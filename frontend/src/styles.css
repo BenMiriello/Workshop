@@ -309,6 +309,38 @@ input[type="range"].grad::-moz-range-thumb {
 @media (max-width: 640px) {
   .chat-tb__picker-val--wide { display: none; }
 }
+/* THE WORKING-TREE PILL NAMES THE EXCEPTION, NOT THE DEFAULT, which is why it
+   does not simply take `--wide` and why it does not simply ignore it either.
+   Measured at 390px: the toolbar has room for about 46px of chat title once
+   this pill has its word, and the chat's name rendered "Re…". So one of the two
+   has to give, and which one depends on what the pill is saying.
+
+   A chat on the SHARED tree is the ordinary state of almost every conversation
+   (leases doc section 10.2: "most sessions never leave this state"). Spending
+   the chat's name on a word that is the same on every toolbar is the constant
+   this system's own colour rule forbids, so on a phone that case is the icon
+   alone and the word is one tap away in the menu, where it leads.
+
+   A chat PINNED TO A BRANCH is the exception, it changes where every turn
+   writes, and it is exactly what the operator asked to be able to see at a
+   glance. That one keeps its label at every width and takes the room from the
+   title, capped so a hand-named slug cannot take all of it. */
+.chat-tb__tree .chat-tb__picker-val { max-width: 22ch; }
+@media (max-width: 640px) {
+  /* THE WORD STAYS AND THE GLYPH GOES, which is the opposite of every other
+     picker on this bar and is the right way round here. Measured at 390: the
+     icon costs 18px and the word costs 45, and of the two only the word
+     actually answers the question. A branch glyph reads as "something about
+     branches" beside a conversation picker that is also about branches, so
+     dropping the word and keeping the glyph left the control saying nothing at
+     the width it is read at. A PINNED chat keeps both: there the glyph is what
+     distinguishes it from the shared state at a glance. */
+  .chat-tb__tree--shared > svg { display: none; }
+  .chat-tb__tree .chat-tb__picker-val { max-width: 11ch; }
+}
+/* The dot is a mark, not a chip: no label beside it (the pill's own word is the
+   label) and no shrinking, so it is the last thing on the bar to give up room. */
+.chat-tb__tree .ws-dot { flex: 0 0 auto; }
 /* Where you are, and the way back to the other chats. Sized and reset to read
    as the same quiet label it always was; the hover state is the only hint it is
    a control, the way .chat-tb__picker's is.
@@ -3576,3 +3608,28 @@ p.chat-workpanel__note { margin: 0; }
   .ws-dashline__tail { display: none; }
   .ws-dashline__title { max-width: none; flex: 1 1 auto; }
 }
+
+/* ============================================================
+   Branches: a list row that has somewhere to go
+   ============================================================
+   The kit's `.ws-listrow` is one element and it is either a button or a link.
+   A branch row is both: tapping it opens the row's own panel (the facts, the
+   reap control), and the tree is usually held by a chat you want to open. An
+   anchor cannot be nested in a button, so the two sit side by side and the row
+   keeps all of the width it is not using.
+
+   No hover of its own on the wrapper: `.ws-listrow` already lights on hover and
+   a second highlight around it would draw a box the row does not have. */
+.branchrow { display: flex; align-items: stretch; min-width: 0; }
+.branchrow > .ws-listrow { flex: 1 1 auto; }
+.branchrow__go {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  /* 44px of touch target, which is what a phone needs and what the row is
+     already tall enough to give. */
+  width: 44px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  text-decoration: none;
+}
+.branchrow__go:hover { color: var(--fg); background: var(--card-hover); }

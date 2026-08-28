@@ -65,8 +65,8 @@ REF_SOURCES = ("ticket", "run", "branch", "app_default")
 _INHERITED_SOURCES = ("ticket", "run", "branch")
 
 READ_ONLY_DETAIL = (
-    "Reading {ref}. It is shared, so it is read-only here until you write — "
-    "the first write gets its own branch.")
+    "Reading {ref}. It is shared, so it is read-only here until you write. "
+    "The first write gets its own branch.")
 NEW_BRANCH_DETAIL = (
     "This write needs a branch of its own. A new one off {ref} keeps it "
     "separate; a branch merges as one unit, so joining another means "

@@ -1,19 +1,24 @@
 // The state ladder, exercised on the rows it was built for.
 //
-// The tests that matter most here are the ones about ABANDONED WORK, because
-// that row is the reason the module exists and it is the one a presence-first
-// view (`holders.ts`) cannot produce at all: there is no live session to start
-// from, so the branch would render "Nobody here" while somebody's uncommitted
-// edits sat in the tree holding a build back.
+// The tests that matter most here are the ones about UNSAVED WORK, because that
+// row is the reason the module exists and it is the one a presence-first view
+// (`holders.ts`) cannot produce at all: there is no live session to start from,
+// so the branch would render "Nobody here" while somebody's uncommitted edits
+// sat in the tree holding a build back.
+//
+// FIVE WORDS AND FIVE KINDS ARE NOT THE SAME AXIS. The module's own header says
+// why: the WORD is the state and the COLOUR is the urgency, so `Stuck` and
+// `Unsaved work` each appear in two kinds and the tests below assert the pair
+// rather than the word alone.
 import { describe, expect, it } from "vitest";
 
 import {
-  attentionCount, beatSeconds, blockingFiles, blockingSummary, branchLabel,
-  branchState, DORMANT_AFTER_SEC, driftHeadline, heartbeatNote, humanSeconds,
-  orderRows, reapPlan, reapUrl, rowFacts, shortSeconds, tipAge,
+  attentionCount, beatSeconds, branchLabel, branchState, heartbeatNote,
+  holderLink, humanSeconds, orderRows, reapPlan, reapUrl, rowFacts,
+  SETTLED_AFTER_SEC, shortSeconds, tipAge,
 } from "./branchesView";
 import type {
-  BranchRow, DriftReport, LeaseRow, LeaseWindows, TreeState,
+  BranchRow, LeaseRow, LeaseWindows, TreeState,
 } from "./branchesView";
 import { holderName } from "./holders";
 import type { BranchRecord, DirectoryEntry } from "./holders";
@@ -64,75 +69,84 @@ const CLEAN: TreeState = { clean: true, entries: 0 };
 const DIRTY: TreeState = { clean: false, entries: 2 };
 
 describe("branchState", () => {
-  it("a held, beating, moving lease is running and wants nothing", () => {
+  it("a held, beating, moving lease is running and says In use", () => {
     const s = branchState(row(), WINDOWS);
     expect(s.kind).toBe("running");
-    expect(s.label).toBe("Working");
+    expect(s.label).toBe("In use");
     expect(s.needsAttention).toBe(false);
   });
 
-  it("a held lease whose work has stopped moving is warn, and still says held", () => {
-    // The state did not change, so the word does not; what changed is that
-    // nothing has been written, which is a reason to look.
+  it("a held lease whose work has stopped moving is Stuck, and warn", () => {
     const s = branchState(
       row({ lease: lease({ idle_since: "2026-08-27T00:00:00+00:00" }) }), WINDOWS);
     expect(s.kind).toBe("warn");
-    expect(s.label).toBe("Idle");
+    expect(s.label).toBe("Stuck");
     expect(s.needsAttention).toBe(true);
     expect(s.detail).toContain("10 minutes");
   });
 
-  it("an expired lease over a CLEAN tree is stopped, not a problem", () => {
+  it("an expired lease over a CLEAN tree is Free, because it can be taken", () => {
+    // It used to say "Expired", which is a fact about a lease row rather than
+    // an answer to any of the three questions this page is read for. Nothing
+    // is at risk and nothing is held: that is the same decision as a branch
+    // nobody ever took, so it is the same word.
     const s = branchState(
       row({ lease: lease({ state: "expired" }), holder: null, tree: CLEAN }), WINDOWS);
-    expect(s.kind).toBe("stopped");
-    expect(s.label).toBe("Expired");
+    expect(s.kind).toBe("ok");
+    expect(s.label).toBe("Free");
     expect(s.needsAttention).toBe(false);
   });
 
-  it("THE ROW THIS MODULE EXISTS FOR: a dirty tree nobody holds is abandoned", () => {
+  it("THE ROW THIS MODULE EXISTS FOR: a dirty tree nobody holds is Unsaved work", () => {
     const s = branchState(
       row({ lease: lease({ state: "expired" }), holder: null, tree: DIRTY }), WINDOWS);
-    expect(s.kind).toBe("danger");
-    expect(s.label).toBe("Abandoned");
+    expect(s.kind).toBe("warn");
+    expect(s.label).toBe("Unsaved work");
     expect(s.needsAttention).toBe(true);
     expect(s.detail).toContain("hold a build back");
   });
 
-  it("a dirty tree with NO lease at all is abandoned too", () => {
+  it("a dirty tree with NO lease at all is Unsaved work too", () => {
     // Nothing ever took this tree, or the row is gone. The uncommitted work is
     // still stranded, which is the fact that matters.
     const s = branchState(row({ lease: null, holder: null, tree: DIRTY }), WINDOWS);
-    expect(s.label).toBe("Abandoned");
-    expect(s.kind).toBe("danger");
+    expect(s.label).toBe("Unsaved work");
+    expect(s.kind).toBe("warn");
   });
 
-  it("a dirty tree that someone IS holding is not abandoned; they are working", () => {
+  it("a dirty tree that someone IS holding is not stranded; they are in it", () => {
     const s = branchState(row({ tree: DIRTY }), WINDOWS);
-    expect(s.label).toBe("Working");
+    expect(s.label).toBe("In use");
   });
 
-  it("an unread tree is never called abandoned", () => {
+  it("an unread tree is never called unsaved work", () => {
     // `null` is "not read yet", and guessing either way is wrong: guessing
-    // clean hides the row this view exists for, guessing dirty cries abandoned
-    // at every branch on every first paint.
+    // clean hides the row this view exists for, guessing dirty cries unsaved
+    // work at every branch on every first paint.
     const s = branchState(
       row({ lease: lease({ state: "expired" }), holder: null, tree: null }), WINDOWS);
-    expect(s.label).toBe("Expired");
-    expect(s.kind).not.toBe("danger");
+    expect(s.label).toBe("Free");
+    expect(s.kind).not.toBe("warn");
   });
 
-  it("a preempt in flight outranks everything else that is live", () => {
+  it("a preempt in flight is Stuck at DANGER, which outranks everything live", () => {
+    // Same word as an idle holder, because the decision is the same one (open
+    // the holder and deal with it) and a second word for it would be a state
+    // the reader has to learn. The COLOUR is what says this one is louder.
     const s = branchState(row({ yieldRequested: true, tree: DIRTY }), WINDOWS);
     expect(s.kind).toBe("danger");
-    expect(s.label).toBe("Preempting");
+    expect(s.label).toBe("Stuck");
     expect(s.detail).toContain("30 seconds");
   });
 
-  it("your own lease reads as yours, not as somebody working", () => {
+  it("your own lease is In use like anyone else's, because the action is the same", () => {
+    // "Yours" was a separate rung and it led nowhere different: a tree you are
+    // working in and a tree somebody else is working in are both trees to leave
+    // alone. The detail sentence still says which.
     const s = branchState(row(), WINDOWS, "sweep-42");
-    expect(s.kind).toBe("ok");
-    expect(s.label).toBe("Yours");
+    expect(s.kind).toBe("running");
+    expect(s.label).toBe("In use");
+    expect(s.detail).toContain("You hold");
   });
 
   it("a free branch with a clean tree is ok, not stopped", () => {
@@ -141,11 +155,38 @@ describe("branchState", () => {
     expect(s.label).toBe("Free");
   });
 
-  it("a finished record short-circuits the whole ladder", () => {
-    expect(branchState(row({ record: record({ status: "merged" }), tree: DIRTY }),
-                       WINDOWS).label).toBe("Merged");
-    expect(branchState(row({ record: record({ status: "discarded" }), tree: DIRTY }),
-                       WINDOWS).label).toBe("Discarded");
+  it("every way for a branch to be over says Done, and says which in the detail", () => {
+    const merged = branchState(row({ record: record({ status: "merged" }), tree: DIRTY }),
+                               WINDOWS);
+    const discarded = branchState(row({ record: record({ status: "discarded" }), tree: DIRTY }),
+                                  WINDOWS);
+    const gone = branchState(row({ record: record({ presence: "gone" }), tree: null }),
+                             WINDOWS);
+    for (const s of [merged, discarded, gone]) {
+      expect(s.label).toBe("Done");
+      expect(s.kind).toBe("stopped");
+      expect(s.needsAttention).toBe(false);
+    }
+    expect(merged.detail).toContain("trunk");
+    expect(discarded.detail).toContain("thrown away");
+    expect(gone.detail).toContain("directory is not");
+  });
+
+  it("never uses a word outside the five", () => {
+    const labels = new Set([
+      branchState(row(), WINDOWS).label,
+      branchState(row({ lease: lease({ idle_since: "x" }) }), WINDOWS).label,
+      branchState(row({ lease: null, holder: null, tree: DIRTY }), WINDOWS).label,
+      branchState(row({ lease: lease({ state: "expired" }), holder: null }), WINDOWS).label,
+      branchState(row({ lease: null, holder: null }), WINDOWS).label,
+      branchState(row({ yieldRequested: true }), WINDOWS).label,
+      branchState(row({ record: record({ status: "merged" }) }), WINDOWS).label,
+      branchState(row({ record: record({ presence: "gone" }) }), WINDOWS).label,
+      branchState(row({ record: record({ presence: "orphan" }) }), WINDOWS).label,
+    ]);
+    for (const l of labels) {
+      expect(["In use", "Stuck", "Unsaved work", "Free", "Done"]).toContain(l);
+    }
   });
 
   it("uses only the five status kinds", () => {
@@ -164,8 +205,40 @@ describe("branchState", () => {
 
   it("names the holder from the lease when no live session is left", () => {
     const s = branchState(
-      row({ lease: lease({ state: "expired" }), holder: null }), WINDOWS);
-    expect(s.detail).toContain("sweep-42");
+      row({ lease: lease({ state: "expired" }), holder: null, tree: DIRTY }), WINDOWS);
+    expect(s.detail).toContain("never committed");
+    expect(branchState(row({ lease: lease({ state: "expired" }), holder: null }),
+                       WINDOWS).detail).toContain("sweep-42");
+  });
+});
+
+describe("holderLink", () => {
+  // THE ROW LINKS TO THE CHAT, which is what the operator asked this page for.
+  it("takes a chat-held tree to that conversation, by thread id", () => {
+    const link = holderLink(row({
+      lease: lease({ holder_kind: "chat", holder_id: "abc123" }),
+      holder: null,
+    }));
+    expect(link?.to).toBe("/chat/project%3Ademo?thread=abc123");
+  });
+
+  it("prefers the live session's own scope, because the lease row has none", () => {
+    const link = holderLink(row({
+      lease: lease({ holder_kind: "chat", holder_id: "abc123" }),
+      holder: entry({ session_kind: "chat", session_id: "abc123", scope: "general" }),
+    }));
+    expect(link?.to).toBe("/chat/general?thread=abc123");
+  });
+
+  it("takes a run-held tree to the run", () => {
+    expect(holderLink(row())?.to).toBe("/runs/sweep-42");
+  });
+
+  it("answers null rather than a link that would 404", () => {
+    expect(holderLink(row({
+      lease: lease({ holder_kind: "sweep" }), holder: null,
+    }))).toBeNull();
+    expect(holderLink(row({ lease: null, holder: null }))).toBeNull();
   });
 });
 
@@ -219,56 +292,61 @@ describe("humanSeconds / shortSeconds", () => {
   });
 });
 
-describe("the dormant rung", () => {
+describe("the settled split: one word, two colours", () => {
   // THE OPERATOR'S RULE, and it predates this page: never make a card's alarm
   // colour permanent, because a hue that never varies carries no information.
-  // /branches opened on eleven `Abandoned` rows in `danger` and nothing else,
-  // which is a screen of identical red saying "everything is equally wrong".
-  // Eleven stranded trees is what this system looks like at rest.
+  // /branches opened on eleven rows in `danger` and nothing else, which is a
+  // screen of identical red saying "everything is equally wrong". Eleven trees
+  // of stranded work is what this system looks like at rest.
+  //
+  // The WORD does not change across the split, because the decision does not:
+  // both rows are "there is work here nobody saved". What changes is how loudly
+  // it is drawn, and the age printed on the row beside it is what makes the two
+  // shades readable.
   const NOW = Date.parse("2026-08-28T12:00:00Z");
   const at = (secsAgo: number) => new Date(NOW - secsAgo * 1000).toISOString();
   const stranded = (tip_at: string | null) => row({
     record: record({ tip_at }), lease: null, holder: null, tree: DIRTY,
   });
 
-  it("work stranded in the last day is still the danger it always was", () => {
+  it("work stranded in the last day wants a look", () => {
     const s = branchState(stranded(at(3600)), WINDOWS, null, NOW);
-    expect(s.label).toBe("Abandoned");
-    expect(s.kind).toBe("danger");
+    expect(s.label).toBe("Unsaved work");
+    expect(s.kind).toBe("warn");
     expect(s.needsAttention).toBe(true);
   });
 
-  it("the same tree a week later is neutral and wants nothing", () => {
+  it("the same tree a week later is the same word, quietly", () => {
     const s = branchState(stranded(at(7 * 24 * 3600)), WINDOWS, null, NOW);
-    expect(s.label).toBe("Dormant");
+    expect(s.label).toBe("Unsaved work");
     expect(s.kind).toBe("stopped");
     expect(s.needsAttention).toBe(false);
     expect(s.detail).toContain("7 days");
   });
 
-  it("the boundary is DORMANT_AFTER_SEC, and it is not a lease window", () => {
-    expect(branchState(stranded(at(DORMANT_AFTER_SEC - 60)), WINDOWS, null, NOW).label)
-      .toBe("Abandoned");
-    expect(branchState(stranded(at(DORMANT_AFTER_SEC + 60)), WINDOWS, null, NOW).label)
-      .toBe("Dormant");
+  it("the boundary is SETTLED_AFTER_SEC, and it is not a lease window", () => {
+    expect(branchState(stranded(at(SETTLED_AFTER_SEC - 60)), WINDOWS, null, NOW).kind)
+      .toBe("warn");
+    expect(branchState(stranded(at(SETTLED_AFTER_SEC + 60)), WINDOWS, null, NOW).kind)
+      .toBe("stopped");
   });
 
   it("an undated tree is never quieted, because nothing measured its age", () => {
     // Quieting a row on a fact nobody recorded is the one way this rung could
     // hide real stranded work.
-    expect(branchState(stranded(null), WINDOWS, null, NOW).label).toBe("Abandoned");
+    expect(branchState(stranded(null), WINDOWS, null, NOW).kind).toBe("warn");
   });
 
-  it("a dormant tree drops out of the attention count", () => {
+  it("a settled tree drops out of the attention count", () => {
     const rows = [stranded(at(7 * 24 * 3600)), stranded(at(600))];
     expect(attentionCount(rows, WINDOWS, null, NOW)).toBe(1);
   });
 
-  it("and sorts below everything live, but above the rungs holding nothing", () => {
-    const dormant = { ...stranded(at(7 * 24 * 3600)), record: record({ id: "d", tip_at: at(7 * 24 * 3600) }) };
-    const gone = row({ record: record({ id: "g", presence: "gone" }), lease: null, holder: null });
-    const working = row({ record: record({ id: "w" }) });
-    expect(orderRows([gone, dormant, working], WINDOWS, null, NOW).map((r) => r.record.id))
+  it("and sorts below everything live, but above the rows holding nothing", () => {
+    const settled = { ...stranded(at(7 * 24 * 3600)), record: record({ id: "d", tip_at: at(7 * 24 * 3600) }) };
+    const done = row({ record: record({ id: "g", presence: "gone" }), lease: null, holder: null });
+    const inUse = row({ record: record({ id: "w" }) });
+    expect(orderRows([done, settled, inUse], WINDOWS, null, NOW).map((r) => r.record.id))
       .toEqual(["w", "d", "g"]);
   });
 });
@@ -296,17 +374,25 @@ describe("rowFacts", () => {
 
   it("leads with the state WORD, not just the dot's colour", () => {
     const r = row();
-    expect(rowFacts(r, branchState(r, WINDOWS, null, NOW))[0]).toBe("Working");
+    expect(rowFacts(r, branchState(r, WINDOWS, null, NOW))[0]).toBe("In use");
   });
 
-  it("names the holder when one is there, and the stranded work when none is", () => {
+  it("names the holder when one is there, and counts the files when none is", () => {
     const held = row();
     expect(rowFacts(held, branchState(held, WINDOWS, null, NOW)))
-      .toEqual(["Working", holderName(entry())]);
+      .toEqual(["In use", holderName(entry())]);
 
+    // NOT "2 uncommitted": the word beside it already says the work is
+    // unsaved, so the second fact would spend the row's width restating the
+    // first. What varies between two of these rows is the SIZE.
     const loose = row({ lease: null, holder: null, tree: DIRTY });
     expect(rowFacts(loose, branchState(loose, WINDOWS, null, NOW)))
-      .toEqual(["Abandoned", "2 uncommitted"]);
+      .toEqual(["Unsaved work", "2 files"]);
+  });
+
+  it("says one file, not one files", () => {
+    const one = row({ lease: null, holder: null, tree: { clean: false, entries: 1 } });
+    expect(rowFacts(one, branchState(one, WINDOWS, null, NOW))[1]).toBe("1 file");
   });
 
   it("says nothing more when there is nothing more that varies", () => {
@@ -316,20 +402,34 @@ describe("rowFacts", () => {
 });
 
 describe("orderRows", () => {
-  it("puts what needs a decision above what is merely happening", () => {
-    const working = row({ record: record({ id: "w" }) });
+  it("ranks by the KIND, so the loudest colour is always on top", () => {
+    // Order is derived from the status kind rather than from the word, which is
+    // what stops the sort and the paint from disagreeing. The one split inside
+    // a kind is at the bottom: a stopped tree still holding work sorts above a
+    // stopped record holding none.
+    const NOW = Date.parse("2026-08-28T12:00:00Z");
+    const preempting = row({ record: record({ id: "p" }), yieldRequested: true });
     const idle = row({
       record: record({ id: "i" }),
-      lease: lease({ idle_since: "2026-08-27T00:00:00+00:00" }),
+      lease: lease({ idle_since: "2026-08-27T00:00:00+00:00", held_for_sec: 9000 }),
     });
-    const abandoned = row({
-      record: record({ id: "a" }), lease: lease({ state: "expired" }),
-      holder: null, tree: DIRTY,
+    const stranded = row({
+      record: record({ id: "a", tip_at: new Date(NOW - 3600_000).toISOString() }),
+      lease: lease({ state: "expired" }), holder: null, tree: DIRTY,
     });
+    const inUse = row({ record: record({ id: "w" }) });
     const free = row({ record: record({ id: "f" }), lease: null, holder: null });
-    const order = orderRows([free, working, idle, abandoned], WINDOWS)
+    const settled = row({
+      record: record({ id: "d", tip_at: new Date(NOW - 8 * 24 * 3600_000).toISOString() }),
+      lease: null, holder: null, tree: DIRTY,
+    });
+    const done = row({
+      record: record({ id: "g", presence: "gone" }), lease: null, holder: null,
+    });
+    const order = orderRows(
+      [done, settled, free, inUse, stranded, idle, preempting], WINDOWS, null, NOW)
       .map((r) => r.record.id);
-    expect(order).toEqual(["a", "i", "w", "f"]);
+    expect(order).toEqual(["p", "i", "a", "w", "f", "d", "g"]);
   });
 
   it("within a rung, the longest-standing comes first", () => {
@@ -366,127 +466,46 @@ describe("attentionCount", () => {
   });
 });
 
-describe("drift", () => {
-  function report(over: Partial<DriftReport> = {}): DriftReport {
-    return {
-      surfaces: [], blocked: false, stale: false, canonical: true,
-      apply_command: "bash scripts/apply.sh", detail: "",
-      ...over,
-    } as DriftReport;
-  }
-  const surface = (over: Record<string, unknown>) => ({
-    name: "ui bundle", state: "current", blocking_files: [], detail: "",
-    ...over,
-  }) as DriftReport["surfaces"][number];
-
-  it("a blocked surface says the apply step will not clear it, and counts the files", () => {
-    const head = driftHeadline(report({
-      blocked: true, stale: true,
-      surfaces: [surface({
-        state: "blocked",
-        blocking_files: ["frontend/src/A.tsx", "frontend/src/B.tsx"],
-      })],
-    }));
-    expect(head).toContain("old code");
-    expect(head).toContain("will not clear it");
-    expect(head).toContain("2 files have to be committed");
-  });
-
-  it("the verb agrees with the count", () => {
-    // It read "1 file below have to be committed first" on the operator's
-    // phone. A banner that cannot conjugate is not trusted about anything else
-    // it says, and this one is the app's only word on whether the screen in
-    // front of him is current.
-    const head = driftHeadline(report({
-      blocked: true, stale: true,
-      surfaces: [surface({ state: "blocked", blocking_files: ["backend/x.py"] })],
-    }));
-    expect(head).toContain("1 file has to be committed first");
-    expect(head).not.toContain("below");
-  });
-
-  it("names a few files and then counts the rest, eliding at the END", () => {
-    // A path is whole or it is honestly short. The banner printed
-    // `ackend/services/scoped_exec.py` -- a file that does not exist -- because
-    // the server had cut a character off the front (services/drift.py::_run).
-    expect(blockingSummary([])).toBe("");
-    expect(blockingSummary(["a.py", "b.py"])).toBe("a.py, b.py");
-    expect(blockingSummary(["a.py", "b.py", "c.py", "d.py", "e.py"]))
-      .toBe("a.py, b.py, c.py and 2 more");
-  });
-
-  it("a merely stale surface does not tell anyone to commit anything", () => {
-    const head = driftHeadline(report({
-      stale: true, surfaces: [surface({ state: "stale" })],
-    }));
-    expect(head).toContain("has not been applied yet");
-    expect(head).not.toContain("committed");
-  });
-
-  it("a healthy installation says nothing at all", () => {
-    // A permanent green bar is the constant that trains people to stop reading.
-    expect(driftHeadline(report({ surfaces: [surface({})] }))).toBeNull();
-    expect(driftHeadline(null)).toBeNull();
-  });
-
-  it("a linked worktree is called out even when everything else is current", () => {
-    const head = driftHeadline(report({ canonical: false, surfaces: [surface({})] }));
-    expect(head).toContain("linked worktree");
-    expect(head).toContain("invisible until the branch merges");
-  });
-
-  it("deduplicates the blocking files across surfaces, because a file commits once", () => {
-    expect(blockingFiles(report({
-      surfaces: [
-        surface({ name: "ui bundle", state: "blocked", blocking_files: ["a.tsx", "b.tsx"] }),
-        surface({ name: "backend", state: "blocked", blocking_files: ["b.tsx", "c.py"] }),
-      ],
-    }))).toEqual(["a.tsx", "b.tsx", "c.py"]);
-  });
-});
-
-// --- presence: the rows that exist without a record, and vice versa ----------
-//
-// These are the cases the page was blind to. `/branches?live=true` answered from
-// the record table, so a tree nothing had recorded did not appear at all, and a
-// record whose tree had gone appeared as a working branch.
-
 describe("presence", () => {
-  it("a record whose directory is gone is stopped and wants nothing", () => {
+  it("a record whose directory is gone is Done and wants nothing", () => {
     const s = branchState(row({
       record: record({ presence: "gone" }), lease: null, holder: null, tree: null,
     }), WINDOWS);
     expect(s.kind).toBe("stopped");
-    expect(s.label).toBe("Gone");
+    expect(s.label).toBe("Done");
     expect(s.needsAttention).toBe(false);
-    expect(s.detail).toContain("no directory");
+    expect(s.detail).toContain("directory is not");
   });
 
-  it("a directory git has never heard of is warn AND wants a look", () => {
-    // It is the one row nothing else in the system can see, and it holds a whole
-    // checkout of disk until somebody removes it.
+  it("a directory git has never heard of is Unsaved work, and wants a look", () => {
+    // "Orphaned" was its own word and it named a CAUSE (a teardown that could
+    // not finish) rather than a decision. The decision is the same one a dirty
+    // tree gets, at its worst: nothing can read what is in here, so do not
+    // delete it blindly. Same word, and the detail says why this one is
+    // unreadable.
     const s = branchState(row({
       record: record({ presence: "orphan", recorded: false, status: null }),
       lease: null, holder: null, tree: null,
     }), WINDOWS);
     expect(s.kind).toBe("warn");
-    expect(s.label).toBe("Orphaned");
+    expect(s.label).toBe("Unsaved work");
     expect(s.needsAttention).toBe(true);
+    expect(s.detail).toContain("Git has no worktree");
   });
 
   it("A TREE WITH NO RECORD IS STILL RANKED BY THE LADDER, not skipped", () => {
     // The structurally common case: most trees were never allocated through the
     // record path, so `status` is null and `recorded` is false, and the row must
-    // still reach `Abandoned` on a dirty tree nobody holds.
+    // still reach `Unsaved work` on a dirty tree nobody holds.
     const s = branchState(row({
       record: record({ recorded: false, status: null }),
       lease: null, holder: null, tree: DIRTY,
     }), WINDOWS);
-    expect(s.label).toBe("Abandoned");
-    expect(s.kind).toBe("danger");
+    expect(s.label).toBe("Unsaved work");
+    expect(s.kind).toBe("warn");
   });
 
-  it("puts an orphan above the branches that are merely being worked", () => {
+  it("puts an unreadable directory above the branches that are merely in use", () => {
     const orphan = row({
       record: record({ id: "orphan", presence: "orphan" }),
       lease: null, holder: null, tree: null,

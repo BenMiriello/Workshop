@@ -30,7 +30,6 @@ from routes import branches as branches_routes
 from routes import presence as presence_routes
 from routes import control as control_routes
 from routes import leases as leases_routes
-from routes import drift as drift_routes
 from services import app_registry
 import asyncio
 import datetime as _dt
@@ -387,10 +386,12 @@ app.include_router(control_routes.router, dependencies=_OPERATOR)  # /control
 # to a stuck-work view -- an expired lease, and a held one whose holder stopped
 # writing presence -- have no session to join from and render as silence.
 app.include_router(leases_routes.router, dependencies=_OPERATOR)  # /leases
-# Is what you are looking at what is on disk. The product-visible half of
-# scripts/apply.sh --check, whose "not building: UNCOMMITTED UI work" refusal
-# was previously only ever printed into one agent's terminal.
-app.include_router(drift_routes.router, dependencies=_OPERATOR)  # /drift
+# `/drift` WAS HERE AND IS DELETED (2026-08-28). It served one always-mounted
+# banner saying "you may be looking at old code"; the operator deleted that
+# banner permanently, and an endpoint whose only reader is gone is dead weight
+# that the next agent would wire back into some new chrome. The same question is
+# answered by `scripts/apply.sh --check` from a terminal, which is where it was
+# always answered. Do not reintroduce a global drift warning in any form.
 app.include_router(base_apps.router, prefix="/base-apps", tags=["base-apps"], dependencies=_OPERATOR)
 # Grants + Stores (Phase 4). /base-apps/grants stays as a thin alias in base_apps
 # until Phase 5; this is the real grants router (/grants, /grants/mint,

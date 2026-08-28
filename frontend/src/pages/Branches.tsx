@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  GitBranch, RefreshCw, Trash2,
+  ChevronRight, GitBranch, RefreshCw, Trash2,
 } from "lucide-react";
 import {
   Button, Card, ConfirmDialog, CopyButton, Notice, PageHeader, Prop, Props, Row,
@@ -13,62 +13,76 @@ import {
   useBranchesView, useYieldFlags,
 } from "../components/holders/useBranchesView";
 import {
-  attentionCount, branchLabel, branchState, heartbeatNote, orderRows, reapPlan,
-  reapUrl, rowFacts, shortSeconds, tipAge,
+  attentionCount, branchLabel, branchState, heartbeatNote, holderLink, orderRows,
+  reapPlan, reapUrl, rowFacts, shortSeconds, tipAge,
 } from "../lib/branchesView";
 import type { BranchRow } from "../lib/branchesView";
 import type { BranchesViewRead } from "../components/holders/useBranchesView";
 
-// WHO IS WORKING WHERE, AND WHAT IS STUCK.
+// WHICH TREES EXIST, WHO IS IN THEM, AND HOW TO GET THERE.
 //
 // The question this page exists for is not "what branches are there". It is
-// "is anything wedged, and is anyone's work stranded" -- so the ordering is by
-// ATTENTION rather than by time, and the state word leads every row.
+// "is anything wedged, is anyone's work stranded, and where is the conversation
+// that put it there" -- so the rows are ordered by attention, the state word
+// leads every row, and a row held by a chat LINKS TO THAT CHAT.
+//
+// THE LINK IS THE POINT OF THE PAGE (operator, 2026-08-28: "we could have this
+// branches page in a better simpler clearer form, linking to the chats. But the
+// main way we'll find worktrees is through chats or agents"). This is a
+// secondary surface. The primary one is the tree pill on the chat toolbar
+// (`components/chat/TreePill.tsx`) and the branch picker on an agent
+// (`pages/AgentBuild.tsx`); this page is the overview you open when you want to
+// see all of them at once, and its job is to hand you back to the chat.
+//
+// THE ROW IS A BUTTON AND A LINK SIDE BY SIDE, which is why the markup is not
+// a bare `.ws-listrow`. An anchor cannot be nested inside a button, and both
+// verbs are real: the button opens the row's own panel (the facts, and the reap
+// control), the link leaves for the conversation. The wrapper is
+// `.branchrow` in styles.css and it is the whole of the extra CSS this page has.
 //
 // IT SHIPPED WITHOUT ANYONE LOOKING AT IT ON A SCREEN, and the operator opened
-// it on a phone the next morning. Ten faults, and eight of them were one fault
-// wearing different clothes: nothing here had been sized to a 390px column.
-// What that rebuild changed, so it is not undone by accident:
+// it on a phone the next morning. What the rebuild changed, so it is not undone
+// by accident:
 //
 //   * THE TABLE IS GONE. Eight columns inside a horizontal scroller meant a
 //     `STATE` column and then a third column clipped to a single letter at the
 //     right edge. `.ws-list` / `.ws-listrow` is the kit's answer and its own
 //     comment is about exactly this failure: one row per item, never scrolling
-//     sideways at any width, two lines on a phone and one from 720px. The
-//     columns that used to be clipped are on the row's panel now.
+//     sideways at any width. The columns that used to be clipped are on the
+//     row's panel now.
 //   * THE NAME IS SHORT. A 32-character hex slug wrapped over two lines with
 //     its project underneath it in mono, and eleven of those was most of the
 //     page. `branchLabel` keeps eight characters and an ellipsis; the whole
 //     value is on the panel with a copy button.
-//   * DRIFT IS NOT SAID HERE. It was said three times on one screen: the
-//     shell's banner, a second copy of the same forty words in this page's
-//     body, and a card headed "WHAT IS BEING SERVED" restating it as pills.
-//     `shell/DriftBanner` is the one surface. This page does not read /drift.
-//   * THE COUNT IS ON THE FILTER THAT PRODUCES IT. "11 of 13 need a look" sat
-//     under the title while the active filter said "All branches", so the
-//     number and the view disagreed about what was being counted.
+//   * NOTHING SAYS DRIFT HERE, and no endpoint answers it any more. It was said
+//     three times on one screen (a shell banner, a copy of the same forty words
+//     in this body, and a card headed "WHAT IS BEING SERVED"). The operator
+//     deleted the banner permanently on 2026-08-28; `/drift` and
+//     `services/drift.py` went with it, because an endpoint with no reader is
+//     dead weight. Do not reintroduce a drift warning here or anywhere.
 //   * NO EXPLAINER SUBTITLE. A page called Branches does not need a sentence
-//     defining a branch.
+//     defining a branch, and the operator named that sentence specifically.
+//   * THE COUNT IS ON THE FILTER THAT PRODUCES IT, not under the title where it
+//     could disagree with the view that is actually on screen.
 //
-// WHY THE PILL WORDS AND THE ORDER ARE NOT IN THIS FILE. `lib/branchesView.ts`
-// owns the state ladder, the row's facts and the short name, and it is tested;
-// this file renders what it decided. That split is the repo's rule (the target
-// of a test is the pure rule behind a behaviour, and there is no DOM harness
-// here), and it is what stops a status word from being invented at a call site.
+// WHY THE STATE WORDS AND THE ORDER ARE NOT IN THIS FILE. `lib/branchesView.ts`
+// owns the state ladder, the row's facts, the short name and the holder link,
+// and it is tested; this file renders what it decided. That split is the repo's
+// rule (the target of a test is the pure rule behind a behaviour, and there is
+// no DOM harness here), and it is what stops a status word from being invented
+// at a call site.
 //
 // TAKE OVER IS NOT OFFERED FROM THIS PAGE, and that is a real limit rather than
 // an omission. `POST /control/{id}/preempt` requires `new_holder_id`: somebody
 // has to receive the lease, and a page is not a session. `offerableVerbs`
 // already encodes this and renders the reason as text rather than a dead
-// button, which is the honest shape. Queue and steer are fully live here.
+// button. Queue and steer are fully live here.
 //
-// REAP IS THE VERB FOR A TREE WITH NOBODY IN IT, and it is the one this page was
-// missing. Finding eleven abandoned trees and offering nothing to do about them
-// is half a monitoring view. `DELETE /api/worktrees/{project}/{branch}` is safe
-// to put behind a button because the server commits uncommitted work to
-// `refs/wip/<branch>` before it removes anything and refuses when it cannot;
-// `reapPlan` in `lib/branchesView.ts` decides whether it may be offered and what
-// the dialog has to promise, so the promise and the request cannot drift apart.
+// REAP IS THE VERB FOR A TREE WITH NOBODY IN IT. `DELETE /api/worktrees/
+// {project}/{branch}` is safe to put behind a button because the server commits
+// uncommitted work to `refs/wip/<branch>` before it removes anything and refuses
+// when it cannot; `reapPlan` decides whether it may be offered and what the
+// dialog has to promise, so the promise and the request cannot drift apart.
 
 // A hundred live trees would be a different problem than this page is for. The
 // count says the rest rather than the table growing without end.
@@ -79,7 +93,7 @@ type Filter = "attention" | "all";
 // ALL BRANCHES IS THE DEFAULT, and the reason is a measured failure rather than
 // a preference. Opening on "Needs a look" meant the first thing this page ever
 // said was an empty state reading "Nothing is stuck", and on 2026-08-27 it said
-// that with eleven abandoned trees on disk. Two different facts -- "there is
+// that with eleven trees of stranded work on disk. Two different facts -- "there is
 // nothing here" and "nothing here is wrong" -- rendered identically, and the
 // wrong one is unfalsifiable from the screen.
 //
@@ -128,14 +142,13 @@ export default function Branches() {
 
   return (
     <div>
-      <PageHeader
-        title="Branches"
-        actions={
-          <Button size="sm" variant="ghost" onClick={() => { view.reload(); }}>
-            <RefreshCw aria-hidden /> Refresh
-          </Button>
-        }
-      />
+      {/* NO ACTIONS SLOT. `.ws-page-header__main` is `flex: 1 1 16rem`, so at
+          390px the actions could never share the title's line and Refresh got a
+          line of its own plus the header's own bottom margin under it: about
+          forty pixels of nothing between the page name and the first row, at
+          the top of the screen this page is read on. It sits on the filter row
+          instead, where there is room for it. */}
+      <PageHeader title="Branches" />
 
       {!view.leasesAvailable && (
         <Notice tone="info">
@@ -152,13 +165,16 @@ export default function Branches() {
         </Notice>
       )}
 
-      <Row wrap>
+      <Row wrap between>
         <Segmented
           ariaLabel="Which branches to list"
           options={filters}
           value={filter}
           onChange={(v) => setFilter(v as Filter)}
         />
+        <Button size="sm" variant="ghost" onClick={() => { view.reload(); }}>
+          <RefreshCw aria-hidden /> Refresh
+        </Button>
       </Row>
 
       {/* A failed read with the BRANCH LIST still loaded is a LINE, not a
@@ -194,10 +210,10 @@ export default function Branches() {
       ) : shown === null || shown.length === 0 ? (
         <StateBlock
           icon={<GitBranch aria-hidden />}
-          title={filter === "attention" ? "Nothing is stuck" : "No branches are allocated"}
+          title={filter === "attention" ? "Nothing is stuck" : "No branches"}
           hint={filter === "attention"
-            ? "No tree is being preempted, freshly stranded or orphaned. Switch to All to see the ones that are simply sitting there."
-            : "This lists what is on disk, not what was recorded, so an empty list means the branches directory has no trees in it. A branch appears here when work starts on a ticket, or after POST /api/worktrees/<project>."}
+            ? "Nothing is being stopped, nothing is holding unsaved work. Switch to All to see the trees that are simply sitting there."
+            : "A branch appears here when a chat or a run starts working in one."}
           action={filter === "attention"
             ? <Button size="sm" onClick={() => setFilter("all")}>Show all branches</Button>
             : undefined}
@@ -213,42 +229,56 @@ export default function Branches() {
             {shown.map((r) => {
               const state = branchState(r, view.windows, null, now);
               const open = selected === r.record.id;
+              const link = holderLink(r);
               return (
                 <li key={r.record.id}>
-                  <button
-                    type="button"
-                    className="ws-listrow"
-                    aria-expanded={open}
-                    onClick={() => setSelected(open ? null : r.record.id)}
-                  >
-                    <span
-                      className="ws-listrow__mark"
-                      title={state.label}
-                      aria-label={state.label}
+                  {/* A ROW AND ITS WAY OUT. The button opens the panel under
+                      it; the link leaves for whatever is working in this tree,
+                      which for a chat-held tree is the conversation itself.
+                      Two elements because an anchor may not live inside a
+                      button, and both are real verbs. */}
+                  <div className="branchrow">
+                    <button
+                      type="button"
+                      className="ws-listrow"
+                      aria-expanded={open}
+                      onClick={() => setSelected(open ? null : r.record.id)}
                     >
-                      <StatusDot status={state.kind}>{null}</StatusDot>
-                    </span>
-                    {/* The project sits BESIDE the name, not under it: it is
-                        the second half of the same identifier, and stacking
-                        it cost a whole line per row. */}
-                    <span className="ws-listrow__title">
-                      <span className="ws-mono">{branchLabel(r.record.branch_slug)}</span>
-                      {" "}
-                      <span className="ws-muted">{r.record.project_slug}</span>
-                    </span>
-                    <span className="ws-listrow__meta">
-                      {rowFacts(r, state).map((f) => <span key={f}>{f}</span>)}
-                      {/* How long it has been sitting there, and NOTHING
-                          when nothing dated it: an empty trailing span still
-                          takes the meta line's separator, so an orphan read
-                          "Orphaned ·" with a middot pointing at nobody. For
-                          an unrecorded tree this is the only age there is,
-                          because nothing wrote a created_at. */}
-                      {tipAge(r.record, now) && (
-                        <span className="ws-listrow__time">{tipAge(r.record, now)}</span>
-                      )}
-                    </span>
-                  </button>
+                      <span
+                        className="ws-listrow__mark"
+                        title={state.label}
+                        aria-label={state.label}
+                      >
+                        <StatusDot status={state.kind}>{null}</StatusDot>
+                      </span>
+                      {/* The project sits BESIDE the name, not under it: it is
+                          the second half of the same identifier, and stacking
+                          it cost a whole line per row. */}
+                      <span className="ws-listrow__title">
+                        <span className="ws-mono">{branchLabel(r.record.branch_slug)}</span>
+                        {" "}
+                        <span className="ws-muted">{r.record.project_slug}</span>
+                      </span>
+                      <span className="ws-listrow__meta">
+                        {rowFacts(r, state).map((f) => <span key={f}>{f}</span>)}
+                        {/* How long it has been sitting there, and NOTHING
+                            when nothing dated it: an empty trailing span still
+                            takes the meta line's separator, so a row read
+                            "Unsaved work ·" with a middot pointing at nobody.
+                            For an unrecorded tree this is the only age there
+                            is, because nothing wrote a created_at. */}
+                        {tipAge(r.record, now) && (
+                          <span className="ws-listrow__time">{tipAge(r.record, now)}</span>
+                        )}
+                      </span>
+                    </button>
+                    {link && (
+                      <Link className="branchrow__go" to={link.to} title={link.label}
+                            aria-label={link.label}>
+                        <ChevronRight size={16} aria-hidden />
+                      </Link>
+                    )}
+                  </div>
                   {open && <BranchPanel row={r} view={view} now={now} onDone={() => {
                     setSelected(null);
                     view.reload();
@@ -291,6 +321,7 @@ function BranchPanel({ row, view, now, onDone }: {
 }) {
   const state = branchState(row, view.windows, null, now);
   const lease = row.lease;
+  const link = holderLink(row);
   const beat = heartbeatNote(lease, view.windows);
   const age = tipAge(row.record, now);
   return (
@@ -319,9 +350,16 @@ function BranchPanel({ row, view, now, onDone }: {
                   : `${row.tree.entries} uncommitted`}
           </Prop>
           {age && <Prop label="Last commit">{age}</Prop>}
+          {/* THE HOLDER IS A LINK WHEN IT IS SOMETHING YOU CAN OPEN. The row
+              above carries the same destination as a chevron; here it is
+              named, because this is where a reader has already stopped to
+              read. A holder kind with no page (anything but a chat or a run)
+              is plain text rather than a link that would 404. */}
           {lease && (
             <Prop label="Holder">
-              <span className="ws-mono">{lease.holder_kind} {lease.holder_id}</span>
+              {link
+                ? <Link to={link.to}>{lease.holder_kind === "chat" ? "Open the chat" : "Open the run"}</Link>
+                : <span className="ws-mono">{lease.holder_kind} {lease.holder_id}</span>}
             </Prop>
           )}
           {lease?.held_for_sec != null && (

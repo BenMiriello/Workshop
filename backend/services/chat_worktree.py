@@ -169,16 +169,34 @@ def _project_of(provider: Any) -> str | None:
     A project chat's own slug; a maker agent's linked project. Anything else
     (a data chat, a freestanding agent with a scratch dir) has no branch space
     and therefore can never hold a tree.
+
+    READ THE SLUG, NOT THE KEY. This used to require `key.startswith("project:")`
+    before trusting `slug`, and that is a real bug rather than a style point:
+    `DevelopmentContextProvider` is a `ProjectContextProvider` that deliberately
+    keys itself `development` instead of `project:development` (ADR 0014, so the
+    picker groups the platform's own source above the projects). So the one chat
+    that cuts more branches than any other answered `can_pin: false`, the tree
+    pill rendered nothing at all on it, and eleven of its branches were visible
+    only from /branches. `is_build_provider` above is already the membership
+    test; the key is a routing detail and never was the question.
+
+    THE MAKER IS THE ONE EXCLUSION, because `slug` does not mean the same thing
+    on both build providers: on a project provider it IS the project, on a maker
+    agent it is the AGENT and the project is `project_slug`. A maker with no
+    linked project has no branch space, and must stay None rather than pinning
+    itself to a project named after itself.
     """
     if not chat_context.is_build_provider(provider):
         return None
+    # A maker names its project explicitly. No name, no project.
     slug = getattr(provider, "project_slug", None)
     if slug:
         return str(slug)
-    # A ProjectContextProvider IS its project.
-    if getattr(provider, "key", "").startswith("project:"):
-        return str(getattr(provider, "slug", "")) or None
-    return None
+    if str(getattr(provider, "key", "")).startswith("agent:"):
+        return None
+    # Everything else that reaches here IS a project provider, and `slug` is
+    # which project it is.
+    return str(getattr(provider, "slug", "")) or None
 
 
 def _pinned_branch(thread: dict | None, provider: Any) -> str | None:

@@ -6,7 +6,7 @@ import {
   shortHttpError,
 } from "@workshop/ui";
 import { holderFor } from "../../lib/holders";
-import { treeLabel, treeStatus, type ChatWorktree } from "./chatTree";
+import { showsHolder, treeLabel, treeStatus, type ChatWorktree } from "./chatTree";
 import { queryKeys } from "../../lib/queryKeys";
 import { useDirectory } from "../holders/useHolders";
 import HolderControls from "../holders/HolderControls";
@@ -19,8 +19,14 @@ import HolderControls from "../holders/HolderControls";
 // IT IS NOT THE `BranchPicker` BESIDE IT. That one switches which line of the
 // CONVERSATION you are reading (ADR 0020); this one switches which working tree
 // the next turn runs in. Two different things that English calls a branch, so
-// this control never says the bare word on its own: it says "Shared tree" or
-// the branch's slug, under a "Where this chat works" heading.
+// this control never says the bare word on its own: it says "Shared" or the
+// branch's slug, under a "Where this chat works" heading.
+//
+// TWO FACTS AND NOTHING MORE (operator, 2026-08-28): am I in a worktree or the
+// shared tree, and is anyone else in it. That is the label plus a dot, and the
+// dot is there only when somebody IS in it. Everything else this control knows
+// (the ref, the holder, the other branches, the way to cut one) is in the menu,
+// one tap away, which is where you are choosing rather than glancing.
 //
 // SHOWN ONLY WHERE IT CAN DO SOMETHING. `can_pin` is false for every chat with
 // no project tree of its own -- a data chat, a freestanding agent -- and this
@@ -100,17 +106,27 @@ export default function TreePill({ threadId }: { threadId: string }) {
 
   return (
     <>
+      {/* THE TRIGGER ANSWERS TWO THINGS AND NOTHING ELSE: which tree, and
+          whether anybody is in it. The label is always shown, at every width
+          (see `treeLabel`), because an icon on its own cannot say which. The
+          dot appears only when the tree is held, by you or by somebody else, so
+          it is a signal rather than a permanent grey mark on every toolbar in
+          the app. */}
       <Menu
         label="Working tree"
         trigger={
           <button
-            className="chat-tb__picker"
+            className={`chat-tb__picker chat-tb__tree${tree?.branch_slug ? "" : " chat-tb__tree--shared"}`}
             title={tree?.detail || "Which working tree this chat's turns run in"}
+            aria-label={`Working tree: ${treeLabel(tree)}`}
           >
-            <GitBranch size={14} aria-hidden />
-            <span className="chat-tb__picker-val chat-tb__picker-val--wide">
-              {treeLabel(tree)}
-            </span>
+            {tree?.branch_slug
+              ? <GitBranch size={14} aria-hidden />
+              : <GitMerge size={14} aria-hidden />}
+            <span className="chat-tb__picker-val">{treeLabel(tree)}</span>
+            {showsHolder(status) && (
+              <StatusDot status={status.kind}>{null}</StatusDot>
+            )}
           </button>
         }
       >

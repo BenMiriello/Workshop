@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { treeLabel, treeStatus, type ChatWorktree } from "./chatTree";
+import { showsHolder, treeLabel, treeStatus, type ChatWorktree } from "./chatTree";
 import type { DirectoryEntry } from "../../lib/holders";
 
 const THREAD = "thread-1";
@@ -45,18 +45,48 @@ function entry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
 }
 
 describe("treeLabel", () => {
-  it("names the trunk by what git actually calls it, not 'main'", () => {
-    expect(treeLabel(tree({ default_ref: "master" }))).toBe("master");
+  it("calls the trunk Shared, whatever git calls the ref", () => {
+    // It used to print the ref itself, which is `main` almost everywhere, and
+    // a toolbar reading "main" beside a control that switches conversation
+    // BRANCHES is the exact ambiguity this pill exists to remove. The ref is
+    // still named, in the menu's first row, where you are choosing.
+    expect(treeLabel(tree({ default_ref: "master" }))).toBe("Shared");
+    expect(treeLabel(tree({ default_ref: "" }))).toBe("Shared");
   });
 
   it("names the pin when there is one", () => {
     expect(treeLabel(tree({ branch_slug: "fix-42", pinned: true }))).toBe("fix-42");
   });
 
+  it("shortens a machine hex slug, because a toolbar has no room for 32 characters", () => {
+    expect(treeLabel(tree({ branch_slug: "t-537437c1d3de4feb98801c3f1416c383" })))
+      .toBe("t-537437c1…");
+    expect(treeLabel(tree({ branch_slug: "bc81b563abe14333be4e8626dc8182bd" })))
+      .toBe("bc81b563…");
+  });
+
   it("says nothing it does not know while cold", () => {
     expect(treeLabel(null)).toBe("Tree");
-    // A project whose trunk could not be read must not be labelled "main".
-    expect(treeLabel(tree({ default_ref: "" }))).toBe("shared tree");
+  });
+});
+
+describe("showsHolder", () => {
+  // A CONSTANT IS NOT A SIGNAL. Every idle chat is `stopped` here, so a dot on
+  // that state would sit on every toolbar in the app saying nothing.
+  it("says nothing on a tree nobody is in", () => {
+    expect(showsHolder(treeStatus(tree(), null, THREAD))).toBe(false);
+    expect(showsHolder(treeStatus(tree({ branch_slug: "b", pinned: true }), null, THREAD)))
+      .toBe(false);
+  });
+
+  it("shows the dot exactly when somebody is in the tree", () => {
+    const yours = treeStatus(
+      tree({ branch_slug: "b", pinned: true, held: true, lease: lease(THREAD) }),
+      null, THREAD);
+    const theirs = treeStatus(
+      tree({ branch_slug: "b", pinned: true, blocked_by: lease("other") }), null, THREAD);
+    expect(showsHolder(yours)).toBe(true);
+    expect(showsHolder(theirs)).toBe(true);
   });
 });
 

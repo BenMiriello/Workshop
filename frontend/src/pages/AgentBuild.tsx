@@ -709,7 +709,13 @@ export default function AgentBuild() {
                 aria-label="Branch"
                 title={`Turns run in ${agent.cwd || "this agent's directory"}. Changing this moves the next turn, not the one in flight.`}
               >
-                <option value="">Main branch</option>
+                {/* ONE NAME FOR THE TRUNK, EVERYWHERE. The chat toolbar's tree
+                    pill calls it "Shared tree" and this used to call it "Main
+                    branch", which is two names for one place in the two
+                    controls that do the same job. It is also the more accurate
+                    of the two: what matters about it is that everything else is
+                    in it, not what git happens to call the ref. */}
+                <option value="">Shared tree</option>
                 {worktrees.map((w) => (
                   <option key={w.branch_slug} value={w.branch_slug}>{w.branch_slug}</option>
                 ))}
@@ -720,7 +726,7 @@ export default function AgentBuild() {
             </Row>
           ) : agent.project_slug ? (
             <Row style={{ gap: "var(--space-2)" }}>
-              <StatusPill status="stopped">Main branch</StatusPill>
+              <StatusPill status="stopped">Shared tree</StatusPill>
               <Button size="sm" variant="ghost" onClick={() => setNewBranchOpen(true)}>
                 <Plus aria-hidden /> New branch
               </Button>

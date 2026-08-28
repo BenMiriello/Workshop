@@ -173,11 +173,6 @@ export const queryKeys = {
     list: (subjectKind: string | null) => ["leases", subjectKind] as const,
   },
 
-  /** Is what you are looking at what is on disk. One fact, no parameters. */
-  drift: {
-    report: () => ["drift"] as const,
-  },
-
   /**
    * Reads about one working tree on disk, keyed by its absolute path because
    * that is what the route is addressed by. `treeState` is the dirty/clean

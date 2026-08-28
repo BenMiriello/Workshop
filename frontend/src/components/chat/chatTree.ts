@@ -14,12 +14,40 @@ import type { components } from "../../api/schema.gen";
 // Generated from the backend's own OpenAPI schema, never hand-written.
 export type ChatWorktree = components["schemas"]["ChatWorktree"];
 
-/** The label. Short, because it sits on a toolbar that also carries the chat's
- *  name: the shared tree is named by its real ref, a pin by its slug. */
+/** How wide a run of hex has to be before it is an id rather than a name, and
+ *  how much of it the pill keeps. Same rule and same numbers as the Branches
+ *  page (`lib/branchesView.branchLabel`), because it is the same defect: a
+ *  32-character machine slug is not a name and rendered whole it takes the
+ *  whole toolbar. Duplicated as a THRESHOLD, not as a function, because this
+ *  pill has a harder cap than a list row does. */
+const HEX_ID_MIN = 24;
+const HEX_ID_KEEP = 8;
+
+/**
+ * The label, and it is ALWAYS SHOWN, including on a phone.
+ *
+ * This is the whole job of the control (operator, 2026-08-28: an indicator has
+ * to answer, at a glance, am I in a worktree or the shared tree and is anyone
+ * else in it). It used to carry `chat-tb__picker-val--wide`, which is the class
+ * that hides a picker's text under 640px because the icon already names the
+ * value. That is true of the scope picker and false here: a branch icon says
+ * "something about branches", not WHICH tree, so at 390px the pill answered
+ * nothing.
+ *
+ * "Shared" rather than the ref's own name for the trunk, because the ref is
+ * usually `main` and a toolbar reading `main` beside a conversation picker that
+ * also says branch is the exact ambiguity this control exists to avoid. The
+ * full name, with the ref, is the first row of the menu.
+ */
 export function treeLabel(tree: ChatWorktree | null): string {
   if (!tree) return "Tree";
-  if (tree.branch_slug) return tree.branch_slug;
-  return tree.default_ref || "shared tree";
+  if (!tree.branch_slug) return "Shared";
+  const slug = tree.branch_slug;
+  const m = /^(t-)?([0-9a-f]+)$/i.exec(slug.trim());
+  if (!m) return slug;
+  const [, prefix = "", hex] = m;
+  if (hex.length < HEX_ID_MIN) return slug;
+  return `${prefix}${hex.slice(0, HEX_ID_KEEP)}…`;
 }
 
 /** The pill's status kind, from the four this view can honestly reach.
@@ -41,4 +69,21 @@ export function treeStatus(
     return { kind: "running", label: "Held" };
   }
   return { kind: "stopped", label: "Free" };
+}
+
+/**
+ * Whether the pill shows a dot at all.
+ *
+ * A CONSTANT IS NOT A SIGNAL (frontend/CLAUDE.md). Every chat that is not
+ * mid-turn shows `stopped` here, and a grey dot on every toolbar in the app
+ * says nothing while costing the label its width. Section 14 of the leases doc
+ * asks for the same thing in the other direction: the ref pill carries "the
+ * holder's avatar WHEN SOMEONE ELSE HOLDS IT".
+ *
+ * So the dot appears for exactly the two states the operator asked about: this
+ * tree is yours right now, or somebody else is in it. Both are the answer to
+ * "is anyone else in it", and both are rare.
+ */
+export function showsHolder(status: HolderStatus): boolean {
+  return status.kind !== "stopped";
 }

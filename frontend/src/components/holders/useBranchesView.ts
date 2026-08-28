@@ -5,23 +5,28 @@
 //   GET /branches?live=true      the trees that exist, read from the DISK and
 //                                joined with the records that describe them.
 //                                Reading it from the record table alone is what
-//                                made this page report eleven abandoned trees as
+//                                made this page report eleven stranded trees as
 //                                none: most trees were never allocated through
 //                                the record path, so most trees had no row.
 //   GET /leases                  what is CLAIMED, including claims nobody is
 //                                behind any more. This is the read that makes
-//                                abandoned work visible; see the route's own
+//                                stranded work visible; see the route's own
 //                                header for why the directory cannot do it.
 //   GET /presence/directory      which of those holders is a live session, and
 //                                what it says it is doing
 //   GET /git/status              whether the tree is DIRTY, which is the other
-//                                half of "abandoned"
-//   GET /git/ahead-behind        how far the branch has drifted from its base
+//                                half of "unsaved work"
+//   GET /git/ahead-behind        how far the branch has moved from its base
 //
-// ONLY TWO OF THOSE ROUTES ARE NEW. `/leases` and `/drift` were added for this
-// view because the facts had no endpoint at all; the working-tree reads are the
-// `/git` router that already existed, addressed per tree, rather than a new
-// aggregate that would have been a second opinion about the same `git status`.
+// ONLY ONE OF THOSE ROUTES IS NEW. `/leases` was added for this view because
+// the fact had no endpoint at all; the working-tree reads are the `/git` router
+// that already existed, addressed per tree, rather than a new aggregate that
+// would have been a second opinion about the same `git status`.
+//
+// `/drift` WAS THE SIXTH SOURCE AND IS GONE. It backed one always-mounted
+// banner, the operator deleted the banner on 2026-08-28, and an endpoint with
+// no reader is dead weight. `bash scripts/apply.sh --check` answers the same
+// question from a terminal.
 //
 // THE PER-TREE READS ARE ONE QUERY EACH, NOT TWO. `useQueries` fans out over
 // the branches, and each entry does both git calls in its own `queryFn`. A
@@ -39,7 +44,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { shortHttpError } from "@workshop/ui";
 
 import type {
-  BranchRow, DriftReport, LeaseRow, LeaseWindows, TreeState,
+  BranchRow, LeaseRow, LeaseWindows, TreeState,
 } from "../../lib/branchesView";
 import { holderFor, type BranchRecord, type DirectoryEntry } from "../../lib/holders";
 import { queryKeys } from "../../lib/queryKeys";
@@ -48,7 +53,6 @@ const DIRECTORY_MS = 15_000;
 const LEASES_MS = 15_000;
 const BRANCHES_MS = 60_000;
 const TREE_MS = 30_000;
-const DRIFT_MS = 60_000;
 
 async function readJson<T>(url: string): Promise<T> {
   const r = await fetch(url);
@@ -73,7 +77,6 @@ export type BranchesViewRead = {
   /** False when this installation keeps no lease records at all, which is a
    *  different thing from holding none and must not render the same. */
   leasesAvailable: boolean;
-  drift: DriftReport | null;
   /** False when the relational store could not be read. The trees below are
    *  still real (they came from git); they carry no ticket, no allocator and no
    *  status. Different from "no trees", and rendered as such. */
@@ -139,15 +142,6 @@ export function useBranchesView({ enabled = true }: { enabled?: boolean } = {})
     },
     enabled,
     refetchInterval: DIRECTORY_MS,
-    staleTime: 0,
-    retry: false,
-  });
-
-  const drift = useQuery({
-    queryKey: queryKeys.drift.report(),
-    queryFn: async () => readJson<DriftReport>("/api/drift"),
-    enabled,
-    refetchInterval: DRIFT_MS,
     staleTime: 0,
     retry: false,
   });
@@ -220,14 +214,12 @@ export function useBranchesView({ enabled = true }: { enabled?: boolean } = {})
     // keeps no leases" is a strong claim and must not be made before asking.
     leasesAvailable: leases.data?.available ?? true,
     recordsAvailable: branches.data?.recordsAvailable ?? true,
-    drift: drift.data ?? null,
     // Named by route, so a line beside the table says which read went missing
     // rather than blaming whichever one the caller happens to mention.
     err: [
       branches.error ? `GET /api/branches: ${branches.error}` : null,
       leases.error ? `GET /api/leases: ${leases.error}` : null,
       directory.error ? `GET /api/presence/directory: ${directory.error}` : null,
-      drift.error ? `GET /api/drift: ${drift.error}` : null,
     ].filter(Boolean)[0] ?? null,
     fatal: branches.isError && branches.data === undefined
       ? String(branches.error) : null,
@@ -236,7 +228,6 @@ export function useBranchesView({ enabled = true }: { enabled?: boolean } = {})
       void branches.refetch();
       void leases.refetch();
       void directory.refetch();
-      void drift.refetch();
     },
   };
 }

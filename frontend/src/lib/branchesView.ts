@@ -1,9 +1,36 @@
 // What state a branch is actually in, joined from the four things that know.
 //
 // THE ONE THING THIS FILE IS FOR: turning "a lease row, a live session, a
-// working tree and a pending yield" into ONE honest state per branch, so that a
-// stuck holder looks different from a busy one and abandoned work looks
-// different from an empty tree.
+// working tree and a pending yield" into ONE honest state per branch, in words
+// an operator does not have to learn.
+//
+// FIVE WORDS, AND THEY ANSWER THREE QUESTIONS. The operator asked exactly three
+// things of this page: is somebody working in this tree, is there work in it
+// that would be lost, and is it finished with. So there are four states a live
+// tree can be in and one for a branch that is over:
+//
+//   In use        somebody is working here          leave it alone
+//   Stuck         somebody holds it, nothing moves  look at the holder
+//   Unsaved work  nobody holds it, changes inside   save it or reap it
+//   Free          nobody holds it, nothing to lose  take it or reap it
+//   Done          the branch is over                nothing
+//
+// It used to say Merged, Discarded, Gone, Orphaned, Dormant, Abandoned,
+// Expired, Idle, Working, Yours, Free and Preempting -- twelve words, three of
+// them ("dormant", "abandoned", "orphaned") different shades of "nobody is
+// here" that no reader could tell apart or act on differently. The rule that
+// replaced them: if two rows lead to the same decision they are one state, and
+// no word may need a Workshop-specific meaning to read.
+//
+// THE WORD IS THE STATE; THE COLOUR IS THE URGENCY. `holders.ts` already works
+// this way and says why -- "a held lease that has gone quiet is `warn` and it
+// still says Held. The state did not change, so the word does not; what changed
+// is that nothing has been written for ten minutes." So `Stuck` is `warn` for an
+// idle holder and `danger` once a stop has been asked for and refused, and
+// `Unsaved work` is `warn` while it is news and `stopped` once it is inventory.
+// That is also what keeps a colour from going constant: eleven identical red
+// rows was the bug, and eleven rows that are all the same word but not all the
+// same colour is the fix.
 //
 // WHY IT IS NOT `holders.ts`. That module answers "who is here", and it starts
 // from a `DirectoryEntry` -- a LIVE SESSION. It is correct and it is reused
@@ -12,40 +39,17 @@
 // still has uncommitted work in it has no `DirectoryEntry` at all, so
 // `holderStatus` is never called and the branch renders as "Nobody here",
 // which is true and useless. Starting from the LEASE ROW and the WORKING TREE
-// instead is what makes abandoned work nameable.
-//
-// THE LADDER RANKS LIVE BRANCHES. Above it sit the RECORD-LEVEL short-circuits
-// (`Merged`, `Discarded`, and now `Gone` and `Orphaned`), and the difference is
-// not cosmetic: a rung of the ladder answers "who is in this tree and is
-// anything at risk", which presumes there IS a tree to be in. A row whose
-// directory is missing, or whose directory git has never heard of, has no such
-// answer, so it short-circuits rather than adding a rung. The ladder is seven
-// deep.
+// instead is what makes stranded work nameable.
 //
 // `presence` COMES FROM THE SERVER (`worktrees.live_branches`), which reads the
 // disk and joins the record onto it. Before that join, `/branches?live=true`
-// answered from the record table alone and reported eleven abandoned trees as
+// answered from the record table alone and reported eleven stranded trees as
 // none; this file could rank perfectly and still be ranking an empty list.
 //
 // FIVE STATUS KINDS, AND NO SIXTH (frontend/CLAUDE.md rule 4, and section 14 of
 // workspace-ownership-and-leases-2026-08-22.md, which maps them for exactly
 // this view: "`ok` free or yours, `running` someone working, `warn` holder
 // idle, `danger` preempted or conflicted, `stopped` expired or reaped").
-//
-// THE LADDER IS SEVEN DEEP NOW, and the rung that was added is a DOWNGRADE.
-// `Dormant` takes a tree that `Abandoned` would have painted `danger` and,
-// once it has sat for a day, paints it `stopped` instead. The operator's rule,
-// recorded in this repo before this page existed: never make a card's alarm
-// colour permanent, because a hue that never varies carries no information.
-// Eleven identical red rows was that failure exactly.
-//
-// `danger` IS USED HERE AND DELIBERATELY IS NOT IN `holders.ts`. That file
-// explains why it withholds it: from a `LeaseRef` alone, a bystander session on
-// a leased subject is the ordinary sweep shape and painting it red would fire
-// on the healthy case every time. This module has two facts that file does not
-// -- whether a yield is in flight, and whether the tree is DIRTY -- and both are
-// section 14's `danger` exactly: a preempt in progress, and uncommitted work
-// stranded in a tree nobody holds.
 //
 // THE WINDOWS ARE NOT COPIED. `idle_after_sec` and the rest arrive from
 // `GET /leases` (`LeaseWindows`), because the server derives `idle_since` from
@@ -62,12 +66,10 @@ import type { BranchRecord, DirectoryEntry } from "./holders";
 
 export type LeaseRow = components["schemas"]["LeaseRow"];
 export type LeaseWindows = components["schemas"]["LeaseWindows"];
-export type DriftReport = components["schemas"]["DriftReport"];
-export type DriftSurface = components["schemas"]["Surface"];
 
 /** The working tree behind one branch, as `GET /git/status` answers it.
  *  `null` while it has not been read, which is NOT the same as clean and is
- *  why the state below refuses to call anything abandoned until it knows. */
+ *  why the state below refuses to name unsaved work until it knows. */
 export type TreeState = { clean: boolean; entries: number } | null;
 
 /** A branch, and everything known about who is in it. */
@@ -103,7 +105,7 @@ export type BranchState = {
  *  counterpart on the server to disagree with. A day is the span over which
  *  stranded work is still somebody's afternoon: past it, nobody is coming back
  *  to it this session. */
-export const DORMANT_AFTER_SEC = 24 * 60 * 60;
+export const SETTLED_AFTER_SEC = 24 * 60 * 60;
 
 /** How wide a run of hex has to be before it is an ID rather than a name, and
  *  how much of it a row shows. Eight hex characters is the length git itself
@@ -137,43 +139,28 @@ export function branchLabel(slug: string): string {
 
 /**
  * One branch's state. FIRST MATCH WINS, and the order is the point: the
- * question "is anyone's work at risk here" outranks "is anyone working here",
+ * question "is anything here at risk" outranks "is anyone working here",
  * because a busy holder needs no decision and stranded work does.
  *
- * The ladder, and what each rung is FOR:
+ * The five words are in this file's header. What each one folds, and why the
+ * fold is safe (the test is whether the two rows want DIFFERENT decisions):
  *
- *  1. `Preempting`   a yield is in flight. `danger`, because a stop was asked
- *                    for and the holder has not answered yet.
- *  2. `Abandoned`    the tree is DIRTY, nobody holds it, and it went that way
- *                    inside the last day. `danger`, and it is the row this whole
- *                    view was built for: somebody's uncommitted work is sitting
- *                    in a tree with no owner, which is what blocks a build.
- *  3. `Dormant`      the same tree a day later. `stopped`, and it does NOT want
- *                    a look. See `DORMANT_AFTER_SEC`: eleven of these is what
- *                    this system looks like at rest, and a screen of identical
- *                    red told the operator nothing about which one to open.
- *  4. `Expired`      the lease lapsed and the tree is clean. `stopped`, a
- *                    neutral outcome: the tree is reusable, nothing is at risk.
- *  5. `Idle`         held, renewed, but no WORK event inside the idle window.
- *                    `warn`. The holder is alive and is not getting anywhere,
- *                    which is precisely "stuck" and is a reason to look rather
- *                    than a reason to act.
- *  6. `Working`      held and moving. `running`.
- *  7. `Free`         no lease, clean tree. `ok`: available, nothing owed.
- *
- * `merged` and `discarded` short-circuit above all of it, because a record that
- * is over has no live state to report and its lease row is history. So do the
- * two PRESENCE cases, for the same reason one step earlier: there is no tree to
- * hold, so there is nobody to be holding it.
- *
- *  `Gone`      a live record whose directory is not on disk. `stopped`: nothing
- *              is at risk and nothing can be lost, the bookkeeping simply
- *              outlived the tree.
- *  `Orphaned`  a directory under the branches root that git does not know
- *              about, which is what a teardown that fell back to `rmtree`
- *              leaves. `warn` and it DOES want a look: it is the one row
- *              nothing else in the system can see, it is taking up a checkout's
- *              worth of disk, and no tool but a plain delete can clear it.
+ *  `Done`          merged, discarded, and a record whose directory is not on
+ *                  disk. Three ways for a branch to be over; the decision in
+ *                  all three is "nothing", so they are one word and three
+ *                  sentences. `stopped`.
+ *  `Stuck`         a holder that has been asked to stop and has not let go
+ *                  (`danger`), and a holder that is alive and writing nothing
+ *                  (`warn`). Both mean: open the holder and decide about it.
+ *  `Unsaved work`  a dirty tree nobody holds, and a directory under the
+ *                  branches root that git has no branch for. The second cannot
+ *                  even be read, so it is the same decision at its worst: do
+ *                  not delete this until you know what is in it. `warn` while
+ *                  the tree is recent, `stopped` once it has sat a day, because
+ *                  eleven of these at rest is inventory rather than an alarm.
+ *  `In use`        held and moving, yours or anyone's. `running`.
+ *  `Free`          no live hold and nothing uncommitted, whether the lease
+ *                  lapsed or was never taken. `ok`: take it or reap it.
  */
 export function branchState(row: BranchRow, windows: LeaseWindows,
                             selfSessionId?: string | null,
@@ -181,29 +168,18 @@ export function branchState(row: BranchRow, windows: LeaseWindows,
   const { record, lease, tree, yieldRequested } = row;
 
   if (record.status === "merged") {
-    return { kind: "ok", label: "Merged", needsAttention: false,
+    return { kind: "stopped", label: "Done", needsAttention: false,
              detail: "This branch reached the trunk. Its tree can be cleaned up." };
   }
   if (record.status === "discarded") {
-    return { kind: "stopped", label: "Discarded", needsAttention: false,
+    return { kind: "stopped", label: "Done", needsAttention: false,
              detail: "This branch was thrown away." };
   }
-
   if (record.presence === "gone") {
     return {
-      kind: "stopped", label: "Gone", needsAttention: false,
-      detail: "There is a record for this branch and no directory at the path it "
-        + "names, so the tree was removed without the record being closed. "
-        + "Nothing is at risk here; the row is the only thing left.",
-    };
-  }
-  if (record.presence === "orphan") {
-    return {
-      kind: "warn", label: "Orphaned", needsAttention: true,
-      detail: "This directory sits under the branches root and git has no worktree "
-        + "and no branch for it, which is what a teardown that could not finish "
-        + "leaves behind. Nothing can say what is in it, so it can only be "
-        + "removed, and until it is it holds a whole checkout of disk.",
+      kind: "stopped", label: "Done", needsAttention: false,
+      detail: "The record is still here and the directory is not. Nothing is at "
+        + "risk; this row is all that is left of it.",
     };
   }
 
@@ -211,15 +187,24 @@ export function branchState(row: BranchRow, windows: LeaseWindows,
   // A DIRTY TREE IS ONLY KNOWN WHEN IT HAS BEEN READ. `tree === null` means the
   // status call has not landed (or failed), and guessing "clean" there would
   // hide exactly the rows this view exists to show, while guessing "dirty"
-  // would cry abandoned at every branch for the first second of every load.
+  // would cry unsaved work at every branch for the first second of every load.
   const dirty = tree !== null && !tree.clean;
 
   if (held && yieldRequested) {
     return {
-      kind: "danger", label: "Preempting", needsAttention: true,
-      detail: `${holderLabel(row)} has been asked to stop and has not let go yet. `
-        + `It gets ${windows.preempt_grace_sec} seconds, then it is stopped and its `
-        + `work is snapshotted.`,
+      kind: "danger", label: "Stuck", needsAttention: true,
+      detail: `${holderLabel(row)} was asked to stop and has not let go. It gets `
+        + `${windows.preempt_grace_sec} seconds, then it is stopped and its work is `
+        + `snapshotted.`,
+    };
+  }
+
+  if (record.presence === "orphan") {
+    return {
+      kind: "warn", label: "Unsaved work", needsAttention: true,
+      detail: "Git has no worktree and no branch for this directory, so nothing "
+        + "can say what is in it. Removing it is the only option and it is "
+        + "permanent. Until then it holds a whole checkout of disk.",
     };
   }
 
@@ -227,57 +212,98 @@ export function branchState(row: BranchRow, windows: LeaseWindows,
     // A HUE THAT NEVER VARIES CARRIES NO INFORMATION (frontend/CLAUDE.md, "a
     // constant is not a signal"). Eleven dirty trees nobody holds is the
     // RESTING STATE of this system, not an emergency, and painting every one of
-    // them `danger` produced a screen of identical red that says nothing about
-    // which row to look at. So the rung splits on age: work stranded in the
-    // last day is news, and a tree that has sat untouched for a week is
-    // inventory. Same facts, two different decisions.
+    // them loud produced a screen of identical red that says nothing about
+    // which row to look at. Same word, quieter colour: work stranded in the
+    // last day is news, and a tree that has sat for a week is inventory. The
+    // age is printed on the row beside it, so the two shades are readable.
     const age = tipAgeSeconds(record, nowMs);
-    if (age !== null && age >= DORMANT_AFTER_SEC) {
+    if (age !== null && age >= SETTLED_AFTER_SEC) {
       return {
-        kind: "stopped", label: "Dormant", needsAttention: false,
-        detail: `Uncommitted work is sitting in this tree and nobody holds it. `
-          + `Nothing has been committed here for ${humanSeconds(age)}, so it is `
-          + `disk rather than an emergency.`,
+        kind: "stopped", label: "Unsaved work", needsAttention: false,
+        detail: `Work here was never committed and nobody holds it. Nothing has `
+          + `been committed for ${humanSeconds(age)}, so this is disk rather than `
+          + `an emergency.`,
       };
     }
     return {
-      kind: "danger", label: "Abandoned", needsAttention: true,
+      kind: "warn", label: "Unsaved work", needsAttention: true,
       detail: lease
-        ? `Uncommitted work is sitting in this tree and its lease has expired, so `
-          + `nobody owns it. Until it is committed or thrown away it can hold a `
-          + `build back.`
-        : `Uncommitted work is sitting in this tree and nobody holds it. Until it `
-          + `is committed or thrown away it can hold a build back.`,
-    };
-  }
-
-  if (lease && !held) {
-    return {
-      kind: "stopped", label: "Expired", needsAttention: false,
-      detail: `The lease ${holderLabel(row)} held has expired and the tree is clean. `
-        + `Anyone can take this branch.`,
+        ? `Work here was never committed and the lease on it has expired, so `
+          + `nobody owns it. Commit it or reap it; until then it can hold a build `
+          + `back.`
+        : `Work here was never committed and nobody holds it. Commit it or reap `
+          + `it; until then it can hold a build back.`,
     };
   }
 
   if (held && lease) {
     if (selfSessionId && lease.holder_id === selfSessionId) {
-      return { kind: "ok", label: "Yours", needsAttention: false,
+      return { kind: "running", label: "In use", needsAttention: false,
                detail: "You hold this branch." };
     }
     if (lease.idle_since) {
       return {
-        kind: "warn", label: "Idle", needsAttention: true,
+        kind: "warn", label: "Stuck", needsAttention: true,
         detail: `${holderLabel(row)} still holds this and is still beating, but nothing `
           + `has been written for ${humanSeconds(windows.idle_after_sec)}. It may be `
           + `stuck.`,
       };
     }
-    return { kind: "running", label: "Working", needsAttention: false,
+    return { kind: "running", label: "In use", needsAttention: false,
              detail: `${holderLabel(row)} is working here.` };
+  }
+
+  if (lease) {
+    return {
+      kind: "ok", label: "Free", needsAttention: false,
+      detail: `The lease ${holderLabel(row)} held has expired and the tree is `
+        + `clean. Anyone can take this branch.`,
+    };
   }
 
   return { kind: "ok", label: "Free", needsAttention: false,
            detail: "Nobody holds this branch and its tree is clean." };
+}
+
+/**
+ * The way from a tree to the thing that is working in it, or null.
+ *
+ * THE ROW LINKS TO THE CHAT, and that is the single most useful thing this page
+ * does (operator, 2026-08-28: "the main way we'll find worktrees is through
+ * chats or agents"). A lease's holder is a session, and `chat_worktree.enter`
+ * takes it under `holder_kind="chat"` with the THREAD ID as the holder id, so
+ * the conversation is addressable from the lease row alone. `run_worktree` does
+ * the same with a job id, which `/runs/:id` resolves.
+ *
+ * The live directory entry is preferred over the lease row for one reason: it
+ * carries the session's own `scope`, which is the chat's context key. The lease
+ * table does not, so for an expired lease the branch record's scope is used and
+ * the chat route corrects itself if that guess is wrong (`FocusedChat` re-reads
+ * the thread and replaces the URL).
+ *
+ * Null for every other holder kind rather than a guess: a link that lands on a
+ * 404 is worse than a name with no link, and the panel names the holder either
+ * way.
+ */
+export type HolderLink = { to: string; label: string };
+
+export function holderLink(row: BranchRow): HolderLink | null {
+  const entry = row.holder;
+  const lease = row.lease;
+  const kind = entry?.session_kind || lease?.holder_kind || "";
+  const id = entry?.session_id || lease?.holder_id || "";
+  if (!id) return null;
+  if (kind === "chat") {
+    const scope = (entry?.scope || row.record.scope || "general").trim() || "general";
+    return {
+      to: `/chat/${encodeURIComponent(scope)}?thread=${encodeURIComponent(id)}`,
+      label: "Open the chat working here",
+    };
+  }
+  if (kind === "run") {
+    return { to: `/runs/${encodeURIComponent(id)}`, label: "Open the run working here" };
+  }
+  return null;
 }
 
 /** Who to name in a sentence: the live session when there is one, else the
@@ -312,9 +338,11 @@ export function rowFacts(row: BranchRow, state: BranchState): string[] {
   if (row.lease?.state === "held") {
     facts.push(holderLabel(row));
   } else if (row.tree && !row.tree.clean) {
-    // The size of what is stranded is the only thing that separates one
-    // dormant tree from the next, so it is the fact the row spends its width on.
-    facts.push(`${row.tree.entries} uncommitted`);
+    // How much is stranded. Said as a COUNT OF FILES, not "N uncommitted": the
+    // state word beside it is already "Unsaved work", and a row that reads
+    // "Unsaved work / 2 uncommitted" spends its second fact restating its
+    // first.
+    facts.push(`${row.tree.entries} ${row.tree.entries === 1 ? "file" : "files"}`);
   }
   return facts;
 }
@@ -397,7 +425,7 @@ export type ReapPlan = {
 /**
  * Whether the page may offer to reap this tree, and what it must promise.
  *
- * THE PAGE FOUND THE ABANDONED TREES AND THEN HAD NOTHING TO OFFER, which is
+ * THE PAGE FOUND THE STRANDED TREES AND THEN HAD NOTHING TO OFFER, which is
  * half a monitoring view. The verb is `DELETE /api/worktrees/{project}/{branch}`,
  * and it is safe to offer because the server snapshots uncommitted work to
  * `refs/wip/<branch>` before it removes anything and refuses when it cannot.
@@ -408,8 +436,8 @@ export type ReapPlan = {
  *  - A HELD LEASE. Somebody is in there. Reaping a tree out from under a live
  *    holder is a preempt wearing a different name, and preempt has its own
  *    control with its own authorization.
- *  - `Gone`. There is no directory to remove. The row is a record, and closing a
- *    record is not this verb.
+ *  - A RECORD WITH NO DIRECTORY (`Done`). There is nothing to remove. The row
+ *    is bookkeeping, and closing a record is not this verb.
  *  - AN UNREAD TREE (`tree === null`). The dirty state has not landed, so the
  *    dialog cannot say what would happen to it, and a confirm that cannot name
  *    the consequence is not a confirm.
@@ -514,28 +542,24 @@ export function tipAgeSeconds(record: BranchRecord, nowMs: number): number | nul
 /** Rows worth looking at first.
  *
  *  Sorted by ATTENTION, not by time: this is a monitoring view, and a branch
- *  that has been abandoned for a day is more interesting than one that changed
+ *  whose work has been stranded for a day is more interesting than one that changed
  *  a second ago. Within a rung, the longest-standing first, because the oldest
  *  stuck thing is the one that has been costing the most.
  */
 export function orderRows(rows: BranchRow[], windows: LeaseWindows,
                           selfSessionId?: string | null,
                           nowMs: number = Date.now()): BranchRow[] {
+  // RANKED BY THE KIND, NOT BY THE WORD, so the order and the colour cannot
+  // disagree: whatever is painted loudest is at the top. The one split inside a
+  // kind is at the bottom, where a tree still holding uncommitted work sorts
+  // above two that hold none.
   const rank = (r: BranchRow): number => {
     const s = branchState(r, windows, selfSessionId, nowMs);
-    if (s.label === "Preempting") return 0;
-    if (s.label === "Abandoned") return 1;
-    if (s.label === "Orphaned") return 2;
-    if (s.label === "Idle") return 3;
-    if (s.label === "Working") return 4;
-    if (s.label === "Yours") return 5;
-    if (s.label === "Free") return 6;
-    // Below the fold: nothing here is moving. A dormant tree still holds work,
-    // so it sits above the two rungs that hold none.
-    if (s.label === "Dormant") return 7;
-    if (s.label === "Expired") return 8;
-    if (s.label === "Gone") return 9;
-    return 10;
+    if (s.kind === "danger") return 0;
+    if (s.kind === "warn") return 1;
+    if (s.kind === "running") return 2;
+    if (s.kind === "ok") return 3;
+    return s.label === "Unsaved work" ? 4 : 5;
   };
   return [...rows].sort((a, b) => {
     const d = rank(a) - rank(b);
@@ -554,79 +578,4 @@ export function attentionCount(rows: BranchRow[], windows: LeaseWindows,
                                nowMs: number = Date.now()): number {
   return rows.filter(
     (r) => branchState(r, windows, selfSessionId, nowMs).needsAttention).length;
-}
-
-// --- drift --------------------------------------------------------------------
-
-// DRIFT HAS ONE SURFACE, AND IT IS `shell/DriftBanner`. `driftKind` and
-// `driftLabel` lived here to paint a per-surface pill on the Branches page, and
-// that pill was the THIRD rendering of the same fact on one phone screen: the
-// shell's banner, the page's own copy of the banner, and a card headed "WHAT IS
-// BEING SERVED" reading `ui bundle: Current / backend: Blocked`. The banner's
-// sentence already names which surface is held back and by which files, so the
-// pills were restating it in a shape that could disagree with it. They are gone
-// rather than moved. The functions below are what the one surface needs.
-
-/** The one sentence the banner leads with, or null when there is nothing to say.
- *
- *  Null on a healthy installation is deliberate: this banner is only ever worth
- *  the operator's attention when something is wrong, and a permanent green bar
- *  saying "everything is current" is the constant that trains people to stop
- *  reading it. */
-export function driftHeadline(report: DriftReport | null): string | null {
-  if (!report) return null;
-  const blocked = report.surfaces.filter((s) => s.state === "blocked");
-  if (blocked.length > 0) {
-    const names = blocked.map((s) => s.name).join(" and ");
-    const n = blockingFiles(report).length;
-    // The verb agrees with the count. It read "1 file below have to be
-    // committed first" on the operator's phone, and a banner that cannot
-    // conjugate is a banner nobody trusts about anything else it says. "below"
-    // went with it: the files are named on this same line now, not under it.
-    const owed = n === 1 ? "1 file has" : `${n} files have`;
-    return `You may be looking at old code. Uncommitted work is holding the `
-      + `${names} back, and rerunning the apply step will not clear it: `
-      + `${owed} to be committed first.`;
-  }
-  const stale = report.surfaces.filter((s) => s.state === "stale");
-  if (stale.length > 0) {
-    return `You may be looking at old code. The ${stale.map((s) => s.name).join(" and ")} `
-      + `moved on disk and has not been applied yet.`;
-  }
-  if (!report.canonical) {
-    return `This is a linked worktree. A build here goes to its own bundle, not to `
-      + `the one the origin serves, so a change made here is invisible until the `
-      + `branch merges.`;
-  }
-  return null;
-}
-
-/** Every file named as holding a surface back, deduplicated across surfaces.
- *  Deduplicated because a file can only be committed once, and the list is a
- *  to-do rather than a per-surface accounting. */
-export function blockingFiles(report: DriftReport | null): string[] {
-  if (!report) return [];
-  const all = report.surfaces.flatMap((s) => s.blocking_files ?? []);
-  return [...new Set(all)].sort();
-}
-
-/** How many paths a banner names before it starts counting instead. */
-export const BLOCKING_NAMED = 3;
-
-/**
- * The blocking files as one line, elided from the END when there are too many.
- *
- * A PATH IS EITHER WHOLE OR HONESTLY SHORT. The operator's banner read
- * `ackend/services/scoped_exec.py`, a file that does not exist, because the
- * server had cut a character off the front of it (`services/drift.py::_run`).
- * That was the bug; this is the rule that follows from it. The point of naming
- * a file here is that somebody can go and commit it, so a name that has been
- * quietly altered is worse than no name. When the list is long the ELISION is
- * declared, at the end, in a count.
- */
-export function blockingSummary(files: string[]): string {
-  if (files.length === 0) return "";
-  if (files.length <= BLOCKING_NAMED) return files.join(", ");
-  const shown = files.slice(0, BLOCKING_NAMED);
-  return `${shown.join(", ")} and ${files.length - shown.length} more`;
 }

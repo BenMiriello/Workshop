@@ -5255,26 +5255,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/drift": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Drift
-         * @description What is running versus what is on disk, and what is holding the gap open.
-         */
-        get: operations["get_drift_drift_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/environment/astro": {
         parameters: {
             query?: never;
@@ -11950,30 +11930,6 @@ export interface components {
             /** Updated */
             updated: string;
         };
-        /**
-         * DriftReport
-         * @description `canonical` IS LOAD-BEARING AND IS NOT A DETAIL.
-         *
-         *     A linked git worktree builds into its own `frontend/dist`, while the edge
-         *     serves the canonical checkout's dist by absolute path. So a UI change
-         *     applied from a worktree is correct, built, and reaches nobody. apply.sh
-         *     warns about it; a client that did not carry the flag would show a green
-         *     "current" for a bundle the operator cannot see.
-         */
-        DriftReport: {
-            /** Apply Command */
-            apply_command: string;
-            /** Blocked */
-            blocked: boolean;
-            /** Canonical */
-            canonical: boolean;
-            /** Detail */
-            detail: string;
-            /** Stale */
-            stale: boolean;
-            /** Surfaces */
-            surfaces: components["schemas"]["Surface"][];
-        };
         /** DuplicateOfIn */
         DuplicateOfIn: {
             /** Target Id */
@@ -16031,43 +15987,6 @@ export interface components {
             command: string;
             /** Kind */
             kind: string;
-        };
-        /**
-         * Surface
-         * @description One thing that can serve something other than what is on disk.
-         *
-         *     `state` is a closed set of four and each has a different fix:
-         *
-         *       `current`      running matches source. Nothing is owed.
-         *       `stale`        they differ and the tree is clean. The apply step fixes it.
-         *       `blocked`      they differ AND uncommitted work under this surface means
-         *                      the apply step will REFUSE. Rerunning apply does nothing;
-         *                      the files have to be committed. This is the state that is
-         *                      invisible today and the reason this router exists.
-         *       `undecidable`  a source id could not be computed. Reported as its own
-         *                      state rather than folded into `current`, because apply.sh
-         *                      is explicit that "undecidable is NOT the same as in-sync
-         *                      and must never be reported as it".
-         *
-         *     `blocking_files` is populated only for `blocked`, and it is the answer to
-         *     the only question the operator has at that moment: whose work is it.
-         */
-        Surface: {
-            /** Blocking Files */
-            blocking_files?: string[];
-            /**
-             * Detail
-             * @default
-             */
-            detail: string;
-            /** Name */
-            name: string;
-            /** Running */
-            running?: string | null;
-            /** Source */
-            source?: string | null;
-            /** State */
-            state: string;
         };
         /** Surfaces */
         Surfaces: {
@@ -27425,26 +27344,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_drift_drift_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DriftReport"];
                 };
             };
         };
