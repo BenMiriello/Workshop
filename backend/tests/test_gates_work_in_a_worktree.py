@@ -26,6 +26,15 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
+
+# A NEUTRAL MARKER, not a literal home path. What these tests exercise is
+# whether the probe reaches a gitignored file at all, and that works with any
+# distinctive string. Writing a real `/home/<name>/...` here, copied out of the
+# incident it reproduces, made this file a genuine hit in the real
+# check_no_hardcoding run: the gate working correctly on its own test. The
+# alternative was adding this file to the checker's exclude list, which would
+# stop it being scanned for a hardcoded path someone adds here later.
+MARKER = "ZZPROBE-ONLY-MARKER"
 CHECK = REPO / "scripts" / "check_no_hardcoding.sh"
 DESIGN = REPO / "scripts" / "check_design.sh"
 AUTO_PR = REPO / "scripts" / "auto_pr.sh"
@@ -63,7 +72,7 @@ def repo_with_worktree(tmp_path: Path):
 
     planted = wt / "node_modules" / "pkg"
     planted.mkdir(parents=True)
-    (planted / "index.js").write_text('const p = "/home/someuser/.cache/x";\n')
+    (planted / "index.js").write_text(f'const p = "{MARKER}";\n')
     return origin, wt
 
 
@@ -78,7 +87,7 @@ def test_a_linked_worktree_dot_git_is_a_file(repo_with_worktree):
 def _run_probe(directory: Path) -> list[str]:
     """Execute check_no_hardcoding.sh's own _grep_in against `directory`."""
     fn = _extract(CHECK, "_grep_in")
-    prog = f"EXCLUDES=()\n{fn}\n_grep_in {str(directory)!r} -nE '/home/[a-z]'\n"
+    prog = f"EXCLUDES=()\n{fn}\n_grep_in {str(directory)!r} -nF {MARKER!r}\n"
     out = subprocess.run(["bash", "-c", prog], capture_output=True, text=True,
                          timeout=120)
     return [l for l in out.stdout.splitlines() if l.strip()]
@@ -99,7 +108,7 @@ def test_the_worktree_and_the_canonical_tree_agree(repo_with_worktree):
     origin, wt = repo_with_worktree
     planted = origin / "node_modules" / "pkg"
     planted.mkdir(parents=True)
-    (planted / "index.js").write_text('const p = "/home/someuser/.cache/x";\n')
+    (planted / "index.js").write_text(f'const p = "{MARKER}";\n')
     assert _run_probe(origin) == _run_probe(wt) == []
 
 
@@ -107,7 +116,7 @@ def test_a_tracked_violation_is_still_caught_in_a_worktree(repo_with_worktree):
     """The fix must not make the gate blind. Narrowing to tracked files is only
     correct if a tracked violation still fails."""
     origin, wt = repo_with_worktree
-    (wt / "tracked.txt").write_text('home = "/home/someuser/thing"\n')
+    (wt / "tracked.txt").write_text(f'x = "{MARKER}"\n')
     _git("add", "-A", cwd=wt)
     hits = _run_probe(wt)
     assert any("tracked.txt" in h for h in hits), (
@@ -119,7 +128,7 @@ def test_a_directory_with_no_git_at_all_still_takes_the_no_index_path(tmp_path):
     with --no-index, or delta mode compares a scan against nothing."""
     plain = tmp_path / "extract"
     (plain / "sub").mkdir(parents=True)
-    (plain / "sub" / "f.txt").write_text('p = "/home/someuser/x"\n')
+    (plain / "sub" / "f.txt").write_text(f'p = "{MARKER}"\n')
     assert not (plain / ".git").exists()
     assert any("f.txt" in h for h in _run_probe(plain))
 
