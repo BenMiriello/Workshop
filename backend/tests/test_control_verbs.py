@@ -471,17 +471,62 @@ def test_a_holder_that_yields_inside_the_grace_is_never_forced(
     assert stops == []
 
 
+def test_the_yield_request_is_taken_back_down_once_it_is_answered(
+        repo, channel, monkeypatch, events):
+    """A STANDING YIELD FLAG IS A SWEEP THAT HALTS ON AN ASK NOBODY MADE.
+
+    Preempt writes the yield request to start the grace. Until this was fixed
+    nothing ever cleared it -- `run_control.clear_yield` had zero callers in the
+    tree -- and the flag lives in a channel FILE that outlives the run that used
+    it. `scripts/project_ralph.sh` reads it at the top of every iteration and
+    breaks out of its loop on it, so a leftover flag is a sweep that stops
+    immediately, forever, having never been asked. It also made
+    `GET /control/{session_id}` report `yield_requested_at` for a handover that
+    had already finished, which is what a "who is stuck" view would render.
+
+    By the time preempt returns the ask has been answered either way: the holder
+    let go, or it was stopped. So the request comes down.
+    """
+    monkeypatch.setattr(control, "leases", FakeLeases(_held()))
+    monkeypatch.setattr(control, "_force_stop", _stubbed_stop)
+    _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
+                         actor="test-operator", human_action="take over",
+                         grace_sec=0, repo_path=str(repo), worktree_id="wt-1"))
+    assert run_control.yield_requested("sweep-42") is None, (
+        "the yield request outlived the preempt that made it; the next thing "
+        "to read this channel would stop without being asked")
+
+
 def test_the_holder_is_asked_to_yield_before_the_grace_runs(repo, channel,
                                                             monkeypatch, events):
+    """OBSERVED AT THE MOMENT OF THE ASK, not by reading the flag afterwards.
+
+    This used to assert on `yield_requested()` once preempt had returned, which
+    worked only because nothing ever cleared the request -- it was reading a
+    leak. Now that the flag is taken back down when it has been answered (see
+    `test_the_yield_request_is_taken_back_down_once_it_is_answered`), the ask
+    has to be watched where it happens. Spying on the write is also the more
+    direct statement of what this test is for: the holder is ASKED before the
+    grace starts, with the actor and reason that authorized it.
+    """
+    asks: list[dict] = []
+    real_request_yield = run_control.request_yield
+
+    def spy(run_id, *, actor=None, reason=""):
+        asks.append({"run_id": run_id, "actor": actor, "reason": reason})
+        return real_request_yield(run_id, actor=actor, reason=reason)
+
+    monkeypatch.setattr(run_control, "request_yield", spy)
     monkeypatch.setattr(control, "leases", FakeLeases(_held()))
     monkeypatch.setattr(control, "_force_stop", _stubbed_stop)
     _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
                          actor="test-operator", human_action="take over",
                          reason="I need this branch", grace_sec=0,
                          repo_path=str(repo), worktree_id="wt-1"))
-    asked = run_control.yield_requested("sweep-42")
-    assert asked and asked["actor"] == "test-operator"
-    assert asked["reason"] == "I need this branch"
+    assert len(asks) == 1, asks
+    assert asks[0]["run_id"] == "sweep-42"
+    assert asks[0]["actor"] == "test-operator"
+    assert asks[0]["reason"] == "I need this branch"
 
 
 def test_the_lease_is_fenced_and_then_granted_to_the_new_holder(

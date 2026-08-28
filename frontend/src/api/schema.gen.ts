@@ -5199,6 +5199,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/drift": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Drift
+         * @description What is running versus what is on disk, and what is holding the gap open.
+         */
+        get: operations["get_drift_drift_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/environment/astro": {
         parameters: {
             query?: never;
@@ -6235,6 +6255,32 @@ export interface paths {
          *     for ranked semantic search. This runs the same plaintext path as ?q= on the notes list.
          */
         post: operations["search_knowledge__scope_key__search_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/leases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Leases
+         * @description Every lease this installation records, most recently renewed first.
+         *
+         *     `held_only` DEFAULTS TO FALSE HERE and to True in the service, and the flip
+         *     is the point of the route. The service's callers ask "may I write" and want
+         *     only live claims; a view asking "what is stuck" wants the dead ones most of
+         *     all, because an expired lease over a tree that still exists on disk is
+         *     abandoned work and nothing else reports it.
+         */
+        get: operations["list_leases_leases_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -11724,6 +11770,30 @@ export interface components {
             /** Updated */
             updated: string;
         };
+        /**
+         * DriftReport
+         * @description `canonical` IS LOAD-BEARING AND IS NOT A DETAIL.
+         *
+         *     A linked git worktree builds into its own `frontend/dist`, while the edge
+         *     serves the canonical checkout's dist by absolute path. So a UI change
+         *     applied from a worktree is correct, built, and reaches nobody. apply.sh
+         *     warns about it; a client that did not carry the flag would show a green
+         *     "current" for a bundle the operator cannot see.
+         */
+        DriftReport: {
+            /** Apply Command */
+            apply_command: string;
+            /** Blocked */
+            blocked: boolean;
+            /** Canonical */
+            canonical: boolean;
+            /** Detail */
+            detail: string;
+            /** Stale */
+            stale: boolean;
+            /** Surfaces */
+            surfaces: components["schemas"]["Surface"][];
+        };
         /** DuplicateOfIn */
         DuplicateOfIn: {
             /** Target Id */
@@ -12601,6 +12671,30 @@ export interface components {
             apps: components["schemas"]["LauncherCard"][];
         };
         /**
+         * LeaseList
+         * @description `available` DISTINGUISHES AN EMPTY ANSWER FROM AN ABSENT ONE.
+         *
+         *     An installation with no relational store holds no leases and never will, and
+         *     that must not render as "nothing is claimed right now" -- the two look
+         *     identical in `leases: []` and mean opposite things. The list route answers
+         *     200 with `available: false` rather than 503, because "this installation does
+         *     not keep leases" is a fact about the installation that a view should render
+         *     calmly, not an error it should retry.
+         */
+        LeaseList: {
+            /** Available */
+            available: boolean;
+            /** Count */
+            count: number;
+            /** Holder Kinds */
+            holder_kinds: string[];
+            /** Leases */
+            leases: components["schemas"]["LeaseRow"][];
+            /** Subject Kinds */
+            subject_kinds: string[];
+            windows: components["schemas"]["LeaseWindows"];
+        };
+        /**
          * LeaseRef
          * @description The lease on a directory entry's subject, read at join time.
          *
@@ -12639,6 +12733,72 @@ export interface components {
             subject_id: string;
             /** Subject Kind */
             subject_kind: string;
+        };
+        /**
+         * LeaseRow
+         * @description A lease, with the derived staleness a client would otherwise recompute.
+         *
+         *     It EXTENDS `LeaseRef` rather than redeclaring it, so the shape a lease has
+         *     when the directory decorates a session is the shape it has when listed here.
+         *     Two hand-kept copies of these eleven fields is the drift ADR 0023 clause 6
+         *     exists to stop.
+         *
+         *     `held_for_sec` and `since_heartbeat_sec` are DERIVED AND SERVED rather than
+         *     left to the caller, because the windows they are compared against
+         *     (`IDLE_AFTER_SEC`, `LEASE_TTL_SEC`) live on this side and a client that did
+         *     its own arithmetic would be comparing against a copy of them. They are
+         *     seconds, not a label: `state` is the label, and it is `LeaseRef`'s.
+         */
+        LeaseRow: {
+            /** Acquired At */
+            acquired_at?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Generation */
+            generation: number;
+            /** Held For Sec */
+            held_for_sec?: number | null;
+            /** Holder Id */
+            holder_id: string;
+            /** Holder Kind */
+            holder_kind: string;
+            /** Idle Since */
+            idle_since?: string | null;
+            /** Last Renewed At */
+            last_renewed_at?: string | null;
+            /** Last Work At */
+            last_work_at?: string | null;
+            /** Principal User Id */
+            principal_user_id?: string | null;
+            /** Since Heartbeat Sec */
+            since_heartbeat_sec?: number | null;
+            /** Since Work Sec */
+            since_work_sec?: number | null;
+            /** State */
+            state: string;
+            /** Subject Id */
+            subject_id: string;
+            /** Subject Kind */
+            subject_kind: string;
+        };
+        /**
+         * LeaseWindows
+         * @description The four windows from §5, served so no client hardcodes them.
+         *
+         *     A UI that decides "this holder is idle" needs the same threshold the server
+         *     derives `idle_since` from. Shipping the numbers means the two can never
+         *     disagree, and it means the copy on screen ("no work for 10 minutes") is
+         *     generated from the constant rather than typed next to it.
+         */
+        LeaseWindows: {
+            /** Heartbeat Sec */
+            heartbeat_sec: number;
+            /** Idle After Sec */
+            idle_after_sec: number;
+            /** Lease Ttl Sec */
+            lease_ttl_sec: number;
+            /** Preempt Grace Sec */
+            preempt_grace_sec: number;
         };
         /** LiveBody */
         LiveBody: {
@@ -15692,6 +15852,43 @@ export interface components {
             /** Kind */
             kind: string;
         };
+        /**
+         * Surface
+         * @description One thing that can serve something other than what is on disk.
+         *
+         *     `state` is a closed set of four and each has a different fix:
+         *
+         *       `current`      running matches source. Nothing is owed.
+         *       `stale`        they differ and the tree is clean. The apply step fixes it.
+         *       `blocked`      they differ AND uncommitted work under this surface means
+         *                      the apply step will REFUSE. Rerunning apply does nothing;
+         *                      the files have to be committed. This is the state that is
+         *                      invisible today and the reason this router exists.
+         *       `undecidable`  a source id could not be computed. Reported as its own
+         *                      state rather than folded into `current`, because apply.sh
+         *                      is explicit that "undecidable is NOT the same as in-sync
+         *                      and must never be reported as it".
+         *
+         *     `blocking_files` is populated only for `blocked`, and it is the answer to
+         *     the only question the operator has at that moment: whose work is it.
+         */
+        Surface: {
+            /** Blocking Files */
+            blocking_files?: string[];
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /** Name */
+            name: string;
+            /** Running */
+            running?: string | null;
+            /** Source */
+            source?: string | null;
+            /** State */
+            state: string;
+        };
         /** Surfaces */
         Surfaces: {
             /** Integrated */
@@ -16968,6 +17165,8 @@ export interface components {
         TurnPart: {
             /** Client Id */
             client_id?: string | null;
+            /** Sender */
+            sender?: string | null;
             /** Sent At */
             sent_at?: string | null;
             /** Text */
@@ -26940,6 +27139,26 @@ export interface operations {
             };
         };
     };
+    get_drift_drift_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DriftReport"];
+                };
+            };
+        };
+    };
     astro_environment_astro_get: {
         parameters: {
             query: {
@@ -28758,6 +28977,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["routes__knowledge__SearchHit"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_leases_leases_get: {
+        parameters: {
+            query?: {
+                subject_kind?: string | null;
+                holder_kind?: string | null;
+                holder_id?: string | null;
+                held_only?: boolean;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LeaseList"];
                 };
             };
             /** @description Validation Error */

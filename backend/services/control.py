@@ -675,6 +675,22 @@ async def preempt(*, subject_id: str, new_holder_id: str,
         presence.release(holder_id)
     except Exception:
         pass
+    # THE YIELD REQUEST IS ANSWERED, SO IT IS TAKEN BACK DOWN. Step 1 wrote it
+    # to start the grace; by here the holder has either let go or been stopped,
+    # so the ask has been satisfied either way and leaving it standing is a lie
+    # about the present.
+    #
+    # It is not cosmetic. `scripts/project_ralph.sh` reads this flag at the TOP
+    # of every iteration and breaks out of its loop on it (`control: yield
+    # requested`), and nothing else in the tree ever cleared it -- until now
+    # `run_control.clear_yield` had zero callers. A channel file outlives the
+    # run that used it, so a standing flag is a sweep that halts immediately on
+    # a yield nobody asked for, and `GET /control/{session_id}` reporting
+    # `yield_requested_at` forever for a handover that finished.
+    try:
+        run_control.clear_yield(holder_id)
+    except Exception:
+        pass
     return out
 
 
