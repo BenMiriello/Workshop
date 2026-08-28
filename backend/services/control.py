@@ -253,7 +253,12 @@ def queue(holder_id: str, text: str, *, actor: str | None = None,
     kind = _resolved_kind(holder_id, holder_kind)
     rid = request_id or uuid.uuid4().hex
     if kind == "chat":
-        chat_queue.enqueue(holder_id, text=text, client_id=rid)
+        # `actor` REACHES THE CHAT, not just the sweep. It was already computed
+        # and already passed to `run_control.submit` on the branch below, and
+        # dropped here, so a send into a chat could not say who made it. That
+        # single omission is why a thread cannot yet address a thread: the door
+        # exists, the mailbox exists, and the sender was the missing field.
+        chat_queue.enqueue(holder_id, text=text, client_id=rid, sender=actor)
         # Fire-and-forget: the queue may already be drainable (the turn ended
         # between the caller deciding to queue and this write). The drain
         # refuses while a turn is live, so asking costs nothing.

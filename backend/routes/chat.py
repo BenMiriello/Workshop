@@ -2993,6 +2993,10 @@ class TurnPart(BaseModel):
     # holds separate messages and each becomes its own log event; without one id
     # each, a retry of the batch could only be reconciled by matching text.
     client_id: str | None = None
+    # WHO SENT IT, when it was not the operator at a keyboard: a finished run, a
+    # trigger, another thread. None means the operator, which is what every
+    # message in the transcript already assumes.
+    sender: str | None = None
 
 
 class StartTurnIn(BaseModel):
@@ -3099,6 +3103,12 @@ def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None
     if parts and len(parts) == 1 and (parts[0].sent_at or parts[0].client_id):
         p0 = parts[0]
         meta = {"queued": True}
+        # WHO SENT IT. Recorded only when it was not the operator, so absence
+        # keeps its existing meaning and no message already in the log becomes
+        # wrong. This is the fact `meta.autonomous` was guessing at on 2 of
+        # 2,723 messages: the producer knew who it was and had nowhere to put it.
+        if p0.sender:
+            meta["sender"] = p0.sender
         if attachments:
             meta["attachments"] = attachments
         chat_store.append_message_during_turn(
@@ -3122,6 +3132,11 @@ def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None
         if not text:
             continue
         meta = {"queued": True}
+        # Per part, like the send time beside it: a batch can in principle hold
+        # entries from different senders, and copying one onto all of them would
+        # be the same class of error as dating them all at the drain.
+        if p.sender:
+            meta["sender"] = p.sender
         if attachments and added == 0:
             meta["attachments"] = attachments
         chat_store.append_message_during_turn(
@@ -4075,7 +4090,7 @@ async def _start_queued_batch(thread_id: str, batch: list[dict]) -> bool:
     if not batch:
         return False
     parts = [TurnPart(text=e.get("text") or "", sent_at=e.get("ts"),
-                      client_id=e.get("client_id"))
+                      client_id=e.get("client_id"), sender=e.get("sender"))
              for e in batch]
     content = chat_queue.joined_text(batch)
     if not content:

@@ -207,7 +207,8 @@ def enqueue(thread_id: str, *, text: str, client_id: str, ts: str | None = None,
             attachments: list[dict] | None = None,
             model: str | None = None, effort: str | None = None,
             permission_mode: str | None = None,
-            recorded: bool = False, auto: bool = False) -> dict:
+            recorded: bool = False, auto: bool = False,
+            sender: str | None = None) -> dict:
     """Take responsibility for a message that cannot run yet.
 
     IDEMPOTENT ON `client_id`. A retry after a timeout, a second tab replaying
@@ -236,6 +237,21 @@ def enqueue(thread_id: str, *, text: str, client_id: str, ts: str | None = None,
         "ts": ts or chat_log.now_iso(),
         "received_at": chat_log.now_iso(),
     }
+    if sender:
+        # WHO SENT THIS, when it was not the operator at a keyboard.
+        #
+        # The mailbox has always been the only door into a thread, and it has
+        # always been able to carry a message from something other than a
+        # person: a finished run, a trigger, another thread. What it could not
+        # do was say so. `control.queue` already took an `actor` and dropped it
+        # on the chat branch, so the one fact that distinguishes "the operator
+        # typed this" from "something else put it here" was computed, passed in,
+        # and thrown away one line before it would have been stored.
+        #
+        # Absent means the operator. That keeps every existing entry correct
+        # without a backfill, and it is the same default the transcript already
+        # assumes.
+        entry["sender"] = sender
     if auto:
         entry["auto"] = True
     if recorded:
@@ -367,6 +383,22 @@ def joined_text(entries: list[dict]) -> str:
     is only the prompt.
     """
     return "\n\n".join((e.get("text") or "").strip() for e in entries if (e.get("text") or "").strip())
+
+
+def sender_of(entries: list[dict]) -> str | None:
+    """The sender a drained batch was queued by, or None for the operator.
+
+    First non-empty wins, exactly as `setting_of` does for model and effort. A
+    batch is consecutive entries with no command between them; two different
+    senders interleaving into one batch is not a case that arises today, and if
+    it ever does, the alternative to picking one is refusing to drain, which
+    would strand the messages rather than attribute them slightly coarsely.
+    """
+    for e in entries:
+        v = e.get("sender")
+        if v:
+            return str(v)
+    return None
 
 
 def attachments_of(entries: list[dict]) -> list[dict]:
