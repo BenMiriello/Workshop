@@ -1,19 +1,23 @@
 """/compact reclaims the LIVE window, and that is all it does.
 
-It used to be sent to the CLI as a raw turn for the CLI's own `/compact` to run.
-It never ran. In headless mode (`-p --input-format stream-json`) a leading slash
-is parsed into a local-command block that nothing executes, so the turn at
-2026-08-12T05:10:18Z came back in two seconds having recorded the command and
-freed nothing:
+It used to be sent to the CLI as a raw turn for the CLI's own `/compact` to run,
+and the turn at 2026-08-12T05:10:18Z came back in two seconds having recorded
 
     user    <command-name>/compact</command-name>
     system  local_command
             <local-command-caveat> ... DO NOT respond to these messages
 
-No `compact_boundary` after it, and a meter still reading what it read before.
-The chat answered "Command ran." over that. Detaching the session is the lever
-that works from this side: the next turn mints a fresh one and re-sends the
-transcript, so the window drops because the session holding it is gone.
+with no `compact_boundary` after it and a meter still reading what it read
+before. That was read as "the command does not execute in headless mode", and
+on 2026-08-27 that reading was measured false: those records are what a working
+`/compact` writes too, and the boundary lands at the END of an operation taking
+12 to 190 seconds, so a two-second read sees the start of a compaction and
+calls it a no-op. See `routes.chat.compact_thread`.
+
+What these tests pin is unaffected, because it is about OUR side: detaching the
+session is a lever that works from here regardless. The next turn mints a fresh
+one and re-sends the transcript, so the window drops because the session holding
+it is gone.
 
 The line these tests hold is that /compact is NOT /clear. It frees the window
 without moving the cut, so nothing the operator can see goes away.

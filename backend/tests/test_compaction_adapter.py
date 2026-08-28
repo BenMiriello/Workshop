@@ -3,9 +3,10 @@
 Workshop runs one provider today (the Claude Code CLI, headless) and this
 adapter wraps the existing fold/detach functions in `routes.chat` rather than
 reimplementing them, so these tests check the wrapping is honest: the
-capabilities it reports match the facts the CLI docstring already established
-(no reachable native manual compaction from headless mode), and its methods
-actually delegate rather than silently no-op.
+capabilities it reports match what has been measured on this CLI (both
+compaction flags true as of 2026-08-27; see `ClaudeCLIAdapter`'s docstring for
+the false negative that had `native_manual` inverted for months), and its
+methods actually delegate rather than silently no-op.
 """
 import asyncio
 
@@ -26,15 +27,22 @@ def owned(tmp_path, monkeypatch):
 
 
 class TestCapabilitiesReportTheRealCLIFacts:
-    def test_native_manual_is_false(self):
-        """The headless `/compact` command is confirmed dead (see
-        `routes.chat.compact_thread`'s docstring, measured 2026-08-12): a
-        leading slash over stream-json is parsed into a local-command block
-        nothing executes, and there is no control-protocol request for it
-        either. This adapter must not claim otherwise."""
+    def test_native_manual_is_true(self):
+        """This assertion was inverted until 2026-08-27, pinning a false
+        negative: the 2026-08-12 measurement it cited read the session
+        transcript about two seconds after sending `/compact`, saw only the
+        local-command records, and called the command dead. Those records are
+        what a WORKING compaction writes too, and the boundary lands at the end
+        of an operation that takes 12 to 190 seconds.
+
+        Re-measured on the installed 2.1.143 with this backend's own spawn
+        flags: the `/compact` turn ran, `trigger:manual`, 27,088 -> 2,104
+        tokens in 17.4s, and it accepts focus instructions as an argument. A
+        test that pins a measurement must be re-run, not inherited, which is
+        the actual lesson here."""
         adapter = ClaudeCLIAdapter(None, None, None)
         caps = adapter.capabilities()
-        assert caps["native_manual"] is False
+        assert caps["native_manual"] is True
 
     def test_native_auto_is_true(self):
         """Unlike `native_manual`, automatic compaction inside a `--resume`d

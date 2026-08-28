@@ -3614,25 +3614,42 @@ export interface paths {
          * Compact Thread
          * @description Reclaim the LIVE window: drop the session, keep the transcript.
          *
-         *     THE CLI CANNOT DO THIS FOR US, which is the correction this endpoint exists
-         *     to carry. `/compact` was sent as a raw turn for the CLI's own command to
-         *     run, and in headless mode (`-p --input-format stream-json`) a leading slash
-         *     is parsed into a local-command block that nothing executes. The turn at
-         *     2026-08-12T05:10:18Z came back in two seconds and the CLI session recorded
-         *     the whole of it as
+         *     THE CLI CAN ACTUALLY DO THIS, and this docstring said the opposite for
+         *     months. Corrected 2026-08-27; the paragraph below is kept because the wrong
+         *     version was reasoned from twice and the reason it was wrong is the useful
+         *     part.
+         *
+         *     What it used to say: `/compact` sent as a raw turn is parsed, in headless
+         *     mode (`-p --input-format stream-json`), into a local-command block that
+         *     nothing executes. The turn at 2026-08-12T05:10:18Z came back in two seconds
+         *     having recorded
          *
          *         user    <command-name>/compact</command-name>
          *         system  local_command
          *                 <local-command-caveat> ... DO NOT respond to these messages
          *
-         *     with no `compact_boundary` behind it, no summarization, and a window exactly
-         *     as full as before. (A real one, in a terminal the same night, took 136
-         *     seconds and reported 492981 -> 14880 tokens.) There is no control request
-         *     for it either: the protocol's entire list is initialize, set_model,
-         *     rename_session, read_file, interrupt, set_permission_mode,
-         *     set_max_thinking_tokens, mcp_oauth_callback_url, file_suggestions,
-         *     get_usage, set_color. Compaction is not in it. The chat reported "Command
-         *     ran." over that for months.
+         *     with no `compact_boundary` behind it.
+         *
+         *     THAT WAS A FALSE NEGATIVE. Those exact records are also what a WORKING
+         *     `/compact` writes, and the boundary lands at the END of the operation, which
+         *     takes 12 to 190 seconds in every case on record. The test read the
+         *     transcript two seconds in. Re-measured 2026-08-27 on the installed 2.1.143,
+         *     spawned with this backend's own flags: a `/compact` turn ran, recorded
+         *     `trigger:manual`, 27,088 -> 2,104 tokens, `durationMs` 17,446, and
+         *     `<local-command-stdout>Compacted </local-command-stdout>`; a resumed turn
+         *     afterwards started from the collapsed context. It takes focus instructions
+         *     as `<command-args>` too. Corroborating, from the session files: three
+         *     `trigger:manual` boundaries fired in headless runs on 2026-08-12 itself,
+         *     and 29 `trigger:auto` ones have fired since at 126k-153k tokens. The
+         *     control-request list quoted here (initialize, set_model, ... set_color) is
+         *     real and still contains no compaction verb; that only means there is no
+         *     CONTROL-PROTOCOL trigger, which is not the same as no trigger.
+         *
+         *     NONE OF THAT CHANGES WHAT THIS ENDPOINT DOES TODAY. It still runs Workshop's
+         *     own fold, and whether it should keep doing so now that the CLI's own
+         *     compaction is reachable is an open operator decision, deliberately not
+         *     settled here. See section 1 and section 3 of
+         *     docs/platform-redesign/chat-context-and-compaction-2026-08-25.md.
          *
          *     DETACHING IS HALF THE ANSWER, and on its own it is not compaction. The next
          *     turn mints a fresh session and re-assembles the prompt, so the CLI's private

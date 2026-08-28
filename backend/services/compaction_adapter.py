@@ -4,9 +4,10 @@ Workshop's chat backend drives the Claude Code CLI headless today and will
 eventually also speak the raw Claude API. Both providers need the same
 user-facing operation ("Compact" shrinks the window, keeps the transcript,
 nothing is deleted) but the CLI and the API implement it through genuinely
-different mechanisms: the CLI has no reachable native compaction from headless
-mode at all (see the docstring on `routes.chat.compact_thread`), so Workshop's
-own fold stands in for it; the API's own `compact_20260112`/
+different mechanisms: the CLI compacts through its own `/compact`, reachable
+from headless mode after all (measured 2026-08-27; see the docstring on
+`routes.chat.compact_thread` for the earlier false negative), while Workshop's
+own fold is what this endpoint actually runs today; the API's own `compact_20260112`/
 `clear_tool_uses_20250919` edits are real provider primitives once the API
 backend exists. This module is the interface that lets the route layer call
 one thing regardless of which provider is live, per
@@ -18,9 +19,9 @@ those functions as injected callables rather than importing `routes.chat`
 directly, because `routes.chat` is the module that will import THIS one to
 build the adapter -- importing back would be circular. The Claude API adapter
 described in the plan doc is future work, gated on the API backend existing at
-all, and is deliberately not stubbed out here: a `NotImplementedError` class
-would be exactly the committed-stub pattern this repo doesn't allow, so it
-simply doesn't exist yet.
+all, and is deliberately not stubbed out here: a class whose every method only
+raises would be exactly the committed-stub pattern this repo doesn't allow, so
+it simply doesn't exist yet.
 """
 from __future__ import annotations
 
@@ -90,21 +91,32 @@ class ClaudeCLIAdapter:
     the existing fold/detach functions in `routes.chat`, passed in at
     construction so this module never imports that one.
 
-    `capabilities()` reports the true CLI facts established by the
-    2026-08-12 measurement in `routes.chat.compact_thread`'s docstring: the
-    manual `/compact` command is confirmed dead in headless mode (a leading
-    slash over stream-json is parsed into a local-command block nothing
-    executes), and there is no control-protocol request for it either. Native
-    AUTO compaction, in contrast, is a confirmed fact, not an open question:
-    `services.build_streaming` detects the CLI's own `compact_boundary` meta
-    event mid-turn (`elif kind == "meta" and payload.get("subtype") ==
-    "compact_boundary": state["compacted"] = True`) and a `--resume`d session
-    really does compact itself when the window fills, which is why that same
-    module carries a marker write (`chat_store.note_auto_compact`) for exactly
-    this case and a passing regression
-    (`test_an_auto_compact_mid_work_keeps_its_real_reply`). So `native_auto`
-    is `True`: the CLI compacts on its own, uncontrolled by Workshop, even
-    though Workshop cannot ask it to (that is `native_manual`, still `False`).
+    `capabilities()` reports what has been MEASURED on this CLI, and both
+    compaction flags are now `True`. Corrected 2026-08-27.
+
+    `native_auto`: `services.build_streaming` detects the CLI's own
+    `compact_boundary` meta event mid-turn (`elif kind == "meta" and
+    payload.get("subtype") == "compact_boundary": state["compacted"] = True`),
+    carries a marker write (`chat_store.note_auto_compact`) for it, and has a
+    passing regression (`test_an_auto_compact_mid_work_keeps_its_real_reply`).
+    Across every session transcript on the box, 29 `trigger:auto` boundaries
+    have fired in headless runs, at 126k-153k tokens.
+
+    `native_manual` USED TO BE `False`, on a 2026-08-12 measurement that was a
+    false negative: it read the session transcript about two seconds after
+    sending `/compact` and saw only the local-command records, which is what a
+    working compaction writes too, the boundary landing at the END of an
+    operation that takes 12 to 190 seconds. Re-measured 2026-08-27 on the
+    installed 2.1.143 with this backend's own spawn flags: the turn ran,
+    `trigger:manual`, 27,088 -> 2,104 tokens in 17.4s, and it accepts focus
+    instructions as an argument. So Workshop CAN ask the CLI to compact; there
+    is still no CONTROL-PROTOCOL request for it, which is a different thing.
+
+    What this does NOT decide: whether `compact()` below should stop running
+    Workshop's own fold and send `/compact` instead. That is an open operator
+    call (see section 3 of
+    docs/platform-redesign/chat-context-and-compaction-2026-08-25.md), so the
+    flag reports the fact and the method is unchanged.
     """
 
     def __init__(self, fold_summary, land_fold, detach_live_session):
@@ -114,7 +126,7 @@ class ClaudeCLIAdapter:
 
     def capabilities(self) -> CompactionCapabilities:
         return {
-            "native_manual": False,
+            "native_manual": True,
             "native_auto": True,
             "can_evict_tool_output": False,
             "preserves_cache_prefix": False,

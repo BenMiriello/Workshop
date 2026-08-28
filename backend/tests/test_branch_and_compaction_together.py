@@ -14,9 +14,10 @@ more, so there is nothing left to leak.
 
 WHY WE CAN DO THIS AT ALL. The transcript is ours: an append-only local log
 (`chat_log`), and nothing in it is ever deleted, including by a fold. Our
-/compact does not ask the CLI to compact anything (it cannot: in headless mode a
-leading slash is parsed into a local-command block that nothing executes, see
-compact_thread's docstring). It summarizes OUR copy, records a boundary, and
+/compact does not ask the CLI to compact anything (it could, as of the
+2026-08-27 measurement in compact_thread's docstring, but it does not: whether
+to hand the operation to the CLI is an open call, not something these tests
+assume either way). It summarizes OUR copy, records a boundary, and
 drops the live session so the next turn re-sends the folded transcript. So going
 back past a fold is not undoing something in someone else's process, it is
 declining to apply a row we still hold.

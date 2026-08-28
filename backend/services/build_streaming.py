@@ -3179,11 +3179,12 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         # the original prompt was not a slash command.
         #
         # NON-INJECTED: the prompt itself started with a slash. Headless mode
-        # parses a leading slash into a local-command block and executes the
-        # command only in its own terminal. rc 0 WITH NOTHING TO SHOW is not
-        # "it ran in this chat": /compact reported "Command ran." for months
-        # while the live window it was supposed to empty stayed exactly as full
-        # (2026-08-12T05:10:18Z, two seconds, no compact_boundary).
+        # parses a leading slash into a local-command block, and whether the
+        # command then runs depends on the command: /compact does run (measured
+        # 2026-08-27, see routes/chat.py:compact_thread), /autocompact answers
+        # "isn't available in this environment", and either way the model is
+        # not called, so rc 0 WITH NOTHING TO SHOW does not mean "it ran in
+        # this chat" and must not be reported as a model reply.
         # /compact and /clear no longer come through here — they are
         # server-side now (routes/chat.py:compact_thread). This handles every
         # other slash the operator can still type.
