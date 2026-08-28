@@ -27,7 +27,8 @@ from pathlib import Path
 
 from services import (agent_slots, build_agents, chat_attachments, chat_drain,
                       chat_log, chat_queue, chat_store, chat_worktree, leases,
-                      llm_router, model_caps, ownership, reply_guard, turn_end)
+                      llm_router, model_caps, ownership, reply_guard, turn_end,
+                      worktrees)
 
 log = logging.getLogger("workshop.build_streaming")
 
@@ -706,7 +707,6 @@ def _auto_create_worktree_for_chat(thread_id: str) -> dict | None:
     if not thread_id:
         return None
     try:
-        from services import chat_store, worktrees
         thread = chat_store.get_thread(thread_id)
         if not thread:
             return None
