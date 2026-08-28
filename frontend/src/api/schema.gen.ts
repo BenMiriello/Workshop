@@ -5388,6 +5388,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/files/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * File Rename
+         * @description Rename one file within its own directory, and keep the refs pointing at it.
+         *
+         *     THE REFS ARE THE REASON THIS IS NOT A ONE-LINER. `workshop:doc/<path>`
+         *     resolves against the repo root and the backlink index stores the RESOLVED
+         *     target, and NOTHING rewrites a stored target when the thing it names moves
+         *     (services/backlinks.py has three mutators and all three are keyed by the
+         *     SOURCE). So renaming a file under `docs/` used to be a silent way to break
+         *     every link to it: the row survives, and the edge disappears the next time
+         *     the source that wrote it happens to be saved.
+         *
+         *     That is the same defect the note retitle fixed on 2026-08-27, in the other
+         *     half of the same store, and it is fixed the same way: the inbound sources
+         *     are read from the backlink index, not scanned for, and each one's body is
+         *     rewritten. A source that cannot be rewritten is REPORTED rather than
+         *     swallowed, because a half-updated link graph the operator does not know
+         *     about is worse than one they do.
+         */
+        post: operations["file_rename_files_rename_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/files/tree": {
         parameters: {
             query?: never;
@@ -12148,6 +12183,38 @@ export interface components {
             content: string;
             /** Path */
             path: string;
+        };
+        /** FileRenameIn */
+        FileRenameIn: {
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Workspace */
+            workspace: string;
+        };
+        /** FileRenameOut */
+        FileRenameOut: {
+            /** Modified */
+            modified: string;
+            /** Path */
+            path: string;
+            /**
+             * Rewrote
+             * @default []
+             */
+            rewrote: string[];
+            /** Size */
+            size: number;
+            /**
+             * Stale
+             * @default []
+             */
+            stale: string[];
+            /** Workspace */
+            workspace: string;
+            /** Writable */
+            writable: boolean;
         };
         /** FileTree */
         FileTree: {
@@ -27567,6 +27634,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    file_rename_files_rename_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileRenameIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileRenameOut"];
                 };
             };
             /** @description Validation Error */
