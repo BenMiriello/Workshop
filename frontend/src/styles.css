@@ -1185,8 +1185,24 @@ input[type="range"].grad::-moz-range-thumb {
    stretches back to back, or narration sitting against a step run, rendered
    flush against each other with no gap. Same rule as `.chat-work`, so a run of
    prose blocks reads as separate paragraphs instead of one concatenated blob. */
-.chat-work__text { font-size: var(--fs-sm); }
+/* NARRATION IS PROCESS INK, THE ANSWER IS CONTENT INK, and until now the only
+   thing separating them was two points of font size. On a phone that is not a
+   distinction: a turn that narrated four times rendered as five paragraphs in
+   the same weight and the same colour, so the reader could not tell which one
+   was the reply. That is the "the final response includes all of the text that
+   was printed out along the way" report, and it is a reading failure rather
+   than a data one -- the split itself has always been correct.
+
+   `--muted` is what the design language already uses for secondary ink, so
+   narration takes it and the answer keeps `--fg`. One learnable rule: full ink
+   is the answer, muted ink is the turn talking about its work. Nothing is
+   hidden by this, and it composes with the fold rather than replacing it. */
+.chat-work__text { font-size: var(--fs-sm); color: var(--muted); }
 .chat-work__text:not(:last-child) { margin-bottom: var(--space-2); }
+/* Code, links and emphasis inside narration inherit the muted ink rather than
+   punching back up to full contrast, or a single inline `path/to/file` would be
+   the brightest thing in a paragraph that is meant to sit back. */
+.chat-work__text code, .chat-work__text strong { color: inherit; }
 
 /* ---- Tool call: one row, tap to expand ----
    THE LEAF IS THE QUIET ONE NOW. Operator, 2026-08-18, reading the two the
