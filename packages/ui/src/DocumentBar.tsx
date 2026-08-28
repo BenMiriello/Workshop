@@ -73,6 +73,13 @@ export interface DocumentBarProps {
    *  a note has no rename route anywhere else, so this bar is where its title is
    *  changed (D7, and the wikilink rewrite in D11 is what makes that safe). */
   onNameChange?: (next: string) => void;
+  /** The name is FINISHED being edited: blur, or Enter. Given for a name whose
+   *  write is a real operation rather than a field in a form that will be saved
+   *  later -- a FILE rename moves bytes on disk and repoints every ref that
+   *  named the old path, so doing it per keystroke would be one move and one
+   *  ref rewrite per letter. A note's title needs none of this: it is part of
+   *  the note's own draft and is written by the note's own Save. */
+  onNameCommit?: () => void;
   /** The directory that holds it, drawn ahead of the name in --faint. Hidden
    *  below 900px, where the header is a back control and there is no room. */
   path?: string;
@@ -95,8 +102,8 @@ export interface DocumentBarProps {
 }
 
 export function DocumentBar({
-  name, variant = "file", onNameChange, path, dirty = false, onBack, backLabel,
-  meta, children, className,
+  name, variant = "file", onNameChange, onNameCommit, path, dirty = false,
+  onBack, backLabel, meta, children, className,
 }: DocumentBarProps) {
   const nameEl = onNameChange ? (
     // Sized to its own content so the bar's layout does not jump as you type,
@@ -107,7 +114,14 @@ export function DocumentBar({
       value={name}
       size={Math.max(8, Math.min(60, name.length + 1))}
       onChange={(e) => onNameChange(e.target.value)}
-      aria-label="Title"
+      onBlur={onNameCommit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+        // Escape gives the name back rather than committing a half-typed one.
+        // Blur fires after, so the commit sees the restored value and no-ops.
+        if (e.key === "Escape") { e.currentTarget.blur(); }
+      }}
+      aria-label={variant === "title" ? "Title" : "Filename"}
     />
   ) : (
     <span className="ws-docbar__name">{name}</span>

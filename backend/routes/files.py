@@ -89,6 +89,22 @@ class FileWriteOut(BaseModel):
     writable: bool
 
 
+class FileRenameIn(BaseModel):
+    workspace: str
+    path: str
+    # A bare filename. `app_files.rename_file` refuses one with a separator:
+    # this renames within a directory and is deliberately not a move.
+    name: str
+
+
+class FileRenameOut(FileWriteOut):
+    # Refs that named this file by its OLD path and have been rewritten to name
+    # the new one, plus the ones that could not be. Empty for a workspace
+    # nothing refs, which is every workspace except `documents`.
+    rewrote: list[str] = []
+    stale: list[str] = []
+
+
 def _workspace(ref: str) -> app_files.Workspace:
     try:
         return app_files.resolve(ref)
@@ -162,6 +178,47 @@ async def file_raw(workspace: str = Query(...), path: str = Query(...)) -> FileR
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@router.post("/rename", response_model=FileRenameOut, response_model_exclude_unset=True)
+async def file_rename(body: FileRenameIn) -> dict:
+    """Rename one file within its own directory, and keep the refs pointing at it.
+
+    THE REFS ARE THE REASON THIS IS NOT A ONE-LINER. `workshop:doc/<path>`
+    resolves against the repo root and the backlink index stores the RESOLVED
+    target, and NOTHING rewrites a stored target when the thing it names moves
+    (services/backlinks.py has three mutators and all three are keyed by the
+    SOURCE). So renaming a file under `docs/` used to be a silent way to break
+    every link to it: the row survives, and the edge disappears the next time
+    the source that wrote it happens to be saved.
+
+    That is the same defect the note retitle fixed on 2026-08-27, in the other
+    half of the same store, and it is fixed the same way: the inbound sources
+    are read from the backlink index, not scanned for, and each one's body is
+    rewritten. A source that cannot be rewritten is REPORTED rather than
+    swallowed, because a half-updated link graph the operator does not know
+    about is worse than one they do.
+    """
+    ws = _workspace(body.workspace)
+    try:
+        row = app_files.rename_file(ws, body.path, body.name)
+    except app_files.AppFileReadOnlyError as e:
+        raise HTTPException(403, str(e))
+    except app_files.AppFilePathError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError:
+        raise HTTPException(404, "no such file")
+    except FileExistsError as e:
+        raise HTTPException(409, f"{e} already exists")
+    except IsADirectoryError:
+        raise HTTPException(400, "path is a directory, not a file")
+
+    rewrote: list[str] = []
+    stale: list[str] = []
+    if row["path"] != body.path:
+        from services import doc_refs
+        rewrote, stale = doc_refs.repoint(body.path, row["path"])
+    return {"workspace": ws.ref, **row, "rewrote": rewrote, "stale": stale}
 
 
 @router.put("/content", response_model=FileWriteOut, response_model_exclude_unset=True)

@@ -664,12 +664,16 @@ export function NewNoteDocument({
 export function DocDocument({
   path,
   onChanged,
+  onRenamed,
   onBack,
   backLabel,
   takeover,
 }: {
   path: string;
   onChanged: () => void;
+  /** The file is at a new path now. The page owns the selection, so it is the
+   *  page that has to follow the file rather than this component. */
+  onRenamed?: (nextPath: string) => void;
   /** Back to the level this document is in. Present only on a phone, where the
    *  combined chevron-plus-filename control in the header IS the way out and
    *  replaces the Up bar (shell-mockup-spec-2026-08-22.md sections 4.1 and 6). */
@@ -733,6 +737,44 @@ export function DocDocument({
 
   const edit = useEditMode(current, onSave);
 
+  // RENAMING, which is the file's half of "there should be a way to view the
+  // title of a file or a memory and edit it" (2026-08-27). A note's title is a
+  // field; a file's is its NAME, so it goes through the workspace rename route,
+  // which also repoints the `workshop:doc/` refs that named the old path. A
+  // rename is committed on blur or Enter rather than per keystroke: every
+  // keystroke would be a separate move on disk and a separate ref rewrite.
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameErr, setRenameErr] = useState<string | null>(null);
+  const [renameNote, setRenameNote] = useState<string | null>(null);
+
+  const commitRename = useCallback(async () => {
+    const next = (renaming ?? "").trim();
+    setRenaming(null);
+    if (!next || next === baseName(path)) return;
+    setRenameErr(null);
+    setRenameNote(null);
+    try {
+      const row = await sendJson<{ path: string; rewrote?: string[]; stale?: string[] }>(
+        "/api/files/rename", "POST", { workspace: "documents", path, name: next },
+      );
+      const rewrote = row.rewrote?.length ?? 0;
+      const stale = row.stale?.length ?? 0;
+      // The link graph is the thing a rename can quietly damage, so what
+      // happened to it is reported rather than assumed.
+      if (rewrote || stale) {
+        setRenameNote(
+          [
+            rewrote ? `${rewrote} ${rewrote === 1 ? "note" : "notes"} repointed` : "",
+            stale ? `${stale} still names the old path` : "",
+          ].filter(Boolean).join(", "),
+        );
+      }
+      onRenamed?.(row.path);
+    } catch (e) {
+      setRenameErr(e instanceof Error ? e.message : String(e));
+    }
+  }, [renaming, path, onRenamed]);
+
   if (err) {
     return (
       <StateBlock
@@ -772,7 +814,11 @@ export function DocDocument({
     // there is one scroller on both viewports.
     <div className="ws-doc ws-doc--full">
       <DocumentBar
-        name={baseName(path)}
+        name={renaming ?? baseName(path)}
+        // Editable only where the backend would accept the write anyway, so
+        // there is never a control that looks live and is refused (rule 10).
+        onNameChange={canEdit ? setRenaming : undefined}
+        onNameCommit={canEdit ? () => { void commitRename(); } : undefined}
         path={dirName(path)}
         dirty={edit.dirty}
         onBack={onBack}
@@ -824,6 +870,8 @@ export function DocDocument({
           {/* A save that failed leaves the document on screen, so it is a line
               beside content and never a region that replaces it. */}
           {saveErr && <Notice tone="error" detail={saveErr}>That didn't save.</Notice>}
+          {renameErr && <Notice tone="error" detail={renameErr}>That didn't rename.</Notice>}
+          {renameNote && <Notice tone="warn">Renamed. {renameNote}.</Notice>}
 
           {form === "source" ? (
             <>

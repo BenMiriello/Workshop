@@ -87,6 +87,7 @@ function FilePane({
   onBack,
   backLabel,
   takeover,
+  onRenamed,
 }: {
   workspace: string;
   path: string;
@@ -99,9 +100,17 @@ function FilePane({
   /** The document owns the whole content area. Same boolean the shell is told
    *  about, so the two halves of the takeover cannot disagree. */
   takeover?: boolean;
+  /** The file is at a new path now. The page owns the selection and the tree,
+   *  so both have to follow the file rather than this component doing it. */
+  onRenamed?: (nextPath: string) => void;
 }) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // RENAMING, the same control Memory's document wears (2026-08-27, MEM-19).
+  // Committed on blur or Enter, not per keystroke: a rename moves bytes on
+  // disk, so a letter at a time would be one move per letter.
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameErr, setRenameErr] = useState<string | null>(null);
   const endpoint =
     `/api/files/content?workspace=${encodeURIComponent(workspace)}&path=${encodeURIComponent(path)}`;
 
@@ -143,12 +152,35 @@ function FilePane({
     edit.set("content", next);
   };
 
+  const commitRename = async () => {
+    const next = (renaming ?? "").trim();
+    setRenaming(null);
+    if (!next || next === fileNameOf(path)) return;
+    setRenameErr(null);
+    try {
+      const r = await fetch("/api/files/rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace, path, name: next }),
+      });
+      if (!r.ok) throw new Error((await readFailure(r)).message);
+      const row = await r.json();
+      onRenamed?.(row.path);
+    } catch (e) {
+      setRenameErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   // The four states all wear the same header, so the way out of a file that
   // failed to load is exactly the way out of one that opened.
   const frame = (body: ReactNode, bar?: ReactNode, meta?: ReactNode) => (
     <div className={cx("ws-doc", takeover && "ws-doc--full")}>
       <DocumentBar
-        name={fileNameOf(path)}
+        name={renaming ?? fileNameOf(path)}
+        // Only where the backend would accept the write anyway, so there is
+        // never a control that looks live and is refused (design rule 10).
+        onNameChange={file?.writable ? setRenaming : undefined}
+        onNameCommit={file?.writable ? () => { void commitRename(); } : undefined}
         path={parentPath(path)}
         dirty={edit.dirty}
         onBack={onBack}
@@ -157,7 +189,10 @@ function FilePane({
       >
         {bar}
       </DocumentBar>
-      <div className="ws-doc__body">{body}</div>
+      <div className="ws-doc__body">
+        {renameErr && <Notice tone="error" detail={renameErr}>That didn't rename.</Notice>}
+        {body}
+      </div>
     </div>
   );
 
@@ -444,6 +479,18 @@ function FilesBody({ app }: { app: AppRecord }) {
     }, { replace: true });
   }, [setParams]);
 
+  // THE SELECTION AND THE TREE BOTH FOLLOW A RENAMED FILE. The pane would
+  // otherwise be pointing at a path that is not there, and the tree would still
+  // be listing the old name.
+  const onRenamed = useCallback((nextPath: string) => {
+    setGeneration((n) => n + 1);
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("path", nextPath);
+      return next;
+    }, { replace: true });
+  }, [setParams]);
+
   // Up out of an open file, on a phone: back to the folder that holds it. The
   // trail is rebuilt from the path, so a deep link walks up correctly on its
   // first press without having been drilled into.
@@ -499,6 +546,7 @@ function FilesBody({ app }: { app: AppRecord }) {
         onBack={upFromFile}
         backLabel={upTo.label}
         takeover
+        onRenamed={onRenamed}
       />
     ) : (
       <FileDrill
@@ -581,7 +629,7 @@ function FilesBody({ app }: { app: AppRecord }) {
         host,
       )}
       {selected ? (
-        <FilePane key={selected} workspace={workspace} path={selected} />
+        <FilePane key={selected} workspace={workspace} path={selected} onRenamed={onRenamed} />
       ) : (
         <StateBlock
           icon={<FolderTree aria-hidden />}

@@ -464,6 +464,13 @@ function Library() {
         key={selected.path}
         path={selected.path}
         onChanged={() => onChanged("Saved. Not committed, so commit it yourself when ready.")}
+        // The file is at a new path, so the SELECTION has to follow it or the
+        // pane is pointing at something that is not there any more. The tree
+        // reloads for the same reason: it is still listing the old name.
+        onRenamed={(nextPath) => {
+          setGeneration((n) => n + 1);
+          setParams((next) => next.set("path", nextPath));
+        }}
         onBack={!isWide ? goUp : undefined}
         backLabel={upTrail ? drillCursor(upTrail).label : undefined}
         takeover={docTakeover}

@@ -12,6 +12,21 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.7.4 - 2026-08-28 - a name in the document bar can be committed
+
+**Patch, additive.** One new optional prop.
+
+### Added
+
+- **`DocumentBar` takes `onNameCommit`.** `onNameChange` alone is right for a
+  name that is part of a draft its own Save will write (a note's title), and
+  wrong for one whose write is a real operation: renaming a FILE moves bytes on
+  disk and repoints every ref that named the old path, so per-keystroke would be
+  one move and one ref rewrite per letter. `onNameCommit` fires on blur and on
+  Enter; Escape blurs without committing, so a half-typed name is given back
+  rather than written. The editable name also gets an accurate accessible name
+  now, "Filename" or "Title" by variant, instead of "Title" for both.
+
 ## 0.7.3 - 2026-08-28 - an empty editor says what to write in it
 
 **Patch, additive.** One new optional prop; nothing else changed.

@@ -66,7 +66,7 @@ from services import build_agents
 __all__ = [
     "AppFilePathError", "AppFileBinaryError", "AppFileReadOnlyError",
     "WorkspaceNotFound", "Workspace",
-    "resolve", "workspace_at", "is_writable",
+    "resolve", "workspace_at", "is_writable", "rename_file",
     "project_root", "list_tree", "read_file", "open_file", "write_file",
 ]
 
@@ -467,6 +467,73 @@ def _atomic_write(target: Path, content: str) -> None:
         except OSError:
             pass
         raise
+
+
+def rename_file(ws: Workspace, path: str, new_name: str) -> dict:
+    """Rename one file WITHIN ITS OWN DIRECTORY. Returns the new row.
+
+    A rename, not a move: `new_name` is a bare filename and a separator in it is
+    refused. Moving a file between directories is a different operation with a
+    different blast radius (it changes what contains what, and in the documents
+    workspace it changes every ref that names the path), and nothing has asked
+    for it. Keeping this to a rename means the containing directory's
+    writability is the only permission question there is.
+
+    BOTH ENDS ARE CHECKED. The old path must be writable because the file is
+    leaving it, and the new path must be writable because the file is arriving
+    there. They are the same directory today, so the second check is redundant
+    today; it is here so that the day this grows a move, the check it would need
+    already exists rather than being remembered.
+
+    Raises `AppFilePathError` on an empty/escaping path or a name with a
+    separator, `AppFileReadOnlyError` if either end is read-only,
+    `FileNotFoundError` if there is nothing at `path`, and `FileExistsError`
+    rather than clobbering something already called `new_name`.
+    """
+    if not (path or "").strip():
+        raise AppFilePathError("path is required")
+    name = (new_name or "").strip()
+    if not name:
+        raise AppFilePathError("a new name is required")
+    if "/" in name or "\\" in name or name in (".", ".."):
+        raise AppFilePathError(
+            "a name is a filename, not a path: use a name with no separator")
+
+    root = ws.root.resolve()
+    target = safe_path(root, path)
+    if not target.exists():
+        raise FileNotFoundError(path)
+    if target.is_dir():
+        raise IsADirectoryError(path)
+
+    rel = target.relative_to(root).as_posix()
+    if not is_writable(ws, rel):
+        raise AppFileReadOnlyError(f"{rel!r} is read-only in workspace {ws.ref!r}")
+
+    # Through `safe_path` as well, so a name that survived the separator check
+    # by some encoding trick still cannot land outside the root.
+    dest = safe_path(root, str(Path(rel).parent / name))
+    dest_rel = dest.relative_to(root).as_posix()
+    if dest_rel == rel:
+        # Not an error: renaming a thing to what it is already called is a
+        # no-op, and reporting failure for it would make an idempotent retry
+        # look like a broken one.
+        st = target.stat()
+        return {"path": rel, "size": st.st_size,
+                "modified": _iso_mtime(st.st_mtime), "writable": True}
+    if not is_writable(ws, dest_rel):
+        raise AppFileReadOnlyError(f"{dest_rel!r} is read-only in workspace {ws.ref!r}")
+    if dest.exists():
+        raise FileExistsError(dest_rel)
+
+    target.rename(dest)
+    st = dest.stat()
+    return {
+        "path": dest_rel,
+        "size": st.st_size,
+        "modified": _iso_mtime(st.st_mtime),
+        "writable": is_writable(ws, dest_rel),
+    }
 
 
 def write_file(ws: Workspace, path: str, content: str) -> dict:
