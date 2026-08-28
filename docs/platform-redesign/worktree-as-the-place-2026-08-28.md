@@ -208,14 +208,19 @@ Each of these is a filed ticket. B-numbers refer to the leases doc §15 plan.
    instead of returning an offer. This is what turns B1's flag on safely.
 3. **An operator message preempts.** Attended turn start takes the lease through
    snapshot-and-quiesce; unattended queues.
-4. **The unattended half of the lease.** The sweep and the queue runner still take no
-   lease on the trees they are handed, which is why `WORKSHOP_TREE_LEASE_MOUNT` cannot
-   be armed: with the flag on they would be read-only in their own worktrees. This is
-   the twin of the chat lease that landed today and it blocks everything else.
+4. **The unattended half of the lease. ALREADY DONE**, 2026-08-27, `cd8e7b09`:
+   `services/run_worktree.py` is `chat_worktree`'s non-interactive twin and
+   `scripts/tree_lease.sh` is sourced by both `project_ralph.sh` and `ralph.sh`. A
+   claim on 2026-08-28 that unattended runs still take no lease was a stale reading;
+   both halves of the lease now exist.
 5. **The pill and menu, respecified** (§3, §5).
 6. **Chats page groups by worktree; `/branches` folds in and leaves the nav** (§7).
 
-Order matters: 4 gates the flag, and the flag is what makes 2 fire at all.
+**The flag is the last step of 2, not a step of its own.** `WORKSHOP_TREE_LEASE_MOUNT`
+is now armable (both lease halves exist), but arming it before 2 lands would make every
+unpinned chat read-only, including the operator's own, since §14.3 of the branches doc
+deliberately does not carve out the self-repo. So 2 is developed against the flag in a
+test tree and arms it in the instance config as its final action.
 
 ---
 
