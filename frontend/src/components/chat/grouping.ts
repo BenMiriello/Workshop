@@ -405,11 +405,27 @@ export function stepDuration(seg: ChatSegment): string {
  *  "" when the turn narrated nothing, so a pure-tool-calls turn keeps the
  *  plain step count with nothing invented to fill the row. */
 export function workNarrationPreview(work: ChatSegment[]): string {
-  const text = work
-    .filter((s): s is Extract<ChatSegment, { t: "text" }> => s.t === "text")
-    .map((s) => s.text)
-    .join(" ");
-  return text.replace(/\s+/g, " ").trim();
+  // THE LAST THING SAID, NOT ALL OF THEM JOINED.
+  //
+  // This used to join every narration segment in the turn. The row is one line
+  // with a CSS ellipsis, so on screen that showed the FIRST narration and hid
+  // the rest -- a preview of the oldest thing the turn said, which is the least
+  // useful of them. The same string also went into the `title` attribute, where
+  // nothing clamps it: on the operator's real turns that is an 876-character
+  // tooltip of four unrelated progress notes run together, and on his longest it
+  // is several thousand.
+  //
+  // A collapsed row previews where the turn GOT TO, so it is the most recent
+  // narration and nothing else. Same reason `_turn_content`'s fallback takes the
+  // last segment rather than the join: this is the same bug in a second place.
+  const said = work.filter(
+    (s): s is Extract<ChatSegment, { t: "text" }> => s.t === "text" && !!s.text.trim(),
+  );
+  const last = said[said.length - 1];
+  // Newlines folded to spaces, same technique as `agentChipLine`: the string
+  // itself must not wrap, so CSS ellipsis cuts it at the reader's real width
+  // instead of a guessed character count.
+  return last ? last.text.replace(/\s+/g, " ").trim() : "";
 }
 
 /** How long a whole turn took, for the line that summarises its work.

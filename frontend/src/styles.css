@@ -1430,6 +1430,37 @@ input[type="range"].grad::-moz-range-thumb {
   margin: 0 0 0.2rem calc(var(--chat-head-pad) + var(--chat-rail-nudge));
   padding: 0.1rem 0 0.2rem 0.6rem; border-left: 2px solid var(--border);
 }
+/* A GROUP OF FIFTY TOOL CALLS IS NOT A DISCLOSURE, it is a second transcript
+   wearing one row's affordance. Measured over the operator's own logs: 188 runs
+   exceed 10 steps and the longest is 173, which on a phone buries the answer
+   under a screenful of `Bash` lines.
+
+   So past ten steps the list becomes its own scroll region. Nothing is dropped
+   and nothing is summarised: the header still counts every step and all of them
+   are reachable by scrolling. What is capped is only how much vertical
+   transcript one group may take.
+
+   ELEVEN ROWS, one more than the threshold, so the region always ends on a
+   PARTIAL row. That half-row is the affordance -- it is what says "there is more
+   below" without a gradient, a badge or a count. A region capped at exactly ten
+   looks like a complete list of ten that happens to end there.
+
+   `--chat-step-h` is the measured height of one .chat-tool__head: 0.3rem padding
+   top and bottom around a 1.35 line-height row at --fs-sm. It is declared here
+   rather than inlined so the cap and the row cannot drift apart.
+
+   overscroll-behavior stops a flick that reaches the end of this region from
+   continuing into the transcript behind it, which on a phone is how you lose
+   your place in the whole chat while reading one group. */
+.chat-group__steps.is-capped {
+  --chat-step-h: calc(var(--fs-sm) * 1.35 + 0.6rem);
+  max-height: calc(var(--chat-step-cap, 11) * var(--chat-step-h));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* The rail is the group's, not the scroller's, so the scrollbar sits inside
+     the rail rather than on top of it. */
+  padding-right: 0.2rem;
+}
 /* Still working: motion means in-flight and nothing else, matching the
    `running` status kind. A group holding the live step opens itself, so this
    marks the header the reader is already looking at. */

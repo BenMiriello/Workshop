@@ -1,4 +1,7 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect, useId, useLayoutEffect, useRef, useState,
+  type CSSProperties, type ReactNode,
+} from "react";
 import { Bot, Brain, ChevronRight, Wrench } from "lucide-react";
 import { ChatMarkdown as Markdown } from "./ChatMarkdown";
 import type { ChatSegment } from "../../lib/chat";
@@ -10,6 +13,7 @@ import {
   type TurnItem,
 } from "./grouping";
 import { openInitial, onLive, onToggle } from "./disclosure";
+import { CAP_ROWS, isCapped, bottomOf, shouldFollow, onReaderScroll } from "./stepScroll";
 import { Reveal } from "./Reveal";
 import { lineBottoms, cutHeight, worthClamping } from "./clampCut";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
@@ -168,6 +172,45 @@ function useArrivedSteps(): (seg: ChatSegment) => boolean {
 // one thing this rule is for. (Zero occurrences in the operator's history —
 // every tool call in 449 stored replies has its result — so removing it changes
 // nothing that ever happened, and removes a way for it to.)
+/** The scroll half of the cap: follow the newest step, but only while the reader
+ *  is already at the bottom.
+ *
+ *  THE STICKY STATE IS SAMPLED BEFORE THE CONTENT GROWS AND CONSULTED AFTER, and
+ *  that ordering is the whole trick. Once a new row has been laid out, a reader
+ *  who never moved is no longer at the bottom BECAUSE the content grew, so
+ *  re-measuring at that point answers "they scrolled up" for everyone and turns
+ *  following off once, permanently, on the very first new step. `following` is
+ *  therefore a ref written only by the reader's own scroll events.
+ *
+ *  A ref and not state, deliberately: it must not re-render, and it must not be
+ *  stale inside the layout effect that runs in the same commit as the new row.
+ *
+ *  EXPANDING A STEP MUST NOT MOVE ANYTHING EITHER. This only ever runs on a
+ *  change of step COUNT, so opening a row (which changes the content height and
+ *  nothing else) is not a scroll event and not a growth event. Operator's
+ *  explicit failure condition, 2026-08-27. */
+function useCappedScroll(capped: boolean, stepCount: number) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const following = useRef(true);
+  // Layout effect, not effect: it runs before paint, so the region is already at
+  // the bottom on the frame the new row appears. A passive effect would paint
+  // the old offset first and then jump, which reads as a flicker on every step.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !capped) return;
+    if (!shouldFollow(following.current)) return;
+    el.scrollTop = bottomOf(el);
+  }, [capped, stepCount]);
+  return {
+    ref,
+    onScroll: capped
+      ? (e: React.UIEvent<HTMLDivElement>) => {
+          following.current = onReaderScroll(e.currentTarget);
+        }
+      : undefined,
+  };
+}
+
 function GroupChip({ item, nowMs, arrived, current }: {
   item: Extract<TurnItem, { t: "group" }>; nowMs: number;
   arrived?: (seg: ChatSegment) => boolean; current?: boolean;
@@ -187,6 +230,12 @@ function GroupChip({ item, nowMs, arrived, current }: {
   // is reading would still lose its place.
   const bare = item.steps.length === 1;
   const open = bare || disc.open;
+  // PAST TEN STEPS THE BODY BECOMES ITS OWN SCROLL REGION, eleven rows tall.
+  // Every step stays reachable and the header still counts all of them; what is
+  // capped is how much vertical transcript one group may take. See stepScroll.ts
+  // for the measurements and for why following the newest step is conditional.
+  const capped = isCapped(item.steps.length);
+  const body = useCappedScroll(capped, item.steps.length);
   return (
     <div className={`chat-group${bare ? " is-bare" : ""}${open ? " is-open" : ""}${live ? " is-running" : ""}`}>
       {!bare && (
@@ -219,9 +268,23 @@ function GroupChip({ item, nowMs, arrived, current }: {
           it is always open and never animates. */}
       <Reveal open={open} id={id} className={bare ? undefined : "chat-group__body"}
               animate={!bare && disc.animate}>
-        {item.steps.map((s, i) => (
-          <ToolChip key={s.id || i} seg={s} nowMs={nowMs} arrived={arrived?.(s)} />
-        ))}
+        {/* THE SCROLLER IS INSIDE THE REVEAL, NOT THE REVEAL ITSELF. Reveal
+            animates a grid row between 0fr and 1fr and clips its own overflow;
+            putting `overflow-y: auto` on that same element would make the
+            collapse animation scroll instead of shrink. A plain child owns the
+            cap, so the two behaviours never fight. */}
+        <div
+          ref={body.ref}
+          onScroll={body.onScroll}
+          className={`chat-group__steps${capped ? " is-capped" : ""}`}
+          // The row count lives in stepScroll.ts, so the height the CSS caps at
+          // and the threshold the JS triggers on cannot drift apart.
+          style={capped ? ({ "--chat-step-cap": CAP_ROWS } as CSSProperties) : undefined}
+        >
+          {item.steps.map((s, i) => (
+            <ToolChip key={s.id || i} seg={s} nowMs={nowMs} arrived={arrived?.(s)} />
+          ))}
+        </div>
       </Reveal>
     </div>
   );

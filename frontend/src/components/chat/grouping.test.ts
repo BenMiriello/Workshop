@@ -446,12 +446,24 @@ describe("workNarrationPreview", () => {
     expect(workNarrationPreview([read("a.ts"), bash("ls")])).toBe("");
   });
 
-  it("joins two narration stretches with a space, never bare concatenation", () => {
-    // The bug this replaces: two prose segments run together with no
-    // separator at all read as one unreadable word. A space is the minimum
-    // fix; CSS ellipsis handles the rest at render time.
+  it("previews the LAST narration stretch, not every one of them joined", () => {
+    // REVERSES AN EARLIER RULE, deliberately. This used to join every narration
+    // segment (with a space, to fix an even earlier bug where they ran together
+    // as one unreadable word). Joining was the wrong shape either way: the row
+    // is one line with a CSS ellipsis, so the join showed the FIRST thing the
+    // turn said and hid the rest, and the same string went unclamped into the
+    // `title` attribute -- 876 characters of unrelated progress notes on a real
+    // turn of the operator's, several thousand on a long one.
+    //
+    // A collapsed row previews where the turn GOT TO. That is its most recent
+    // narration and nothing else.
     expect(workNarrationPreview([text("Checking the config."), bash("cat x"), text("Found it.")]))
-      .toBe("Checking the config. Found it.");
+      .toBe("Found it.");
+  });
+
+  it("skips a trailing whitespace-only segment to find the last real one", () => {
+    expect(workNarrationPreview([text("Found it."), bash("ls"), text("   \n  ")]))
+      .toBe("Found it.");
   });
 
   it("folds internal newlines to spaces, same technique as agentChipLine", () => {

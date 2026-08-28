@@ -230,9 +230,24 @@ function msgKey(ev: { client_id?: string; id: string }): string {
   return ev.client_id || ev.id;
 }
 
-/** The top-level text of a slice — what that block's answer says. */
+/** The top-level text of a slice: what that block's ANSWER says, which is the
+ *  trailing run of text and not every text segment in it.
+ *
+ *  Same split `AssistantTurn` renders by and the same one the server now stores
+ *  `content` from (build_streaming.answer_segments). It used to join all of
+ *  them, so a slice that narrated four times before answering produced a
+ *  `content` with the narration concatenated onto the front of the answer.
+ *
+ *  That never reached the bubble body (MessageBubble renders `meta.segments`
+ *  through AssistantTurn, which splits correctly), which is exactly why it
+ *  survived: it was wrong only where `content` is read directly, and that is the
+ *  copy button, the branch preview and anything summarising the block. Copying a
+ *  reply and getting the whole turn's play-by-play is the visible half. */
 function textOf(segments: ChatSegment[]): string {
-  return segments.filter((s) => s.t === "text").map((s) => (s as { text: string }).text).join("").trim();
+  let cut = segments.length;
+  while (cut > 0 && segments[cut - 1].t === "text") cut--;
+  return segments.slice(cut)
+    .filter((s) => s.t === "text").map((s) => (s as { text: string }).text).join("").trim();
 }
 
 /** One committed reply, cut by the messages that interrupted it.

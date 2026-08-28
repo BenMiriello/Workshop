@@ -1217,14 +1217,65 @@ def _agent_step(turn: "Turn", parent: str, seg: dict) -> bool:
     return True
 
 
+def answer_segments(segments: list[dict]) -> list[dict]:
+    """The TRAILING run of text: what the turn finally said.
+
+    THE TRANSCRIPT HAS TWO KINDS OF `text` AND ONLY ONE OF THEM IS THE ANSWER.
+    A turn narrates as it works ("Taking the concrete ones first...", "Both
+    landed, starting the next thread") and then, at the end, answers. Both
+    arrive as `t: "text"`, and the ONLY thing that distinguishes them is
+    position: narration has work after it, the answer does not.
+
+    That rule was implemented in the renderer and nowhere else, so every other
+    consumer re-derived it or skipped it. This is the one definition; callers
+    use it rather than filtering on `t == "text"` themselves.
+
+    Mirrors AssistantTurn's split in frontend/src/components/chat/Transcript.tsx
+    exactly. The two must agree: the same turn is rendered from the client's
+    segments while it streams and from these after a reload."""
+    cut = len(segments)
+    while cut > 0 and segments[cut - 1].get("t") == "text":
+        cut -= 1
+    return segments[cut:]
+
+
 def _turn_content(turn: "Turn") -> str:
-    """The operator-visible answer: TOP-LEVEL text only. A subagent's interim
-    text lives in its own segment's steps and is not part of the reply.
+    """The operator-visible answer: the TRAILING run of top-level text.
+
+    NOT every text segment. It used to be all of them joined, which silently
+    made the stored reply body the answer with all of the turn's interim
+    narration concatenated onto the front of it. Measured 2026-08-27 over the
+    operator's own history: 535 of 632 replies (85%) carried narration they
+    should not have, 1.82 million characters of it.
+
+    The renderer was never fooled (it splits at the trailing run and always
+    has), so this was invisible on screen and wrong everywhere else `content` is
+    read: the copy button, the chat-list preview, search, notifications, and the
+    context fed back to the next turn. Reported repeatedly as the final response
+    "including all of the text that was printed out along the way".
+
+    A subagent's interim text is excluded too, as before: it lives in its own
+    segment's steps and is not part of the reply.
 
     Scrubbed through reply_guard: the guaranteed-clean backstop for the stored
     transcript, so a leaked platform-prompt region never persists even if the
     live per-chunk guard missed a split banner."""
-    joined = "".join(s["text"] for s in turn.segments if s.get("t") == "text").strip()
+    answer = answer_segments(turn.segments)
+    joined = "".join(s["text"] for s in answer if s.get("t") == "text").strip()
+    if not joined:
+        # A TURN THAT ENDED ON A TOOL NEVER ANSWERED, and 12.5% of the operator's
+        # replies are that shape: stopped, interrupted, or out of budget mid-step.
+        # Storing "" for those would be honest about the answer and useless
+        # everywhere content is read as a summary -- the chat list would show a
+        # blank row for every interrupted turn.
+        #
+        # So fall back to the LAST thing the turn said, which is the most recent
+        # narration and the best available account of where it got to. One
+        # segment, not all of them joined: the bug being fixed here is the
+        # joining, and reintroducing it in the fallback would put it back on
+        # exactly the replies most likely to be long.
+        said = [s for s in turn.segments if s.get("t") == "text" and s.get("text", "").strip()]
+        joined = said[-1]["text"].strip() if said else ""
     return reply_guard.scrub(joined)
 
 
