@@ -12,6 +12,36 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.7.2 - 2026-08-28 - shell chrome beside <main> gets the page's measure
+
+**Fix, CSS only.** No export moved and `api/ui.api.md` is unchanged.
+
+The shell renders the drift banner as a SIBLING of `<main>`, and `<main>` is
+where the content cap and the edge inset live (`.ws-app__body > main`). So the
+banner started at the viewport edge and ended past the other one: on a 390px
+phone its "Open Branches" link sat off the right of the screen, which made the
+one control on the one banner that interrupts every screen unreachable on the
+device it is read on. `.ws-trail` already solved this for itself; this
+generalises it.
+
+### Added
+
+- **`.ws-shellnotice`** — a `Notice` drawn by the shell rather than by a page.
+  Takes the same `max(--page-pad-x, (100% - --page-max) / 2)` measure as
+  `.ws-trail` and `<main>`, and drops the cap under `.ws-app--appfull` the same
+  way, so the three pieces of chrome line up at every width.
+
+### Changed
+
+- **`.ws-notice` wraps its action below 640px.** The body is `min-width: 0` and
+  the action is `flex: 0 0 auto`, so on a narrow screen the sentence collapsed
+  toward one word per line while the control held its size and pushed out of the
+  box. The body now takes a `16ch` floor there and the row wraps, so the action
+  drops to its own line, indented to the text column. Nothing changes at or
+  above 640px.
+
+Pinned in `frontend/src/styles.test.ts`.
+
 ## 0.7.1 - 2026-08-27 - a diagram library a consumer never installed is not an error
 
 **Fix.** No export moved and nothing changed for a consumer that installs

@@ -95,6 +95,26 @@ class TestTheStates:
         files = drift.blocking_files(drift.UI_PATHSPEC, root=repo)
         assert files == ["frontend/src/BrandNew.tsx"]
 
+    def test_a_modified_tracked_file_keeps_its_first_letter(self, repo: Path):
+        """THE BEHEADED PATH. Every test above edits an UNTRACKED file, whose
+        porcelain line is `?? path` with no leading blank, so none of them could
+        see this. An unstaged modification is ` M path`, and stripping the whole
+        of stdout removed that leading space from the FIRST line only, after
+        which the fixed three-character slice cut into the path itself. The
+        operator's phone showed `ackend/services/scoped_exec.py`: a file that
+        does not exist, on the one banner whose entire job is naming the file to
+        commit. Two files, so the bug lands on the first and the second stays
+        correct, which is exactly how it hid."""
+        (repo / "backend" / "aaa.py").write_text("# tracked\n")
+        (repo / "backend" / "zzz.py").write_text("# tracked\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "two"], cwd=repo, check=True)
+        (repo / "backend" / "aaa.py").write_text("# edited\n")
+        (repo / "backend" / "zzz.py").write_text("# edited\n")
+        assert drift.blocking_files(drift.BACKEND_PATHSPEC, root=repo,
+                                    exclude_tests=True) == [
+            "backend/aaa.py", "backend/zzz.py"]
+
     def test_a_missing_build_is_undecidable_not_current(self, repo: Path):
         (repo / "frontend" / "dist" / "build-info.json").unlink()
         r = drift.report(running_backend_id="backend-source", root=repo)

@@ -2040,6 +2040,29 @@ span.ws-filterchip__open { cursor: default; }
 /* The action sits on the text's first line rather than centred against a body
    that may have wrapped to three. */
 .ws-notice__action { flex: 0 0 auto; }
+/* On a phone the action DROPS TO ITS OWN LINE rather than being squeezed off
+   the right edge. The row is `min-width: 0` on the body and `flex: 0 0 auto` on
+   the action, so at 390px the sentence collapses toward one word per line while
+   the control sits against the edge, and on the shell banner it ran past it
+   entirely. Giving the body a floor makes the wrap happen instead: below it the
+   action cannot share the line, so it takes the next one, indented to the text
+   column so it reads as belonging to the sentence above it. */
+@media (max-width: 640px) {
+  .ws-notice { flex-wrap: wrap; }
+  .ws-notice__body { min-width: 16ch; }
+  .ws-notice__action { margin-left: calc(14px + var(--space-2)); }
+}
+
+/* A notice rendered by the SHELL, beside <main> rather than inside it.
+   <main> owns the content cap and the edge inset, so anything the shell draws
+   as its sibling starts at the viewport edge and ends past the other one. Same
+   measure as `.ws-trail`, which is a sibling for the same reason, so the two
+   pieces of shell chrome line up with the page under them. */
+.ws-shellnotice {
+  flex: 0 0 auto;
+  padding-inline: max(var(--page-pad-x), (100% - var(--page-max)) / 2);
+}
+.ws-app--appfull .ws-shellnotice { padding-inline: var(--page-pad-x); }
 
 /* skeleton shimmer for loading rows */
 .ws-skeleton { background: linear-gradient(90deg, var(--bg-inset) 25%, var(--card-hover) 37%, var(--bg-inset) 63%); background-size: 400% 100%; border-radius: var(--radius-sm); animation: ws-shimmer 1.4s ease infinite; height: 0.9rem; }

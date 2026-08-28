@@ -69,12 +69,25 @@ def repo_root() -> Path:
 
 
 def _run(args: list[str], cwd: Path) -> tuple[int, str]:
+    """Run a command and return its stdout with TRAILING whitespace removed only.
+
+    THE LEADING WHITESPACE IS DATA, and stripping it cost a file its first
+    letter. `git status --porcelain` writes two status columns before the path,
+    and an unstaged modification leaves the first of them BLANK: the line is
+    ` M backend/services/scoped_exec.py`. A `.strip()` over the whole of stdout
+    removed that leading space from the first line, and the fixed `line[3:]`
+    slice below then cut `M b` instead of ` M `, so the banner named
+    `ackend/services/scoped_exec.py` -- a path that does not exist, on the one
+    screen whose whole job is telling somebody which file to commit. A truncated
+    path is worse than no path. Only the trailing newline may be dropped here;
+    callers that want a bare token strip their own.
+    """
     try:
         p = subprocess.run(args, cwd=str(cwd), capture_output=True, text=True,
                            timeout=_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
         return 1, ""
-    return p.returncode, (p.stdout or "").strip()
+    return p.returncode, (p.stdout or "").rstrip("\n")
 
 
 def source_id(which: str, *, root: Path | None = None) -> str | None:
@@ -89,7 +102,8 @@ def source_id(which: str, *, root: Path | None = None) -> str | None:
     if not script.exists():
         return None
     code, out = _run(["bash", str(script)], root)
-    return out or None if code == 0 else None
+    # A source id is a bare token, so this call site is the one that strips.
+    return out.strip() or None if code == 0 else None
 
 
 def dist_id(*, root: Path | None = None) -> str | None:
@@ -205,6 +219,7 @@ def report(*, running_backend_id: str | None = None,
     # branch merges.
     _, git_dir = _run(["git", "rev-parse", "--git-dir"], root)
     _, common = _run(["git", "rev-parse", "--git-common-dir"], root)
+    git_dir, common = git_dir.strip(), common.strip()
     canonical = bool(git_dir) and git_dir == common
     return {
         "surfaces": rows,

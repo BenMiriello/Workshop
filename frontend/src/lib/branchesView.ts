@@ -19,8 +19,8 @@
 // not cosmetic: a rung of the ladder answers "who is in this tree and is
 // anything at risk", which presumes there IS a tree to be in. A row whose
 // directory is missing, or whose directory git has never heard of, has no such
-// answer, so it short-circuits rather than adding a rung. The ladder is still
-// six deep.
+// answer, so it short-circuits rather than adding a rung. The ladder is seven
+// deep.
 //
 // `presence` COMES FROM THE SERVER (`worktrees.live_branches`), which reads the
 // disk and joins the record onto it. Before that join, `/branches?live=true`
@@ -31,6 +31,13 @@
 // workspace-ownership-and-leases-2026-08-22.md, which maps them for exactly
 // this view: "`ok` free or yours, `running` someone working, `warn` holder
 // idle, `danger` preempted or conflicted, `stopped` expired or reaped").
+//
+// THE LADDER IS SEVEN DEEP NOW, and the rung that was added is a DOWNGRADE.
+// `Dormant` takes a tree that `Abandoned` would have painted `danger` and,
+// once it has sat for a day, paints it `stopped` instead. The operator's rule,
+// recorded in this repo before this page existed: never make a card's alarm
+// colour permanent, because a hue that never varies carries no information.
+// Eleven identical red rows was that failure exactly.
 //
 // `danger` IS USED HERE AND DELIBERATELY IS NOT IN `holders.ts`. That file
 // explains why it withholds it: from a `LeaseRef` alone, a bystander session on
@@ -88,6 +95,46 @@ export type BranchState = {
 
 // --- the state ladder ---------------------------------------------------------
 
+/** When a tree nobody holds stops being news and becomes disk.
+ *
+ *  NOT A LEASE WINDOW, which is why it is here and not read from `LeaseWindows`.
+ *  The server's thresholds decide who holds what and when a claim lapses; this
+ *  decides how loudly one row is drawn, which is a presentation call and has no
+ *  counterpart on the server to disagree with. A day is the span over which
+ *  stranded work is still somebody's afternoon: past it, nobody is coming back
+ *  to it this session. */
+export const DORMANT_AFTER_SEC = 24 * 60 * 60;
+
+/** How wide a run of hex has to be before it is an ID rather than a name, and
+ *  how much of it a row shows. Eight hex characters is the length git itself
+ *  picked for an abbreviated object, for the same reason: it identifies without
+ *  being read. */
+const HEX_ID_MIN = 24;
+const HEX_ID_KEEP = 8;
+
+/**
+ * A branch name in the width a row has.
+ *
+ * A 32-CHARACTER HEX SLUG IS NOT A NAME, and rendered in full it wrapped over
+ * two lines and took most of the page's vertical space while identifying
+ * nothing a prefix would not. This shortens ONLY the case that is machine
+ * output: an optional `t-` ticket prefix followed by a long run of hex. A slug
+ * somebody chose (`t-smoke2`, `feat-widths`) is short already and passes
+ * through whole, because abbreviating a real name is how you make a page
+ * unreadable in the other direction.
+ *
+ * The ellipsis is not decoration: it is the row promising that there is more,
+ * so a reader never mistakes the prefix for the whole value. The full slug is
+ * on the row's own panel, where the reap dialog and the copy button need it.
+ */
+export function branchLabel(slug: string): string {
+  const m = /^(t-)?([0-9a-f]+)$/i.exec(slug.trim());
+  if (!m) return slug;
+  const [, prefix = "", hex] = m;
+  if (hex.length < HEX_ID_MIN) return slug;
+  return `${prefix}${hex.slice(0, HEX_ID_KEEP)}…`;
+}
+
 /**
  * One branch's state. FIRST MATCH WINS, and the order is the point: the
  * question "is anyone's work at risk here" outranks "is anyone working here",
@@ -97,18 +144,22 @@ export type BranchState = {
  *
  *  1. `Preempting`   a yield is in flight. `danger`, because a stop was asked
  *                    for and the holder has not answered yet.
- *  2. `Abandoned`    the tree is DIRTY and nobody holds it. `danger`, and it is
- *                    the row this whole view was built for: somebody's
- *                    uncommitted work is sitting in a tree with no owner, which
- *                    is what blocks a build and what nothing surfaced before.
- *  3. `Expired`      the lease lapsed and the tree is clean. `stopped`, a
+ *  2. `Abandoned`    the tree is DIRTY, nobody holds it, and it went that way
+ *                    inside the last day. `danger`, and it is the row this whole
+ *                    view was built for: somebody's uncommitted work is sitting
+ *                    in a tree with no owner, which is what blocks a build.
+ *  3. `Dormant`      the same tree a day later. `stopped`, and it does NOT want
+ *                    a look. See `DORMANT_AFTER_SEC`: eleven of these is what
+ *                    this system looks like at rest, and a screen of identical
+ *                    red told the operator nothing about which one to open.
+ *  4. `Expired`      the lease lapsed and the tree is clean. `stopped`, a
  *                    neutral outcome: the tree is reusable, nothing is at risk.
- *  4. `Idle`         held, renewed, but no WORK event inside the idle window.
+ *  5. `Idle`         held, renewed, but no WORK event inside the idle window.
  *                    `warn`. The holder is alive and is not getting anywhere,
  *                    which is precisely "stuck" and is a reason to look rather
  *                    than a reason to act.
- *  5. `Working`      held and moving. `running`.
- *  6. `Free`         no lease, clean tree. `ok`: available, nothing owed.
+ *  6. `Working`      held and moving. `running`.
+ *  7. `Free`         no lease, clean tree. `ok`: available, nothing owed.
  *
  * `merged` and `discarded` short-circuit above all of it, because a record that
  * is over has no live state to report and its lease row is history. So do the
@@ -125,7 +176,8 @@ export type BranchState = {
  *              worth of disk, and no tool but a plain delete can clear it.
  */
 export function branchState(row: BranchRow, windows: LeaseWindows,
-                            selfSessionId?: string | null): BranchState {
+                            selfSessionId?: string | null,
+                            nowMs: number = Date.now()): BranchState {
   const { record, lease, tree, yieldRequested } = row;
 
   if (record.status === "merged") {
@@ -172,6 +224,22 @@ export function branchState(row: BranchRow, windows: LeaseWindows,
   }
 
   if (!held && dirty) {
+    // A HUE THAT NEVER VARIES CARRIES NO INFORMATION (frontend/CLAUDE.md, "a
+    // constant is not a signal"). Eleven dirty trees nobody holds is the
+    // RESTING STATE of this system, not an emergency, and painting every one of
+    // them `danger` produced a screen of identical red that says nothing about
+    // which row to look at. So the rung splits on age: work stranded in the
+    // last day is news, and a tree that has sat untouched for a week is
+    // inventory. Same facts, two different decisions.
+    const age = tipAgeSeconds(record, nowMs);
+    if (age !== null && age >= DORMANT_AFTER_SEC) {
+      return {
+        kind: "stopped", label: "Dormant", needsAttention: false,
+        detail: `Uncommitted work is sitting in this tree and nobody holds it. `
+          + `Nothing has been committed here for ${humanSeconds(age)}, so it is `
+          + `disk rather than an emergency.`,
+      };
+    }
     return {
       kind: "danger", label: "Abandoned", needsAttention: true,
       detail: lease
@@ -222,6 +290,35 @@ export function holderLabel(row: BranchRow): string {
 }
 
 // --- the numbers a row shows --------------------------------------------------
+
+/**
+ * The facts one row prints beside a branch name, in reading order.
+ *
+ * ONE TREE IS ONE ROW ON A 390px SCREEN, which is what this list is for and
+ * what the eight-column table it replaces could not be. A table with columns
+ * running off the right edge is the wrong primitive on a phone (the kit says so
+ * where `.ws-listrow` is defined), so the columns that were being clipped are
+ * not squeezed, they are CUT: what is left is the state word, the one number
+ * that varies between rows in that state, and the age. Everything else -- the
+ * holder's id, how long it has been held, the heartbeat, the drift from base,
+ * the path -- moves to the row's own panel, which opens under it.
+ *
+ * The state WORD is here rather than only in the dot, for the reason
+ * frontend/CLAUDE.md gives about ticket lists: a colour answers "is this stuck"
+ * only for a reader who has already learned the five hues.
+ */
+export function rowFacts(row: BranchRow, state: BranchState): string[] {
+  const facts = [state.label];
+  if (row.lease?.state === "held") {
+    facts.push(holderLabel(row));
+  } else if (row.tree && !row.tree.clean) {
+    // The size of what is stranded is the only thing that separates one
+    // dormant tree from the next, so it is the fact the row spends its width on.
+    facts.push(`${row.tree.entries} uncommitted`);
+  }
+  return facts;
+}
+
 
 /** Seconds, in the words a row has space for. Rounds DOWN, so "2 minutes" never
  *  means 2.9 -- an operator reading a heartbeat age is deciding whether
@@ -394,11 +491,22 @@ export function reapUrl(row: BranchRow, plan: ReapPlan): string {
  *  because nothing recorded it being created. Null rather than "unknown" so the
  *  caller can leave the cell empty; a placeholder in a dense column is noise. */
 export function tipAge(record: BranchRecord, nowMs: number): string | null {
+  const secs = tipAgeSeconds(record, nowMs);
+  return secs === null ? null : shortSeconds(secs);
+}
+
+/** The same age as a number, for the ladder.
+ *
+ *  Null rather than zero when nothing dated the branch, and the ladder treats
+ *  null as "not old" rather than "old": an age nobody recorded is not evidence
+ *  that a tree has been sitting, and quieting a row on a fact that was never
+ *  measured is the one way this rung could hide real stranded work. */
+export function tipAgeSeconds(record: BranchRecord, nowMs: number): number | null {
   const at = record.tip_at ?? record.created_at ?? null;
   if (!at) return null;
   const t = Date.parse(at);
   if (Number.isNaN(t)) return null;
-  return shortSeconds((nowMs - t) / 1000);
+  return Math.max(0, (nowMs - t) / 1000);
 }
 
 // --- ordering -----------------------------------------------------------------
@@ -411,9 +519,10 @@ export function tipAge(record: BranchRecord, nowMs: number): string | null {
  *  stuck thing is the one that has been costing the most.
  */
 export function orderRows(rows: BranchRow[], windows: LeaseWindows,
-                          selfSessionId?: string | null): BranchRow[] {
+                          selfSessionId?: string | null,
+                          nowMs: number = Date.now()): BranchRow[] {
   const rank = (r: BranchRow): number => {
-    const s = branchState(r, windows, selfSessionId);
+    const s = branchState(r, windows, selfSessionId, nowMs);
     if (s.label === "Preempting") return 0;
     if (s.label === "Abandoned") return 1;
     if (s.label === "Orphaned") return 2;
@@ -421,9 +530,12 @@ export function orderRows(rows: BranchRow[], windows: LeaseWindows,
     if (s.label === "Working") return 4;
     if (s.label === "Yours") return 5;
     if (s.label === "Free") return 6;
-    if (s.label === "Expired") return 7;
-    if (s.label === "Gone") return 8;
-    return 9;
+    // Below the fold: nothing here is moving. A dormant tree still holds work,
+    // so it sits above the two rungs that hold none.
+    if (s.label === "Dormant") return 7;
+    if (s.label === "Expired") return 8;
+    if (s.label === "Gone") return 9;
+    return 10;
   };
   return [...rows].sort((a, b) => {
     const d = rank(a) - rank(b);
@@ -438,32 +550,22 @@ export function orderRows(rows: BranchRow[], windows: LeaseWindows,
  *  the same `needsAttention` the ladder set, so the number and the pills can
  *  never disagree. */
 export function attentionCount(rows: BranchRow[], windows: LeaseWindows,
-                               selfSessionId?: string | null): number {
-  return rows.filter((r) => branchState(r, windows, selfSessionId).needsAttention).length;
+                               selfSessionId?: string | null,
+                               nowMs: number = Date.now()): number {
+  return rows.filter(
+    (r) => branchState(r, windows, selfSessionId, nowMs).needsAttention).length;
 }
 
 // --- drift --------------------------------------------------------------------
 
-/** The status kind for one surface of the apply check.
- *
- *  `blocked` is `danger` and `stale` is only `warn`, and the gap between them is
- *  the whole point of showing this at all: a stale surface is fixed by running
- *  the apply step, and a blocked one is not fixed by running anything. Somebody
- *  has to commit the files. Rendering them the same colour would send the
- *  operator round the loop that cost nine hours on 2026-08-27. */
-export function driftKind(state: string): StatusKind {
-  if (state === "blocked") return "danger";
-  if (state === "stale") return "warn";
-  if (state === "undecidable") return "warn";
-  return "ok";
-}
-
-export function driftLabel(state: string): string {
-  if (state === "blocked") return "Blocked";
-  if (state === "stale") return "Stale";
-  if (state === "undecidable") return "Unknown";
-  return "Current";
-}
+// DRIFT HAS ONE SURFACE, AND IT IS `shell/DriftBanner`. `driftKind` and
+// `driftLabel` lived here to paint a per-surface pill on the Branches page, and
+// that pill was the THIRD rendering of the same fact on one phone screen: the
+// shell's banner, the page's own copy of the banner, and a card headed "WHAT IS
+// BEING SERVED" reading `ui bundle: Current / backend: Blocked`. The banner's
+// sentence already names which surface is held back and by which files, so the
+// pills were restating it in a shape that could disagree with it. They are gone
+// rather than moved. The functions below are what the one surface needs.
 
 /** The one sentence the banner leads with, or null when there is nothing to say.
  *
@@ -476,10 +578,15 @@ export function driftHeadline(report: DriftReport | null): string | null {
   const blocked = report.surfaces.filter((s) => s.state === "blocked");
   if (blocked.length > 0) {
     const names = blocked.map((s) => s.name).join(" and ");
-    const files = blocked.reduce((n, s) => n + (s.blocking_files ?? []).length, 0);
+    const n = blockingFiles(report).length;
+    // The verb agrees with the count. It read "1 file below have to be
+    // committed first" on the operator's phone, and a banner that cannot
+    // conjugate is a banner nobody trusts about anything else it says. "below"
+    // went with it: the files are named on this same line now, not under it.
+    const owed = n === 1 ? "1 file has" : `${n} files have`;
     return `You may be looking at old code. Uncommitted work is holding the `
       + `${names} back, and rerunning the apply step will not clear it: `
-      + `${files} file${files === 1 ? "" : "s"} below have to be committed first.`;
+      + `${owed} to be committed first.`;
   }
   const stale = report.surfaces.filter((s) => s.state === "stale");
   if (stale.length > 0) {
@@ -501,4 +608,25 @@ export function blockingFiles(report: DriftReport | null): string[] {
   if (!report) return [];
   const all = report.surfaces.flatMap((s) => s.blocking_files ?? []);
   return [...new Set(all)].sort();
+}
+
+/** How many paths a banner names before it starts counting instead. */
+export const BLOCKING_NAMED = 3;
+
+/**
+ * The blocking files as one line, elided from the END when there are too many.
+ *
+ * A PATH IS EITHER WHOLE OR HONESTLY SHORT. The operator's banner read
+ * `ackend/services/scoped_exec.py`, a file that does not exist, because the
+ * server had cut a character off the front of it (`services/drift.py::_run`).
+ * That was the bug; this is the rule that follows from it. The point of naming
+ * a file here is that somebody can go and commit it, so a name that has been
+ * quietly altered is worse than no name. When the list is long the ELISION is
+ * declared, at the end, in a count.
+ */
+export function blockingSummary(files: string[]): string {
+  if (files.length === 0) return "";
+  if (files.length <= BLOCKING_NAMED) return files.join(", ");
+  const shown = files.slice(0, BLOCKING_NAMED);
+  return `${shown.join(", ")} and ${files.length - shown.length} more`;
 }

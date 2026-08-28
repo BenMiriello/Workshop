@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { AlertTriangle } from "lucide-react";
 import { Notice, shortHttpError } from "@workshop/ui";
 
-import { blockingFiles, driftHeadline } from "../../lib/branchesView";
+import { blockingFiles, blockingSummary, driftHeadline } from "../../lib/branchesView";
 import type { DriftReport } from "../../lib/branchesView";
 import { queryKeys } from "../../lib/queryKeys";
 
@@ -27,8 +27,21 @@ import { queryKeys } from "../../lib/queryKeys";
 // interrupting for. The Branches page shows the full picture including `stale`;
 // this is the alarm, not the dashboard.
 //
-// It shares `queryKeys.drift.report()` with that page, so mounting it here costs
-// no extra request when both are on screen.
+// IT IS THE ONLY PLACE DRIFT IS SAID, as of 2026-08-28. The Branches page used
+// to render its own copy of this sentence AND a "what is being served" card
+// under it, so on a phone the same forty words arrived three times above the
+// list they were supposed to be introducing. A second surface for one fact is
+// not redundancy, it is two things that can disagree. The page reads `/api/drift`
+// no more; this is the drift surface and the page is the branch surface.
+//
+// IT SITS OUTSIDE <main>, which is what gives the shell its padding, so it
+// carries `ws-shellnotice` to take the same measure. Without it the banner ran
+// edge to edge and its action was pushed past the right side of a 390px screen,
+// which is to say the one control on the one banner that interrupts every
+// screen was unreachable on the device the operator reads it on.
+//
+// It shares `queryKeys.drift.report()` with the Branches page's reload, so
+// mounting it costs no extra request.
 
 const DRIFT_MS = 60_000;
 
@@ -56,15 +69,17 @@ export function DriftBanner() {
   // for a linked worktree, neither of which earns a bar on every screen.
   if (!report?.blocked) return null;
 
-  const files = blockingFiles(report);
   const headline = driftHeadline(report);
   if (!headline) return null;
 
   return (
     <Notice
+      className="ws-shellnotice"
       tone="error"
       icon={<AlertTriangle aria-hidden />}
-      detail={files.join(", ")}
+      // Whole paths or a declared count, never a silently shortened name: the
+      // point of printing one is that somebody goes and commits it.
+      detail={blockingSummary(blockingFiles(report))}
       action={<Link to="/branches">Open Branches</Link>}
     >
       {headline}

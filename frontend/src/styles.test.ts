@@ -146,6 +146,35 @@ describe("the app shell cannot scroll its own chrome away", () => {
 // they covered, and one of them dimmed only the chat column. They are one rule
 // now, and this is what stops a fifth being written: a dimming surface is
 // `--scrim` on a full-bleed box, so the token has exactly one consumer.
+describe("shell chrome beside <main> takes the page's own measure", () => {
+  // <main> owns the content cap and the edge inset, so anything the shell draws
+  // as its SIBLING starts at the viewport edge and ends past the other one.
+  // Measured 2026-08-28 on a phone: the drift banner ran edge to edge and its
+  // "Open Branches" link sat past the right side of a 390px screen, so the one
+  // control on the one banner that interrupts every screen was unreachable on
+  // the device it is read on.
+  it("gives the shell notice the same measure as <main> and the trail", () => {
+    const measure = "max(var(--page-pad-x), (100% - var(--page-max)) / 2)";
+    expect(kitRule(".ws-shellnotice")).toContain(`padding-inline: ${measure}`);
+    expect(kitRule(".ws-trail")).toContain(measure);
+    // And an app that owns its width drops the cap here exactly as it does for
+    // <main> and the trail, or the banner would be centred over a full-bleed app.
+    expect(kitRule(".ws-app--appfull .ws-shellnotice"))
+      .toContain("padding-inline: var(--page-pad-x)");
+  });
+
+  it("wraps a notice's action onto its own line rather than off the screen", () => {
+    // The body is `min-width: 0` and the action is `flex: 0 0 auto`, so without
+    // a floor on the body the sentence collapses toward one word per line while
+    // the control keeps its size and leaves the box.
+    const phone = kit.slice(kit.indexOf(".ws-notice__action { flex: 0 0 auto; }"));
+    const block = phone.slice(0, phone.indexOf("/* A notice rendered by the SHELL"));
+    expect(block).toContain("@media (max-width: 640px)");
+    expect(block).toContain(".ws-notice { flex-wrap: wrap; }");
+    expect(block).toContain("min-width: 16ch");
+  });
+});
+
 describe("there is one overlay backdrop, not four", () => {
   it("spends --scrim in the kit's overlay rule and nowhere else", () => {
     const uses = (text: string) => text.split("var(--scrim)").length - 1;

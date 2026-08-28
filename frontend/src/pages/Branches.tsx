@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  AlertTriangle, GitBranch, RefreshCw, Trash2,
+  GitBranch, RefreshCw, Trash2,
 } from "lucide-react";
 import {
-  Button, Card, ConfirmDialog, Notice, PageHeader, Row, SectionLabel, Segmented,
-  Skeleton, Stack, StateBlock, StatusDot, StatusPill, Table, TableScroll,
-  shortHttpError,
+  Button, Card, ConfirmDialog, CopyButton, Notice, PageHeader, Prop, Props, Row,
+  Segmented, Skeleton, Stack, StateBlock, StatusDot, shortHttpError,
 } from "@workshop/ui";
 
 import HolderControls from "../components/holders/HolderControls";
@@ -14,25 +13,48 @@ import {
   useBranchesView, useYieldFlags,
 } from "../components/holders/useBranchesView";
 import {
-  attentionCount, blockingFiles, branchState, driftHeadline, driftKind,
-  driftLabel, heartbeatNote, orderRows, reapPlan, reapUrl, shortSeconds, tipAge,
+  attentionCount, branchLabel, branchState, heartbeatNote, orderRows, reapPlan,
+  reapUrl, rowFacts, shortSeconds, tipAge,
 } from "../lib/branchesView";
 import type { BranchRow } from "../lib/branchesView";
+import type { BranchesViewRead } from "../components/holders/useBranchesView";
 
 // WHO IS WORKING WHERE, AND WHAT IS STUCK.
 //
 // The question this page exists for is not "what branches are there". It is
 // "is anything wedged, and is anyone's work stranded" -- so the ordering is by
-// ATTENTION rather than by time, the dirty-tree column is as prominent as the
-// holder, and the drift banner sits above everything because a stale origin
-// makes every other answer on the screen a description of code the operator
-// cannot see.
+// ATTENTION rather than by time, and the state word leads every row.
+//
+// IT SHIPPED WITHOUT ANYONE LOOKING AT IT ON A SCREEN, and the operator opened
+// it on a phone the next morning. Ten faults, and eight of them were one fault
+// wearing different clothes: nothing here had been sized to a 390px column.
+// What that rebuild changed, so it is not undone by accident:
+//
+//   * THE TABLE IS GONE. Eight columns inside a horizontal scroller meant a
+//     `STATE` column and then a third column clipped to a single letter at the
+//     right edge. `.ws-list` / `.ws-listrow` is the kit's answer and its own
+//     comment is about exactly this failure: one row per item, never scrolling
+//     sideways at any width, two lines on a phone and one from 720px. The
+//     columns that used to be clipped are on the row's panel now.
+//   * THE NAME IS SHORT. A 32-character hex slug wrapped over two lines with
+//     its project underneath it in mono, and eleven of those was most of the
+//     page. `branchLabel` keeps eight characters and an ellipsis; the whole
+//     value is on the panel with a copy button.
+//   * DRIFT IS NOT SAID HERE. It was said three times on one screen: the
+//     shell's banner, a second copy of the same forty words in this page's
+//     body, and a card headed "WHAT IS BEING SERVED" restating it as pills.
+//     `shell/DriftBanner` is the one surface. This page does not read /drift.
+//   * THE COUNT IS ON THE FILTER THAT PRODUCES IT. "11 of 13 need a look" sat
+//     under the title while the active filter said "All branches", so the
+//     number and the view disagreed about what was being counted.
+//   * NO EXPLAINER SUBTITLE. A page called Branches does not need a sentence
+//     defining a branch.
 //
 // WHY THE PILL WORDS AND THE ORDER ARE NOT IN THIS FILE. `lib/branchesView.ts`
-// owns the state ladder and is tested; this file renders what it decided. That
-// split is the repo's rule (the target of a test is the pure rule behind a
-// behaviour, and there is no DOM harness here), and it is what stops a status
-// word from being invented at a call site.
+// owns the state ladder, the row's facts and the short name, and it is tested;
+// this file renders what it decided. That split is the repo's rule (the target
+// of a test is the pure rule behind a behaviour, and there is no DOM harness
+// here), and it is what stops a status word from being invented at a call site.
 //
 // TAKE OVER IS NOT OFFERED FROM THIS PAGE, and that is a real limit rather than
 // an omission. `POST /control/{id}/preempt` requires `new_holder_id`: somebody
@@ -54,11 +76,6 @@ const PAGE = 100;
 
 type Filter = "attention" | "all";
 
-const FILTERS = [
-  { value: "attention" as const, label: "Needs a look" },
-  { value: "all" as const, label: "All branches" },
-];
-
 // ALL BRANCHES IS THE DEFAULT, and the reason is a measured failure rather than
 // a preference. Opening on "Needs a look" meant the first thing this page ever
 // said was an empty state reading "Nothing is stuck", and on 2026-08-27 it said
@@ -68,9 +85,9 @@ const FILTERS = [
 //
 // Opening on the whole list costs nothing that the filter was buying: the rows
 // are already ordered by attention, so what needs a look is still at the top,
-// and the header still counts it ("3 of 14 need a look"). The filter stays,
-// because narrowing to the decisions is a real thing to want once you can see
-// there are some.
+// and the filter itself carries both counts. The filter stays, because
+// narrowing to the decisions is a real thing to want once you can see there are
+// some.
 const DEFAULT_FILTER: Filter = "all";
 
 export default function Branches() {
@@ -86,66 +103,39 @@ export default function Branches() {
     yieldRequested: !!r.lease && yielding.has(r.lease.holder_id),
   }));
 
-  const ordered = withYield === null ? null : orderRows(withYield, view.windows);
-  const attention = withYield === null ? 0 : attentionCount(withYield, view.windows);
+  const ordered = withYield === null ? null : orderRows(withYield, view.windows, null, now);
+  const attention = withYield === null ? null : attentionCount(withYield, view.windows, null, now);
   const filtered = ordered === null ? null : (
     filter === "attention"
-      ? ordered.filter((r) => branchState(r, view.windows).needsAttention)
+      ? ordered.filter((r) => branchState(r, view.windows, null, now).needsAttention)
       : ordered
   );
   const shown = filtered === null ? null : filtered.slice(0, PAGE);
 
-  const selectedRow = (withYield ?? []).find((r) => r.record.id === selected) ?? null;
-
-  const headline = driftHeadline(view.drift);
-  const blocking = blockingFiles(view.drift);
+  // THE NUMBER SITS ON THE CONTROL THAT PRODUCES IT. Under the title it was a
+  // claim about a view that was not on screen. Here each option counts its own
+  // result, so picking one can never disagree with the number beside it.
+  const filters = [
+    {
+      value: "attention" as const,
+      label: attention === null ? "Needs a look" : `Needs a look (${attention})`,
+    },
+    {
+      value: "all" as const,
+      label: withYield === null ? "All" : `All (${withYield.length})`,
+    },
+  ];
 
   return (
     <div>
       <PageHeader
         title="Branches"
-        sub="Every tree an agent can be working in, who holds it, and whether anything is stuck."
-        meta={
-          withYield === null ? null
-            : attention > 0
-              ? `${attention} of ${withYield.length} need a look`
-              : `${withYield.length} branches, nothing stuck`
-        }
         actions={
           <Button size="sm" variant="ghost" onClick={() => { view.reload(); }}>
             <RefreshCw aria-hidden /> Refresh
           </Button>
         }
       />
-
-      {/* THE NINE-HOUR ITEM. A stale origin is said FIRST, because every branch
-          state below it describes code the operator may not be looking at. */}
-      {headline && (
-        <Notice
-          tone={view.drift?.blocked ? "error" : "warn"}
-          icon={<AlertTriangle aria-hidden />}
-          detail={
-            blocking.length > 0
-              ? blocking.join(", ")
-              : view.drift?.apply_command
-          }
-        >
-          {headline}
-        </Notice>
-      )}
-
-      {view.drift && (
-        <Card compact>
-          <SectionLabel icon={<GitBranch aria-hidden />}>What is being served</SectionLabel>
-          <Row wrap>
-            {view.drift.surfaces.map((s) => (
-              <StatusPill key={s.name} status={driftKind(s.state)}>
-                {s.name}: {driftLabel(s.state)}
-              </StatusPill>
-            ))}
-          </Row>
-        </Card>
-      )}
 
       {!view.leasesAvailable && (
         <Notice tone="info">
@@ -165,7 +155,7 @@ export default function Branches() {
       <Row wrap>
         <Segmented
           ariaLabel="Which branches to list"
-          options={FILTERS}
+          options={filters}
           value={filter}
           onChange={(v) => setFilter(v as Filter)}
         />
@@ -182,7 +172,7 @@ export default function Branches() {
           action={<Button size="sm" onClick={() => { view.reload(); }}>Retry</Button>}
         >
           One of the reads behind this page did not land, so some rows may be
-          missing their holder, their tree state or the staleness banner.
+          missing their holder or their tree state.
         </Notice>
       )}
 
@@ -206,7 +196,7 @@ export default function Branches() {
           icon={<GitBranch aria-hidden />}
           title={filter === "attention" ? "Nothing is stuck" : "No branches are allocated"}
           hint={filter === "attention"
-            ? "No tree is idle, expired or holding uncommitted work nobody owns. Switch to All branches to see the ones that are simply being worked."
+            ? "No tree is being preempted, freshly stranded or orphaned. Switch to All to see the ones that are simply sitting there."
             : "This lists what is on disk, not what was recorded, so an empty list means the branches directory has no trees in it. A branch appears here when work starts on a ticket, or after POST /api/worktrees/<project>."}
           action={filter === "attention"
             ? <Button size="sm" onClick={() => setFilter("all")}>Show all branches</Button>
@@ -214,78 +204,59 @@ export default function Branches() {
         />
       ) : (
         <Stack gap="sm">
-          <TableScroll>
-            <Table>
-              <thead>
-                <tr>
-                  <th>Branch</th>
-                  <th>State</th>
-                  <th>Holder</th>
-                  <th>Held</th>
-                  <th>Beat</th>
-                  <th>Tree</th>
-                  <th>Vs base</th>
-                  <th>Age</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((r) => {
-                  const state = branchState(r, view.windows);
-                  const lease = r.lease;
-                  return (
-                    <tr key={r.record.id}>
-                      <td>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setSelected(
-                            selected === r.record.id ? null : r.record.id)}
-                        >
-                          {r.record.branch_slug}
-                        </Button>
-                        <div className="ws-muted ws-mono">{r.record.project_slug}</div>
-                      </td>
-                      <td><StatusDot status={state.kind}>{state.label}</StatusDot></td>
-                      <td className="ws-mono">
-                        {lease
-                          ? `${lease.holder_kind} ${lease.holder_id}`
-                          : <span className="ws-muted">nobody</span>}
-                      </td>
-                      <td className="ws-muted ws-mono">
-                        {shortSeconds(lease?.held_for_sec)}
-                      </td>
-                      <td className="ws-muted ws-mono">
-                        {lease?.state === "held" ? shortSeconds(lease.since_heartbeat_sec) : ""}
-                      </td>
-                      <td>
-                        {r.record.presence !== "tree"
-                          // A row with no git behind it has no working tree to
-                          // read, so "reading" would be a promise that never
-                          // resolves. The state column already said which.
-                          ? <span className="ws-muted">no tree</span>
-                          : r.tree === null
-                            ? <span className="ws-muted">reading</span>
-                            : r.tree.clean
-                              ? <span className="ws-muted">clean</span>
-                              : <StatusDot status="warn">
-                                  {r.tree.entries} uncommitted
-                                </StatusDot>}
-                      </td>
-                      <td className="ws-muted ws-mono">
-                        {r.ahead === null && r.behind === null
-                          ? ""
-                          : `+${r.ahead ?? 0} / -${r.behind ?? 0}`}
-                      </td>
-                      {/* HOW LONG IT HAS BEEN SITTING THERE. For an unrecorded
-                          tree this is the only age there is: nothing wrote a
-                          created_at, because nothing recorded it being made. */}
-                      <td className="ws-muted ws-mono">{tipAge(r.record, now) ?? ""}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </Table>
-          </TableScroll>
+          {/* NO CARD AROUND THE LIST. The open row's panel IS a card, and a
+              card inside a card gave the panel a second border a few pixels
+              inside the first. With the rows flat, the one raised surface on
+              the screen is the row you opened, which is the hierarchy the
+              interaction actually has. */}
+          <ul className="ws-list">
+            {shown.map((r) => {
+              const state = branchState(r, view.windows, null, now);
+              const open = selected === r.record.id;
+              return (
+                <li key={r.record.id}>
+                  <button
+                    type="button"
+                    className="ws-listrow"
+                    aria-expanded={open}
+                    onClick={() => setSelected(open ? null : r.record.id)}
+                  >
+                    <span
+                      className="ws-listrow__mark"
+                      title={state.label}
+                      aria-label={state.label}
+                    >
+                      <StatusDot status={state.kind}>{null}</StatusDot>
+                    </span>
+                    {/* The project sits BESIDE the name, not under it: it is
+                        the second half of the same identifier, and stacking
+                        it cost a whole line per row. */}
+                    <span className="ws-listrow__title">
+                      <span className="ws-mono">{branchLabel(r.record.branch_slug)}</span>
+                      {" "}
+                      <span className="ws-muted">{r.record.project_slug}</span>
+                    </span>
+                    <span className="ws-listrow__meta">
+                      {rowFacts(r, state).map((f) => <span key={f}>{f}</span>)}
+                      {/* How long it has been sitting there, and NOTHING
+                          when nothing dated it: an empty trailing span still
+                          takes the meta line's separator, so an orphan read
+                          "Orphaned ·" with a middot pointing at nobody. For
+                          an unrecorded tree this is the only age there is,
+                          because nothing wrote a created_at. */}
+                      {tipAge(r.record, now) && (
+                        <span className="ws-listrow__time">{tipAge(r.record, now)}</span>
+                      )}
+                    </span>
+                  </button>
+                  {open && <BranchPanel row={r} view={view} now={now} onDone={() => {
+                    setSelected(null);
+                    view.reload();
+                  }} />}
+                </li>
+              );
+            })}
+          </ul>
 
           {filtered !== null && filtered.length > PAGE && (
             <p className="ws-muted">
@@ -295,55 +266,102 @@ export default function Branches() {
           )}
         </Stack>
       )}
-
-      {selectedRow && (
-        <Card>
-          <SectionLabel icon={<GitBranch aria-hidden />}>
-            {selectedRow.record.branch_slug}
-          </SectionLabel>
-          <Stack gap="sm">
-            <p>{branchState(selectedRow, view.windows).detail}</p>
-
-            {heartbeatNote(selectedRow.lease, view.windows) && (
-              <p className="ws-muted">{heartbeatNote(selectedRow.lease, view.windows)}</p>
-            )}
-
-            <p className="ws-muted ws-mono">{selectedRow.record.path}</p>
-
-            <p className="ws-muted">
-              Cut from {selectedRow.record.base_ref}
-              {selectedRow.record.ticket_id
-                ? <> for ticket <Link
-                    to={`/work/${encodeURIComponent(selectedRow.record.scope)}/${encodeURIComponent(selectedRow.record.ticket_id)}`}
-                  >{selectedRow.record.ticket_id}</Link></>
-                : null}
-              .
-            </p>
-
-            {/* The three verbs, against the LIVE session that holds this tree.
-                With no live session there is nobody to queue to, and saying so
-                is better than an empty panel of dead controls. */}
-            {selectedRow.holder ? (
-              <HolderControls
-                entry={selectedRow.holder}
-                selfSessionId={null}
-                worktreeId={selectedRow.record.id}
-                onChanged={() => { view.reload(); }}
-              />
-            ) : (
-              <Notice tone="info">
-                No live session is here, so there is nothing to queue a request to.
-              </Notice>
-            )}
-
-            <ReapControl
-              row={selectedRow}
-              onDone={() => { setSelected(null); view.reload(); }}
-            />
-          </Stack>
-        </Card>
-      )}
     </div>
+  );
+}
+
+/**
+ * One branch opened, INLINE UNDER ITS OWN ROW.
+ *
+ * Not at the foot of the page, which is where it was: with thirteen rows above
+ * it on a phone, tapping a row scrolled nothing and the panel that appeared was
+ * off the bottom of the screen. Under the row is the only place a reader can
+ * connect it to what they tapped.
+ *
+ * It is also where every column the list dropped went. `Props` is a responsive
+ * auto-fill grid, so the eight columns that could not fit a 390px table read
+ * here as stacked label/value pairs and reflow into rows on a desktop, which is
+ * the design system's answer to a narrow viewport rather than a second layout.
+ */
+function BranchPanel({ row, view, now, onDone }: {
+  row: BranchRow;
+  view: BranchesViewRead;
+  now: number;
+  onDone: () => void;
+}) {
+  const state = branchState(row, view.windows, null, now);
+  const lease = row.lease;
+  const beat = heartbeatNote(lease, view.windows);
+  const age = tipAge(row.record, now);
+  return (
+    <Card>
+      <Stack gap="sm">
+        <p>{state.detail}</p>
+        {beat && <p className="ws-muted">{beat}</p>}
+
+        {/* EMPTY CELLS ARE NOISE, which is this module's rule about the age
+            column applied to the panel: a row of "Holder: nobody / Held for:
+            not held / Vs main: unknown / Ticket: none" is four labels saying
+            the sentence above already covered it. A fact appears when there is
+            one. */}
+        <Props>
+          <Prop label="Branch"><CopyButton value={row.record.branch_slug} /></Prop>
+          <Prop label="Tree">
+            {row.record.presence !== "tree"
+              // A row with no git behind it has no working tree to read, so
+              // "reading" would be a promise that never resolves. The state
+              // above already said which.
+              ? <span className="ws-muted">no tree</span>
+              : row.tree === null
+                ? <span className="ws-muted">reading</span>
+                : row.tree.clean
+                  ? "clean"
+                  : `${row.tree.entries} uncommitted`}
+          </Prop>
+          {age && <Prop label="Last commit">{age}</Prop>}
+          {lease && (
+            <Prop label="Holder">
+              <span className="ws-mono">{lease.holder_kind} {lease.holder_id}</span>
+            </Prop>
+          )}
+          {lease?.held_for_sec != null && (
+            <Prop label="Held for">{shortSeconds(lease.held_for_sec)}</Prop>
+          )}
+          {(row.ahead !== null || row.behind !== null) && (
+            <Prop label={`Vs ${row.record.base_ref}`}>
+              +{row.ahead ?? 0} / -{row.behind ?? 0}
+            </Prop>
+          )}
+          {row.record.ticket_id && (
+            <Prop label="Ticket">
+              <Link
+                to={`/work/${encodeURIComponent(row.record.scope)}/${encodeURIComponent(row.record.ticket_id)}`}
+              >{row.record.ticket_id}</Link>
+            </Prop>
+          )}
+        </Props>
+
+        {/* `ws-wrap` because a branch path ends in a 32-character hex token that
+            no line break can fall inside, so without it the path ran off the
+            right of a 390px panel exactly like the table it replaced. */}
+        <p className="ws-muted ws-mono ws-wrap">{row.record.path}</p>
+
+        {/* The three verbs, against the LIVE session that holds this tree. With
+            no live session there is nothing to queue to, and the state sentence
+            above has already said nobody is here: a notice repeating it would
+            be on eleven of thirteen panels, which is a constant. */}
+        {row.holder && (
+          <HolderControls
+            entry={row.holder}
+            selfSessionId={null}
+            worktreeId={row.record.id}
+            onChanged={() => { view.reload(); }}
+          />
+        )}
+
+        <ReapControl row={row} onDone={onDone} />
+      </Stack>
+    </Card>
   );
 }
 
@@ -406,17 +424,20 @@ function ReapControl({ row, onDone }: { row: BranchRow; onDone: () => void }) {
           {err}
         </Notice>
       )}
+      {/* The consequence is named ONCE, in the dialog, which is the repo's
+          rule for a destructive action. It used to be printed under the button
+          as well, so every open panel carried the sentence whether or not
+          anybody was about to press anything. */}
       <Row>
         <Button size="sm" variant="danger" onClick={() => setAsking(true)}>
           <Trash2 aria-hidden /> Reap this tree
         </Button>
       </Row>
-      <p className="ws-muted">{plan.consequence}</p>
 
       <ConfirmDialog
         open={asking}
         busy={busy}
-        title={`Reap ${row.record.branch_slug}?`}
+        title={`Reap ${branchLabel(row.record.branch_slug)}?`}
         body={plan.consequence}
         confirmLabel="Reap it"
         onCancel={() => { setAsking(false); setErr(null); }}

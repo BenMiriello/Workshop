@@ -8,13 +8,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  attentionCount, beatSeconds, blockingFiles, branchState, driftHeadline,
-  driftKind, heartbeatNote, humanSeconds, orderRows, reapPlan, reapUrl,
-  shortSeconds, tipAge,
+  attentionCount, beatSeconds, blockingFiles, blockingSummary, branchLabel,
+  branchState, DORMANT_AFTER_SEC, driftHeadline, heartbeatNote, humanSeconds,
+  orderRows, reapPlan, reapUrl, rowFacts, shortSeconds, tipAge,
 } from "./branchesView";
 import type {
   BranchRow, DriftReport, LeaseRow, LeaseWindows, TreeState,
 } from "./branchesView";
+import { holderName } from "./holders";
 import type { BranchRecord, DirectoryEntry } from "./holders";
 
 const WINDOWS: LeaseWindows = {
@@ -218,6 +219,102 @@ describe("humanSeconds / shortSeconds", () => {
   });
 });
 
+describe("the dormant rung", () => {
+  // THE OPERATOR'S RULE, and it predates this page: never make a card's alarm
+  // colour permanent, because a hue that never varies carries no information.
+  // /branches opened on eleven `Abandoned` rows in `danger` and nothing else,
+  // which is a screen of identical red saying "everything is equally wrong".
+  // Eleven stranded trees is what this system looks like at rest.
+  const NOW = Date.parse("2026-08-28T12:00:00Z");
+  const at = (secsAgo: number) => new Date(NOW - secsAgo * 1000).toISOString();
+  const stranded = (tip_at: string | null) => row({
+    record: record({ tip_at }), lease: null, holder: null, tree: DIRTY,
+  });
+
+  it("work stranded in the last day is still the danger it always was", () => {
+    const s = branchState(stranded(at(3600)), WINDOWS, null, NOW);
+    expect(s.label).toBe("Abandoned");
+    expect(s.kind).toBe("danger");
+    expect(s.needsAttention).toBe(true);
+  });
+
+  it("the same tree a week later is neutral and wants nothing", () => {
+    const s = branchState(stranded(at(7 * 24 * 3600)), WINDOWS, null, NOW);
+    expect(s.label).toBe("Dormant");
+    expect(s.kind).toBe("stopped");
+    expect(s.needsAttention).toBe(false);
+    expect(s.detail).toContain("7 days");
+  });
+
+  it("the boundary is DORMANT_AFTER_SEC, and it is not a lease window", () => {
+    expect(branchState(stranded(at(DORMANT_AFTER_SEC - 60)), WINDOWS, null, NOW).label)
+      .toBe("Abandoned");
+    expect(branchState(stranded(at(DORMANT_AFTER_SEC + 60)), WINDOWS, null, NOW).label)
+      .toBe("Dormant");
+  });
+
+  it("an undated tree is never quieted, because nothing measured its age", () => {
+    // Quieting a row on a fact nobody recorded is the one way this rung could
+    // hide real stranded work.
+    expect(branchState(stranded(null), WINDOWS, null, NOW).label).toBe("Abandoned");
+  });
+
+  it("a dormant tree drops out of the attention count", () => {
+    const rows = [stranded(at(7 * 24 * 3600)), stranded(at(600))];
+    expect(attentionCount(rows, WINDOWS, null, NOW)).toBe(1);
+  });
+
+  it("and sorts below everything live, but above the rungs holding nothing", () => {
+    const dormant = { ...stranded(at(7 * 24 * 3600)), record: record({ id: "d", tip_at: at(7 * 24 * 3600) }) };
+    const gone = row({ record: record({ id: "g", presence: "gone" }), lease: null, holder: null });
+    const working = row({ record: record({ id: "w" }) });
+    expect(orderRows([gone, dormant, working], WINDOWS, null, NOW).map((r) => r.record.id))
+      .toEqual(["w", "d", "g"]);
+  });
+});
+
+describe("branchLabel", () => {
+  it("shortens a machine hex slug to a prefix that says there is more", () => {
+    // `bc81b563abe14333be4e8626dc8182bd` wrapped over two lines, eleven times,
+    // and was most of the page's height while identifying nothing a prefix
+    // would not.
+    expect(branchLabel("bc81b563abe14333be4e8626dc8182bd")).toBe("bc81b563…");
+    expect(branchLabel("t-537437c1d3de4feb98801c3f1416c383")).toBe("t-537437c1…");
+  });
+
+  it("leaves a name somebody chose completely alone", () => {
+    // Abbreviating a real name is how a page becomes unreadable in the other
+    // direction.
+    expect(branchLabel("t-smoke2")).toBe("t-smoke2");
+    expect(branchLabel("feat/client-state-consolidation")).toBe("feat/client-state-consolidation");
+    expect(branchLabel("deadbeef")).toBe("deadbeef");
+  });
+});
+
+describe("rowFacts", () => {
+  const NOW = Date.parse("2026-08-28T12:00:00Z");
+
+  it("leads with the state WORD, not just the dot's colour", () => {
+    const r = row();
+    expect(rowFacts(r, branchState(r, WINDOWS, null, NOW))[0]).toBe("Working");
+  });
+
+  it("names the holder when one is there, and the stranded work when none is", () => {
+    const held = row();
+    expect(rowFacts(held, branchState(held, WINDOWS, null, NOW)))
+      .toEqual(["Working", holderName(entry())]);
+
+    const loose = row({ lease: null, holder: null, tree: DIRTY });
+    expect(rowFacts(loose, branchState(loose, WINDOWS, null, NOW)))
+      .toEqual(["Abandoned", "2 uncommitted"]);
+  });
+
+  it("says nothing more when there is nothing more that varies", () => {
+    const free = row({ lease: null, holder: null, tree: CLEAN });
+    expect(rowFacts(free, branchState(free, WINDOWS, null, NOW))).toEqual(["Free"]);
+  });
+});
+
 describe("orderRows", () => {
   it("puts what needs a decision above what is merely happening", () => {
     const working = row({ record: record({ id: "w" }) });
@@ -282,13 +379,6 @@ describe("drift", () => {
     ...over,
   }) as DriftReport["surfaces"][number];
 
-  it("blocked and stale are DIFFERENT colours, because they have different fixes", () => {
-    expect(driftKind("blocked")).toBe("danger");
-    expect(driftKind("stale")).toBe("warn");
-    expect(driftKind("current")).toBe("ok");
-    expect(driftKind("undecidable")).toBe("warn");
-  });
-
   it("a blocked surface says the apply step will not clear it, and counts the files", () => {
     const head = driftHeadline(report({
       blocked: true, stale: true,
@@ -299,7 +389,30 @@ describe("drift", () => {
     }));
     expect(head).toContain("old code");
     expect(head).toContain("will not clear it");
-    expect(head).toContain("2 files");
+    expect(head).toContain("2 files have to be committed");
+  });
+
+  it("the verb agrees with the count", () => {
+    // It read "1 file below have to be committed first" on the operator's
+    // phone. A banner that cannot conjugate is not trusted about anything else
+    // it says, and this one is the app's only word on whether the screen in
+    // front of him is current.
+    const head = driftHeadline(report({
+      blocked: true, stale: true,
+      surfaces: [surface({ state: "blocked", blocking_files: ["backend/x.py"] })],
+    }));
+    expect(head).toContain("1 file has to be committed first");
+    expect(head).not.toContain("below");
+  });
+
+  it("names a few files and then counts the rest, eliding at the END", () => {
+    // A path is whole or it is honestly short. The banner printed
+    // `ackend/services/scoped_exec.py` -- a file that does not exist -- because
+    // the server had cut a character off the front (services/drift.py::_run).
+    expect(blockingSummary([])).toBe("");
+    expect(blockingSummary(["a.py", "b.py"])).toBe("a.py, b.py");
+    expect(blockingSummary(["a.py", "b.py", "c.py", "d.py", "e.py"]))
+      .toBe("a.py, b.py, c.py and 2 more");
   });
 
   it("a merely stale surface does not tell anyone to commit anything", () => {
