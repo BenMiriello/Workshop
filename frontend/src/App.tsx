@@ -47,6 +47,7 @@ const Runs = lazyPage(() => import("./pages/Runs"));
 // change page drags a whole patch renderer, and neither screen is on the way
 // into the app.
 const Changes = lazyPage(() => import("./pages/Changes"));
+const Branches = lazyPage(() => import("./pages/Branches"));
 const ChangeReview = lazyPage(() => import("./pages/ChangeReview"));
 const RunDetail = lazyPage(() => import("./pages/RunDetail"));
 const Usage = lazyPage(() => import("./pages/Usage"));
@@ -131,6 +132,7 @@ export default function App() {
               behind a finished ticket, before it reaches the trunk. Accepting
               the ticket is what merges it, so there is no merge route here. */}
           <Route path="/changes" element={<Changes />} />
+          <Route path="/branches" element={<Branches />} />
           <Route path="/changes/:id" element={<ChangeReview />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/runs/:id" element={<RunDetail />} />

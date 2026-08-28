@@ -141,8 +141,44 @@ export const queryKeys = {
 
   presence: {
     directory: (subjectKind: string | null) => ["presence", "directory", subjectKind] as const,
+    /**
+     * `addr` is the query string the read was addressed with, so the app-scoped
+     * and project-scoped reads cannot be served each other's answer. The
+     * Branches page asks for every tree at once and passes the literal `"all"`,
+     * which is a real address rather than an omitted slot: "every branch" and
+     * "this app's branches" are different questions with different answers, and
+     * an empty string already means "this caller has no address and expects
+     * nothing".
+     */
     branches: (addr: string) => ["branches", addr] as const,
     control: (sessionId: string) => ["control", sessionId] as const,
+  },
+
+  /**
+   * The lease table itself, which is NOT `presence.directory`. The directory
+   * joins outward from live presence and so cannot produce a lease whose holder
+   * has stopped beating; this read starts from the leases and can. Two
+   * different facts, two different keys.
+   */
+  leases: {
+    all: () => ["leases"] as const,
+    list: (subjectKind: string | null) => ["leases", subjectKind] as const,
+  },
+
+  /** Is what you are looking at what is on disk. One fact, no parameters. */
+  drift: {
+    report: () => ["drift"] as const,
+  },
+
+  /**
+   * Reads about one working tree on disk, keyed by its absolute path because
+   * that is what the route is addressed by. `treeState` is the dirty/clean
+   * answer plus how far the branch has drifted from its base, which is two
+   * endpoints behind one key: a caller wants both or neither, and splitting
+   * them would double the rows in flight to say one thing.
+   */
+  git: {
+    treeState: (repo: string, base: string) => ["git", "tree-state", repo, base] as const,
   },
 
   inbox: {

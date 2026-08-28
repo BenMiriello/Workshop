@@ -179,6 +179,7 @@ export function buildPlaces(
       // sec 2), and one that nobody thought to open its ticket is exactly the
       // one that sits unreviewed.
       { id: "changes", label: "Changes", to: "/changes", Icon: icons.changes },
+      { id: "branches", label: "Branches", to: "/branches", Icon: icons.branches },
       { id: "deploys", label: "Deploys", to: "/deploys", Icon: icons.deploys },
       { id: "memory", label: "Memory", to: "/memory", Icon: icons.memory },
       { id: "usage", label: "Usage", to: "/usage", Icon: icons.usage },

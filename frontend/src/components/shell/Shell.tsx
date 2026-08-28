@@ -14,6 +14,7 @@ import { OverlayHost } from "@workshop/ui";
 import { DirectoryProvider } from "./directory";
 import { Dock } from "./Dock";
 import { MobileBars } from "./MobileBars";
+import { DriftBanner } from "./DriftBanner";
 import { PageColumn } from "./PageColumn";
 import { ShellTrail } from "./ShellTrail";
 import { TakeoverProvider } from "./takeover";
@@ -56,6 +57,10 @@ function ShellFrame({ children }: { children: ReactNode }) {
                 and not the dock or the toolbars beside it. */}
             <OverlayHost>
               <ShellTrail />
+              {/* Above the page, not inside it: a stale origin makes every
+                  screen in the app a description of code the operator may not
+                  be looking at, so it cannot be one page's business. */}
+              <DriftBanner />
               <main>{children}</main>
             </OverlayHost>
           </div>

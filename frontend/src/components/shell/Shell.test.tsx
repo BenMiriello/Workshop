@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider } from "../../auth/AuthProvider";
 import { BreadcrumbProvider } from "@workshop/ui";
 import { appPlaces } from "../../apps/registry";
@@ -24,18 +25,32 @@ import { Shell } from "./Shell";
 // to the Workshop place, so the third test below would assert nothing.
 const APP_HOME = appPlaces()[0]?.home ?? "/apps";
 
-// The same nesting main.tsx uses: AuthProvider > Guard > App > Shell. The
-// avatar reads the signed-in user, so rendering the shell without the provider
-// throws, exactly as it would in the app.
+// The same nesting the app uses: AuthProvider > QueryClientProvider >
+// BreadcrumbProvider > Shell (App.tsx). The avatar reads the signed-in user, so
+// rendering the shell without the auth provider throws, exactly as it would in
+// the app.
+//
+// THE QUERY CLIENT IS PART OF THAT NESTING and was missing here. App.tsx has
+// always mounted `QueryClientProvider` above `Shell`, so a shell child that
+// reads from the server is a normal thing for it to contain; without the
+// provider this harness threw on the first one that appeared, reporting a
+// faithful component as a broken shell. A fresh client per render, with retries
+// off, so one test cannot see another's cache and nothing here reaches the
+// network on a server render.
 function renderAt(path: string): string {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
   return renderToString(
     <MemoryRouter initialEntries={[path]}>
       <AuthProvider>
-        <BreadcrumbProvider>
-          <Shell>
-            <i data-content="1" />
-          </Shell>
-        </BreadcrumbProvider>
+        <QueryClientProvider client={queryClient}>
+          <BreadcrumbProvider>
+            <Shell>
+              <i data-content="1" />
+            </Shell>
+          </BreadcrumbProvider>
+        </QueryClientProvider>
       </AuthProvider>
     </MemoryRouter>,
   );
