@@ -129,7 +129,11 @@ const HEX_ID_KEEP = 8;
  * so a reader never mistakes the prefix for the whole value. The full slug is
  * on the row's own panel, where the reap dialog and the copy button need it.
  */
-export function branchLabel(slug: string): string {
+export function branchLabel(
+  row: string | { branch_slug: string; display_name?: string | null },
+): string {
+  if (typeof row !== "string" && row.display_name) return row.display_name;
+  const slug = typeof row === "string" ? row : row.branch_slug;
   const m = /^(t-)?([0-9a-f]+)$/i.exec(slug.trim());
   if (!m) return slug;
   const [, prefix = "", hex] = m;

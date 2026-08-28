@@ -339,8 +339,8 @@ WT_PY="$WORKSHOP/backend/.venv/bin/python"
 
 # Allocate an isolated, locked worktree for one task. Echoes "<dir>\t<branch_slug>"
 # on success, nothing on failure (caller falls back to the project dir).
-alloc_task_worktree() {  # $1=task_id
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$WT_PY" - "$WT_SLUG" "$1" <<'PYEOF' 2>>"$LOG"
+alloc_task_worktree() {  # $1=task_id $2=task_title
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$WT_PY" - "$WT_SLUG" "$1" "$2" <<'PYEOF' 2>>"$LOG"
 import sys
 from services import worktrees
 try:
@@ -348,7 +348,8 @@ try:
     # worktree and then hardlink-clones the heavy inputs the app DECLARES
     # (workspace_inputs in its manifest) so the tree is usable rather than a
     # source checkout with no dependencies. It had only test callers until now.
-    r = worktrees.provision_worktree(sys.argv[1], sys.argv[2])
+    title = sys.argv[3] if len(sys.argv) > 3 else None
+    r = worktrees.provision_worktree(sys.argv[1], sys.argv[2], title=title)
     print(f"{r['dir']}\t{r['branch_slug']}")
 except Exception as e:
     print(f"[alloc_task_worktree] {e}", file=sys.stderr)
@@ -1247,7 +1248,7 @@ while (( n < MAX_TASKS )); do
   WORK_DIR="$DIR"; WT_MODE=0; WT_BRANCH_SLUG=""
   PR_TITLE=""; PR_BODY=""
   if [[ "$WT_ENABLED" == "1" ]]; then
-    ALLOC=$(alloc_task_worktree "$TASK_ID")
+    ALLOC=$(alloc_task_worktree "$TASK_ID" "$TASK_TEXT")
     WT_DIR=$(printf '%s' "$ALLOC" | cut -f1)
     WT_BRANCH_SLUG=$(printf '%s' "$ALLOC" | cut -f2)
     if [[ -n "$WT_DIR" && -d "$WT_DIR" ]]; then

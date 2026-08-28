@@ -2517,8 +2517,13 @@ def _tree_read(thread_id: str):
 
 def _tree_payload(tree) -> dict:
     project = tree.project_slug
+    display_name: str | None = None
+    if project and tree.branch_slug:
+        rec = worktrees.worktree_record(project, tree.branch_slug)
+        display_name = (rec or {}).get("display_name")
     return {
         **tree.as_dict(),
+        "display_name": display_name,
         "default_ref": worktrees.default_ref(project) if project else "",
         "branches": chat_worktree.branch_options(project),
         "can_pin": bool(project),

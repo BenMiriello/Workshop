@@ -113,6 +113,7 @@ def _shape(row: dict) -> dict:
         "base_sha": row["base_sha"],
         "ticket_id": row["ticket_id"],
         "allocated_by": row["allocated_by"],
+        "display_name": row.get("display_name"),
         "status": row["status"],
         "merged_sha": row["merged_sha"],
         "removed_at": _iso(row["removed_at"]),
@@ -154,7 +155,8 @@ def _validated_kind(kind: str) -> str:
 def record_allocation(*, project_slug: str, scope: str, branch_slug: str,
                       branch: str, path: str, base_ref: str,
                       base_sha: str | None = None, ticket_id: str | None = None,
-                      allocated_by: str | None = None) -> dict:
+                      allocated_by: str | None = None,
+                      display_name: str | None = None) -> dict:
     """Write the record for a tree that has just been created on disk.
 
     Called from `services/worktrees.py` immediately after `git worktree add`
@@ -178,6 +180,7 @@ def record_allocation(*, project_slug: str, scope: str, branch_slug: str,
             project_slug=project_slug, scope=scope, branch_slug=branch_slug,
             branch=branch, path=path, base_ref=base_ref, base_sha=base_sha,
             ticket_id=ticket_id, allocated_by=allocated_by,
+            display_name=display_name,
             app_id=None if app is None else app["id"])
         worktree_repo.append_event(
             s, org_id, row["id"], kind="allocated", actor=allocated_by,

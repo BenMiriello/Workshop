@@ -41,6 +41,7 @@ __all__ = [
 # which does not change while the tree exists.
 UPDATABLE = (
     "app_id", "ticket_id", "allocated_by", "status", "merged_sha", "removed_at",
+    "display_name",
 )
 
 _UUID_COLUMNS = ("app_id",)
@@ -62,6 +63,7 @@ def create_worktree(s: Session, org_id: UUID | str, *, project_slug: str,
                     ticket_id: str | None = None,
                     allocated_by: str | None = None,
                     app_id: UUID | str | None = None,
+                    display_name: str | None = None,
                     status: str = "allocated") -> dict:
     """Insert one worktree record and return it.
 
@@ -76,15 +78,16 @@ def create_worktree(s: Session, org_id: UUID | str, *, project_slug: str,
     s.execute(text(
         "INSERT INTO worktree (id, org_id, app_id, project_slug, scope, "
         "branch_slug, branch, path, base_ref, base_sha, ticket_id, "
-        "allocated_by, status) VALUES (:id, :org, :app_id, :project_slug, "
-        ":scope, :branch_slug, :branch, :path, :base_ref, :base_sha, "
-        ":ticket_id, :allocated_by, :status)"),
+        "allocated_by, display_name, status) VALUES (:id, :org, :app_id, "
+        ":project_slug, :scope, :branch_slug, :branch, :path, :base_ref, "
+        ":base_sha, :ticket_id, :allocated_by, :display_name, :status)"),
         {"id": worktree_id, "org": str(org_id),
          "app_id": _bind("app_id", app_id),
          "project_slug": project_slug, "scope": scope,
          "branch_slug": branch_slug, "branch": branch, "path": path,
          "base_ref": base_ref, "base_sha": base_sha, "ticket_id": ticket_id,
-         "allocated_by": allocated_by, "status": status})
+         "allocated_by": allocated_by, "display_name": display_name,
+         "status": status})
     return get_worktree(s, org_id, worktree_id)
 
 

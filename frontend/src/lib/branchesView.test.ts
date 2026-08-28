@@ -367,6 +367,18 @@ describe("branchLabel", () => {
     expect(branchLabel("feat/client-state-consolidation")).toBe("feat/client-state-consolidation");
     expect(branchLabel("deadbeef")).toBe("deadbeef");
   });
+
+  it("prefers display_name when given a row object", () => {
+    const slug = "bc81b563abe14333be4e8626dc8182bd";
+    expect(branchLabel({ branch_slug: slug, display_name: "Chat toolbar: pill, rename, new chat" }))
+      .toBe("Chat toolbar: pill, rename, new chat");
+  });
+
+  it("falls back to slug abbreviation when display_name is null", () => {
+    const slug = "bc81b563abe14333be4e8626dc8182bd";
+    expect(branchLabel({ branch_slug: slug, display_name: null })).toBe("bc81b563…");
+    expect(branchLabel({ branch_slug: slug, display_name: undefined })).toBe("bc81b563…");
+  });
 });
 
 describe("rowFacts", () => {

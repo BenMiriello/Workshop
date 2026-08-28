@@ -255,7 +255,7 @@ export default function Branches() {
                           the second half of the same identifier, and stacking
                           it cost a whole line per row. */}
                       <span className="ws-listrow__title">
-                        <span className="ws-mono">{branchLabel(r.record.branch_slug)}</span>
+                        <span className="ws-mono">{branchLabel(r.record)}</span>
                         {" "}
                         <span className="ws-muted">{r.record.project_slug}</span>
                       </span>
@@ -475,7 +475,7 @@ function ReapControl({ row, onDone }: { row: BranchRow; onDone: () => void }) {
       <ConfirmDialog
         open={asking}
         busy={busy}
-        title={`Reap ${branchLabel(row.record.branch_slug)}?`}
+        title={`Reap ${branchLabel(row.record)}?`}
         body={plan.consequence}
         confirmLabel="Reap it"
         onCancel={() => { setAsking(false); setErr(null); }}

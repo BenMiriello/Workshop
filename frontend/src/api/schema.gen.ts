@@ -10786,6 +10786,8 @@ export interface components {
              * @default
              */
             detail: string;
+            /** Display Name */
+            display_name?: string | null;
             /** Held */
             held: boolean;
             lease?: components["schemas"]["LeaseRef"] | null;
@@ -10809,7 +10811,8 @@ export interface components {
          *     `branch_slug` is what a pin stores and `branch` is the git ref; both are on
          *     the wire because the menu shows the ref and the write sends the slug, and a
          *     client that had to derive one from the other would be re-implementing
-         *     `services/worktrees.py`'s naming policy.
+         *     `services/worktrees.py`'s naming policy. `display_name` is the original
+         *     human-readable title the slug was derived from, when one was supplied.
          */
         ChatWorktreeBranch: {
             /** Branch */
@@ -10818,6 +10821,8 @@ export interface components {
             branch_slug: string;
             /** Dir */
             dir: string;
+            /** Display Name */
+            display_name?: string | null;
         };
         /** CheckoutBody */
         CheckoutBody: {

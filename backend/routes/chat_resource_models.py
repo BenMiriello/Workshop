@@ -194,11 +194,13 @@ class ChatWorktreeBranch(BaseModel):
     `branch_slug` is what a pin stores and `branch` is the git ref; both are on
     the wire because the menu shows the ref and the write sends the slug, and a
     client that had to derive one from the other would be re-implementing
-    `services/worktrees.py`'s naming policy.
+    `services/worktrees.py`'s naming policy. `display_name` is the original
+    human-readable title the slug was derived from, when one was supplied.
     """
     branch_slug: str
     branch: str
     dir: str
+    display_name: str | None = None
 
 
 class ChatWorktree(BaseModel):
@@ -228,6 +230,10 @@ class ChatWorktree(BaseModel):
     # The trunk's real name, read from git rather than assumed to be `main`.
     default_ref: str
     branches: list[ChatWorktreeBranch] = []
+    # The human-readable title the current branch's slug was derived from.
+    # None for the shared tree, for old branches without a record, and for
+    # branches whose record predates this column.
+    display_name: str | None = None
     # False for every chat with no branch space of its own (a data chat, a
     # freestanding agent). The control is not rendered rather than rendered
     # disabled: there is nothing here to enable.

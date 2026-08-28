@@ -42,6 +42,7 @@ const HEX_ID_KEEP = 8;
 export function treeLabel(tree: ChatWorktree | null): string {
   if (!tree) return "Tree";
   if (!tree.branch_slug) return "Shared";
+  if (tree.display_name) return tree.display_name;
   const slug = tree.branch_slug;
   const m = /^(t-)?([0-9a-f]+)$/i.exec(slug.trim());
   if (!m) return slug;

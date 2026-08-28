@@ -225,7 +225,8 @@ def _record_id(project_slug: str, branch_slug: str) -> str | None:
 
 
 def create_branch(project_slug: str, branch_slug: str, *,
-                  allocated_by: str | None = None) -> dict:
+                  allocated_by: str | None = None,
+                  display_name: str | None = None) -> dict:
     """Create a new worktree-pinned branch off the project's main.
 
     Returns a record describing the new branch: project, branch_slug, full
@@ -258,7 +259,8 @@ def create_branch(project_slug: str, branch_slug: str, *,
             branch_slug=branch_slug, branch=branch, path=str(target),
             base_ref=base_ref,
             base_sha=git_service.rev_parse(project_dir, branch, verify=True),
-            ticket_id=None, allocated_by=allocated_by)
+            ticket_id=None, allocated_by=allocated_by,
+            display_name=display_name)
     return {
         "project_slug": project_slug,
         "branch_slug": branch_slug,
@@ -270,27 +272,39 @@ def create_branch(project_slug: str, branch_slug: str, *,
 
 
 def allocate_task_worktree(project_slug: str, task_id: str, *,
+                           title: str | None = None,
                            ticket_id: str | None = None,
                            allocated_by: str | None = None,
                            scope: str | None = None) -> dict:
     """Allocate an isolated, locked worktree for one task (Phase G3 concurrency).
 
-    Creates branch wt/<slug>/<task-id> in its own worktree, off
+    Creates branch wt/<slug>/<name> in its own worktree, off
     origin/<default_branch> when the project is bound (so an agent starts from
     the canonical remote base), else off the local canonical branch (today's
     behavior). The worktree is locked so a crashed agent's stale index cannot
-    wedge sibling worktrees. The task-id is the branch slug (kebab-normalized
-    and validated). Returns {branch, branch_slug, dir, worktree_id}.
+    wedge sibling worktrees.
+
+    When `title` is supplied the branch slug is derived from the title (kebab-
+    normalized), so the branch reads as the work rather than as a hex id. A
+    collision with an existing directory appends a 5-char suffix from the task
+    id; the pair (title, task_id) is therefore always deterministic.
+
+    Returns {branch, branch_slug, dir, worktree_id}.
 
     THE TICKET DEFAULTS TO THE TASK ID because for this entry point they are the
-    same thing -- the branch is named after the ticket that owns it, which is
-    why `repo_state` reports `task_id = branch_slug`. A caller with a different
-    ticket passes `ticket_id` explicitly; `create_branch` is the no-ticket path
-    (section 10.4). `allocated_by` records WHO asked, and `scope` lets the
-    caller keep its own addressing rather than have one re-derived for it.
+    same thing. A caller with a different ticket passes `ticket_id` explicitly;
+    `create_branch` is the no-ticket path (section 10.4). `allocated_by` records
+    WHO asked, and `scope` lets the caller keep its own addressing rather than
+    have one re-derived for it.
     """
     project_slug = _validate_slug(project_slug, "project_slug")
-    branch_slug = _validate_slug(_kebab_branch_slug(task_id), "task_id")
+    raw_slug = _kebab_branch_slug(title if title else task_id)
+    candidate = _branch_path(project_slug, raw_slug)
+    if title and candidate.exists():
+        # Collision: same title used for a different task. Append a short but
+        # deterministic suffix from the task id so the pair is always unique.
+        raw_slug = (raw_slug[:42].rstrip("-") + "-" + task_id[:5])[:48]
+    branch_slug = _validate_slug(raw_slug, "title" if title else "task_id")
     project_dir = _project_dir(project_slug)
     branch = _branch_name(project_slug, branch_slug)
     target = _branch_path(project_slug, branch_slug)
@@ -329,17 +343,20 @@ def allocate_task_worktree(project_slug: str, task_id: str, *,
             base_ref=start_point,
             base_sha=git_service.rev_parse(project_dir, branch, verify=True),
             ticket_id=(ticket_id if ticket_id is not None else task_id),
-            allocated_by=allocated_by)
+            allocated_by=allocated_by,
+            display_name=(title.strip() if title else None))
 
     return {"branch": branch, "branch_slug": branch_slug, "dir": str(target),
-            "worktree_id": None if record is None else record["id"]}
+            "worktree_id": None if record is None else record["id"],
+            "display_name": (title.strip() if title else None)}
 
 
 def list_branches(project_slug: str) -> list[dict]:
     """List active branches for a project by parsing `git worktree list`.
 
     Only returns worktrees whose branch starts with wt/<project_slug>/.
-    The main worktree is excluded.
+    The main worktree is excluded. `display_name` is joined from records,
+    best-effort: absent when there is no relational store.
     """
     project_slug = _validate_slug(project_slug, "project_slug")
     project_dir = _project_dir(project_slug)
@@ -364,7 +381,14 @@ def list_branches(project_slug: str) -> list[dict]:
             # prune` both refuse. A caller deciding whether a tree can be reaped
             # has to know that; re-deriving it meant a second `git worktree list`.
             "locked": bool(entry.get("locked")),
+            "display_name": None,
         })
+    # Enrich with display_name from records, best-effort.
+    recs_list = _record(worktree_records.list_records,
+                        project_slug=project_slug) or []
+    recs = {r["branch_slug"]: r.get("display_name") for r in recs_list}
+    for item in items:
+        item["display_name"] = recs.get(item["branch_slug"])
     return items
 
 
@@ -522,6 +546,7 @@ def _joined(tree: dict | None, record: dict | None) -> dict:
             "base_sha": None,
             "ticket_id": None,
             "allocated_by": None,
+            "display_name": None,
             "status": None,
             "merged_sha": None,
             "removed_at": None,
@@ -1134,6 +1159,7 @@ def branch_dir(project_slug: str, branch_slug: str) -> Path:
 # ---------------------------------------------------------------------------
 
 def provision_worktree(scope: str, owner: str, *,
+                       title: str | None = None,
                        ticket_id: str | None = None,
                        allocated_by: str | None = None) -> dict:
     """Allocate and provision an isolated worktree for a unit of work.
@@ -1165,7 +1191,8 @@ def provision_worktree(scope: str, owner: str, *,
             f"{project_dir} — need ≥{MIN_FREE_BYTES // (1024 ** 3)} GiB"
         )
 
-    result = allocate_task_worktree(project_slug, owner, ticket_id=ticket_id,
+    result = allocate_task_worktree(project_slug, owner, title=title,
+                                    ticket_id=ticket_id,
                                     allocated_by=allocated_by, scope=scope)
     worktree_dir = Path(result["dir"])
 
