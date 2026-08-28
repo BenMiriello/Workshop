@@ -14,7 +14,6 @@ import { OverlayHost } from "@workshop/ui";
 import { DirectoryProvider } from "./directory";
 import { Dock } from "./Dock";
 import { MobileBars } from "./MobileBars";
-import { DriftBanner } from "./DriftBanner";
 import { PageColumn } from "./PageColumn";
 import { ShellTrail } from "./ShellTrail";
 import { TakeoverProvider } from "./takeover";
@@ -57,10 +56,16 @@ function ShellFrame({ children }: { children: ReactNode }) {
                 and not the dock or the toolbars beside it. */}
             <OverlayHost>
               <ShellTrail />
-              {/* Above the page, not inside it: a stale origin makes every
-                  screen in the app a description of code the operator may not
-                  be looking at, so it cannot be one page's business. */}
-              <DriftBanner />
+              {/* NO DRIFT BANNER. Deleted 2026-08-28 on the operator's
+                  instruction ("remove this shitty ass banner and never show
+                  this again"). It was mounted here on the reasoning that a
+                  stale origin is every screen's business. That reasoning was
+                  wrong in practice: build drift is the NORMAL state between an
+                  edit and an apply, so the banner was on screen most of the
+                  time, ate the top of a phone viewport, and listed the working
+                  files of whichever agent happened to be mid-task. A warning
+                  that is usually showing is not a warning. Do not reintroduce
+                  it, in this or any other always-mounted form. */}
               <main>{children}</main>
             </OverlayHost>
           </div>
