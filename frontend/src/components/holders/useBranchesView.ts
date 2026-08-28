@@ -69,9 +69,19 @@ export type BranchesViewRead = {
    *  different thing from holding none and must not render the same. */
   leasesAvailable: boolean;
   drift: DriftReport | null;
-  /** The read that failed, if one did. The rows stay on screen either way, so
-   *  the caller shows this as a line and not a region. */
+  /** The read that failed, if one did, named with the route that failed it. A
+   *  SECONDARY failure leaves the rows on screen, so the caller shows this as a
+   *  line beside them and not as a region over them. */
   err: string | null;
+  /** The branch list itself could not be read, so there are no rows and there
+   *  is nothing for a line to sit beside.
+   *
+   *  SEPARATE FROM `err` BECAUSE THEY PICK DIFFERENT SHAPES, and conflating
+   *  them was a real bug: with the branches loaded and `/leases` failing, the
+   *  page showed an error REGION reading "GET /api/branches" over a list that
+   *  had loaded perfectly well, hiding the honest "nothing is stuck" answer
+   *  behind the name of a route that had not failed. */
+  fatal: string | null;
   /** True only before the FIRST answer of the two reads a row cannot exist
    *  without. A refetch is not loading; the rows are still there. */
   loading: boolean;
@@ -190,8 +200,16 @@ export function useBranchesView({ enabled = true }: { enabled?: boolean } = {})
     // keeps no leases" is a strong claim and must not be made before asking.
     leasesAvailable: leases.data?.available ?? true,
     drift: drift.data ?? null,
-    err: [branches.error, leases.error, directory.error]
-      .filter(Boolean).map(String)[0] ?? null,
+    // Named by route, so a line beside the table says which read went missing
+    // rather than blaming whichever one the caller happens to mention.
+    err: [
+      branches.error ? `GET /api/branches: ${branches.error}` : null,
+      leases.error ? `GET /api/leases: ${leases.error}` : null,
+      directory.error ? `GET /api/presence/directory: ${directory.error}` : null,
+      drift.error ? `GET /api/drift: ${drift.error}` : null,
+    ].filter(Boolean)[0] ?? null,
+    fatal: branches.isError && branches.data === undefined
+      ? String(branches.error) : null,
     loading: branches.data === undefined && !branches.isError,
     reload: () => {
       void branches.refetch();

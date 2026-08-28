@@ -139,16 +139,18 @@ export default function Branches() {
         />
       </Row>
 
-      {/* A failed poll with rows still on screen is a LINE, not a region
-          (frontend/CLAUDE.md: would this space be empty if the failure had not
-          happened?). */}
-      {view.err && shown !== null && shown.length > 0 && (
+      {/* A failed read with the BRANCH LIST still loaded is a LINE, not a
+          region (frontend/CLAUDE.md: would this space be empty if the failure
+          had not happened?). The list is there, so the answer below is real and
+          only some of its decoration is missing. */}
+      {view.err && !view.fatal && (
         <Notice
           tone="warn"
           detail={view.err}
           action={<Button size="sm" onClick={() => { view.reload(); }}>Retry</Button>}
         >
-          The last read of who is working where did not land. These rows may be old.
+          One of the reads behind this page did not land, so some rows may be
+          missing their holder, their tree state or the staleness banner.
         </Notice>
       )}
 
@@ -160,11 +162,11 @@ export default function Branches() {
             <Skeleton width="55%" />
           </Stack>
         </Card>
-      ) : view.err && (shown === null || shown.length === 0) ? (
+      ) : view.fatal ? (
         <StateBlock
           variant="error"
           title="Couldn't load branches"
-          hint={<code>GET /api/branches ({view.err})</code>}
+          hint={<code>GET /api/branches ({view.fatal})</code>}
           action={<Button size="sm" onClick={() => { view.reload(); }}>Retry</Button>}
         />
       ) : shown === null || shown.length === 0 ? (
