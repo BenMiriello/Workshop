@@ -3556,12 +3556,42 @@ span.ws-filterchip__open { cursor: default; }
 .ws-doc--full .ws-editor { margin-inline: calc(var(--page-pad-x) * -1); }
 /* Full bleed means no side border and no corner to round against the edge. */
 .ws-doc--full .cm-editor { border-inline: 0; border-radius: 0; }
-/* The editor fills what is left of the viewport instead of taking a fraction of
-   it: bar one, this bar, and the body's own padding are the only things above
-   and below it. `100dvh` rather than `100vh` because a phone's URL bar moves. */
-.ws-doc--full .ws-editor { height: var(--doc-editor-h); }
+/* THE EDITOR FILLS WHAT IS LEFT, and "what is left" is measured by the layout
+   rather than by arithmetic.
+ 
+   This used to be a subtraction: `100dvh` minus bar one, minus this bar, minus
+   the body's padding. That is only correct when the editor is the FIRST thing
+   in the body, which was true of every caller until a new note arrived with a
+   scope picker, a type, a hook and two help lines above it (2026-08-27,
+   MEM-17). Measured then: the editor's own box ended 165px below the fold on a
+   900px viewport, because the formula had no way to know what was above it.
+ 
+   A bounded flex column has no such blind spot. The document is as tall as the
+   content area, the body takes what the bar leaves, and the editor takes what
+   the fields leave. Nothing has to be told what its siblings are.
+ 
+   `100dvh` rather than `100vh` because a phone's URL bar moves. */
 .ws-doc--full {
-  --doc-editor-h: calc(100dvh - var(--bar1-h) - var(--docbar-h) - var(--space-3) - var(--space-5));
+  height: calc(100dvh - var(--bar1-h));
+  min-height: 0;
+}
+.ws-doc--full .ws-doc__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* The RENDERED form scrolls here (prose is as long as it is). The SOURCE form
+     does not: the editor below scrolls inside its own box, which is what keeps
+     a document to one scroller either way. */
+  overflow: auto;
+}
+.ws-doc--full .ws-doc__body > .ws-stack { flex: 1 1 auto; min-height: 0; }
+.ws-doc--full .ws-editor {
+  flex: 1 1 auto;
+  /* A floor, so a document whose fields fill the screen still shows an editor
+     you can type in rather than a 2px sliver. Below the floor the body scrolls,
+     which is the correct outcome and the reason the body is the scroller. */
+  min-height: 12rem;
 }
 
 @media (min-width: 900px) {
@@ -3574,11 +3604,8 @@ span.ws-filterchip__open { cursor: default; }
   /* A DESKTOP DOCUMENT OWNS THE CONTENT AREA TOO (2026-08-27, D8). `--full` was
      phone-only, which is why a desktop document had the page scrolling around a
      60vh editor that scrolled inside it: two scrollers, and the operator hit
-     both. The same rule now applies on both, with the desktop body padding in
-     the sum so the editor ends exactly where the viewport does. */
-  .ws-doc--full {
-    --doc-editor-h: calc(100dvh - var(--bar1-h) - var(--docbar-h) - var(--space-5) - var(--space-6));
-  }
+     both. The same rule applies on both now; the flex column above needs no
+     per-viewport arithmetic, so there is nothing left to restate here. */
 }
 
 /* ---- THE 16px FLOOR: nothing zooms the page when you focus it ------------- */
