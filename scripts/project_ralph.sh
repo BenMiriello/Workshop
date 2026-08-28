@@ -155,7 +155,17 @@ release_presence() {
   python3 "$WORKSHOP/scripts/presence.py" release "$PRESENCE_ID" >/dev/null 2>&1 || true
   PRESENCE_ID=""
 }
-trap 'revoke_grant; release_presence' EXIT
+# --- the worktree lease (workspace-ownership-and-leases-2026-08-22 sec 4/5) --
+#
+# A run that is handed an isolated worktree must HOLD it, or the mount cannot
+# follow the lease and WORKSHOP_TREE_LEASE_MOUNT can never be armed. The verbs
+# live in scripts/tree_lease.sh, beside sweep_control.sh and for the same two
+# reasons: ralph.sh needs the same three functions and must not carry a second
+# copy, and a sourced file can be tested. Sourcing is best-effort, so a checkout
+# without it sweeps exactly as it did before.
+# shellcheck source=scripts/tree_lease.sh
+source "$WORKSHOP/scripts/tree_lease.sh" 2>/dev/null || { TREE_SUBJECT=""; TREE_GENERATION=""; TREE_BEAT_PID=""; tree_lease_take() { return 3; }; tree_lease_release() { :; }; }
+trap 'revoke_grant; release_presence; tree_lease_release' EXIT
 # --- the control channel (workspace-ownership-and-leases sec 8, step B6) -----
 #
 # A sweep has no stdin, so steer and yield reach it through
@@ -224,6 +234,15 @@ halt_evidence() {
 }
 
 job_finish_child() {  # $1=child_job $2=status $3=exit_code [$4=evidence-json]
+  # THE ATTEMPT IS OVER, SO THE TREE IS FREE. This is the single choke point
+  # every terminal leg of a task goes through -- done, in_review, failed,
+  # blocked, parked, cancelled, displaced, thrash, touches violation, env
+  # failure, publish and merge conflict -- which is why the release hangs here
+  # rather than being repeated at twenty `case` branches, where the one that got
+  # missed would be the one that stranded a tree. Everything that still needs
+  # $WORK_DIR (the receipt, the committed diff, publish_or_park) has already run
+  # by the time a leg calls this.
+  tree_lease_release
   [[ -z "$1" ]] && return 0
   local ev=(); [[ -n "${4:-}" ]] && ev=(--evidence "$4")
   _job_py finish --id "$1" --status "$2" --exit-code "${3:-0}" "${ev[@]}" \
@@ -305,10 +324,23 @@ build_receipt_evidence() {  # $1=receipt_file $2=baseline $3=head $4=commits(new
 # backend services: run from $WORKSHOP with the backend on PYTHONPATH so
 # `from services import worktrees` resolves the same module the API uses.
 
+# THE INTERPRETER THESE SHELL INTO MUST BE THE BACKEND VENV, not PATH's python3.
+# `services.worktrees` imports `worktree_records` -> `db.app_repo` -> sqlalchemy,
+# which the python3 a sweep runs with does not have. Measured 2026-08-27 in this
+# tree's own `.runtime/ralph.log`: from 2026-08-25 every alloc_task_worktree died
+# with `ModuleNotFoundError: No module named 'sqlalchemy'` before it ran a line,
+# the caller read the empty stdout as "allocation failed", and EVERY unattended
+# run since then worked in the SHARED project tree -- which is precisely the
+# collision worktree mode exists to end. `record_change_gates` below already
+# resolved the venv for the same reason; this hoists that answer so there is one
+# of it rather than one per helper.
+WT_PY="$WORKSHOP/backend/.venv/bin/python"
+[[ -x "$WT_PY" ]] || WT_PY=python3
+
 # Allocate an isolated, locked worktree for one task. Echoes "<dir>\t<branch_slug>"
 # on success, nothing on failure (caller falls back to the project dir).
 alloc_task_worktree() {  # $1=task_id
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" <<'PYEOF' 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$WT_PY" - "$WT_SLUG" "$1" <<'PYEOF' 2>>"$LOG"
 import sys
 from services import worktrees
 try:
@@ -330,7 +362,7 @@ PYEOF
 #   ok\t<pr_url>\t<pr_number> -> published
 #   error: <msg>             -> transient/other failure; caller logs, still done
 publish_task_worktree() {  # $1=branch_slug $2=title $3=body
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$WT_PY" - "$WT_SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
 import sys
 from services import worktrees
 slug, branch_slug, title, body = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
@@ -357,7 +389,7 @@ PYEOF
 #   ok\t<commit>             -> merged successfully
 #   error: <msg>             -> other failure; caller logs, still done
 merge_task_worktree_local() {  # $1=branch_slug
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" <<'PYEOF' 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$WT_PY" - "$WT_SLUG" "$1" <<'PYEOF' 2>>"$LOG"
 import sys
 from services import worktrees
 slug, branch_slug = sys.argv[1], sys.argv[2]
@@ -383,7 +415,7 @@ PYEOF
 # is committed on the branch either way, so a bookkeeping failure must never cost
 # it. See backend/services/work_review.py.
 open_change_for_task() {  # $1=branch_slug $2=task_id $3=title
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$WT_PY" - "$WT_SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
 import sys
 from services import ownership, work_review
 # Pin the data owner before any relational read/write. Without this the call
@@ -443,7 +475,7 @@ record_claim_check() {  # $1=change_id
 
 # Reap worktrees whose branch already merged into the canonical base. Best-effort.
 cleanup_merged_worktrees() {
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" <<'PYEOF' >/dev/null 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$WT_PY" - "$WT_SLUG" <<'PYEOF' >/dev/null 2>>"$LOG"
 import sys
 from services import worktrees
 try:
@@ -857,6 +889,8 @@ WORK_DIR="$DIR"
 RUNTIME="$DIR/.runtime"
 mkdir -p "$RUNTIME"
 LOG="$RUNTIME/ralph.log"
+# Where the lease helpers put their own lines (sourced above, before $LOG existed).
+TREE_LEASE_LOG="$LOG"
 
 ts() { date -Iseconds; }
 log() { echo "[$(ts)] [project_ralph] $*" >> "$LOG"; echo "[project_ralph] $*"; }
@@ -1221,6 +1255,23 @@ while (( n < MAX_TASKS )); do
       PR_TITLE="$(echo "$TASK_TEXT" | head -c 72 | tr '\n' ' ')"
       PR_BODY="Automated change for task $TASK_ID in project $WT_SLUG."
       log "task=$TASK_ID provisioned worktree $WT_DIR (branch wt/$WT_SLUG/$WT_BRANCH_SLUG)"
+      # HOLD IT (sec 4). A tree somebody else holds is not a tree this run may
+      # write to, and section 8's rule is "the answer to a busy tree is a verb,
+      # not a silent second writer". A sweep has no operator to offer a verb to,
+      # so it does the honest thing available to it: put the ticket back exactly
+      # as the environment-failure leg does (attempt restored, so nothing is
+      # burned) and let a later poll take it once the tree is free. Exit 3 -- no
+      # lease store on this installation -- is NOT a refusal: a file-backed
+      # project tree with no Postgres near it carries on as it always has, the
+      # same contract `services/tasks.py` gives the ticket lease.
+      tree_lease_take "$CHILD_JOB" "$WT_DIR"; TREE_RC=$?
+      if (( TREE_RC == 1 )); then
+        python3 "$PTASKS" note "$DIR" "$TASK_ID" "another session holds the worktree for this ticket; the attempt was restored and the ticket returned to todo rather than writing into a tree this run does not hold" --kind acceptance >/dev/null 2>>"$LOG"
+        ptasks_tx set-status "$DIR" "$TASK_ID" todo --restore-attempt --expect-claim-token "${CLAIM_TOKEN:-}" || true
+        job_finish_child "$CHILD_JOB" cancelled 0
+        log "task=$TASK_ID SKIPPED: another session holds $WT_DIR"
+        continue
+      fi
     else
       log "task=$TASK_ID worktree allocation failed; running in project dir (no isolation, no PR)"
     fi

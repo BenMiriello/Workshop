@@ -158,7 +158,23 @@ beat_presence() {
 release_presence() {
   python3 "$WORKSHOP/scripts/presence.py" release "$PRESENCE_ID" >/dev/null 2>&1 || true
 }
-trap release_presence EXIT
+# --- the worktree lease (workspace-ownership-and-leases-2026-08-22 sec 4/5) --
+#
+# The verbs live in scripts/tree_lease.sh so this file and project_ralph.sh
+# share one copy; see that file for why a run has to hold the tree it writes in
+# and why the renewal is a background child. Sourcing is best-effort.
+# shellcheck source=scripts/tree_lease.sh
+source "$WORKSHOP/scripts/tree_lease.sh" 2>/dev/null || { TREE_SUBJECT=""; TREE_GENERATION=""; TREE_BEAT_PID=""; tree_lease_take() { return 3; }; tree_lease_release() { :; }; }
+#
+# WHO TAKES IT DEPENDS ON WHO STARTED THIS RUN, and getting that wrong would be
+# a self-inflicted fence. When project_ralph.sh drove this run it passed --run,
+# and it has ALREADY taken the lease under that same id; re-acquiring here would
+# bump the generation and fence its beater with this run's own hand. So this
+# takes the lease only for a STANDALONE ralph, which nothing else is holding a
+# tree for. Either way $PRESENCE_ID is the holder id and the id the confined
+# spawn presents, so the mount layer asks about the session that actually holds
+# the tree.
+trap 'release_presence; tree_lease_release' EXIT
 
 # Renew the claimed task's lease so a slow-but-alive worker is never reclaimed
 # mid-iteration (Fix 2). Best-effort and inert unless project_ralph passed the
@@ -242,6 +258,10 @@ else:
 LOG=$DIR/.runtime/ralph.log
 mkdir -p "$(dirname "$LOG")"
 log() { echo "[$(ts)] [ralph] $*" >> "$LOG"; echo "[ralph] $*"; }
+TREE_LEASE_LOG="$LOG"
+if [[ -z "$RUN_ID" ]]; then
+  tree_lease_take "$PRESENCE_ID" "$DIR" || true
+fi
 
 if [[ -z "$TASK" ]]; then
   echo "usage: ralph.sh \"<task description>\" [--baseline-rev rev] [--max-iter N] [--max-wall sec]" >&2
@@ -919,7 +939,13 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
   # (stdout -> $ITER_OUT, stdin < /dev/null) cross the namespace as already-open
   # descriptors, so the JSON capture is unaffected. PYTHONPATH lets the launcher
   # (which runs OUTSIDE the sandbox, building the argv) import services.scoped_exec.
-  SCOPED_EXEC=("$WORKSHOP/backend/.venv/bin/python" -m services.scoped_exec exec --workdir "$DIR" --)
+  # --session-id IS WHO IS ASKING, for the lease layer ([B1], sec 4): with
+  # WORKSHOP_TREE_LEASE_MOUNT on, $DIR is bound read-write only if THIS run holds
+  # its worktree lease, and read-only otherwise. Without it the turn carries no
+  # session identity, `tree_access.decide` correctly answers "this turn holds
+  # nothing", and the worker would be read-only inside its own worktree. Free
+  # while the flag is off: the argv is byte-identical either way.
+  SCOPED_EXEC=("$WORKSHOP/backend/.venv/bin/python" -m services.scoped_exec exec --workdir "$DIR" --session-id "$PRESENCE_ID" --)
   PYTHONPATH="$WORKSHOP/backend" timeout "$PER_ITER_TIMEOUT" \
     "${SCOPED_EXEC[@]}" \
     "$CLAUDE" "${RESUME_FLAG[@]}" -p "$ITER_PROMPT" \
