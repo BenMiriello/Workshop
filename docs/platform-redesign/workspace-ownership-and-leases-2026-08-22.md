@@ -4,7 +4,15 @@
 - Status: **B0, B2a, B2, B4, B3, B1 and B8 are built** (B1 and B8 on 2026-08-23,
   B3 and B4 the same day, B2 the same day, the other two 2026-08-22 evening),
   along with track C's record, review surface and merge-on-accept, and all of
-  track A. B5 through B7 are not. B1 had MOVED to after B3 (it is defined as
+  track A. **B5, B6 and B7 are built too, as of 2026-08-23** (commits `5cfc8630`
+  for the holder UI and `939ab1dd` for Queue, Steer and Preempt); this line said
+  they were not until 2026-08-27, and that stale sentence is the reason the work
+  was believed unstarted for four days. **ALL OF B0 THROUGH B8 IS BUILT.**
+  What is NOT true is that any of it has run: measured 2026-08-27, the `lease`,
+  `worktree` and `change` tables hold zero rows each. See
+  [`EXECUTION-PLAN-2026-08-27.md`](EXECUTION-PLAN-2026-08-27.md) §1 for the three
+  connections that hold it inert, the largest being that nothing gives an
+  interactive chat a lease, which is why the flag below cannot be armed. B1 had MOVED to after B3 (it is defined as
   read-write-if-you-hold-the-lease and there was no lease until B3) and shipped
   once that prerequisite existed.
   **B1 IS BEHIND A FLAG THAT IS OFF** (`WORKSHOP_TREE_LEASE_MOUNT`, unset =

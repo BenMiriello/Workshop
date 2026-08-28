@@ -7,6 +7,13 @@
   (B2, B3 and B4 on 2026-08-23; the rest 2026-08-22 evening). See section 0. B1
   and B5 to B8 are unstarted. B1's position in the order was wrong -- it needs
   the lease -- and the lease now exists, so B1 is next.
+- **CORRECTED 2026-08-27: that status line is wrong and has been since
+  2026-08-23. B1 and B5 through B8 all shipped.** The whole of B0 to B8 is
+  built. B1 remains behind `WORKSHOP_TREE_LEASE_MOUNT`, which is off and cannot
+  safely be armed because nothing gives an interactive chat a lease. The
+  measured state, and the ordered plan for the rest of the platform around it,
+  is [`EXECUTION-PLAN-2026-08-27.md`](EXECUTION-PLAN-2026-08-27.md). Read that
+  before acting on any status line in this file.
 - Design of record: [`workspace-ownership-and-leases-2026-08-22.md`](workspace-ownership-and-leases-2026-08-22.md)
   (revision 2, post-review) and
   [`branches-worktrees-and-environments-2026-08-20.md`](branches-worktrees-and-environments-2026-08-20.md)
