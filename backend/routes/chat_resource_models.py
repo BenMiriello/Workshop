@@ -25,6 +25,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from routes.api_models import McpCounts
+from routes.presence import LeaseRef
 
 
 class ThreadContext(BaseModel):
@@ -186,3 +187,49 @@ class MentionableAgents(BaseModel):
 
     scope: str
     agents: list[MentionableAgent]
+
+
+class ChatWorktreeBranch(BaseModel):
+    """One branch this chat could be pinned to.
+
+    `branch_slug` is what a pin stores and `branch` is the git ref; both are on
+    the wire because the menu shows the ref and the write sends the slug, and a
+    client that had to derive one from the other would be re-implementing
+    `services/worktrees.py`'s naming policy.
+    """
+    branch_slug: str
+    branch: str
+    dir: str
+
+
+class ChatWorktree(BaseModel):
+    """Where this chat's turns run, and what it holds there.
+
+    Section 10 of `workspace-ownership-and-leases-2026-08-22.md` as one read.
+    `pinned` false is the ordinary state: the chat runs in the shared tree,
+    holds nothing, and `lease` is null. `blocked_by` is the lease ANOTHER
+    session holds on the tree this chat is pinned to, which is what the
+    queue/steer/take-over controls are offered against.
+    """
+    cwd: str
+    project_slug: str | None = None
+    scope: str | None = None
+    branch_slug: str | None = None
+    branch: str | None = None
+    # `branch` (a pin) or `app_default` (the shared tree). From
+    # `services/session_defaults.resolve`, never invented at the route.
+    source: str
+    read_only: bool
+    detail: str = ""
+    subject_id: str | None = None
+    lease: LeaseRef | None = None
+    blocked_by: LeaseRef | None = None
+    pinned: bool
+    held: bool
+    # The trunk's real name, read from git rather than assumed to be `main`.
+    default_ref: str
+    branches: list[ChatWorktreeBranch] = []
+    # False for every chat with no branch space of its own (a data chat, a
+    # freestanding agent). The control is not rendered rather than rendered
+    # disabled: there is nothing here to enable.
+    can_pin: bool

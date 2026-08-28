@@ -1085,6 +1085,24 @@ def get_thread_mcp_servers(thread_id: str) -> list[str] | None:
     return list(value) if isinstance(value, list) else None
 
 
+def set_thread_branch(thread_id: str, branch_slug: str | None) -> dict | None:
+    """Pin this conversation to a branch of its project's tree (None unpins).
+
+    THE PIN, NOT THE LEASE. This says where this chat's turns run; whether it
+    may WRITE there is the worktree lease, taken per turn by
+    `services/chat_worktree.py`, and enforced by the mount. Storing one where the
+    other belongs is the mistake section 4 of
+    `docs/platform-redesign/workspace-ownership-and-leases-2026-08-22.md`
+    exists to prevent, so this stores a name and grants nothing.
+
+    Validation belongs to the caller, on the same terms as `set_thread_model`:
+    whether a branch exists is a question for the branches layer, which the
+    route asks before it gets here, and asking it twice from two modules is two
+    ideas of what a valid branch is.
+    """
+    return _patch(thread_id, branch_slug=branch_slug)
+
+
 def set_thread_effort(thread_id: str, effort: str | None) -> dict | None:
     """Persist the per-thread effort preference (a level name, or None to fall
     back to the model default). Returns the updated thread, or None if missing.

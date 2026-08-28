@@ -642,6 +642,64 @@ def _current_ref(meta: dict) -> str:
         return "HEAD"
 
 
+# --- the worktree this turn holds (connection C-3) ---------------------------
+
+def _renew_tree(meta: dict, state: dict) -> None:
+    """Renew the lease and presence on the tree this turn is writing in.
+
+    SECTION 6'S RENEWAL CHANNEL FOR AN INTERACTIVE HOLDER, driven from the one
+    loop that runs for exactly as long as the turn does. A lease TTL is 90s and
+    a beat is every 30s (`services/leases.py`), so two consecutive beats can be
+    lost to a slow disk without the tree lapsing under a chat that is plainly
+    working.
+
+    A turn that holds nothing pays one dict lookup here and nothing else, which
+    is every chat that was never pinned to a branch.
+
+    LOSING THE LEASE DOES NOT KILL THE TURN. Being fenced means someone
+    preempted this chat, and `services/control.py` already stopped the turn
+    itself as part of that; all this does is stop claiming a tree that is no
+    longer ours, so the next spawn reads the truth.
+    """
+    tree = meta.get("tree")
+    if not tree:
+        return
+    now = time.time()
+    from services import leases
+    if now - float(state.get("tree_beat_at") or 0) < leases.HEARTBEAT_SEC:
+        return
+    state["tree_beat_at"] = now
+    try:
+        from services import chat_worktree
+        held = chat_worktree.TreeState.from_dict(tree)
+        if held is None or not chat_worktree.beat(
+                str(meta.get("thread_id") or ""), held,
+                activity=f"a chat turn in {held.branch or held.cwd}"):
+            log.info("turn %s: the tree lease is no longer ours; letting it go",
+                     meta.get("turn_id"))
+            meta["tree"] = None
+    except Exception as exc:  # pragma: no cover - bookkeeping, never a turn
+        log.debug("turn %s: could not renew the tree lease: %s",
+                  meta.get("turn_id"), exc)
+
+
+def _release_tree(meta: dict) -> None:
+    """The turn is over, so the tree is free. Section 7: sessions are disposable.
+
+    Withdrawing presence is the whole of it -- `presence.release` already
+    releases the leases the holder had, which is section 6's join rule, and
+    calling `leases.release` here as well would be a second implementation of
+    the same rule.
+    """
+    if not meta.get("tree"):
+        return
+    try:
+        from services import chat_worktree
+        chat_worktree.leave(str(meta.get("thread_id") or ""))
+    except Exception as exc:  # pragma: no cover - defensive
+        log.debug("turn %s: could not release the tree: %s", meta.get("turn_id"), exc)
+
+
 def _maybe_write_blocked(turn: Turn, meta: dict, payload: dict) -> None:
     """The `EROFS` event, turned into an offer instead of a crash ([B1], §4.2).
 
@@ -1978,6 +2036,7 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
                      effort: str | None = None,
                      permission_mode: str | None = None,
                      attachments: list[dict] | None = None,
+                     tree: dict | None = None,
                      origin: list[dict] | None = None) -> Turn:
     """Kick off a streaming turn. The claude subprocess is detached and streams
     to a disk journal so it survives a backend restart; the returned Turn is
@@ -2063,6 +2122,14 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
         # entry has no key at all, which reads as None: today's behavior.
         "mcp_selection": mcp_selection,
         "tools_disabled": bool(tools_disabled),
+        # THE WORKTREE THIS TURN HOLDS, when it holds one
+        # (`services/chat_worktree.enter`, connection C-3 of the leases design).
+        # None for every chat that is not pinned to a branch, which is the
+        # common case and is byte-for-byte today's behaviour. In meta rather
+        # than in a process-local map so a turn adopted after a restart goes on
+        # renewing the lease it took rather than silently abandoning a tree it
+        # is still writing to.
+        "tree": tree or None,
         # None = send no --effort, i.e. the model's own default. Carried in meta
         # so a turn resumed after a restart respawns at the level it was started
         # at rather than silently dropping to the default.
@@ -2546,6 +2613,10 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     state = {"compacted": False, "saw_result": False, "last_ctx": 0,
              "replays": 0, "results": 0, "foreign_results": 0,
              "seg_at_result": -1,
+             # Seeded at NOW, not at 0: `chat_worktree.enter` wrote the first beat
+             # when it took the lease, so the first renewal is due one window
+             # from the start of the turn rather than on the first loop pass.
+             "tree_beat_at": time.time(),
              "activity_at": time.time(), "seg_count": 0}
     buf = ""
     # RESUME THE JOURNAL, DO NOT REPLAY IT.
@@ -2823,6 +2894,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                              starttime=meta.get("pid_starttime"))
             _drain(final=True)
             break
+        _renew_tree(meta, state)
         await asyncio.sleep(0.15)
 
     _cleanup_turn_input(turn.id)
@@ -3068,6 +3140,10 @@ async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
     Always wakes, even if the commit raised. The blocking POST /messages path
     awaits `turn.finished`, and a finalize that fails silently would leave that
     request hanging for as long as the client will hold the socket open."""
+    # BEFORE anything that can raise. A tree left held by a finished turn is
+    # the orphaned worktree this whole design exists to remove, and the commit
+    # below is the part with failure modes.
+    _release_tree(meta)
     _stale_pending_approvals(turn)
     _close_open_tools(turn)
     _close_open_agents(turn, stopped=bool(kw.get("stopped")), lost=bool(kw.get("lost")))

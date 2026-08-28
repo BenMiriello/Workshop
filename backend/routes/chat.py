@@ -33,6 +33,7 @@ from services import chat_attachments
 from services import context_window
 from services import chat_branches
 from services import chat_drain
+from services import chat_worktree
 from services import chat_events
 from services import tenancy
 from services import chat_queue
@@ -2492,6 +2493,117 @@ async def thread_context(thread_id: str):
     }
 
 
+# ---- Which tree this chat works in ------------------------------------------
+# Section 10 and section 14 of
+# `docs/platform-redesign/workspace-ownership-and-leases-2026-08-22.md`: the ref
+# is "inherited, shown, changeable", and the chat is where it is shown and
+# changed. `services/chat_worktree.py` holds the rules; these two routes are the
+# door.
+
+
+def _tree_read(thread_id: str):
+    """The chat, its provider and where its next turn would run. Writes nothing."""
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    provider = chat_context.get_provider(t.get("context_key"))
+    fallback = (str(provider.dir) if chat_context.is_build_provider(provider)
+                else str(paths.chat_cwd()))
+    return t, provider, chat_worktree.plan(t, provider, fallback_cwd=fallback)
+
+
+def _tree_payload(tree) -> dict:
+    from services import worktrees
+    project = tree.project_slug
+    return {
+        **tree.as_dict(),
+        "default_ref": worktrees.default_ref(project) if project else "",
+        "branches": chat_worktree.branch_options(project),
+        "can_pin": bool(project),
+    }
+
+
+@router.get("/threads/{thread_id}/tree", response_model=crm.ChatWorktree,
+            response_model_exclude_unset=True)
+async def thread_tree(thread_id: str):
+    """Which tree this chat works in, who holds it, and where else it could go.
+
+    A READ, not a turn: opening the ref menu claims nothing and writes no
+    presence. The lease it reports is whatever the lease table says right now,
+    which for an idle chat is usually nothing at all -- a chat holds its tree
+    for the length of a turn, not for the length of the conversation
+    (section 7: sessions are disposable, trees are not).
+    """
+    _t, _provider, tree = _tree_read(thread_id)
+    return _tree_payload(tree)
+
+
+class ThreadTreeIn(BaseModel):
+    """Move this chat to another tree.
+
+    `action` is section 10.3's closed set and nothing else is accepted:
+    `join` an existing branch, cut a `new_branch`, or `release` the pin and go
+    back to the shared tree. Joining requires a branch that was actually
+    offered -- `services/session_defaults.choose` enforces that, and the point
+    of routing through it is that a join is never something that just happens.
+    """
+    action: str = "join"
+    branch: str | None = None
+
+
+@router.put("/threads/{thread_id}/tree", response_model=crm.ChatWorktree,
+            response_model_exclude_unset=True)
+async def set_thread_tree(thread_id: str, body: ThreadTreeIn):
+    """Pin this chat to a branch, cut a new one, or go back to the shared tree.
+
+    APPLIES FROM THE NEXT TURN, exactly as the model, effort and MCP selection
+    do: a turn already in flight had its cwd fixed when its process started, and
+    moving a running turn's directory underneath it is not a thing that can be
+    done. The pill re-reads after the write, so what it says is what the next
+    turn will do.
+
+    WHERE THE PIN IS STORED DEPENDS ON WHAT IS BEING PINNED, and that is
+    section 7 rather than an inconsistency. A maker agent is one worker with one
+    tree, so its pin is on the agent and every chat addressed to it moves
+    together; a project chat is one of many against a shared tree, so its pin is
+    on the conversation.
+    """
+    t, provider, tree = _tree_read(thread_id)
+    project = tree.project_slug
+    if not project:
+        raise HTTPException(400, "this chat has no project tree to branch from")
+
+    from services import worktrees
+    if body.action == "release":
+        branch_slug = None
+    elif body.action in ("join", "new_branch"):
+        offer = chat_worktree.pin_offer(project, current_ref=worktrees.default_ref(project))
+        try:
+            chosen = chat_worktree.apply_choice(project, offer, body.action,
+                                            branch=body.branch,
+                                            allocated_by=f"chat:{thread_id}")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        branch_slug = chosen["branch_slug"]
+    else:
+        raise HTTPException(400, "action must be join, new_branch or release")
+
+    key = str(getattr(provider, "key", "") or "")
+    if key.startswith("agent:"):
+        from services import build_agents as _ba
+        try:
+            _ba.set_branch(provider.slug, branch_slug)
+        except KeyError:
+            raise HTTPException(404, f"build agent not found: {provider.slug}")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    elif chat_store.set_thread_branch(thread_id, branch_slug) is None:
+        raise HTTPException(404, "thread not found")
+
+    _t2, _p2, moved = _tree_read(thread_id)
+    return _tree_payload(moved)
+
+
 def _side_query_cwd(provider) -> str:
     """The directory a side query should run the CLI in.
 
@@ -3729,6 +3841,27 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
     if mcp_selection is None and not ownership.caller_is_operator():
         mcp_selection = []
 
+    # WHICH TREE THIS TURN RUNS IN, and the lease on it. Connection C-3 of
+    # `docs/platform-redesign/workspace-ownership-and-leases-2026-08-22.md`:
+    # every other piece of that design was built and none of it had ever run,
+    # because nothing gave an interactive chat a lease.
+    #
+    # OPT-IN, AND THE OPT-IN IS THE PIN. A chat that was never pinned to a
+    # branch comes back with `cwd` exactly as it was computed here before —
+    # `provider.dir` for a project or maker chat — holding nothing, writing no
+    # presence and taking no lease. That is section 10.2 ("most sessions never
+    # leave this state") and it is why turning this on cannot surprise anybody
+    # who never asked for a branch.
+    #
+    # NEVER RAISES. `enter` answers with a usable cwd for every failure it can
+    # meet, including no lease store at all, so a turn cannot fail to spawn
+    # because the bookkeeping was unavailable.
+    tree = chat_worktree.enter(
+        thread_id, t, provider,
+        fallback_cwd=(str(provider.dir) if chat_context.is_build_provider(provider)
+                      else str(paths.chat_cwd())),
+        activity=f"a chat turn in {t.get('title') or thread_id}")
+
     if isinstance(provider, chat_context.MakerAgentContextProvider):
         from services import build_agents as _ba
         try:
@@ -3738,7 +3871,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         # Stale-session guard: an existing id whose claude session no longer exists
         # on disk (old agent, post-reboot prune) would make `--resume` fail the
         # whole turn. Detect it up front and start fresh so the turn just works.
-        if sid and not is_new and not build_streaming.session_alive(sid, str(provider.dir)):
+        if sid and not is_new and not build_streaming.session_alive(sid, tree.cwd):
             log.info("agent %s: claude session %s is gone; starting fresh", provider.slug, sid)
             _ba.reset_session(provider.slug)
             try:
@@ -3779,16 +3912,17 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         _link_build_skills(provider)  # native .claude/skills discovery (Phase 5)
         return await build_streaming.start_turn(
             thread_id=thread_id, agent_slug=provider.slug, prompt=prompt, model=model,
-            cwd=str(provider.dir), session_id=sid, resume=resume_flag,
+            cwd=tree.cwd, session_id=sid, resume=resume_flag,
             timeout_s=CHAT_TIMEOUT_S, turn_id=turn_id, effort=effort,
             permission_mode=permission_mode, mcp_selection=mcp_selection,
+            tree=(tree.as_dict() if tree.held else None),
             origin=sends,
         )
 
     is_project = chat_context.is_build_provider(provider)
     if is_project:
         _link_build_skills(provider)
-        cwd = str(provider.dir)
+        cwd = tree.cwd
         allowed_tools: list[str] | None = None
         mcp_servers: list[str] = []
         tools_disabled = False
@@ -3819,6 +3953,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         session_id=sid, resume=resume_flag,
         timeout_s=CHAT_TIMEOUT_S, turn_id=turn_id, effort=effort,
         permission_mode=permission_mode, attachments=attachments,
+        tree=(tree.as_dict() if tree.held else None),
         allowed_tools=allowed_tools, mcp_servers=mcp_servers, tools_disabled=tools_disabled,
         # Redundant on the narrow branch above (which already filtered
         # `mcp_servers` and `allowed_tools` through it, and the filter is
