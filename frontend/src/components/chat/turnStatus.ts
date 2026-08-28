@@ -51,7 +51,12 @@ const TOOL_VERB: Record<string, string> = {
   Glob: "Scanning",
   WebFetch: "Fetching",
   WebSearch: "Searching",
-  Agent: "Delegating",
+  // NOT "Delegating". A subagent is an internal mechanism of how the turn is
+  // run, and the indicator answers "what is happening for me right now", so it
+  // names the work rather than the plumbing. Reported 2026-08-27: "why did you
+  // start doing custom working text I never asked for... what determines that?"
+  // What determines it is the live tool; the fix was the word, not the table.
+  Agent: "Working",
   NotebookEdit: "Editing",
   EnterPlanMode: "Planning",
   ExitPlanMode: "Planning",
@@ -94,7 +99,9 @@ export function currentActivity(segments: ChatSegment[]): string {
   for (let i = segments.length - 1; i >= 0; i--) {
     const seg = segments[i];
     if (seg.t === "tool" && isRunning(seg)) return toolVerb(seg.name);
-    if (seg.t === "agent" && !seg.done) return "Delegating";
+    // Same reason as the TOOL_VERB entry above: the indicator names the work,
+    // not the plumbing that runs it.
+    if (seg.t === "agent" && !seg.done) return "Working";
     if (seg.t === "approval" && seg.state === "pending") return "Waiting";
   }
   return "Working";
