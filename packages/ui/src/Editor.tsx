@@ -42,6 +42,7 @@ import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import {
   EditorView,
   drawSelection,
+  placeholder as cmPlaceholder,
   highlightActiveLine,
   highlightActiveLineGutter,
   highlightSpecialChars,
@@ -261,7 +262,11 @@ function editExtensions(canEdit: boolean): Extension {
   ];
 }
 
-function profileExtensions(profile: EditorProfile, ariaLabel?: string): Extension {
+function profileExtensions(
+  profile: EditorProfile,
+  ariaLabel?: string,
+  placeholder?: string,
+): Extension {
   const attrs: Record<string, string> = {
     // A memory document is prose somebody wrote; a source file is not, and a
     // red squiggle under every identifier is noise.
@@ -271,6 +276,13 @@ function profileExtensions(profile: EditorProfile, ariaLabel?: string): Extensio
   };
   if (ariaLabel) attrs["aria-label"] = ariaLabel;
   const content = EditorView.contentAttributes.of(attrs);
+  // WHAT AN EMPTY EDITOR LOOKS LIKE, and why it needs saying. An empty editor
+  // in a full-width document has no border on its long edges and a background a
+  // shade off the page's, so on 2026-08-28 a new note's body was an editor the
+  // size of the screen that read as blank page: measured 1128x513 and invisible.
+  // A placeholder is the fix that also answers the more useful question, which
+  // is what to write there. `view` gets none: a reader is not about to type.
+  const hint = placeholder && profile !== "view" ? [cmPlaceholder(placeholder)] : [];
 
   // `view`: the profile's highlighting and nothing that edits. Wrapped, because
   // a reader should never have to scroll sideways to finish a line.
@@ -280,11 +292,12 @@ function profileExtensions(profile: EditorProfile, ariaLabel?: string): Extensio
   // matching, and no active-line highlight either. A memory document is read as
   // a document, and a running bar down the line you are on is code furniture.
   if (profile === "prose") {
-    return [content, EditorView.lineWrapping, history(), keymap.of([...defaultKeymap, ...historyKeymap])];
+    return [content, ...hint, EditorView.lineWrapping, history(), keymap.of([...defaultKeymap, ...historyKeymap])];
   }
 
   return [
     content,
+    ...hint,
     lineNumbers(),
     highlightActiveLineGutter(),
     highlightActiveLine(),
@@ -311,6 +324,11 @@ export interface EditorProps {
   editable?: boolean;
   /** A fixed height. Omit it and the editor grows with its content. */
   height?: number | string;
+  /** What an EMPTY editor says. Not decoration: an empty editor in a
+   *  full-width document has no side border and a background a shade off the
+   *  page's, so without one it reads as blank page rather than as somewhere to
+   *  type. Ignored by the `view` profile, which is not for typing in. */
+  placeholder?: string;
   className?: string;
   /** The accessible name. An editor is a text box and needs one. */
   ariaLabel?: string;
@@ -325,6 +343,7 @@ export function Editor({
   height,
   className,
   ariaLabel,
+  placeholder,
 }: EditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -360,6 +379,8 @@ export function Editor({
   // through the reconfiguring effects below.
   const activeRef = useRef(active);
   const ariaLabelRef = useRef(ariaLabel);
+  const placeholderRef = useRef(placeholder);
+  placeholderRef.current = placeholder;
   const canEditRef = useRef(canEdit);
 
   useEffect(() => {
@@ -380,7 +401,7 @@ export function Editor({
           // (useEffect runs after paint), so seeding empty would paint one
           // frame of a read-only editor as contenteditable -- which on a phone
           // is a frame that can open the virtual keyboard.
-          shape.of(profileExtensions(activeRef.current, ariaLabelRef.current)),
+          shape.of(profileExtensions(activeRef.current, ariaLabelRef.current, placeholderRef.current)),
           lang.of([]),
           edit.of(editExtensions(canEditRef.current)),
           EditorView.updateListener.of((u) => {
@@ -403,8 +424,10 @@ export function Editor({
   }, [shape, lang, edit]);
 
   useEffect(() => {
-    viewRef.current?.dispatch({ effects: shape.reconfigure(profileExtensions(active, ariaLabel)) });
-  }, [active, ariaLabel, shape]);
+    viewRef.current?.dispatch({
+      effects: shape.reconfigure(profileExtensions(active, ariaLabel, placeholder)),
+    });
+  }, [active, ariaLabel, placeholder, shape]);
 
   useEffect(() => {
     viewRef.current?.dispatch({ effects: edit.reconfigure(editExtensions(canEdit)) });

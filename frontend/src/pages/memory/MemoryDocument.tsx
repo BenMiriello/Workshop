@@ -427,6 +427,7 @@ export function NoteDocument({
                 }}
                 path="note.md"
                 profile="prose"
+                placeholder="Write the note in Markdown."
                 ariaLabel="Note body, markdown source"
               />
             </>
@@ -620,6 +621,9 @@ export function NewNoteDocument({
             </Field>
             <Checkbox checked={pinned} onChange={setPinned} label="Pinned" />
           </Row>
+          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
+            Pinned notes, then preferences and decisions, rank first in what gets read into every chat in this scope.
+          </p>
 
           <Field
             label="Hook"
@@ -635,17 +639,20 @@ export function NewNoteDocument({
             />
           </Field>
 
-          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-            Pinned notes, then preferences and decisions, rank first in what gets read into every chat in this scope.
-          </p>
-
-          <Editor
-            value={content}
-            onChange={setContent}
-            path="note.md"
-            profile="prose"
-            ariaLabel="Note body, markdown source"
-          />
+          {/* THE BODY IS LABELLED, and the editor says what to put in it.
+              Measured 2026-08-28: an empty editor in a full-width document has
+              no side border and a background a shade off the page's, so a new
+              note's body was 1128x513 of what read as blank page. */}
+          <Field label="Body" htmlFor="new-note-body">
+            <Editor
+              value={content}
+              onChange={setContent}
+              path="note.md"
+              profile="prose"
+              placeholder="Write the note in Markdown."
+              ariaLabel="Note body, markdown source"
+            />
+          </Field>
         </Stack>
       </div>
     </div>

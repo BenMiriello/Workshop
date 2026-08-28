@@ -12,6 +12,32 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.7.3 - 2026-08-28 - an empty editor says what to write in it
+
+**Patch, additive.** One new optional prop; nothing else changed.
+
+### Added
+
+- **`Editor` takes a `placeholder`.** An empty editor inside a full-width
+  document has no border on its long edges and a background one shade off the
+  page's, so it reads as blank page rather than as somewhere to type. Measured
+  2026-08-28 on a new Memory note: an editor 1128x513 that nobody could see.
+  The placeholder answers the more useful question at the same time, which is
+  what to write there. The `view` profile ignores it: a reader is not about to
+  type. The `.cm-placeholder` theme rule this styles has existed since the
+  editor shipped and had nothing wired to it.
+
+### Fixed
+
+- **`.ws-doc--full` sizes its editor by layout, not by arithmetic.** The height
+  was `100dvh` minus bar one, minus the document bar, minus the body's padding,
+  which is only correct when the editor is the FIRST thing in the body. A new
+  note has a scope picker, a type, a hook and two help lines above it, and the
+  editor's box ran 165px below the fold. It is a bounded flex column now: the
+  body takes what the bar leaves, the editor takes what the fields leave, and
+  nothing has to be told what its siblings are. The editor keeps a 12rem floor
+  and the body is the scroller, so a document is still one scroller either way.
+
 ## 0.7.2 - 2026-08-28 - shell chrome beside <main> gets the page's measure
 
 **Fix, CSS only.** No export moved and `api/ui.api.md` is unchanged.
