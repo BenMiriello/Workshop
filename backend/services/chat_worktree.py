@@ -226,7 +226,8 @@ def _subject_id(cwd: str) -> str | None:
 
 # --- the read ----------------------------------------------------------------
 
-def plan(thread: dict | None, provider: Any, *, fallback_cwd: str) -> TreeState:
+def plan(thread: dict | None, provider: Any, *, fallback_cwd: str,
+         holder_id: str | None = None) -> TreeState:
     """Where this chat's next turn would run, and who holds it. Writes nothing.
 
     Serves `GET /chat/threads/{id}/tree` and is the first half of `enter`, so
@@ -236,6 +237,12 @@ def plan(thread: dict | None, provider: Any, *, fallback_cwd: str) -> TreeState:
     project_slug = _project_of(provider)
     branch_slug = _pinned_branch(thread, provider)
     default_ref = _default_ref(project_slug)
+    # The chat's own id IS its holder id: the lease is taken under the thread id,
+    # which is also what `scoped_exec` asks the mount layer about. `enter` passes
+    # the id it was called with rather than relying on the record carrying one,
+    # so a caller that already knows who is asking cannot be told its own lease
+    # belongs to somebody else.
+    holder_id = str(holder_id or (thread or {}).get("id") or "")
 
     if not (project_slug and branch_slug):
         # SECTION 10.2, and the reason this branch exists at all: an unpinned
@@ -284,9 +291,17 @@ def plan(thread: dict | None, provider: Any, *, fallback_cwd: str) -> TreeState:
         current = leases.get(SUBJECT_KIND, subject_id)
     except Exception:
         current = None
-    if current and current.get("state") == "held":
+    if not current or current.get("state") != "held":
+        return tree
+    # `lease` MEANS "THIS CHAT HOLDS IT" AND `blocked_by` MEANS "SOMEBODY ELSE
+    # DOES", and conflating them is not cosmetic: `held` is what the ref pill
+    # colours `ok / Yours` and what the route reports, so a chat reading a tree
+    # another chat is writing would have been told it held the thing it is
+    # about to be refused a write on. Measured on the second chat in the
+    # end-to-end run before this branch existed.
+    if holder_id and str(current.get("holder_id")) == holder_id:
         return replace(tree, lease=current)
-    return tree
+    return replace(tree, blocked_by=current)
 
 
 # --- the write ---------------------------------------------------------------
@@ -306,11 +321,12 @@ def enter(thread_id: str, thread: dict | None, provider: Any, *,
     comes back as `blocked_by`, and the caller offers queue, steer or take-over
     against it -- the verbs that already exist (B6/B7).
     """
-    tree = plan(thread, provider, fallback_cwd=fallback_cwd)
+    tree = plan(thread, provider, fallback_cwd=fallback_cwd,
+                holder_id=str(thread_id))
     if not tree.pinned or not tree.subject_id:
         return tree
-    holder = tree.lease
-    if holder and str(holder.get("holder_id")) != str(thread_id):
+    holder = tree.blocked_by
+    if holder:
         # Section 8: the answer to a busy tree is a verb, not a silent second
         # writer. The turn still runs (read-only once the flag is on); what it
         # does not get is the lease.
@@ -444,7 +460,11 @@ def apply_choice(project_slug: str, offer: dict, action: str, *,
     if chosen["action"] == "join":
         return {"branch_slug": str(chosen["branch"]), "created": False}
     from services import worktrees
-    slug = str(chosen.get("ticket_id") or chosen.get("work_id"))
+    # NORMALIZED BY THE BRANCHES LAYER, not here. Section 10.4's work id is
+    # `uuid4().hex[:8]`, which starts with a digit more often than not, and
+    # `create_branch` requires a slug that starts with a letter.
+    slug = worktrees.branch_slug_for(
+        str(chosen.get("ticket_id") or chosen.get("work_id")))
     created = worktrees.create_branch(project_slug, slug, allocated_by=allocated_by)
     return {"branch_slug": created["branch_slug"], "created": True,
             "branch": created["branch"], "dir": created["dir"]}

@@ -2509,7 +2509,8 @@ def _tree_read(thread_id: str):
     provider = chat_context.get_provider(t.get("context_key"))
     fallback = (str(provider.dir) if chat_context.is_build_provider(provider)
                 else str(paths.chat_cwd()))
-    return t, provider, chat_worktree.plan(t, provider, fallback_cwd=fallback)
+    return t, provider, chat_worktree.plan(t, provider, fallback_cwd=fallback,
+                                           holder_id=thread_id)
 
 
 def _tree_payload(tree) -> dict:

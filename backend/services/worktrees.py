@@ -47,6 +47,7 @@ Public surface:
   worktree_record(project_slug, branch_slug) -> dict | None
   provision_worktree(scope, owner) -> dict
   list_branches(project_slug) -> list[dict]
+  branch_slug_for(value) -> str         an arbitrary work id, as a branch slug
   live_branches() -> dict            every tree there is, joined with its record
   merge_branch(project_slug, branch_slug, *, message="") -> dict
   discard_branch(project_slug, branch_slug, *, force=False) -> dict
@@ -1081,6 +1082,20 @@ def repo_state(project_slug: str) -> dict:
         "worktrees": worktrees_out,
         "open_prs": open_prs,
     }
+
+
+def branch_slug_for(value: str) -> str:
+    """Turn an arbitrary work id into a branch slug this module will accept.
+
+    PUBLISHED BECAUSE NAMING IS THIS MODULE'S POLICY (section 13.2 of
+    `workspace-ownership-and-leases-2026-08-22.md`): "no service imports another
+    service's policy", and a second slugifier elsewhere is the same branch name
+    derived two ways. `allocate_task_worktree` already normalized on the way in
+    and `create_branch` did not, so the no-ticket path in section 10.4 -- whose
+    work id is `uuid4().hex[:8]` and therefore starts with a digit about six
+    times in ten -- could not name a branch at all.
+    """
+    return _kebab_branch_slug(value)
 
 
 def default_ref(project_slug: str) -> str:

@@ -241,6 +241,22 @@ class TestASecondChatIsOfferedTheVerbs:
         assert rival.cwd == str(wired["branch"])
         assert wired["table"][SUBJECT]["holder_id"] == THREAD
 
+    def test_the_read_does_not_tell_it_that_it_holds_what_it_does_not(self, wired):
+        """`lease` means THIS chat holds it; `blocked_by` means somebody else
+        does. The ref pill colours `held` as `ok / Yours`, so conflating the two
+        told a chat it held the tree it is about to be refused a write on."""
+        chat_worktree.enter(THREAD, {"branch_slug": "fix-42"}, wired["provider"],
+                            fallback_cwd=str(wired["project"]))
+        seen = chat_worktree.plan({"id": OTHER, "branch_slug": "fix-42"},
+                                  wired["provider"],
+                                  fallback_cwd=str(wired["project"]))
+        assert seen.held is False and seen.lease is None
+        assert seen.blocked_by["holder_id"] == THREAD
+        mine = chat_worktree.plan({"id": THREAD, "branch_slug": "fix-42"},
+                                  wired["provider"],
+                                  fallback_cwd=str(wired["project"]))
+        assert mine.held is True and mine.blocked_by is None
+
     def test_it_does_not_leave_a_phantom_presence_behind(self, wired):
         chat_worktree.enter(THREAD, {"branch_slug": "fix-42"}, wired["provider"],
                             fallback_cwd=str(wired["project"]))
@@ -340,3 +356,20 @@ class TestChoosingABranch:
         offer = chat_worktree.pin_offer("demo", current_ref="master")
         out = chat_worktree.apply_choice("demo", offer, "join", branch="fix-42")
         assert out == {"branch_slug": "fix-42", "created": False}
+
+    def test_a_new_branch_is_named_by_the_branches_layer(self, wired, monkeypatch):
+        """Section 10.4's work id starts with a digit six times in ten, and
+        `create_branch` requires a slug that starts with a letter. Normalizing it
+        here rather than in `worktrees` would be the same name derived twice, so
+        the assertion is that the branches layer was ASKED."""
+        from services import worktrees
+        made: list[str] = []
+        monkeypatch.setattr(worktrees, "create_branch",
+                            lambda p, b, **kw: made.append(b) or {
+                                "branch_slug": b, "branch": f"wt/{p}/{b}",
+                                "dir": f"/tmp/{b}"})
+        offer = chat_worktree.pin_offer("demo", current_ref="master")
+        offer["default"]["work_id"] = "9f0d2c8b"
+        out = chat_worktree.apply_choice("demo", offer, "new_branch")
+        assert made == ["t-9f0d2c8b"]
+        assert out["branch_slug"] == "t-9f0d2c8b" and out["created"] is True
