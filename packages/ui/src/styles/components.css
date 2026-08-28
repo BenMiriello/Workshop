@@ -3586,6 +3586,19 @@ span.ws-filterchip__open { cursor: default; }
   overflow: auto;
 }
 .ws-doc--full .ws-doc__body > .ws-stack { flex: 1 1 auto; min-height: 0; }
+/* THE FIELD THE EDITOR IS IN HAS TO GROW TOO, or the chain stops at it. A
+   `Field` is a plain block, so an editor inside one is laid out against the
+   FIELD's height and never sees the space the stack has free: measured
+   2026-08-28, the body sat at its 12rem floor with 300px of dead page under it.
+   Marked by the caller rather than inferred, because only the caller knows
+   which of a form's fields is the one that should take what is left. */
+.ws-doc--full .ws-field--grow {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ws-doc--full .ws-field--grow > .ws-editor { flex: 1 1 auto; min-height: 0; }
 .ws-doc--full .ws-editor {
   flex: 1 1 auto;
   /* A floor, so a document whose fields fill the screen still shows an editor

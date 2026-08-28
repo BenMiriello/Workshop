@@ -643,7 +643,7 @@ export function NewNoteDocument({
               Measured 2026-08-28: an empty editor in a full-width document has
               no side border and a background a shade off the page's, so a new
               note's body was 1128x513 of what read as blank page. */}
-          <Field label="Body" htmlFor="new-note-body">
+          <Field label="Body" className="ws-field--grow">
             <Editor
               value={content}
               onChange={setContent}
