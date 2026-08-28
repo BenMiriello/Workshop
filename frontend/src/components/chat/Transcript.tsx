@@ -474,7 +474,27 @@ export function AnswerBody({
         if (p.t === "open") {
           return streaming ? <UiCardPending key={i} /> : <Markdown key={i}>{p.text}</Markdown>;
         }
-        return <UiCard key={i} spec={p.spec} raw={p.raw} ctx={cardCtx} />;
+        // A CARD IS NOT ACTIONABLE WHILE THE TURN THAT WROTE IT IS STILL RUNNING.
+        //
+        // Only a FINISHED turn has an answer. While one streams, its trailing
+        // text is whatever was last said, which is usually narration that a tool
+        // call is about to follow, and it renders here because the split cannot
+        // know that yet. Rendering a complete card live in that window hands the
+        // operator a control the turn may still talk itself out of, and acting on
+        // it races the turn that is writing it. WorkText already refuses this for
+        // narration the turn has moved past ("must not be a live control, and
+        // card outcomes persist server-side"); the streaming path was the hole in
+        // that rule.
+        //
+        // So while streaming every card is pending, and they become live together
+        // when the turn settles. The alternative considered was styling interim
+        // text as narration until the turn ends, which fixes the same hole but
+        // taxes the answer: it would render the whole reply in secondary ink for
+        // the entire time the operator is reading it, then pop to full ink at the
+        // end. Suppressing the control and keeping the ink costs neither.
+        return streaming
+          ? <UiCardPending key={i} />
+          : <UiCard key={i} spec={p.spec} raw={p.raw} ctx={cardCtx} />;
       })}
     </>
   );
