@@ -1,8 +1,8 @@
 {
-  "_measured_against": 244,
-  "big_file_count": 22,
-  "function_local_imports": 552,
-  "largest_scc_size": 110,
+  "_measured_against": 281,
+  "big_file_count": 25,
+  "function_local_imports": 593,
+  "largest_scc_size": 127,
   "scc_count": 1,
-  "upward_violations": 48
+  "upward_violations": 47
 }
