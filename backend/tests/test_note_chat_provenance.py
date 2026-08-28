@@ -51,17 +51,20 @@ def _put(scope, note_id, title, body, **kw):
 # --- backward compatibility: the extended regex must not break old notes ----
 
 def test_a_note_with_no_marker_still_parses():
-    author, ntype, pinned, chat, body = knowledge._parse_meta_line("Just prose, no marker.")
-    assert (author, ntype, pinned, chat) == ("", "", None, "")
+    # `reach` joined the tuple on 2026-08-28; it sits after `type` in the marker
+    # and after it here, and is "" when the marker carries none.
+    author, ntype, reach, pinned, chat, body = knowledge._parse_meta_line("Just prose, no marker.")
+    assert (author, ntype, reach, pinned, chat) == ("", "", "", None, "")
     assert body == "Just prose, no marker."
     assert knowledge.note_chat("Just prose, no marker.") == ""
 
 
 def test_an_author_only_marker_still_parses():
     raw = "<!-- author: operator -->\nThe body.\n"
-    author, ntype, pinned, chat, body = knowledge._parse_meta_line(raw)
+    author, ntype, reach, pinned, chat, body = knowledge._parse_meta_line(raw)
     assert author == "operator"
     assert ntype == ""
+    assert reach == ""
     assert pinned is None
     assert chat == ""
     assert body == "The body.\n"
@@ -69,8 +72,8 @@ def test_an_author_only_marker_still_parses():
 
 def test_an_author_type_pinned_marker_still_parses_with_no_chat():
     raw = "<!-- author: operator; type: decision; pinned: true -->\nThe body.\n"
-    author, ntype, pinned, chat, body = knowledge._parse_meta_line(raw)
-    assert (author, ntype, pinned, chat) == ("operator", "decision", True, "")
+    author, ntype, reach, pinned, chat, body = knowledge._parse_meta_line(raw)
+    assert (author, ntype, reach, pinned, chat) == ("operator", "decision", "", True, "")
     assert body == "The body.\n"
 
 
