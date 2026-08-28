@@ -27,6 +27,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 CHECK = REPO / "scripts" / "check_no_hardcoding.sh"
+DESIGN = REPO / "scripts" / "check_design.sh"
 AUTO_PR = REPO / "scripts" / "auto_pr.sh"
 
 
@@ -137,3 +138,47 @@ def test_no_script_tests_dot_git_as_a_directory(script):
 def test_the_scripts_parse(script):
     assert subprocess.run(["bash", "-n", str(script)],
                           capture_output=True).returncode == 0
+
+
+class TestTheDesignCheckDoesNotFailEveryWorktree:
+    """The other half of the same acceptance, found by review of the first half.
+
+    check_design.sh asks whether a change's committed UI work is in the built
+    bundle. In a linked worktree that question has no honest answer: there is no
+    `frontend/dist` (gitignored, and provisioning hardlinks node_modules and the
+    venv, not dist), and the built bundle belongs to the canonical tree, which
+    does not have this branch until it merges. It read a missing build stamp as
+    "we cannot show this is published, so we must not claim it is" and failed.
+
+    Measured before the fix: exit 1 with "(no usable build stamp on
+    frontend/dist)". So reviewer.sh still gave a different verdict in a worktree
+    than in the canonical tree for ANY change touching frontend/ or
+    packages/ui/, which is most of what the loop works.
+    """
+
+    def test_it_detects_a_linked_worktree_the_same_way_apply_does(self):
+        """One rule, not two. apply.sh compares git-dir with git-common-dir; a
+        second definition of 'am I in a worktree' is how two checks start
+        disagreeing about it."""
+        code = "\n".join(l for l in DESIGN.read_text().splitlines()
+                         if not l.lstrip().startswith("#"))
+        assert "--git-common-dir" in code
+        assert "IN_LINKED_WORKTREE" in code
+
+    def test_the_bundle_branch_is_skipped_in_a_worktree_not_failed(self):
+        code = DESIGN.read_text()
+        i = code.index("IN_LINKED_WORKTREE=1")
+        branch = code[i:i + 1200]
+        assert "warn:" in branch, "a worktree still takes a failing branch"
+
+    def test_the_canonical_tree_still_answers_the_question(self):
+        """The fix must not delete the check. On the canonical tree the bundle
+        question is answerable and must still be asked, or a UI change ships
+        unbuilt, which is the failure the check exists for."""
+        code = DESIGN.read_text()
+        assert "not in the built bundle" in code
+        assert "design_status=1" in code
+
+    def test_it_parses(self):
+        assert subprocess.run(["bash", "-n", str(DESIGN)],
+                              capture_output=True).returncode == 0

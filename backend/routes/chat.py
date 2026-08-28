@@ -3068,13 +3068,25 @@ def _sends_behind(content: str, parts: list[TurnPart] | None,
     if parts and any(p.sent_at or p.client_id for p in parts):
         out = []
         for i, p in enumerate(parts):
-            out.append({
+            entry = {
                 "text": (p.text or "").strip() or content,
                 "client_id": p.client_id or (client_id if i == 0 else None),
                 "ts": p.sent_at,
                 # Recorded on the first part, exactly as the log records them.
                 "attachments": list(attachments or []) if i == 0 else [],
-            })
+            }
+            # WHO SENT IT rides along too, and ONLY when there is one, which is
+            # the same rule the message meta follows: absence means the operator,
+            # so an operator send's payload keeps exactly the shape it had.
+            # Without this a message the CLI never read comes back through
+            # `_requeue_unread` as an operator send, and the queue the operator
+            # is looking at attributes another thread's message to them. The
+            # transcript row keeps its own `meta.sender` either way, because the
+            # log is idempotent on client id, which is precisely why losing it
+            # here would be silent.
+            if p.sender:
+                entry["sender"] = p.sender
+            out.append(entry)
         return out
     return [{"text": content, "client_id": client_id, "ts": None,
              "attachments": list(attachments or [])}]
@@ -3116,7 +3128,15 @@ def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None
             ts=p0.sent_at, client_id=p0.client_id or client_id)
         return
     if not parts or len(parts) < 2:
-        meta = {"attachments": attachments} if attachments else None
+        meta: dict | None = {"attachments": attachments} if attachments else None
+        # Not reachable from the drain today, because every queued entry carries
+        # a client id and so takes the branch above. It is written this way
+        # anyway: these are the two places a caller passing a sender without a
+        # client id or a send time would lose it, and silently.
+        sender = parts[0].sender if parts else None
+        if sender:
+            meta = dict(meta or {})
+            meta["sender"] = sender
         chat_store.append_message(thread_id, "user", content, meta=meta,
                                   client_id=client_id)
         return
@@ -3145,6 +3165,10 @@ def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None
         added += 1
     if not added:
         meta = {"attachments": attachments} if attachments else None
+        sender = next((p.sender for p in parts if p.sender), None)
+        if sender:
+            meta = dict(meta or {})
+            meta["sender"] = sender
         chat_store.append_message(thread_id, "user", content, meta=meta,
                                   client_id=client_id)
 

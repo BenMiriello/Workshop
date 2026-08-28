@@ -60,26 +60,6 @@ class TestTheQueueCarriesIt:
         assert len(batch) == 1 and batch[0]["sender"] == "run:7"
 
 
-class TestSenderOfABatch:
-    def test_it_reads_the_sender_off_a_batch(self):
-        chat_queue.enqueue(T1, text="a", client_id="c1", sender="trigger:cron")
-        assert chat_queue.sender_of(chat_queue.next_batch(T1)) == "trigger:cron"
-
-    def test_an_operator_batch_has_none(self):
-        chat_queue.enqueue(T1, text="a", client_id="c1")
-        assert chat_queue.sender_of(chat_queue.next_batch(T1)) is None
-
-    def test_first_non_empty_wins(self):
-        """Same rule as setting_of for model and effort. Refusing to drain a
-        mixed batch would strand the messages, which is worse than attributing
-        them slightly coarsely."""
-        assert chat_queue.sender_of([{}, {"sender": "thread:b"},
-                                     {"sender": "thread:c"}]) == "thread:b"
-
-    def test_an_empty_batch_has_none(self):
-        assert chat_queue.sender_of([]) is None
-
-
 class TestControlStopsDroppingTheActor:
     def test_a_queued_chat_request_records_its_actor(self, monkeypatch):
         """The regression itself: control.queue passed actor to the sweep branch

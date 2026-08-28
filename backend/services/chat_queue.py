@@ -385,22 +385,6 @@ def joined_text(entries: list[dict]) -> str:
     return "\n\n".join((e.get("text") or "").strip() for e in entries if (e.get("text") or "").strip())
 
 
-def sender_of(entries: list[dict]) -> str | None:
-    """The sender a drained batch was queued by, or None for the operator.
-
-    First non-empty wins, exactly as `setting_of` does for model and effort. A
-    batch is consecutive entries with no command between them; two different
-    senders interleaving into one batch is not a case that arises today, and if
-    it ever does, the alternative to picking one is refusing to drain, which
-    would strand the messages rather than attribute them slightly coarsely.
-    """
-    for e in entries:
-        v = e.get("sender")
-        if v:
-            return str(v)
-    return None
-
-
 def attachments_of(entries: list[dict]) -> list[dict]:
     """Every file the batch carries, in the order they were attached."""
     out: list[dict] = []

@@ -3051,7 +3051,8 @@ def _requeue_unread(turn: Turn, *, stopped: bool) -> int:
             try:
                 chat_queue.enqueue(turn.thread_id, text=text, client_id=cid,
                                    ts=entry.get("ts") or None,
-                                   attachments=entry.get("attachments") or None)
+                                   attachments=entry.get("attachments") or None,
+                                   sender=entry.get("sender") or None)
                 sent += 1
             except Exception as e:  # pragma: no cover — the queue is a file write
                 log.warning("turn %s: could not requeue an unread message: %s", turn.id, e)

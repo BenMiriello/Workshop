@@ -327,7 +327,32 @@ if [ "$MODE" = "added" ]; then
                   | grep -E '^(frontend|packages/ui)/' || true)"
   [ -n "$run_ui_files" ] && ui_inputs_touched=1
 fi
-if [ "$ui_inputs_touched" = 1 ]; then
+# A LINKED WORKTREE CANNOT ANSWER THE BUNDLE QUESTION, and failing it for that
+# is how the completion gate became unusable for per-run worktrees.
+#
+# The check below asks "is this change's committed UI work in the built bundle".
+# In a worktree the honest answer is "not yet, and it cannot be": there is no
+# `frontend/dist` (it is gitignored, and provisioning hardlinks node_modules and
+# the venv, not dist), and the built bundle belongs to the CANONICAL tree, which
+# does not have this branch until it merges. `apply.sh` states the same fact from
+# the other side: a UI change applied from a worktree reaches nobody.
+#
+# So it warns here instead of failing, and the question is asked for real on the
+# canonical tree after the merge, where it can be answered. Detected exactly as
+# apply.sh detects it, rather than by a second rule: in a linked worktree the
+# git-dir and the git-common-dir differ.
+IN_LINKED_WORKTREE=0
+if [ "$(git -C "$WORKSHOP" rev-parse --git-dir 2>/dev/null)" \
+     != "$(git -C "$WORKSHOP" rev-parse --git-common-dir 2>/dev/null)" ]; then
+  IN_LINKED_WORKTREE=1
+fi
+
+if [ "$ui_inputs_touched" = 1 ] && [ "$IN_LINKED_WORKTREE" = 1 ]; then
+  echo "warn: this change touches UI and is being checked inside a linked worktree,"
+  echo "      which has no built bundle and whose branch the canonical tree does not"
+  echo "      have yet. The bundle question is asked on the canonical tree after this"
+  echo "      merges; failing it here would fail every UI change the loop ever works."
+elif [ "$ui_inputs_touched" = 1 ]; then
   if ! bash "$WORKSHOP/scripts/ui_sync.sh" --strict; then
     # Which commit is the bundle built from? Recorded by the build itself, so
     # this is not a second definition of freshness — it is the same stamp
