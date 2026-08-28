@@ -295,10 +295,12 @@ export function useTurnStream({
         try {
           const d = JSON.parse((e as MessageEvent).data || "{}");
           if (d.payload?.detail) {
-            cb.current.onError({
-              text: String(d.payload.detail),
-              endpoint: `/api/chat/turns/${turnId}/stream`,
-            });
+            // NO ENDPOINT. The failure is in the TURN, not in the URL the turn
+            // happened to arrive over, so naming the stream path tells the
+            // operator nothing they can act on. Same rule the design system
+            // states for `where`: name the endpoint only where naming it helps
+            // someone act. See the dropped-stream branch below.
+            cb.current.onError({ text: String(d.payload.detail) });
           }
         } catch { /* ignore */ }
       },
@@ -313,10 +315,12 @@ export function useTurnStream({
           const detail = offer.default?.detail;
           if (!detail) return;
           const path = offer.blocked_path;
+          // The path that matters here is the BLOCKED one, and it is already in
+          // the sentence. The stream endpoint is not where the write failed and
+          // is not something the operator can act on.
           cb.current.onError({
             text: path ? `${detail} The write to ${path} did not happen.`
                        : detail,
-            endpoint: `/api/chat/turns/${turnId}/stream`,
           });
         } catch { /* ignore */ }
       },
@@ -401,10 +405,32 @@ export function useTurnStream({
         // no longer replaying, so the poll snapshot must resume advancing them
         // (see threadStore `streamOwned`). A re-attach later takes ownership back.
         cb.current.dispatch({ type: "turnStreamDropped", turnId });
-        cb.current.onError({
-          text: "Lost the connection to this turn. It is still running; reattaching.",
-          endpoint: `/api/chat/turns/${turnId}/stream`,
-        });
+        // NOTHING IS SAID ON SCREEN, BECAUSE THE SCREEN ALREADY SAYS IT.
+        //
+        // This used to raise a problem block reading "Lost the connection to
+        // this turn. It is still running; reattaching." carrying the endpoint
+        // `/api/chat/turns/<id>/stream`. Three things wrong with it:
+        //
+        //  1. It printed an internal API path to someone who cannot act on one.
+        //     Same defect as the drift banner deleted 2026-08-28: app copy
+        //     addressed to a developer.
+        //  2. It said what the indicator beside it was already saying. Setting
+        //     `detached` is exactly what makes turnLifecycle report "Still
+        //     running" (turnLifecycle.ts, `watching === "detached"`), so the
+        //     block and the indicator stated the same fact one line apart, and
+        //     the screen read as contradicting itself.
+        //  3. "reattaching" describes the poll's job, not this function's. The
+        //     budget is spent deliberately here; the liveness poll in Chat is
+        //     what attaches again, on its own pace.
+        //
+        // The run is still in the store, the poll keeps its snapshot current,
+        // and the indicator keeps saying the turn is running. That is the whole
+        // truth the operator needs, and it is already on screen. The path goes
+        // to the console, where a developer can reach it.
+        console.warn(
+          `chat: stream dropped after ${MAX_RECONNECTS} reconnects; the poll takes over`,
+          { turnId, endpoint: `/api/chat/turns/${turnId}/stream` },
+        );
         return;
       }
       reconnectsRef.current += 1;
