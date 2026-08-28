@@ -229,7 +229,7 @@ def _deliver(*, thread_id: str, owner_id: int, job_id: str, label: str,
         chat_store.append_message(
             thread_id, "assistant", body,
             meta={"kind": "background_result", "autonomous": True,
-                  "job": job_id, "status": status},
+                  "sender": f"run:{job_id}", "job": job_id, "status": status},
         )
         if timed_out:
             seed = (

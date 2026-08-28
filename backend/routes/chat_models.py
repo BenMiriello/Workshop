@@ -323,6 +323,11 @@ class QueuedMessage(BaseModel):
     model: str | None = None
     effort: str | None = None
     permission_mode: str | None = None
+    # WHO PUT THIS HERE. Absent means the operator typed it. When present the
+    # values are: person | thread:<id> | run:<job-id> | agent:<slug> | platform.
+    # `role` (user/assistant) stays the model-API field it always was; `sender`
+    # is ours and means "who put this here", which `role` never answered.
+    sender: str | None = None
 
 
 class QueueState(BaseModel):

@@ -103,6 +103,7 @@ def post_for_task(task: dict, request: dict, *, scope: str | None = None) -> boo
                 # AUTONOMOUS: a sweep hit a block and had to ask. Marked so
                 # the thread shows who is speaking before the words are read.
                 meta={"kind": "ticket_question", "autonomous": True,
+                      "sender": "platform",
                       "ticket": task.get("id"),
                       "scope": scope, "block_kind": request.get("kind")},
             )

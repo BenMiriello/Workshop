@@ -329,6 +329,7 @@ def post_for_job(job_id: str, status: str = "done") -> int:
                     # label) rather than as an ordinary assistant reply, which
                     # is what they are not. See frontend/src/lib/chat.ts.
                     meta={"kind": "run_report", "autonomous": True,
+                          "sender": f"run:{job_id}",
                           "job": job_id, "status": status,
                           "tickets": [t.get("id") for t in tickets]},
                 )

@@ -14771,6 +14771,8 @@ export interface components {
             received_at: string;
             /** Recorded */
             recorded?: boolean | null;
+            /** Sender */
+            sender?: string | null;
             /** Text */
             text: string;
             /** Ts */

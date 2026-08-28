@@ -166,6 +166,7 @@ def request_continuation(thread_id: str, *, seed: str, dedupe_id: str) -> bool:
             text=seed,
             client_id=f"auto-{dedupe_id}",
             auto=True,
+            sender="platform",
         )
     except Exception as e:  # pragma: no cover - defensive: a run must still close
         log.warning("continuation seed for %s could not be queued: %s", thread_id, e)
