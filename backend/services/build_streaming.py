@@ -697,8 +697,43 @@ def _release_tree(meta: dict) -> None:
         log.debug("turn %s: could not release the tree: %s", meta.get("turn_id"), exc)
 
 
+def _auto_create_worktree_for_chat(thread_id: str) -> dict | None:
+    """Create and pin a worktree for a project chat on its first write.
+
+    Returns {branch_slug, display_name, project_slug} on success, None when
+    the chat is not a project chat, is already pinned, or creation fails.
+    """
+    if not thread_id:
+        return None
+    try:
+        from services import chat_store, worktrees
+        thread = chat_store.get_thread(thread_id)
+        if not thread:
+            return None
+        context_key = (thread.get("context_key") or "")
+        if not context_key.startswith("project:"):
+            return None
+        if thread.get("branch_slug"):
+            return None
+        project_slug = context_key[len("project:"):]
+        title = (thread.get("title") or "").strip() or None
+        created = worktrees.allocate_task_worktree(
+            project_slug, thread_id, title=title,
+            allocated_by=f"chat:{thread_id}")
+        branch_slug = created["branch_slug"]
+        chat_store.set_thread_branch(thread_id, branch_slug)
+        return {
+            "branch_slug": branch_slug,
+            "display_name": created.get("display_name") or title or branch_slug,
+            "project_slug": project_slug,
+        }
+    except Exception as exc:
+        log.debug("auto-create worktree for chat %s failed: %s", thread_id, exc)
+        return None
+
+
 def _maybe_write_blocked(turn: Turn, meta: dict, payload: dict) -> None:
-    """The `EROFS` event, turned into an offer instead of a crash ([B1], §4.2).
+    """The `EROFS` event: first write creates the worktree, without asking.
 
     THIS IS THE WRITE-DETECTION MECHANISM §14.1 OF THE BRANCHES DOC NEEDED AND
     DID NOT HAVE. "Branch on write" was unbuildable as written: a turn is a
@@ -709,15 +744,17 @@ def _maybe_write_blocked(turn: Turn, meta: dict, payload: dict) -> None:
     exact, cheap and observable -- and it arrives here, on the ordinary stream,
     with no new channel.
 
-    What it produces is §10.3's offer, whose default is a NEW branch. It does
-    NOT create one, does not join one, and does not fail the turn: the write
-    already failed on its own, and what the operator is owed at that moment is
-    the choice, not a decision taken for him. A branch merges as one unit, so
-    joining is the thing that must never happen by itself.
+    What it does now is §10.3's default taken automatically: create a worktree
+    named from the chat's title, pin the chat to it, and inject one message so
+    the model knows to continue rather than retry in the same turn. Write access
+    applies from the NEXT turn (the bwrap mount is fixed for the current one).
 
     ONCE PER TURN. A blocked write is usually followed by several more as the
-    model retries; one offer is the event, and five would be noise about the
+    model retries; one creation is the event, and five would be noise about the
     same fact.
+
+    FALLBACK. When auto-creation is not possible (not a project chat, already
+    pinned, project missing), the old offer is pushed for manual handling.
 
     SILENT AND CHEAP WHILE THE FLAG IS OFF. `tree_lease_mounts()` is a single
     env read and the very first thing checked, so a turn on today's read-write
@@ -730,6 +767,22 @@ def _maybe_write_blocked(turn: Turn, meta: dict, payload: dict) -> None:
         if turn.write_offer is not None or not scoped_exec.tree_lease_mounts():
             return
         from services import tree_access
+        if not tree_access.detect_erofs(payload.get("text")):
+            return
+        thread_id = str(meta.get("thread_id") or "")
+        result = _auto_create_worktree_for_chat(thread_id)
+        if result is not None:
+            name = result.get("display_name") or result.get("branch_slug") or "new worktree"
+            turn.write_offer = result
+            write_to_turn(
+                turn.id,
+                f"Working in new worktree: {name}. "
+                "Your write was blocked on the shared read-only tree. "
+                "Write access applies from the next turn. "
+                "Acknowledge in one sentence only.",
+            )
+            return
+        # Fallback: the chat is not a project chat or is already pinned.
         offer = tree_access.first_write_offer(
             payload.get("text"), current_ref=_current_ref(meta),
             ticket_id=meta.get("ticket_id"))
@@ -738,7 +791,7 @@ def _maybe_write_blocked(turn: Turn, meta: dict, payload: dict) -> None:
         turn.write_offer = offer
         _push(turn, "write_blocked", offer)
     except Exception as exc:  # pragma: no cover -- defensive, see docstring
-        log.debug("turn %s: could not build a write offer: %s", turn.id, exc)
+        log.debug("turn %s: could not handle write block: %s", turn.id, exc)
 
 
 # The CLI's own no-op placeholder, and the ONLY synthetic message we drop.
