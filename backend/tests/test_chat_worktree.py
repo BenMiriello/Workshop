@@ -337,6 +337,39 @@ class TestNoLeaseStoreIsNotAFailedTurn:
         assert [c for c in wired["calls"] if c[0] == "acquire"] == []
 
 
+# --- the self-repo is not carved out (branches doc section 14.3) ---------------
+
+class TestThePlatformsOwnRepoIsAnOrdinarySubject:
+    """Section 14.3 refuses the carve-out `scoped_exec.turn_user` makes for the
+    UID layer, and refuses it for the reason that matters: the platform repo "is
+    where agents collide most". The whole point of this ticket is that the
+    operator's own chat can hold a tree, not that it is exempt from needing one.
+
+    True by construction today -- there is no such branch anywhere in
+    `chat_worktree` or `tree_access` -- and that is exactly why it is pinned:
+    a carve-out is the easy thing to add the first time the flag bites.
+    """
+
+    def test_the_workshop_root_gets_no_exemption_from_the_mount(self, monkeypatch):
+        from services import tree_access, worktree_records
+        from wsplatform import paths
+        monkeypatch.setenv("WORKSHOP_TREE_LEASE_MOUNT", "1")
+        monkeypatch.setattr(worktree_records, "list_records", lambda **kw: [])
+        self_repo = str(paths.workshop_root())
+        decision = tree_access.decide(self_repo, session_id="a-chat", holder_kind="chat")
+        assert decision.mode == "ro"
+        assert "special" not in decision.reason and "platform" not in decision.reason
+
+    def test_no_source_line_names_the_platform_repo(self):
+        """A grep, deliberately, because the failure mode is a line somebody adds
+        later -- `if is_self_dir(root): return rw` -- which no behavioural test
+        written today would exercise."""
+        src = (Path(__file__).resolve().parents[1]
+               / "services" / "chat_worktree.py").read_text()
+        for smell in ("is_self", "self_repo", "workshop_root", "is_in_self_repo"):
+            assert smell not in src, f"{smell!r} carves the platform repo out"
+
+
 # --- section 10.3: choosing where to work --------------------------------------
 
 class TestChoosingABranch:

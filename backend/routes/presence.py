@@ -44,6 +44,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services import leases as leases_svc
+from routes.api_models import LeaseRef
 from services import presence as presence_svc
 
 router = APIRouter(prefix="/presence", tags=["presence"])
@@ -97,33 +98,6 @@ class PresenceBeat(BaseModel):
     liveness_profile: str = "heartbeat"
     ttl_sec: int | None = None
     meta: dict[str, str] = Field(default_factory=dict)
-
-
-class LeaseRef(BaseModel):
-    """The lease on a directory entry's subject, read at join time.
-
-    TYPED, not a `dict[str, Any]`. An opaque field satisfies the route-level
-    response_model check and still generates `Record<string, never>` in the
-    client, so the frontend hand-writes the shape and drifts from it -- which is
-    the defect ADR 0023 clause 6 exists to remove.
-
-    `state` has exactly two values (section 6): `held` or `expired`. `idle_since`
-    is the moment of the last work event on a lease whose work has not moved for
-    ten minutes, and null otherwise; it is a warning a client renders, not a
-    third state.
-    """
-    subject_kind: str
-    subject_id: str
-    holder_kind: str
-    holder_id: str
-    principal_user_id: str | None = None
-    generation: int
-    state: str
-    idle_since: str | None = None
-    expires_at: str | None = None
-    acquired_at: str | None = None
-    last_renewed_at: str | None = None
-    last_work_at: str | None = None
 
 
 class DirectoryEntry(BaseModel):

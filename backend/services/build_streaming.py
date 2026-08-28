@@ -26,8 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from services import (agent_slots, build_agents, chat_attachments, chat_drain,
-                      chat_log, chat_queue, chat_store, llm_router, model_caps,
-                      ownership, reply_guard, turn_end)
+                      chat_log, chat_queue, chat_store, chat_worktree, leases,
+                      llm_router, model_caps, ownership, reply_guard, turn_end)
 
 log = logging.getLogger("workshop.build_streaming")
 
@@ -665,12 +665,10 @@ def _renew_tree(meta: dict, state: dict) -> None:
     if not tree:
         return
     now = time.time()
-    from services import leases
     if now - float(state.get("tree_beat_at") or 0) < leases.HEARTBEAT_SEC:
         return
     state["tree_beat_at"] = now
     try:
-        from services import chat_worktree
         held = chat_worktree.TreeState.from_dict(tree)
         if held is None or not chat_worktree.beat(
                 str(meta.get("thread_id") or ""), held,
@@ -694,7 +692,6 @@ def _release_tree(meta: dict) -> None:
     if not meta.get("tree"):
         return
     try:
-        from services import chat_worktree
         chat_worktree.leave(str(meta.get("thread_id") or ""))
     except Exception as exc:  # pragma: no cover - defensive
         log.debug("turn %s: could not release the tree: %s", meta.get("turn_id"), exc)

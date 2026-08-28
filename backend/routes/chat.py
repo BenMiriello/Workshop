@@ -34,6 +34,8 @@ from services import context_window
 from services import chat_branches
 from services import chat_drain
 from services import chat_worktree
+from services import worktrees
+from services import build_agents
 from services import chat_events
 from services import tenancy
 from services import chat_queue
@@ -2514,7 +2516,6 @@ def _tree_read(thread_id: str):
 
 
 def _tree_payload(tree) -> dict:
-    from services import worktrees
     project = tree.project_slug
     return {
         **tree.as_dict(),
@@ -2574,7 +2575,6 @@ async def set_thread_tree(thread_id: str, body: ThreadTreeIn):
     if not project:
         raise HTTPException(400, "this chat has no project tree to branch from")
 
-    from services import worktrees
     if body.action == "release":
         branch_slug = None
     elif body.action in ("join", "new_branch"):
@@ -2591,9 +2591,8 @@ async def set_thread_tree(thread_id: str, body: ThreadTreeIn):
 
     key = str(getattr(provider, "key", "") or "")
     if key.startswith("agent:"):
-        from services import build_agents as _ba
         try:
-            _ba.set_branch(provider.slug, branch_slug)
+            build_agents.set_branch(provider.slug, branch_slug)
         except KeyError:
             raise HTTPException(404, f"build agent not found: {provider.slug}")
         except ValueError as e:

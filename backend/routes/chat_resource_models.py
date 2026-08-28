@@ -24,8 +24,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from routes.api_models import McpCounts
-from routes.presence import LeaseRef
+from routes.api_models import LeaseRef, McpCounts
 
 
 class ThreadContext(BaseModel):

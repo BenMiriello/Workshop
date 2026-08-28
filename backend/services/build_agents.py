@@ -101,6 +101,19 @@ def get_agent(slug: str) -> dict:
     return {"slug": slug, **a}
 
 
+def _branch_dir(project_slug: str, branch_slug: str):
+    """This project's tree for one branch, asked of the branches layer.
+
+    ONE FUNCTION-LOCAL IMPORT INSTEAD OF ONE PER CALLER: `services/worktrees.py`
+    pulls in the app runner and its yaml dependency, which the system python3
+    some callers run under does not have, so it stays deferred -- but it is
+    deferred in one place now that both `create_agent` and `set_branch` resolve
+    a cwd the same way.
+    """
+    from services import worktrees
+    return worktrees.branch_dir(project_slug, branch_slug)
+
+
 def create_agent(
     *,
     slug: str,
@@ -119,9 +132,8 @@ def create_agent(
     # cwd resolution: a branch pin wins over the project main worktree, which
     # wins over the freestanding scratch dir.
     if project_slug and branch_slug:
-        from services import worktrees as _worktrees
         try:
-            cwd = _worktrees.branch_dir(project_slug, branch_slug)
+            cwd = _branch_dir(project_slug, branch_slug)
         except ValueError as e:
             raise ValueError(str(e))
         if not cwd.exists():
@@ -236,8 +248,7 @@ def set_branch(slug: str, branch_slug: str | None) -> dict:
         raise ValueError("this agent has no project, so it has no branches")
     branch_slug = (branch_slug or "").strip() or None
     if branch_slug:
-        from services import worktrees as _worktrees
-        cwd = _worktrees.branch_dir(project_slug, branch_slug)
+        cwd = _branch_dir(project_slug, branch_slug)
         if not cwd.exists():
             raise ValueError(f"branch worktree not found: {cwd}")
     else:

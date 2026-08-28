@@ -71,7 +71,8 @@ import os
 from dataclasses import dataclass, replace
 from typing import Any
 
-from services import leases, presence, session_defaults, tree_access
+from services import (build_agents, chat_context, leases, presence,
+                      session_defaults, tree_access, worktrees)
 
 log = logging.getLogger(__name__)
 
@@ -169,7 +170,6 @@ def _project_of(provider: Any) -> str | None:
     (a data chat, a freestanding agent with a scratch dir) has no branch space
     and therefore can never hold a tree.
     """
-    from services import chat_context
     if not chat_context.is_build_provider(provider):
         return None
     slug = getattr(provider, "project_slug", None)
@@ -192,7 +192,6 @@ def _pinned_branch(thread: dict | None, provider: Any) -> str | None:
     """
     key = str(getattr(provider, "key", "") or "")
     if key.startswith("agent:"):
-        from services import build_agents
         try:
             return build_agents.get_agent(getattr(provider, "slug", "")).get("branch_slug") or None
         except Exception:
@@ -206,7 +205,6 @@ def _default_ref(project_slug: str | None) -> str:
     a repo whose trunk is `master` is not described as `main`."""
     if not project_slug:
         return "the shared tree"
-    from services import worktrees
     return worktrees.default_ref(project_slug)
 
 
@@ -254,7 +252,6 @@ def plan(thread: dict | None, provider: Any, *, fallback_cwd: str,
                         source=state["source"], read_only=state["read_only"],
                         detail=state["detail"])
 
-    from services import worktrees
     try:
         path = worktrees.branch_dir(project_slug, branch_slug)
     except ValueError as exc:
@@ -426,7 +423,6 @@ def branch_options(project_slug: str | None) -> list[dict]:
     if not project_slug:
         return []
     try:
-        from services import worktrees
         return worktrees.list_branches(project_slug)
     except Exception:
         return []
@@ -459,7 +455,6 @@ def apply_choice(project_slug: str, offer: dict, action: str, *,
     chosen = session_defaults.choose(offer, action, branch=branch)
     if chosen["action"] == "join":
         return {"branch_slug": str(chosen["branch"]), "created": False}
-    from services import worktrees
     # NORMALIZED BY THE BRANCHES LAYER, not here. Section 10.4's work id is
     # `uuid4().hex[:8]`, which starts with a digit more often than not, and
     # `create_branch` requires a slug that starts with a letter.

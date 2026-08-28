@@ -752,3 +752,39 @@ class LabelCount(BaseModel):
 
     label: str
     count: int
+
+
+# --- the lease, as any resource that names a holder reports it -----------------
+#
+# IT LIVES HERE RATHER THAN BESIDE ITS FIRST READER. `LeaseRef` was declared in
+# `routes/presence.py`, which is right up until a second router needs it: the
+# chat's worktree resource does, and importing it from `presence` put a route
+# module into the backend's largest import cycle to borrow one shape. This file
+# is the leaf every router already imports, so the shape has one definition and
+# no router depends on another router to get at it. `routes/presence.py`
+# re-exports it, so the three existing importers are unchanged.
+class LeaseRef(BaseModel):
+    """The lease on a directory entry's subject, read at join time.
+
+    TYPED, not a `dict[str, Any]`. An opaque field satisfies the route-level
+    response_model check and still generates `Record<string, never>` in the
+    client, so the frontend hand-writes the shape and drifts from it -- which is
+    the defect ADR 0023 clause 6 exists to remove.
+
+    `state` has exactly two values (section 6): `held` or `expired`. `idle_since`
+    is the moment of the last work event on a lease whose work has not moved for
+    ten minutes, and null otherwise; it is a warning a client renders, not a
+    third state.
+    """
+    subject_kind: str
+    subject_id: str
+    holder_kind: str
+    holder_id: str
+    principal_user_id: str | None = None
+    generation: int
+    state: str
+    idle_since: str | None = None
+    expires_at: str | None = None
+    acquired_at: str | None = None
+    last_renewed_at: str | None = None
+    last_work_at: str | None = None
