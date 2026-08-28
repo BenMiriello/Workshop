@@ -306,6 +306,47 @@ def branch_list(repo: Path | str, *, pattern: str | None = None) -> list[str]:
     return [b.strip() for b in (r.stdout or "").splitlines() if b.strip()]
 
 
+def update_ref(repo: Path | str, ref: str, sha: str) -> bool:
+    """Point *ref* at *sha*. Best-effort: False when git refused, never raises.
+
+    The one write that keeps a commit REACHABLE. `snapshot` already does this
+    for the commit it creates; this is for the case where the commit already
+    exists and only the ref is about to go -- reaping a clean branch that is
+    ahead of its base, where there is nothing to stash and everything to lose.
+    """
+    r = _run(repo, ["update-ref", ref, sha], check=False, timeout=15)
+    return r.returncode == 0
+
+
+def branch_tips(repo: Path | str, *, pattern: str | None = None) -> dict[str, dict]:
+    """`{branch: {sha, committed_at}}` for local branches, in ONE invocation.
+
+    WHY `for-each-ref` AND NOT `log` PER BRANCH. The caller
+    (`worktrees.live_branches`) wants "when did this line of work last move" for
+    every branch of a project at once, and a `git log -1` per branch is one
+    subprocess per tree on a page that polls. `for-each-ref` answers the whole
+    set in one, so the cost is per PROJECT rather than per branch.
+
+    `committed_at` is the COMMITTER date, ISO-8601 with its offset, because that
+    is when the commit was written here; the author date can be arbitrarily old
+    on a rebase or a cherry-pick and would make a tree touched an hour ago look
+    like a week.
+
+    Best-effort: a repository that cannot be read answers `{}` rather than
+    raising, matching `branch_list` beside it.
+    """
+    args = ["for-each-ref", "--format=%(refname:short)%09%(objectname)%09%(committerdate:iso-strict)"]
+    args.append(f"refs/heads/{pattern}" if pattern else "refs/heads/")
+    r = _run(repo, args, check=False, timeout=15)
+    out: dict[str, dict] = {}
+    for line in (r.stdout or "").splitlines():
+        parts = line.rstrip().split("\t")
+        if len(parts) != 3 or not parts[0]:
+            continue
+        out[parts[0]] = {"sha": parts[1] or None, "committed_at": parts[2] or None}
+    return out
+
+
 def branch_create(repo: Path | str, name: str, start_point: str | None = None) -> str:
     """Create branch *name* (at *start_point* when given). Raises on failure."""
     args = ["branch", name]

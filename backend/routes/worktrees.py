@@ -51,6 +51,10 @@ class BranchRow(BaseModel):
     branch: str
     dir: str
     head: str | None = None
+    # git refuses to remove or prune a locked worktree, and every tree the task
+    # allocator makes is locked, so a caller deciding whether one can be reaped
+    # has to know.
+    locked: bool = False
 
 
 class BranchCreated(BaseModel):
@@ -165,7 +169,26 @@ class RepoState(BaseModel):
 
 
 class BranchDiscarded(BaseModel):
+    """What a reap did, and where the work went.
+
+    `ok: false` is an ANSWER, not an outage: the tree had uncommitted work that
+    could not be snapshotted, or it is a directory with no git metadata that
+    nothing can speak for, and it was left exactly as it was. `detail` says
+    which. Retry with `force=true` once you have read `detail` and decided the
+    contents are expendable.
+    """
+
     ok: bool
+    removed: bool = False
+    # The ref the uncommitted work was committed to before the directory went
+    # away, or null when there was nothing to save. Recoverable with
+    # `git show <ref>` in the project's own repository.
+    snapshot_ref: str | None = None
+    snapshot_sha: str | None = None
+    # How many entries `git status` reported before the reap. The size of what
+    # the snapshot is holding.
+    dirty_entries: int = 0
+    detail: str = ""
 
 
 @router.get("/{project_slug}", response_model=list[BranchRow], response_model_exclude_unset=True)
@@ -234,9 +257,23 @@ async def repo_state(project_slug: str):
         raise HTTPException(400, str(e))
 
 
-@router.delete("/{project_slug}/{branch_slug}", response_model=BranchDiscarded, response_model_exclude_unset=True)
-async def discard(project_slug: str, branch_slug: str):
+@router.delete("/{project_slug}/{branch_slug}", response_model=BranchDiscarded)
+async def discard(project_slug: str, branch_slug: str, force: bool = False,
+                  reason: str = ""):
+    """Reap a branch tree, snapshotting anything uncommitted first.
+
+    THE VERB `/branches` OFFERS. That page exists to surface trees holding work
+    nobody owns, and until this could promise not to destroy that work it had
+    nothing safe to point at: an abandoned tree could only be cleared by hand.
+    Uncommitted content goes to `refs/wip/<branch_slug>` in the project's repo
+    before the directory is removed, and the response says where.
+
+    `force` covers the one case with nothing to snapshot -- a directory with no
+    git metadata, which is what a teardown that fell through to `rmtree` leaves
+    behind. Without it that is a refusal rather than a silent deletion.
+    """
     try:
-        return worktrees.discard_branch(project_slug, branch_slug)
+        return worktrees.discard_branch(project_slug, branch_slug,
+                                        reason=reason, force=force)
     except ValueError as e:
         raise HTTPException(400, str(e))

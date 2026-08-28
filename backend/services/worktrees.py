@@ -47,8 +47,9 @@ Public surface:
   worktree_record(project_slug, branch_slug) -> dict | None
   provision_worktree(scope, owner) -> dict
   list_branches(project_slug) -> list[dict]
+  live_branches() -> dict            every tree there is, joined with its record
   merge_branch(project_slug, branch_slug, *, message="") -> dict
-  discard_branch(project_slug, branch_slug) -> dict
+  discard_branch(project_slug, branch_slug, *, force=False) -> dict
   diff_branch(project_slug, branch_slug) -> dict
   branch_state(project_slug, branch_slug) -> dict
   publish_branch(project_slug, branch_slug, *, title="", body="") -> dict
@@ -357,8 +358,243 @@ def list_branches(project_slug: str) -> list[dict]:
             "branch": branch,
             "dir": entry.get("dir", ""),
             "head": entry.get("head"),
+            # Carried because `allocate_task_worktree` LOCKS every tree it makes,
+            # and a locked tree is one `git worktree remove` and `git worktree
+            # prune` both refuse. A caller deciding whether a tree can be reaped
+            # has to know that; re-deriving it meant a second `git worktree list`.
+            "locked": bool(entry.get("locked")),
         })
     return items
+
+
+# ---------------------------------------------------------------------------
+# The joined view: what is ACTUALLY there
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS. `/branches` answered from the RECORD TABLE alone, and the
+# table only ever has a row for a tree that was allocated through the record
+# path. Measured 2026-08-27 on this installation: eleven real worktrees on disk,
+# every one of them abandoned, and the page that exists to find abandoned trees
+# showed none of them, because none had a record. Absence is the one answer a
+# monitoring view must never fabricate, so the live view starts from the DISK --
+# which is the only thing that can say a tree is there -- and joins the record
+# onto it for everything the disk cannot say (who allocated it, for which
+# ticket, what became of it).
+#
+# THREE WAYS A BRANCH TREE CAN EXIST, and the join has to name all three or it
+# is telling the same lie in a new direction:
+#
+#   PRESENCE_TREE    git lists the worktree and its directory is there. The
+#                    ordinary case, with or without a record.
+#   PRESENCE_ORPHAN  the directory is under the branches root and git does not
+#                    know it. That is what a teardown that fell through to
+#                    `rmtree` + `prune` leaves behind, and nothing else in the
+#                    system can see it: it has no branch, no metadata and no
+#                    record, so it is invisible to git AND to the table.
+#   PRESENCE_GONE    a live record whose directory is not on disk. The record
+#                    outlived the tree; there is nothing to work in.
+#
+# THIS IS A READ AND IT NEVER WRITES. It would be easy to "reconcile" here --
+# close the gone records, prune the orphans -- and that would make a page load
+# destroy state. Reconciliation is a verb the operator invokes (`discard_branch`),
+# not a side effect of looking.
+PRESENCE_TREE = "tree"
+PRESENCE_ORPHAN = "orphan"
+PRESENCE_GONE = "gone"
+
+
+def _registry_project_slugs() -> list[str]:
+    """Every project slug the registry names. Empty when there is no registry."""
+    try:
+        reg = json.loads(PROJECTS_REGISTRY.read_text())
+    except Exception:
+        return []
+    return sorted((reg.get("projects") or {}).keys())
+
+
+def _tree_rows(project_slug: str) -> list[dict]:
+    """Every branch tree of one project, from git and from the directory.
+
+    TWO SUBPROCESSES PER PROJECT, NOT PER TREE: one `git worktree list` and one
+    `git for-each-ref`. The directory scan is a listdir. This runs on a page that
+    polls, so the cost has to be per project.
+    """
+    prefix = f"wt/{project_slug}/"
+    try:
+        project_dir = _project_dir(project_slug)
+    except ValueError:
+        project_dir = None
+
+    base_ref = ""
+    tips: dict[str, dict] = {}
+    entries: list[dict] = []
+    if project_dir is not None:
+        try:
+            entries = git_service.worktree_list(project_dir)
+        except git_service.GitError:
+            entries = []
+        tips = git_service.branch_tips(project_dir, pattern=f"{prefix}*")
+        try:
+            base_ref = _canonical_branch(project_slug, project_dir)
+        except Exception:
+            base_ref = ""
+
+    rows: list[dict] = []
+    known_slugs: set[str] = set()
+    for entry in entries:
+        branch = entry.get("branch") or ""
+        if not branch.startswith(prefix):
+            continue
+        branch_slug = branch[len(prefix):]
+        known_slugs.add(branch_slug)
+        path = entry.get("dir") or str(_branch_path(project_slug, branch_slug))
+        tip = tips.get(branch) or {}
+        rows.append({
+            "project_slug": project_slug,
+            "branch_slug": branch_slug,
+            "branch": branch,
+            "path": path,
+            "base_ref": base_ref,
+            "head_sha": entry.get("head") or tip.get("sha"),
+            "tip_at": tip.get("committed_at"),
+            "locked": bool(entry.get("locked")),
+            # `prunable` is git's own word for "the directory this record points
+            # at is not there any more", and it is the same fact as the
+            # directory check beside it. Either one is enough to say GONE.
+            "presence": (PRESENCE_TREE
+                         if Path(path).is_dir() and not entry.get("prunable")
+                         else PRESENCE_GONE),
+        })
+
+    # The directories git lost. Named for the branch they WOULD carry, because
+    # the path is the canonical one for that slug; `presence` is what says the
+    # ref behind that name does not exist.
+    root = BRANCHES_ROOT / project_slug
+    if root.is_dir():
+        for child in sorted(root.iterdir()):
+            if not child.is_dir() or child.name in known_slugs:
+                continue
+            rows.append({
+                "project_slug": project_slug,
+                "branch_slug": child.name,
+                "branch": _branch_name(project_slug, child.name),
+                "path": str(child),
+                "base_ref": base_ref,
+                "head_sha": None,
+                "tip_at": None,
+                "locked": False,
+                "presence": PRESENCE_ORPHAN,
+            })
+    return rows
+
+
+def _joined(tree: dict | None, record: dict | None) -> dict:
+    """One row of the live view: the disk, with the record joined onto it.
+
+    THE DISK WINS ON IDENTITY (path, branch, where it is) and the RECORD WINS ON
+    INTENT (ticket, who allocated it, status), because each side is the only one
+    that can answer its half. A row with no record carries `recorded: false` and
+    a null `status` rather than a plausible-looking `allocated`: "no record"
+    and "a record that says allocated" are different facts and this is a view
+    that exists because they were conflated.
+    """
+    if tree is None:                      # a record whose tree is not there
+        assert record is not None
+        return {
+            **record,
+            "recorded": True,
+            "presence": PRESENCE_GONE,
+            "head_sha": None,
+            "tip_at": record.get("updated_at"),
+            "locked": False,
+        }
+    if record is None:                    # a tree nothing remembered
+        return {
+            "id": f"tree:{tree['project_slug']}/{tree['branch_slug']}",
+            "app_id": None,
+            "project_slug": tree["project_slug"],
+            "scope": _scope_for(tree["project_slug"]),
+            "branch_slug": tree["branch_slug"],
+            "branch": tree["branch"],
+            "path": tree["path"],
+            "base_ref": tree["base_ref"],
+            "base_sha": None,
+            "ticket_id": None,
+            "allocated_by": None,
+            "status": None,
+            "merged_sha": None,
+            "removed_at": None,
+            "created_at": None,
+            "updated_at": None,
+            "recorded": False,
+            "presence": tree["presence"],
+            "head_sha": tree["head_sha"],
+            "tip_at": tree["tip_at"],
+            "locked": tree["locked"],
+        }
+    return {
+        **record,
+        "path": tree["path"],             # the disk knows where it actually is
+        "recorded": True,
+        "presence": tree["presence"],
+        "head_sha": tree["head_sha"],
+        "tip_at": tree["tip_at"] or record.get("updated_at"),
+        "locked": tree["locked"],
+    }
+
+
+def _sort_key(row: dict) -> str:
+    """Newest activity first, and a row with no timestamp sorts last rather than
+    first: an unknown age must not be able to look like this second."""
+    return row.get("tip_at") or row.get("updated_at") or row.get("created_at") or ""
+
+
+def live_branches(*, project_slug: str | None = None, ticket_id: str | None = None,
+                  app_id: str | None = None, limit: int = 200) -> dict:
+    """Every branch tree that exists, joined with the record that describes it.
+
+    `{"worktrees": [...], "records_available": bool}`. `records_available` is
+    False when this installation has no reachable relational store: the trees are
+    still real and still listed, they simply carry no ticket, no allocator and no
+    status. That is a different answer from "no trees", and the caller renders it
+    as one.
+
+    THE RECORD LAYER IS BEST-EFFORT HERE, unlike `worktree_records.list_records`
+    which raises. That inversion is deliberate and is the whole point of this
+    function: a record read that fails takes the intent out of the answer, not
+    the answer itself. The trees came from git.
+    """
+    records = _record(worktree_records.list_records, live_only=True, limit=1000)
+    records_available = records is not None
+    by_key: dict[tuple[str, str], dict] = {
+        (r["project_slug"], r["branch_slug"]): r for r in (records or [])
+    }
+
+    rows: list[dict] = []
+    matched: set[tuple[str, str]] = set()
+    for slug in _registry_project_slugs():
+        if project_slug and slug != project_slug:
+            continue
+        for tree in _tree_rows(slug):
+            key = (tree["project_slug"], tree["branch_slug"])
+            matched.add(key)
+            rows.append(_joined(tree, by_key.get(key)))
+
+    for key, record in by_key.items():
+        if key in matched:
+            continue
+        if project_slug and key[0] != project_slug:
+            continue
+        rows.append(_joined(None, record))
+
+    if ticket_id:
+        rows = [r for r in rows if r.get("ticket_id") == ticket_id]
+    if app_id:
+        rows = [r for r in rows if str(r.get("app_id") or "") == str(app_id)]
+
+    rows.sort(key=_sort_key, reverse=True)
+    return {"worktrees": rows[:max(1, min(int(limit), 1000))],
+            "records_available": records_available}
 
 
 def diff_branch(project_slug: str, branch_slug: str) -> dict:
@@ -556,9 +792,113 @@ def _reap_worktree(project_dir: Path, project_slug: str, branch_slug: str,
                 commit=(merged_sha or None))
 
 
+def _snapshot_before_teardown(target: Path, branch_slug: str, *,
+                              project_dir: Path | None = None,
+                              branch: str | None = None,
+                              base_ref: str | None = None) -> dict:
+    """Put whatever is uncommitted in *target* somewhere it can be got back.
+
+    THE RULE: REAPING A TREE MAY NOT DESTROY WORK NOBODY RECORDED. A dirty tree
+    is snapshotted to `refs/wip/<branch_slug>` -- a real ref in the project's
+    object store, so the commit survives `git gc` and is recoverable with
+    `git show`/`git cherry-pick` long after the directory is gone. That is the
+    same mechanism `services/control.py` uses when it takes a tree away from a
+    live holder, and it is deliberately the same ref namespace: there is one
+    place to look for work a machine took, not two.
+
+    UNTRACKED FILES ARE INCLUDED, because they are most of what is at stake. An
+    abandoned tree's uncommitted content is typically files that were never
+    added, and a tracked-only snapshot would record nothing while reporting
+    success.
+
+    A CLEAN TREE IS NOT AUTOMATICALLY SAFE. Teardown deletes the branch, so a
+    branch that never reached its base loses its commits with it. Given
+    `project_dir`/`branch`/`base_ref` this points the same ref at the tip in
+    that case, and does nothing when the branch is already contained in its base.
+
+    Returns `{snapshottable, dirty, entries, ref, sha, detail}`:
+
+      `snapshottable` False means git cannot speak for this directory at all --
+      it is not a repository, which is exactly the ORPHAN case (a teardown that
+      fell through to `rmtree` leaves a directory with no git metadata). Nothing
+      can be saved and nothing can be promised, so the caller has to decide
+      rather than being told it was fine.
+    """
+    out = {"snapshottable": False, "failed": False, "dirty": False,
+           "entries": 0, "ref": None, "sha": None, "detail": ""}
+    if not target.exists():
+        out["detail"] = "the directory is not there"
+        return out
+    if not git_service.is_repo(target):
+        out["detail"] = f"not a git repository: {target}"
+        return out
+    out["snapshottable"] = True
+    try:
+        status = git_service.status(target)
+    except git_service.GitError as e:
+        out["snapshottable"] = False
+        out["detail"] = (e.stderr or str(e)).strip()[:300]
+        return out
+    out["entries"] = len(status.get("entries") or [])
+    out["dirty"] = not status.get("clean")
+    ref = f"refs/wip/{branch_slug}"
+    if not out["dirty"]:
+        # A CLEAN TREE CAN STILL BE CARRYING WORK. Teardown deletes the branch
+        # ref (`git branch -D`), so commits that never reached the base become
+        # unreachable and are gone at the next gc. There is nothing to stash, so
+        # the save is just a ref: point `refs/wip/<slug>` at the tip and the
+        # commits stay recoverable. A branch already contained in its base has
+        # nothing to keep and gets no ref, which is what stops every routine
+        # merge-then-reap from leaving one behind.
+        if project_dir is not None and branch and base_ref:
+            try:
+                contained = git_service.is_ancestor(project_dir, branch, base_ref)
+            except Exception:
+                contained = True
+            head = git_service.rev_parse(target, "HEAD")
+            if not contained and head and git_service.update_ref(target, ref, head):
+                out["ref"] = ref
+                out["sha"] = head
+        return out
+    snap = git_service.snapshot(
+        target, ref=ref,
+        message=f"workshop reap snapshot: {branch_slug}",
+        include_untracked=True)
+    if not snap.get("ok"):
+        out["failed"] = True
+        out["detail"] = snap.get("detail") or "snapshot failed"
+        return out
+    # `ok` with no sha means the staged tree matched HEAD's after all, so there
+    # was nothing to record. That is a success, not a refusal: gating the reap on
+    # a sha would wedge on a tree porcelain calls dirty and git has nothing to
+    # commit for.
+    out["ref"] = snap.get("ref") if snap.get("sha") else None
+    out["sha"] = snap.get("sha")
+    return out
+
+
 def discard_branch(project_slug: str, branch_slug: str, *,
-                   reason: str = "") -> dict:
+                   reason: str = "", force: bool = False) -> dict:
     """Force-remove a branch worktree and delete its git ref.
+
+    THE WORK IS SNAPSHOTTED FIRST. Before this, discarding a tree with
+    uncommitted changes in it deleted them, and `/branches` -- whose whole
+    subject is abandoned trees holding uncommitted work -- had no verb it could
+    offer that did not risk destroying the thing it was pointing at. Now a dirty
+    tree is committed to `refs/wip/<branch_slug>` (see
+    `_snapshot_before_teardown`) and the returned `snapshot_ref`/`snapshot_sha`
+    say where it went, so "reap" is a recoverable act rather than a deletion.
+
+    A FAILED SNAPSHOT IS A REFUSAL, not a warning. `ok: False` with `detail`
+    saying why, and the tree is left exactly as it was: a dirty tree the next
+    reader can see beats work nobody can get back. `services/control.py` takes
+    the same position on the same trade.
+
+    `force` IS FOR THE ONE CASE NOTHING CAN SPEAK FOR: a directory with no git
+    metadata at all, which is what a teardown that fell through to `rmtree`
+    leaves behind. There is no snapshot to take and no way to know what is in
+    it, so removing it is a plain deletion and the caller has to say so rather
+    than have it done quietly on its behalf.
 
     The record moves to `discarded` rather than being deleted: what happened to
     a branch is exactly the question the record exists to answer, and a row that
@@ -572,11 +912,42 @@ def discard_branch(project_slug: str, branch_slug: str, *,
     branch = _branch_name(project_slug, branch_slug)
     target = _branch_path(project_slug, branch_slug)
     with work_driver.tree_lock(target):
+        base_ref = None
+        try:
+            base_ref = _canonical_branch(project_slug, project_dir)
+        except Exception:
+            base_ref = None
+        snap = _snapshot_before_teardown(target, branch_slug,
+                                         project_dir=project_dir, branch=branch,
+                                         base_ref=base_ref)
+        if not snap["snapshottable"] and target.exists() and not force:
+            return {
+                "ok": False, "removed": False,
+                "detail": f"{snap['detail']}; nothing can say what is in this "
+                          f"directory, so removing it would be a plain "
+                          f"deletion. Pass force to remove it anyway.",
+                "snapshot_ref": None, "snapshot_sha": None,
+                "dirty_entries": 0,
+            }
+        if snap["failed"] and not force:
+            return {
+                "ok": False, "removed": False,
+                "detail": f"the tree has uncommitted work and it could not be "
+                          f"snapshotted ({snap['detail']}), so it was left "
+                          f"alone.",
+                "snapshot_ref": None, "snapshot_sha": None,
+                "dirty_entries": snap["entries"],
+            }
         _tear_down_tree(project_dir, target, branch)
         record_id = _record_id(project_slug, branch_slug)
         if record_id is not None:
             _record(worktree_records.mark_discarded, record_id, reason=reason)
-    return {"ok": True}
+            if snap["sha"]:
+                _record(worktree_records.add_event, record_id, kind="snapshot",
+                        sha=snap["sha"], detail=snap["ref"])
+    return {"ok": True, "removed": True, "detail": "",
+            "snapshot_ref": snap["ref"], "snapshot_sha": snap["sha"],
+            "dirty_entries": snap["entries"]}
 
 
 def publish_branch(project_slug: str, branch_slug: str, *,
@@ -710,6 +1081,26 @@ def repo_state(project_slug: str) -> dict:
         "worktrees": worktrees_out,
         "open_prs": open_prs,
     }
+
+
+def default_ref(project_slug: str) -> str:
+    """The trunk this project's branches are cut from, by name.
+
+    PUBLISHED FOR THE SAME REASON `branch_dir` IS. Section 13.2 of
+    `workspace-ownership-and-leases-2026-08-22.md` puts branch naming policy in
+    this module and forbids another service importing it, and section 10.2 of
+    the same doc needs the trunk's NAME to say what a read-only session is
+    reading. Callers were resolving it by reaching for `_project_dir` and
+    `git_service` themselves, which is that rule broken twice in one line -- and
+    it would have printed `main` at a repo whose trunk is `master`.
+
+    Best-effort by design: an unregistered project, a missing directory or a git
+    that will not answer all give `HEAD`, which is true of every repository.
+    """
+    try:
+        return _canonical_branch(project_slug, _project_dir(project_slug)) or "HEAD"
+    except Exception:
+        return "HEAD"
 
 
 def branch_dir(project_slug: str, branch_slug: str) -> Path:

@@ -14,7 +14,8 @@ concept is the worktree, the USER-FACING concept is the branch, and section
 B3 (`POST /branches/{id}/lease`), so the id-addressed resource has to be this
 one. The existing `/worktrees` router is a different surface with a different
 key: it is addressed by `(project_slug, branch_slug)` and it operates on the
-DISK -- create, diff, merge, publish, discard. This one is the RECORD.
+DISK -- create, diff, merge, publish, discard. This one is the RECORD, and the
+`live=true` listing is the RECORD JOINED ONTO THE DISK: see that route.
 
 A FIRST-CLASS RESOURCE. It declares a prefix and a tag -- a bare `APIRouter()`
 is a bug by section 13.2's own rule -- and every route declares a real
@@ -41,7 +42,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from services import worktree_records as records
+from services import worktree_records as records, worktrees
 
 router = APIRouter(prefix="/branches", tags=["branches"])
 
@@ -72,7 +73,11 @@ class Worktree(BaseModel):
     # and a ticket can adopt it later.
     ticket_id: str | None = None
     allocated_by: str | None = None
-    status: str
+    # NULL when nothing recorded this tree. "No record" and "a record that says
+    # allocated" are different facts, and conflating them is what let `/branches`
+    # report eleven abandoned trees as no trees at all; see
+    # `worktrees.live_branches`.
+    status: str | None = None
     merged_sha: str | None = None
     # When the directory left the disk. Set together with a terminal status, and
     # the database enforces that pairing.
@@ -80,9 +85,39 @@ class Worktree(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
 
+    # --- what the DISK says, filled only by the live view -------------------
+    #
+    # These four are the join `worktrees.live_branches` performs, and they are
+    # nullable because "the disk was not consulted" is a real state: the history
+    # listing (`live=false`) and `GET /branches/{id}` read the record table and
+    # nothing else, so they answer null here rather than a default that would
+    # read as an observation nobody made.
+
+    # False for a tree that git knows about and the table does not, which is the
+    # structurally common case: most trees were never allocated through the
+    # record path.
+    recorded: bool = True
+    # `tree` on disk and known to git, `orphan` a directory git lost, `gone` a
+    # record whose directory is not there. Null when the disk was not read.
+    presence: str | None = None
+    head_sha: str | None = None
+    # When this branch's tip was last written. The age a monitoring view reads,
+    # and the only one an unrecorded tree has, since it has no `created_at`.
+    tip_at: str | None = None
+    # git refuses to remove or prune a locked worktree, so a caller deciding
+    # whether a tree can be reaped has to know.
+    locked: bool | None = None
+
 
 class WorktreeCollection(BaseModel):
+    """`records_available` is False when the relational store could not be read.
+
+    The live view still answers the trees, because they came from git and are
+    still real; they simply carry no ticket, no allocator and no status. That is
+    a different answer from "no trees", and it is said rather than implied.
+    """
     worktrees: list[Worktree]
+    records_available: bool = True
 
 
 class WorktreeEvent(BaseModel):
@@ -149,14 +184,37 @@ def list_branches(project: str | None = Query(None),
                   limit: int = Query(200, ge=1, le=1000)) -> WorktreeCollection:
     """Worktree records, newest activity first.
 
-    `live=true` narrows to the trees that still exist on disk (not merged, not
-    discarded), which is the question a "who is working where" view asks;
-    without it the answer includes the history, which is the question
-    "what happened to this branch" asks. Both are real, so neither is the
-    default hidden inside the other.
+    `live=true` is THE TREES THAT EXIST, read from the disk and joined with the
+    records that describe them (`worktrees.live_branches`), which is the question
+    a "who is working where" view asks. Without it the answer is the record
+    history, which is the question "what happened to this branch" asks. Both are
+    real, so neither is the default hidden inside the other.
+
+    THE LIVE VIEW USED TO ASK THE TABLE, and the table only ever has a row for a
+    tree allocated through the record path. It therefore reported an
+    installation with eleven abandoned worktrees on disk as having one branch,
+    at a path that did not exist. A view whose subject is "what is stuck" cannot
+    take its list of things from a register that most things were never entered
+    in.
     """
+    if live:
+        # THE LIVE VIEW STARTS FROM THE DISK. Answering it from the record table
+        # meant a tree that was never allocated through the record path did not
+        # exist as far as this route was concerned, and on 2026-08-27 that was
+        # every abandoned tree on this installation. `status` is a record filter
+        # and has no meaning over trees with no record, so it is not offered
+        # here; ask the history listing for it.
+        if status:
+            raise HTTPException(
+                400, "status filters the record history; drop live=true to use it")
+        out = worktrees.live_branches(project_slug=project, ticket_id=ticket_id,
+                                      app_id=app_id, limit=limit)
+        return WorktreeCollection(
+            worktrees=[Worktree(**r) for r in out["worktrees"]],
+            records_available=out["records_available"])
+
     rows = _guard(records.list_records, project_slug=project, status=status,
-                  ticket_id=ticket_id, app_id=app_id, live_only=live,
+                  ticket_id=ticket_id, app_id=app_id, live_only=False,
                   limit=limit)
     return WorktreeCollection(worktrees=[Worktree(**r) for r in rows])
 

@@ -2,7 +2,12 @@
 //
 // FIVE SOURCES, AND EACH ONE ANSWERS SOMETHING THE OTHERS CANNOT:
 //
-//   GET /branches?live=true      the trees that exist, and what they are for
+//   GET /branches?live=true      the trees that exist, read from the DISK and
+//                                joined with the records that describe them.
+//                                Reading it from the record table alone is what
+//                                made this page report eleven abandoned trees as
+//                                none: most trees were never allocated through
+//                                the record path, so most trees had no row.
 //   GET /leases                  what is CLAIMED, including claims nobody is
 //                                behind any more. This is the read that makes
 //                                abandoned work visible; see the route's own
@@ -69,6 +74,10 @@ export type BranchesViewRead = {
    *  different thing from holding none and must not render the same. */
   leasesAvailable: boolean;
   drift: DriftReport | null;
+  /** False when the relational store could not be read. The trees below are
+   *  still real (they came from git); they carry no ticket, no allocator and no
+   *  status. Different from "no trees", and rendered as such. */
+  recordsAvailable: boolean;
   /** The read that failed, if one did, named with the route that failed it. A
    *  SECONDARY failure leaves the rows on screen, so the caller shows this as a
    *  line beside them and not as a region over them. */
@@ -92,10 +101,17 @@ export function useBranchesView({ enabled = true }: { enabled?: boolean } = {})
 : BranchesViewRead {
   const branches = useQuery({
     queryKey: queryKeys.presence.branches("all"),
-    queryFn: async (): Promise<BranchRecord[]> => {
-      const d = await readJson<{ worktrees: BranchRecord[] }>(
-        "/api/branches?live=true&limit=500");
-      return d.worktrees ?? [];
+    queryFn: async (): Promise<{ records: BranchRecord[]; recordsAvailable: boolean }> => {
+      const d = await readJson<{
+        worktrees: BranchRecord[]; records_available: boolean;
+      }>("/api/branches?live=true&limit=500");
+      return {
+        records: d.worktrees ?? [],
+        // `undefined` from an older backend reads as available, for the reason
+        // `leasesAvailable` gives below: "this installation keeps no records" is
+        // a strong claim and must not be made before it has been asserted.
+        recordsAvailable: d.records_available ?? true,
+      };
     },
     enabled,
     refetchInterval: BRANCHES_MS,
@@ -136,7 +152,7 @@ export function useBranchesView({ enabled = true }: { enabled?: boolean } = {})
     retry: false,
   });
 
-  const records = branches.data ?? null;
+  const records = branches.data?.records ?? null;
 
   // One entry per tree. `combine` folds the array into a lookup so the caller
   // re-renders on the whole set rather than on each arrival, which is what
@@ -161,7 +177,11 @@ export function useBranchesView({ enabled = true }: { enabled?: boolean } = {})
           behind: ab?.behind ?? null,
         };
       },
-      enabled: enabled && !!r.path,
+      // ONLY A TREE GIT KNOWS ABOUT CAN ANSWER `git status`. A `gone` row has no
+      // directory and an `orphan` row has no git metadata, so both would 4xx on
+      // every poll and put a permanent "one of the reads did not land" line
+      // beside a table that is entirely correct.
+      enabled: enabled && !!r.path && r.presence === "tree",
       refetchInterval: TREE_MS,
       staleTime: 0,
       retry: false,
@@ -199,6 +219,7 @@ export function useBranchesView({ enabled = true }: { enabled?: boolean } = {})
     // `undefined` while cold reads as available, because "this installation
     // keeps no leases" is a strong claim and must not be made before asking.
     leasesAvailable: leases.data?.available ?? true,
+    recordsAvailable: branches.data?.recordsAvailable ?? true,
     drift: drift.data ?? null,
     // Named by route, so a line beside the table says which read went missing
     // rather than blaming whichever one the caller happens to mention.

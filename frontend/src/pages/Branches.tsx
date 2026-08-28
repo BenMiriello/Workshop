@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  AlertTriangle, GitBranch, RefreshCw,
+  AlertTriangle, GitBranch, RefreshCw, Trash2,
 } from "lucide-react";
 import {
-  Button, Card, Notice, PageHeader, Row, SectionLabel, Segmented, Skeleton,
-  Stack, StateBlock, StatusDot, StatusPill, Table, TableScroll,
+  Button, Card, ConfirmDialog, Notice, PageHeader, Row, SectionLabel, Segmented,
+  Skeleton, Stack, StateBlock, StatusDot, StatusPill, Table, TableScroll,
+  shortHttpError,
 } from "@workshop/ui";
 
 import HolderControls from "../components/holders/HolderControls";
@@ -14,7 +15,7 @@ import {
 } from "../components/holders/useBranchesView";
 import {
   attentionCount, blockingFiles, branchState, driftHeadline, driftKind,
-  driftLabel, heartbeatNote, orderRows, shortSeconds,
+  driftLabel, heartbeatNote, orderRows, reapPlan, reapUrl, shortSeconds, tipAge,
 } from "../lib/branchesView";
 import type { BranchRow } from "../lib/branchesView";
 
@@ -38,6 +39,14 @@ import type { BranchRow } from "../lib/branchesView";
 // has to receive the lease, and a page is not a session. `offerableVerbs`
 // already encodes this and renders the reason as text rather than a dead
 // button, which is the honest shape. Queue and steer are fully live here.
+//
+// REAP IS THE VERB FOR A TREE WITH NOBODY IN IT, and it is the one this page was
+// missing. Finding eleven abandoned trees and offering nothing to do about them
+// is half a monitoring view. `DELETE /api/worktrees/{project}/{branch}` is safe
+// to put behind a button because the server commits uncommitted work to
+// `refs/wip/<branch>` before it removes anything and refuses when it cannot;
+// `reapPlan` in `lib/branchesView.ts` decides whether it may be offered and what
+// the dialog has to promise, so the promise and the request cannot drift apart.
 
 // A hundred live trees would be a different problem than this page is for. The
 // count says the rest rather than the table growing without end.
@@ -50,9 +59,24 @@ const FILTERS = [
   { value: "all" as const, label: "All branches" },
 ];
 
+// ALL BRANCHES IS THE DEFAULT, and the reason is a measured failure rather than
+// a preference. Opening on "Needs a look" meant the first thing this page ever
+// said was an empty state reading "Nothing is stuck", and on 2026-08-27 it said
+// that with eleven abandoned trees on disk. Two different facts -- "there is
+// nothing here" and "nothing here is wrong" -- rendered identically, and the
+// wrong one is unfalsifiable from the screen.
+//
+// Opening on the whole list costs nothing that the filter was buying: the rows
+// are already ordered by attention, so what needs a look is still at the top,
+// and the header still counts it ("3 of 14 need a look"). The filter stays,
+// because narrowing to the decisions is a real thing to want once you can see
+// there are some.
+const DEFAULT_FILTER: Filter = "all";
+
 export default function Branches() {
-  const [filter, setFilter] = useState<Filter>("attention");
+  const [filter, setFilter] = useState<Filter>(DEFAULT_FILTER);
   const [selected, setSelected] = useState<string | null>(null);
+  const now = Date.now();
 
   const view = useBranchesView();
   const yielding = useYieldFlags(view.rows);
@@ -130,6 +154,14 @@ export default function Branches() {
         </Notice>
       )}
 
+      {!view.recordsAvailable && (
+        <Notice tone="info">
+          The branch records could not be read, so no row below can say which
+          ticket it was cut for or who allocated it. The trees are still real:
+          they were read from git.
+        </Notice>
+      )}
+
       <Row wrap>
         <Segmented
           ariaLabel="Which branches to list"
@@ -175,7 +207,7 @@ export default function Branches() {
           title={filter === "attention" ? "Nothing is stuck" : "No branches are allocated"}
           hint={filter === "attention"
             ? "No tree is idle, expired or holding uncommitted work nobody owns. Switch to All branches to see the ones that are simply being worked."
-            : "A branch is allocated when work starts on a ticket, or by POST /api/worktrees/<project>. Nothing has one open right now."}
+            : "This lists what is on disk, not what was recorded, so an empty list means the branches directory has no trees in it. A branch appears here when work starts on a ticket, or after POST /api/worktrees/<project>."}
           action={filter === "attention"
             ? <Button size="sm" onClick={() => setFilter("all")}>Show all branches</Button>
             : undefined}
@@ -193,6 +225,7 @@ export default function Branches() {
                   <th>Beat</th>
                   <th>Tree</th>
                   <th>Vs base</th>
+                  <th>Age</th>
                 </tr>
               </thead>
               <tbody>
@@ -225,19 +258,28 @@ export default function Branches() {
                         {lease?.state === "held" ? shortSeconds(lease.since_heartbeat_sec) : ""}
                       </td>
                       <td>
-                        {r.tree === null
-                          ? <span className="ws-muted">reading</span>
-                          : r.tree.clean
-                            ? <span className="ws-muted">clean</span>
-                            : <StatusDot status="warn">
-                                {r.tree.entries} uncommitted
-                              </StatusDot>}
+                        {r.record.presence !== "tree"
+                          // A row with no git behind it has no working tree to
+                          // read, so "reading" would be a promise that never
+                          // resolves. The state column already said which.
+                          ? <span className="ws-muted">no tree</span>
+                          : r.tree === null
+                            ? <span className="ws-muted">reading</span>
+                            : r.tree.clean
+                              ? <span className="ws-muted">clean</span>
+                              : <StatusDot status="warn">
+                                  {r.tree.entries} uncommitted
+                                </StatusDot>}
                       </td>
                       <td className="ws-muted ws-mono">
                         {r.ahead === null && r.behind === null
                           ? ""
                           : `+${r.ahead ?? 0} / -${r.behind ?? 0}`}
                       </td>
+                      {/* HOW LONG IT HAS BEEN SITTING THERE. For an unrecorded
+                          tree this is the only age there is: nothing wrote a
+                          created_at, because nothing recorded it being made. */}
+                      <td className="ws-muted ws-mono">{tipAge(r.record, now) ?? ""}</td>
                     </tr>
                   );
                 })}
@@ -290,14 +332,96 @@ export default function Branches() {
               />
             ) : (
               <Notice tone="info">
-                No live session is here, so there is nothing to queue a request
-                to. If the tree has uncommitted work, it has to be committed or
-                thrown away by hand.
+                No live session is here, so there is nothing to queue a request to.
               </Notice>
             )}
+
+            <ReapControl
+              row={selectedRow}
+              onDone={() => { setSelected(null); view.reload(); }}
+            />
           </Stack>
         </Card>
       )}
     </div>
+  );
+}
+
+/**
+ * Reap one tree, with the consequence named before it happens.
+ *
+ * THE DIALOG'S SENTENCE AND THE REQUEST COME FROM THE SAME DECISION.
+ * `reapPlan` says whether the verb may be offered, what it will cost and
+ * whether the call has to carry `force`; `reapUrl` builds the request from that
+ * same plan. Deciding twice is how a confirm ends up promising a snapshot on a
+ * request that could not take one.
+ *
+ * A REFUSAL IS AN ANSWER, NOT AN OUTAGE. The route replies 200 with
+ * `ok: false` and its own `detail` when it left the tree alone (the work could
+ * not be snapshotted), so that string is shown verbatim rather than being
+ * re-worded here into a promise the server did not make.
+ */
+function ReapControl({ row, onDone }: { row: BranchRow; onDone: () => void }) {
+  const plan = reapPlan(row);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (!plan.offered) {
+    return <p className="ws-muted">{plan.blockedBecause}</p>;
+  }
+
+  const run = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch(reapUrl(row, plan), { method: "DELETE" });
+      if (!res.ok) {
+        throw new Error(shortHttpError(
+          res.status, res.statusText, await res.text().catch(() => "")));
+      }
+      const body = await res.json() as {
+        ok: boolean; detail?: string; snapshot_ref?: string | null;
+      };
+      if (!body.ok) {
+        setErr(body.detail || "The tree was left alone.");
+        return;
+      }
+      setAsking(false);
+      onDone();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Stack gap="sm">
+      {err && (
+        <Notice
+          tone="warn"
+          action={<Button size="sm" onClick={() => { setErr(null); }}>Dismiss</Button>}
+        >
+          {err}
+        </Notice>
+      )}
+      <Row>
+        <Button size="sm" variant="danger" onClick={() => setAsking(true)}>
+          <Trash2 aria-hidden /> Reap this tree
+        </Button>
+      </Row>
+      <p className="ws-muted">{plan.consequence}</p>
+
+      <ConfirmDialog
+        open={asking}
+        busy={busy}
+        title={`Reap ${row.record.branch_slug}?`}
+        body={plan.consequence}
+        confirmLabel="Reap it"
+        onCancel={() => { setAsking(false); setErr(null); }}
+        onConfirm={() => { void run(); }}
+      />
+    </Stack>
   );
 }

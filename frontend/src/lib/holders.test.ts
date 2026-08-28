@@ -233,6 +233,7 @@ describe("the ref", () => {
     removed_at: null,
     created_at: "2026-08-23T10:00:00Z",
     updated_at: "2026-08-23T10:00:00Z",
+    recorded: true,
   };
 
   it("prefers the project's own record of the default branch", () => {

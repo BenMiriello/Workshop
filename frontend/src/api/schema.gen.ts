@@ -299,8 +299,15 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Rename Build Agent */
-        patch: operations["rename_build_agent_agents_build__slug__patch"];
+        /**
+         * Patch Build Agent
+         * @description Rename a maker, restate its purpose, or move it to another branch.
+         *
+         *     A branch move takes effect from the NEXT turn (the running one's cwd was
+         *     fixed at spawn) and keeps the agent's Claude Code session, because the
+         *     conversation is about the work rather than about the directory.
+         */
+        patch: operations["patch_build_agent_agents_build__slug__patch"];
         trace?: never;
     };
     "/agents/build/{slug}/brief": {
@@ -2893,11 +2900,18 @@ export interface paths {
          * List Branches
          * @description Worktree records, newest activity first.
          *
-         *     `live=true` narrows to the trees that still exist on disk (not merged, not
-         *     discarded), which is the question a "who is working where" view asks;
-         *     without it the answer includes the history, which is the question
-         *     "what happened to this branch" asks. Both are real, so neither is the
-         *     default hidden inside the other.
+         *     `live=true` is THE TREES THAT EXIST, read from the disk and joined with the
+         *     records that describe them (`worktrees.live_branches`), which is the question
+         *     a "who is working where" view asks. Without it the answer is the record
+         *     history, which is the question "what happened to this branch" asks. Both are
+         *     real, so neither is the default hidden inside the other.
+         *
+         *     THE LIVE VIEW USED TO ASK THE TABLE, and the table only ever has a row for a
+         *     tree allocated through the record path. It therefore reported an
+         *     installation with eleven abandoned worktrees on disk as having one branch,
+         *     at a path that did not exist. A view whose subject is "what is stuck" cannot
+         *     take its list of things from a register that most things were never entered
+         *     in.
          */
         get: operations["list_branches_branches_get"];
         put?: never;
@@ -4298,6 +4312,48 @@ export interface paths {
          */
         get: operations["ticket_scope_chat_threads__thread_id__ticket_scope_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/threads/{thread_id}/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Thread Tree
+         * @description Which tree this chat works in, who holds it, and where else it could go.
+         *
+         *     A READ, not a turn: opening the ref menu claims nothing and writes no
+         *     presence. The lease it reports is whatever the lease table says right now,
+         *     which for an idle chat is usually nothing at all -- a chat holds its tree
+         *     for the length of a turn, not for the length of the conversation
+         *     (section 7: sessions are disposable, trees are not).
+         */
+        get: operations["thread_tree_chat_threads__thread_id__tree_get"];
+        /**
+         * Set Thread Tree
+         * @description Pin this chat to a branch, cut a new one, or go back to the shared tree.
+         *
+         *     APPLIES FROM THE NEXT TURN, exactly as the model, effort and MCP selection
+         *     do: a turn already in flight had its cwd fixed when its process started, and
+         *     moving a running turn's directory underneath it is not a thing that can be
+         *     done. The pill re-reads after the write, so what it says is what the next
+         *     turn will do.
+         *
+         *     WHERE THE PIN IS STORED DEPENDS ON WHAT IS BEING PINNED, and that is
+         *     section 7 rather than an inconsistency. A maker agent is one worker with one
+         *     tree, so its pin is on the agent and every chat addressed to it moves
+         *     together; a project chat is one of many against a shared tree, so its pin is
+         *     on the conversation.
+         */
+        put: operations["set_thread_tree_chat_threads__thread_id__tree_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -8683,7 +8739,20 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Discard */
+        /**
+         * Discard
+         * @description Reap a branch tree, snapshotting anything uncommitted first.
+         *
+         *     THE VERB `/branches` OFFERS. That page exists to surface trees holding work
+         *     nobody owns, and until this could promise not to destroy that work it had
+         *     nothing safe to point at: an abandoned tree could only be cleared by hand.
+         *     Uncommitted content goes to `refs/wip/<branch_slug>` in the project's repo
+         *     before the directory is removed, and the response says where.
+         *
+         *     `force` covers the one case with nothing to snapshot -- a directory with no
+         *     git metadata, which is what a teardown that fell through to `rmtree` leaves
+         *     behind. Without it that is a refusal rather than a silent deletion.
+         */
         delete: operations["discard_worktrees__project_slug___branch_slug__delete"];
         options?: never;
         head?: never;
@@ -10223,10 +10292,38 @@ export interface components {
             /** Summary */
             summary: string;
         };
-        /** BranchDiscarded */
+        /**
+         * BranchDiscarded
+         * @description What a reap did, and where the work went.
+         *
+         *     `ok: false` is an ANSWER, not an outage: the tree had uncommitted work that
+         *     could not be snapshotted, or it is a directory with no git metadata that
+         *     nothing can speak for, and it was left exactly as it was. `detail` says
+         *     which. Retry with `force=true` once you have read `detail` and decided the
+         *     contents are expendable.
+         */
         BranchDiscarded: {
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /**
+             * Dirty Entries
+             * @default 0
+             */
+            dirty_entries: number;
             /** Ok */
             ok: boolean;
+            /**
+             * Removed
+             * @default false
+             */
+            removed: boolean;
+            /** Snapshot Ref */
+            snapshot_ref?: string | null;
+            /** Snapshot Sha */
+            snapshot_sha?: string | null;
         };
         /** BranchRecord */
         BranchRecord: {
@@ -10250,6 +10347,11 @@ export interface components {
             dir: string;
             /** Head */
             head?: string | null;
+            /**
+             * Locked
+             * @default false
+             */
+            locked: boolean;
             /** Project Slug */
             project_slug: string;
         };
@@ -10361,8 +10463,21 @@ export interface components {
             /** State */
             state?: string | null;
         };
-        /** BuildAgentRename */
-        BuildAgentRename: {
+        /**
+         * BuildAgentPatch
+         * @description What can be changed about a maker after it exists.
+         *
+         *     `branch_slug` IS THE ONE THAT MOVES WHERE ITS TURNS RUN, and it is here
+         *     because the picker on the agent's own page was inert without it: the value
+         *     was chosen, held in state, and read by nothing. Three values, three
+         *     meanings, and the difference matters -- absent leaves the pin alone, a slug
+         *     moves the agent onto that branch's tree, and an empty string moves it back
+         *     to the project's main tree. `None` cannot mean "clear it" here because
+         *     `None` is what "not sent" already means.
+         */
+        BuildAgentPatch: {
+            /** Branch Slug */
+            branch_slug?: string | null;
             /** Name */
             name?: string | null;
             /** Purpose */
@@ -10658,6 +10773,71 @@ export interface components {
             points: components["schemas"]["UsagePoint"][];
             /** Window S */
             window_s: number;
+        };
+        /**
+         * ChatWorktree
+         * @description Where this chat's turns run, and what it holds there.
+         *
+         *     Section 10 of `workspace-ownership-and-leases-2026-08-22.md` as one read.
+         *     `pinned` false is the ordinary state: the chat runs in the shared tree,
+         *     holds nothing, and `lease` is null. `blocked_by` is the lease ANOTHER
+         *     session holds on the tree this chat is pinned to, which is what the
+         *     queue/steer/take-over controls are offered against.
+         */
+        ChatWorktree: {
+            blocked_by?: components["schemas"]["LeaseRef"] | null;
+            /** Branch */
+            branch?: string | null;
+            /** Branch Slug */
+            branch_slug?: string | null;
+            /**
+             * Branches
+             * @default []
+             */
+            branches: components["schemas"]["ChatWorktreeBranch"][];
+            /** Can Pin */
+            can_pin: boolean;
+            /** Cwd */
+            cwd: string;
+            /** Default Ref */
+            default_ref: string;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /** Held */
+            held: boolean;
+            lease?: components["schemas"]["LeaseRef"] | null;
+            /** Pinned */
+            pinned: boolean;
+            /** Project Slug */
+            project_slug?: string | null;
+            /** Read Only */
+            read_only: boolean;
+            /** Scope */
+            scope?: string | null;
+            /** Source */
+            source: string;
+            /** Subject Id */
+            subject_id?: string | null;
+        };
+        /**
+         * ChatWorktreeBranch
+         * @description One branch this chat could be pinned to.
+         *
+         *     `branch_slug` is what a pin stores and `branch` is the git ref; both are on
+         *     the wire because the menu shows the ref and the write sends the slug, and a
+         *     client that had to derive one from the other would be re-implementing
+         *     `services/worktrees.py`'s naming policy.
+         */
+        ChatWorktreeBranch: {
+            /** Branch */
+            branch: string;
+            /** Branch Slug */
+            branch_slug: string;
+            /** Dir */
+            dir: string;
         };
         /** CheckoutBody */
         CheckoutBody: {
@@ -16770,6 +16950,25 @@ export interface components {
             updated_at?: string | null;
         };
         /**
+         * ThreadTreeIn
+         * @description Move this chat to another tree.
+         *
+         *     `action` is section 10.3's closed set and nothing else is accepted:
+         *     `join` an existing branch, cut a `new_branch`, or `release` the pin and go
+         *     back to the shared tree. Joining requires a branch that was actually
+         *     offered -- `services/session_defaults.choose` enforces that, and the point
+         *     of routing through it is that a join is never something that just happens.
+         */
+        ThreadTreeIn: {
+            /**
+             * Action
+             * @default join
+             */
+            action: string;
+            /** Branch */
+            branch?: string | null;
+        };
+        /**
          * ThreadWithQueue
          * @description GET /threads/{id}: the settings document merged with the queue, from one
          *     read, so opening a chat shows what is waiting in it on the first paint.
@@ -17583,22 +17782,35 @@ export interface components {
             branch_slug: string;
             /** Created At */
             created_at?: string | null;
+            /** Head Sha */
+            head_sha?: string | null;
             /** Id */
             id: string;
+            /** Locked */
+            locked?: boolean | null;
             /** Merged Sha */
             merged_sha?: string | null;
             /** Path */
             path: string;
+            /** Presence */
+            presence?: string | null;
             /** Project Slug */
             project_slug: string;
+            /**
+             * Recorded
+             * @default true
+             */
+            recorded: boolean;
             /** Removed At */
             removed_at?: string | null;
             /** Scope */
             scope: string;
             /** Status */
-            status: string;
+            status?: string | null;
             /** Ticket Id */
             ticket_id?: string | null;
+            /** Tip At */
+            tip_at?: string | null;
             /** Updated At */
             updated_at?: string | null;
         };
@@ -17622,8 +17834,20 @@ export interface components {
             /** Repo */
             repo: string;
         };
-        /** WorktreeCollection */
+        /**
+         * WorktreeCollection
+         * @description `records_available` is False when the relational store could not be read.
+         *
+         *     The live view still answers the trees, because they came from git and are
+         *     still real; they simply carry no ticket, no allocator and no status. That is
+         *     a different answer from "no trees", and it is said rather than implied.
+         */
         WorktreeCollection: {
+            /**
+             * Records Available
+             * @default true
+             */
+            records_available: boolean;
             /** Worktrees */
             worktrees: components["schemas"]["Worktree"][];
         };
@@ -18687,7 +18911,7 @@ export interface operations {
             };
         };
     };
-    rename_build_agent_agents_build__slug__patch: {
+    patch_build_agent_agents_build__slug__patch: {
         parameters: {
             query?: never;
             header?: never;
@@ -18698,7 +18922,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["BuildAgentRename"];
+                "application/json": components["schemas"]["BuildAgentPatch"];
             };
         };
         responses: {
@@ -25817,6 +26041,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TicketScope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    thread_tree_chat_threads__thread_id__tree_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatWorktree"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_thread_tree_chat_threads__thread_id__tree_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThreadTreeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatWorktree"];
                 };
             };
             /** @description Validation Error */
@@ -32974,7 +33264,10 @@ export interface operations {
     };
     discard_worktrees__project_slug___branch_slug__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+                reason?: string;
+            };
             header?: never;
             path: {
                 project_slug: string;

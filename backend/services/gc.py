@@ -106,8 +106,16 @@ def reap_merged_worktrees(*, apply: bool = False) -> dict:
     reaped, failed = [], []
     for m in merged:
         try:
-            worktrees.discard_branch(m["project_slug"], m["branch_slug"])
-            reaped.append(m)
+            # A REFUSAL IS NOT A REAP. `discard_branch` snapshots uncommitted
+            # work before it tears a tree down and answers `ok: False` when it
+            # could not, leaving the tree alone; counting that as reaped would
+            # report the sweep as having cleaned up something still sitting
+            # there.
+            res = worktrees.discard_branch(m["project_slug"], m["branch_slug"])
+            if res.get("ok"):
+                reaped.append({**m, "snapshot_ref": res.get("snapshot_ref")})
+            else:
+                failed.append({**m, "error": res.get("detail") or "refused"})
         except Exception as e:
             failed.append({**m, "error": f"{type(e).__name__}: {e}"})
     return {"applied": True, "reaped": reaped, "failed": failed,

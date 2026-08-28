@@ -9,7 +9,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   attentionCount, beatSeconds, blockingFiles, branchState, driftHeadline,
-  driftKind, heartbeatNote, humanSeconds, orderRows, shortSeconds,
+  driftKind, heartbeatNote, humanSeconds, orderRows, reapPlan, reapUrl,
+  shortSeconds, tipAge,
 } from "./branchesView";
 import type {
   BranchRow, DriftReport, LeaseRow, LeaseWindows, TreeState,
@@ -26,6 +27,7 @@ function record(over: Partial<BranchRecord> = {}): BranchRecord {
     id: "wt-1", project_slug: "demo", scope: "project:demo",
     branch_slug: "a-ticket", branch: "wt/demo/a-ticket",
     path: "/trees/a-ticket", base_ref: "origin/main", status: "active",
+    recorded: true, presence: "tree",
     ...over,
   } as BranchRecord;
 }
@@ -327,5 +329,144 @@ describe("drift", () => {
         surface({ name: "backend", state: "blocked", blocking_files: ["b.tsx", "c.py"] }),
       ],
     }))).toEqual(["a.tsx", "b.tsx", "c.py"]);
+  });
+});
+
+// --- presence: the rows that exist without a record, and vice versa ----------
+//
+// These are the cases the page was blind to. `/branches?live=true` answered from
+// the record table, so a tree nothing had recorded did not appear at all, and a
+// record whose tree had gone appeared as a working branch.
+
+describe("presence", () => {
+  it("a record whose directory is gone is stopped and wants nothing", () => {
+    const s = branchState(row({
+      record: record({ presence: "gone" }), lease: null, holder: null, tree: null,
+    }), WINDOWS);
+    expect(s.kind).toBe("stopped");
+    expect(s.label).toBe("Gone");
+    expect(s.needsAttention).toBe(false);
+    expect(s.detail).toContain("no directory");
+  });
+
+  it("a directory git has never heard of is warn AND wants a look", () => {
+    // It is the one row nothing else in the system can see, and it holds a whole
+    // checkout of disk until somebody removes it.
+    const s = branchState(row({
+      record: record({ presence: "orphan", recorded: false, status: null }),
+      lease: null, holder: null, tree: null,
+    }), WINDOWS);
+    expect(s.kind).toBe("warn");
+    expect(s.label).toBe("Orphaned");
+    expect(s.needsAttention).toBe(true);
+  });
+
+  it("A TREE WITH NO RECORD IS STILL RANKED BY THE LADDER, not skipped", () => {
+    // The structurally common case: most trees were never allocated through the
+    // record path, so `status` is null and `recorded` is false, and the row must
+    // still reach `Abandoned` on a dirty tree nobody holds.
+    const s = branchState(row({
+      record: record({ recorded: false, status: null }),
+      lease: null, holder: null, tree: DIRTY,
+    }), WINDOWS);
+    expect(s.label).toBe("Abandoned");
+    expect(s.kind).toBe("danger");
+  });
+
+  it("puts an orphan above the branches that are merely being worked", () => {
+    const orphan = row({
+      record: record({ id: "orphan", presence: "orphan" }),
+      lease: null, holder: null, tree: null,
+    });
+    const working = row({ record: record({ id: "working" }) });
+    const gone = row({
+      record: record({ id: "gone", presence: "gone" }),
+      lease: null, holder: null, tree: null,
+    });
+    expect(orderRows([working, gone, orphan], WINDOWS).map((r) => r.record.id))
+      .toEqual(["orphan", "working", "gone"]);
+  });
+});
+
+// --- the verb ----------------------------------------------------------------
+
+describe("reapPlan", () => {
+  it("refuses while somebody holds the tree, and says who", () => {
+    const plan = reapPlan(row());
+    expect(plan.offered).toBe(false);
+    expect(plan.blockedBecause).toContain("holds this tree");
+  });
+
+  it("refuses on a gone record: there is no directory to remove", () => {
+    const plan = reapPlan(row({
+      record: record({ presence: "gone" }), lease: null, holder: null, tree: null,
+    }));
+    expect(plan.offered).toBe(false);
+    expect(plan.blockedBecause).toContain("no directory to remove");
+  });
+
+  it("refuses until the tree has been READ, because the dialog cannot name the cost", () => {
+    const plan = reapPlan(row({ lease: null, holder: null, tree: null }));
+    expect(plan.offered).toBe(false);
+    expect(plan.blockedBecause).toContain("not been read");
+  });
+
+  it("promises a snapshot for a dirty tree, and does not force", () => {
+    const r = row({ lease: null, holder: null, tree: DIRTY });
+    const plan = reapPlan(r);
+    expect(plan.offered).toBe(true);
+    expect(plan.force).toBe(false);
+    expect(plan.consequence).toContain("2 uncommitted entries");
+    expect(plan.consequence).toContain("refs/wip/a-ticket");
+    expect(reapUrl(r, plan)).toBe("/api/worktrees/demo/a-ticket");
+  });
+
+  it("keeps the tip of a CLEAN branch that is ahead: teardown deletes the ref", () => {
+    const plan = reapPlan(row({
+      lease: null, holder: null, tree: CLEAN, ahead: 3,
+    }));
+    expect(plan.consequence).toContain("3 commits ahead");
+    expect(plan.consequence).toContain("refs/wip/a-ticket");
+  });
+
+  it("promises nothing kept when the branch has nothing the trunk lacks", () => {
+    const plan = reapPlan(row({
+      lease: null, holder: null, tree: CLEAN, ahead: 0,
+    }));
+    expect(plan.offered).toBe(true);
+    expect(plan.consequence).not.toContain("refs/wip");
+  });
+
+  it("AN ORPHAN IS THE ONE PERMANENT ONE, and the request says force", () => {
+    // Nothing can snapshot a directory git has no metadata for, so the dialog
+    // has to say the removal is permanent rather than promise a recovery.
+    const r = row({
+      record: record({ presence: "orphan" }), lease: null, holder: null, tree: null,
+    });
+    const plan = reapPlan(r);
+    expect(plan.offered).toBe(true);
+    expect(plan.force).toBe(true);
+    expect(plan.consequence).toContain("permanently");
+    expect(reapUrl(r, plan)).toBe("/api/worktrees/demo/a-ticket?force=true");
+  });
+});
+
+describe("tipAge", () => {
+  const now = Date.parse("2026-08-27T00:00:00Z");
+
+  it("reads the branch tip, which is the only age an unrecorded tree has", () => {
+    expect(tipAge(record({
+      tip_at: "2026-08-23T00:00:00Z", created_at: null,
+    }), now)).toBe("4d");
+  });
+
+  it("falls back to the record's own creation when git dated nothing", () => {
+    expect(tipAge(record({
+      tip_at: null, created_at: "2026-08-26T22:00:00Z",
+    }), now)).toBe("2h");
+  });
+
+  it("answers null rather than a placeholder when nothing dated it", () => {
+    expect(tipAge(record({ tip_at: null, created_at: null }), now)).toBeNull();
   });
 });

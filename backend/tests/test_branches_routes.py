@@ -72,6 +72,36 @@ class TestItReportsAMissingStoreRatherThanAnEmptyList:
         monkeypatch.setattr(records, "list_records", _down)
         assert client.get("/branches").status_code == 503
 
+    def test_the_LIVE_listing_still_answers_when_the_store_is_down(
+            self, client, monkeypatch):
+        """The inversion, and it is the point of reading the disk first.
+
+        A record store that will not answer takes the INTENT out of the live
+        view (which ticket, who allocated it), not the view itself: the trees
+        came from git and are still there. Reporting 503 would say "there are no
+        branches" about a machine with eleven of them, which is the same lie in
+        a new direction. `records_available` says which happened.
+        """
+        from services import worktrees as wt
+
+        def _down(*a, **k):
+            raise records.WorktreesUnavailable("no relational store")
+
+        monkeypatch.setattr(records, "list_records", _down)
+        monkeypatch.setattr(wt, "_registry_project_slugs", lambda: [])
+        r = client.get("/branches?live=true")
+        assert r.status_code == 200
+        assert r.json()["records_available"] is False
+
+    def test_a_status_filter_over_the_live_view_is_refused_rather_than_ignored(
+            self, client):
+        """`status` is a record column and most live trees have no record.
+
+        Silently applying it would drop every unrecorded tree, which is exactly
+        the disappearance this route was fixed to stop.
+        """
+        assert client.get("/branches?live=true&status=allocated").status_code == 400
+
     def test_an_unknown_record_is_a_404(self, client, monkeypatch):
         def _missing(*a, **k):
             raise records.WorktreeNotFound("nope")
@@ -103,7 +133,24 @@ class TestTheModelsDoNotDropFields:
     def test_the_record_survives_the_wire(self, client, monkeypatch):
         monkeypatch.setattr(records, "get_record", lambda *a, **k: dict(self._ROW))
         body = client.get(f"/branches/{self._ROW['id']}").json()
-        assert body == self._ROW
+        assert {k: body[k] for k in self._ROW} == self._ROW
+
+    def test_a_record_read_does_not_claim_to_have_looked_at_the_disk(
+            self, client, monkeypatch):
+        """`presence` and `locked` are OBSERVATIONS, and this route makes none.
+
+        They are on the model because the live listing joins them on; a default
+        of `tree`/`False` here would report a directory as present because
+        nobody asked, which is the shape of the bug the join exists to remove.
+        """
+        monkeypatch.setattr(records, "get_record", lambda *a, **k: dict(self._ROW))
+        body = client.get(f"/branches/{self._ROW['id']}").json()
+        assert body["presence"] is None
+        assert body["locked"] is None
+        assert body["head_sha"] is None
+        assert body["tip_at"] is None
+        # Every row this route can return IS a record, so this one is not null.
+        assert body["recorded"] is True
 
     def test_a_timeline_event_keeps_its_structured_fields(self, client,
                                                           monkeypatch):

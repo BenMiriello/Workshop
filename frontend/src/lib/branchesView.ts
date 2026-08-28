@@ -14,6 +14,19 @@
 // which is true and useless. Starting from the LEASE ROW and the WORKING TREE
 // instead is what makes abandoned work nameable.
 //
+// THE LADDER RANKS LIVE BRANCHES. Above it sit the RECORD-LEVEL short-circuits
+// (`Merged`, `Discarded`, and now `Gone` and `Orphaned`), and the difference is
+// not cosmetic: a rung of the ladder answers "who is in this tree and is
+// anything at risk", which presumes there IS a tree to be in. A row whose
+// directory is missing, or whose directory git has never heard of, has no such
+// answer, so it short-circuits rather than adding a rung. The ladder is still
+// six deep.
+//
+// `presence` COMES FROM THE SERVER (`worktrees.live_branches`), which reads the
+// disk and joins the record onto it. Before that join, `/branches?live=true`
+// answered from the record table alone and reported eleven abandoned trees as
+// none; this file could rank perfectly and still be ranking an empty list.
+//
 // FIVE STATUS KINDS, AND NO SIXTH (frontend/CLAUDE.md rule 4, and section 14 of
 // workspace-ownership-and-leases-2026-08-22.md, which maps them for exactly
 // this view: "`ok` free or yours, `running` someone working, `warn` holder
@@ -98,7 +111,18 @@ export type BranchState = {
  *  6. `Free`         no lease, clean tree. `ok`: available, nothing owed.
  *
  * `merged` and `discarded` short-circuit above all of it, because a record that
- * is over has no live state to report and its lease row is history.
+ * is over has no live state to report and its lease row is history. So do the
+ * two PRESENCE cases, for the same reason one step earlier: there is no tree to
+ * hold, so there is nobody to be holding it.
+ *
+ *  `Gone`      a live record whose directory is not on disk. `stopped`: nothing
+ *              is at risk and nothing can be lost, the bookkeeping simply
+ *              outlived the tree.
+ *  `Orphaned`  a directory under the branches root that git does not know
+ *              about, which is what a teardown that fell back to `rmtree`
+ *              leaves. `warn` and it DOES want a look: it is the one row
+ *              nothing else in the system can see, it is taking up a checkout's
+ *              worth of disk, and no tool but a plain delete can clear it.
  */
 export function branchState(row: BranchRow, windows: LeaseWindows,
                             selfSessionId?: string | null): BranchState {
@@ -111,6 +135,24 @@ export function branchState(row: BranchRow, windows: LeaseWindows,
   if (record.status === "discarded") {
     return { kind: "stopped", label: "Discarded", needsAttention: false,
              detail: "This branch was thrown away." };
+  }
+
+  if (record.presence === "gone") {
+    return {
+      kind: "stopped", label: "Gone", needsAttention: false,
+      detail: "There is a record for this branch and no directory at the path it "
+        + "names, so the tree was removed without the record being closed. "
+        + "Nothing is at risk here; the row is the only thing left.",
+    };
+  }
+  if (record.presence === "orphan") {
+    return {
+      kind: "warn", label: "Orphaned", needsAttention: true,
+      detail: "This directory sits under the branches root and git has no worktree "
+        + "and no branch for it, which is what a teardown that could not finish "
+        + "leaves behind. Nothing can say what is in it, so it can only be "
+        + "removed, and until it is it holds a whole checkout of disk.",
+    };
   }
 
   const held = lease?.state === "held";
@@ -240,6 +282,125 @@ export function heartbeatNote(lease: LeaseRow | null,
     + `${beatSeconds(windows.lease_ttl_sec)} without one.`;
 }
 
+// --- what can be done about it -------------------------------------------------
+
+/** What reaping this branch would actually do, decided once. */
+export type ReapPlan = {
+  /** Whether the verb may be offered at all. */
+  offered: boolean;
+  /** Why not, when it is not. Rendered as a sentence, never as a dead button. */
+  blockedBecause: string;
+  /** The consequence, named in the confirm dialog. */
+  consequence: string;
+  /** True when nothing can be snapshotted, so the removal is permanent and the
+   *  request has to say `force` for the server to accept it. */
+  force: boolean;
+};
+
+/**
+ * Whether the page may offer to reap this tree, and what it must promise.
+ *
+ * THE PAGE FOUND THE ABANDONED TREES AND THEN HAD NOTHING TO OFFER, which is
+ * half a monitoring view. The verb is `DELETE /api/worktrees/{project}/{branch}`,
+ * and it is safe to offer because the server snapshots uncommitted work to
+ * `refs/wip/<branch>` before it removes anything and refuses when it cannot.
+ * This function's whole job is making the button's promise match that.
+ *
+ * THREE REFUSALS, and each is a real limit rather than caution:
+ *
+ *  - A HELD LEASE. Somebody is in there. Reaping a tree out from under a live
+ *    holder is a preempt wearing a different name, and preempt has its own
+ *    control with its own authorization.
+ *  - `Gone`. There is no directory to remove. The row is a record, and closing a
+ *    record is not this verb.
+ *  - AN UNREAD TREE (`tree === null`). The dirty state has not landed, so the
+ *    dialog cannot say what would happen to it, and a confirm that cannot name
+ *    the consequence is not a confirm.
+ *
+ * AN ORPHAN IS OFFERED, AND IT IS THE ONE PERMANENT ONE. A directory git has no
+ * metadata for cannot be snapshotted by anything, so the dialog says so plainly
+ * and the request carries `force`.
+ */
+export function reapPlan(row: BranchRow): ReapPlan {
+  const presence = row.record.presence;
+  if (row.lease?.state === "held") {
+    return {
+      offered: false, force: false, consequence: "",
+      blockedBecause: `${holderLabel(row)} holds this tree. Ask it to stop before `
+        + `removing the tree it is working in.`,
+    };
+  }
+  if (presence === "gone") {
+    return {
+      offered: false, force: false, consequence: "",
+      blockedBecause: "There is no directory to remove. This row is a record whose "
+        + "tree is already gone.",
+    };
+  }
+  if (presence === "orphan") {
+    return {
+      offered: true, force: true,
+      blockedBecause: "",
+      consequence: "This directory has no git metadata, so nothing can record what "
+        + "is in it before it goes. Removing it deletes its files permanently.",
+    };
+  }
+  if (row.tree === null) {
+    return {
+      offered: false, force: false, consequence: "",
+      blockedBecause: "The working tree has not been read yet, so there is no way to "
+        + "say what removing it would cost. Try again in a moment.",
+    };
+  }
+  const ahead = row.ahead ?? 0;
+  const kept = `Uncommitted work is committed to refs/wip/${row.record.branch_slug} `
+    + `first, so it stays recoverable in the project's repository.`;
+  if (!row.tree.clean) {
+    return {
+      offered: true, force: false, blockedBecause: "",
+      consequence: `${row.tree.entries} uncommitted `
+        + `${row.tree.entries === 1 ? "entry" : "entries"} and the branch are removed. `
+        + kept,
+    };
+  }
+  if (ahead > 0) {
+    return {
+      offered: true, force: false, blockedBecause: "",
+      consequence: `The tree is clean and the branch is ${ahead} `
+        + `${ahead === 1 ? "commit" : "commits"} ahead of ${row.record.base_ref}. `
+        + `The directory and the branch are removed, and the tip is kept at `
+        + `refs/wip/${row.record.branch_slug} so those commits stay reachable.`,
+    };
+  }
+  return {
+    offered: true, force: false, blockedBecause: "",
+    consequence: `The tree is clean and the branch has nothing the trunk does not `
+      + `already have. The directory and the branch are removed.`,
+  };
+}
+
+/** The reap request for one row: the path and whether it carries `force`.
+ *  Here rather than at the call site so the URL and the `force` decision cannot
+ *  drift apart from the sentence the dialog just showed. */
+export function reapUrl(row: BranchRow, plan: ReapPlan): string {
+  const p = encodeURIComponent(row.record.project_slug);
+  const b = encodeURIComponent(row.record.branch_slug);
+  return `/api/worktrees/${p}/${b}${plan.force ? "?force=true" : ""}`;
+}
+
+/** How old this branch's last commit is, in words, or null when nothing dated it.
+ *
+ *  `tip_at` is the only age an unrecorded tree has: it has no `created_at`,
+ *  because nothing recorded it being created. Null rather than "unknown" so the
+ *  caller can leave the cell empty; a placeholder in a dense column is noise. */
+export function tipAge(record: BranchRecord, nowMs: number): string | null {
+  const at = record.tip_at ?? record.created_at ?? null;
+  if (!at) return null;
+  const t = Date.parse(at);
+  if (Number.isNaN(t)) return null;
+  return shortSeconds((nowMs - t) / 1000);
+}
+
 // --- ordering -----------------------------------------------------------------
 
 /** Rows worth looking at first.
@@ -255,12 +416,14 @@ export function orderRows(rows: BranchRow[], windows: LeaseWindows,
     const s = branchState(r, windows, selfSessionId);
     if (s.label === "Preempting") return 0;
     if (s.label === "Abandoned") return 1;
-    if (s.label === "Idle") return 2;
-    if (s.label === "Working") return 3;
-    if (s.label === "Yours") return 4;
-    if (s.label === "Free") return 5;
-    if (s.label === "Expired") return 6;
-    return 7;
+    if (s.label === "Orphaned") return 2;
+    if (s.label === "Idle") return 3;
+    if (s.label === "Working") return 4;
+    if (s.label === "Yours") return 5;
+    if (s.label === "Free") return 6;
+    if (s.label === "Expired") return 7;
+    if (s.label === "Gone") return 8;
+    return 9;
   };
   return [...rows].sort((a, b) => {
     const d = rank(a) - rank(b);
