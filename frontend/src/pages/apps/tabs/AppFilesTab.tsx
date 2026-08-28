@@ -39,7 +39,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { FilePlus, FolderTree, Lock, Search } from "lucide-react";
+import { FilePlus, FolderTree, Lock, RefreshCw, Search } from "lucide-react";
 import {
   Badge, Button, Card, DocumentBar, Field, FileDrill, FileTree, Input, Modal, Notice,
   Skeleton, Stack, StateBlock, cx, documentBar, drillTrail, formatBytes, shortHttpError, timeAgo,
@@ -377,6 +377,12 @@ function FilesBody({ app }: { app: AppRecord }) {
 
   const [filterText, setFilterText] = useState("");
   const [creatingFile, setCreatingFile] = useState(false);
+  // Bumped by Reload. A new adapter object is how `FileTree` is told to drop
+  // the levels it has loaded and read them again; it does NOT touch the open
+  // set, so nothing the operator opened closes behind them. Same mechanism
+  // Memory uses, for the same reason: an agent writes files into this tree
+  // while the page is open, so it genuinely goes stale.
+  const [generation, setGeneration] = useState(0);
 
   const adapter = useMemo<FileTreeAdapter>(() => ({
     root,
@@ -409,7 +415,7 @@ function FilesBody({ app }: { app: AppRecord }) {
         filtered: level.filtered ?? undefined,
       };
     },
-  }), [workspace, root]);
+  }), [workspace, root, generation]);
 
   const filteredAdapter = useMemo<FileTreeAdapter>(() => {
     if (!filterText) return adapter;
@@ -520,9 +526,14 @@ function FilesBody({ app }: { app: AppRecord }) {
     <>
       {host && createPortal(
         <>
-          {/* Kit controls, same bar Memory draws (2026-08-27, D5). It was a
-              hand-built `<button>` and a bare `<input>` with their own CSS, and
-              the two never lined up with each other or with anything else. */}
+          {/* THE SAME BAR MEMORY DRAWS, control for control (2026-08-27, D5).
+              It was a hand-built `<button>` and a bare `<input>` with their own
+              CSS, and the two never lined up with each other or with anything
+              else. Two trees that look alike and behave differently is the
+              defect one step removed, so this carries Memory's three controls
+              in Memory's order: the field, New, Reload. The field is labelled
+              Search rather than Filter because it is the same control doing the
+              same thing, and one word for one control was the point. */}
           <div className="ws-pagecol__dirtoolbar">
             <div className="ws-dirtoolbar__search">
               <Search size={13} aria-hidden className="ws-dirtoolbar__searchicon" />
@@ -530,8 +541,8 @@ function FilesBody({ app }: { app: AppRecord }) {
                 className="ws-dirtoolbar__searchinput"
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
-                placeholder="Filter"
-                aria-label="Filter files"
+                placeholder="Search"
+                aria-label="Search this app's files by name"
               />
             </div>
             <Button
@@ -543,6 +554,16 @@ function FilesBody({ app }: { app: AppRecord }) {
               title="New file"
             >
               <FilePlus aria-hidden />
+            </Button>
+            <Button
+              size="sm"
+              icon
+              variant="ghost"
+              onClick={() => setGeneration((n) => n + 1)}
+              aria-label="Reload files"
+              title="Reload"
+            >
+              <RefreshCw aria-hidden />
             </Button>
           </div>
           <div className="ws-pagecol__treescroll">
