@@ -11,6 +11,7 @@ import ChatComposer from "./chat/ChatComposer";
 import { useAttachments, dragHasFiles, filesFromTransfer } from "./chat/useAttachments";
 import { canSendWith } from "./chat/attachments";
 import ChatToolbar from "./chat/ChatToolbar";
+import TreePill from "./chat/TreePill";
 import ChatLog from "./chat/ChatLog";
 import BranchAction from "./chat/BranchAction";
 import BranchPicker from "./chat/BranchPicker";
@@ -1165,6 +1166,7 @@ export default function Chat({
       activeId={activeId}
       activeThreadTitle={thread.activeThreadTitle}
       branchPicker={branchPicker}
+      treePill={activeId ? <TreePill threadId={activeId} /> : null}
       showProviderPicker={variant === "full" || effectiveMode === "data"}
       providers={scopeState.providers}
       activeProvider={scopeState.activeProvider}

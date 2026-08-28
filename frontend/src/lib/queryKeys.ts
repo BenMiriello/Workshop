@@ -64,6 +64,14 @@ export const queryKeys = {
     context: (threadId: string | null) => ["chat", "context", threadId] as const,
     work: (threadId: string | null) => ["chat", "work", threadId] as const,
     branches: (threadId: string | null) => ["chat", "branches", threadId] as const,
+    /**
+     * `GET /api/chat/threads/{id}/tree` -- which WORKING TREE this chat's turns
+     * run in, and who holds its lease. Not `chat.branches`, which is the
+     * conversation's own lines (ADR 0020): one is a git worktree and the other
+     * is a fork of the transcript, and giving them one key would make switching
+     * conversation branch invalidate the ref pill and vice versa.
+     */
+    tree: (threadId: string | null) => ["chat", "tree", threadId] as const,
     mentionable: (threadId: string | null) => ["chat", "mentionable", threadId] as const,
     prefs: () => ["chat", "prefs"] as const,
     /**

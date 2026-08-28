@@ -70,7 +70,7 @@ import { workTitle } from "./work/workRows";
 
 export default function ChatToolbar({
   variant, mode, slug, hideExpand,
-  activeId, activeThreadTitle, branchPicker,
+  activeId, activeThreadTitle, branchPicker, treePill,
   showProviderPicker, providers, activeProvider, onChooseProvider, turnActive,
   drawer, workCount, needsYouCount, onWorkClick,
   onBack, onOpenWorkbench, onEditTitle, onOpenThread,
@@ -131,6 +131,12 @@ export default function ChatToolbar({
    *  what a branch is, only where the control goes. Null until the thread has
    *  more than one line, which is most threads. */
   branchPicker?: ReactNode;
+  /** WHICH WORKING TREE the next turn runs in, and the way to move it
+   *  (workspace-ownership-and-leases-2026-08-22.md section 14). A node for the
+   *  same reason `branchPicker` is: the toolbar's business is where the control
+   *  goes, not what a worktree lease is. Null for every chat with no project
+   *  tree of its own, which the pill decides for itself. */
+  treePill?: ReactNode;
   onArchive: (id: string) => void;
   onPopOut: () => void;
   onNavigate: (to: string) => void;
@@ -263,6 +269,10 @@ export default function ChatToolbar({
           conversation you are in, then which line of it. Absent entirely until
           there is a second line to be on. */}
       {branchPicker}
+      {/* Which WORKING TREE, next to which line of the conversation. Two
+          different things English calls a branch, which is why the pill says
+          "Shared tree" or a slug and never the bare word. */}
+      {treePill}
       {/* Pushes the actions right on desktop; on a narrow viewport the title
           just left of it has already given up the room instead. */}
       <span className="chat-tb__spacer" />
