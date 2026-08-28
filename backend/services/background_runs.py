@@ -34,11 +34,33 @@ log = logging.getLogger(__name__)
 _WORKSHOP_ROOT = Path(__file__).resolve().parent.parent.parent  # repo root
 _BACKEND = Path(__file__).resolve().parent.parent               # backend/
 
-# Bound a background agent so a single chat cannot spend without limit. These
-# match the shape of ralph's per-iteration caps; a background investigation is
-# one turn's worth of work, not a sweep.
-_TIMEOUT_S = 600
+# Bound a background agent so a single chat cannot spend without limit.
+#
+# THE OLD CEILING WAS 600s AND IT WAS THE WRONG SHAPE OF BOUND. Measured
+# 2026-08-28: an audit agent asked to read forty documents against the tree was
+# killed at exactly ten minutes (job_1787934884118_2f00, exit 124) with its
+# entire output discarded, and the chat was told it had "finished". Ten minutes
+# is under one deep read of a large repo, so the cap was not limiting waste, it
+# was truncating every job big enough to be worth delegating. `_MAX_TURNS` is
+# the bound that actually limits spend, because it counts model turns rather
+# than wall-clock, and it stays where it was.
+#
+# The remaining wall-clock bound exists only to stop a wedged process living
+# forever. `WORKSHOP_BACKGROUND_TIMEOUT_S` overrides it for a host that wants
+# a tighter or looser leash.
+def _timeout_s() -> int:
+    raw = (os.environ.get("WORKSHOP_BACKGROUND_TIMEOUT_S") or "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return 3600
+
+
 _MAX_TURNS = 40
+
+# What `_run_claude` returns for a run the wall-clock bound killed. Distinct
+# from any exit code the CLI itself produces, and the same number `timeout(1)`
+# uses, so a reader who knows one knows the other.
+TIMED_OUT = 124
 
 
 def _claude_bin() -> str:
@@ -151,10 +173,19 @@ def _run_claude(prompt: str, cwd: Path, owner_id: int, scope: str) -> tuple[int,
     try:
         out = subprocess.run(
             cmd, cwd=str(cwd), stdin=subprocess.DEVNULL,
-            capture_output=True, text=True, timeout=_TIMEOUT_S,
+            capture_output=True, text=True, timeout=_timeout_s(),
         )
-    except subprocess.TimeoutExpired:
-        return 124, "", {}
+    except subprocess.TimeoutExpired as e:
+        # KEEP WHAT IT HAD SAID. `capture_output` buffers, so a killed run's
+        # stdout is on the exception and used to be dropped on the floor: the
+        # chat was handed an empty result for work the agent had actually done.
+        # `--output-format json` only emits its envelope at the end, so this is
+        # usually partial or empty, but partial beats nothing and an empty one
+        # still gets to say WHY it is empty (`_deliver`).
+        partial = e.stdout or ""
+        if isinstance(partial, bytes):
+            partial = partial.decode("utf-8", "replace")
+        return TIMED_OUT, partial.strip()[:4000], {}
     raw = out.stdout or ""
     text, usage = "", {}
     try:
@@ -168,33 +199,60 @@ def _run_claude(prompt: str, cwd: Path, owner_id: int, scope: str) -> tuple[int,
 
 
 def _deliver(*, thread_id: str, owner_id: int, job_id: str, label: str,
-             status: str, text: str) -> None:
+             status: str, text: str, exit_code: int = 0) -> None:
     """Post the result into the chat and ask it to continue. Mirrors
-    run_report's autonomous-tier delivery so the client renders it the same way."""
+    run_report's autonomous-tier delivery so the client renders it the same way.
+
+    THE OUTCOME IS STATED, NOT IMPLIED. This used to say "finished" in the
+    continuation seed for every outcome, including a run the wall-clock bound
+    had killed, so a chat whose agent was cut off at ten minutes was told the
+    agent had finished and produced nothing useful. That reads as "the work was
+    not worth doing" when the truth was "the work was stopped mid-way", and the
+    two call for opposite next steps: drop it, versus re-run it smaller."""
     from services import chat_store, ownership, chat_drain
     prev = ownership.owner_or_none()
     ownership.set_current_owner(owner_id)
+    timed_out = exit_code == TIMED_OUT
+    mins = max(1, _timeout_s() // 60)
     try:
-        if status == "done" and text:
+        if timed_out:
+            body = (f"Background agent ran out of time: {label}\n\n"
+                    f"It was stopped at the {mins}-minute wall-clock bound before "
+                    f"it could finish.\n\n{text or '(nothing had been emitted yet)'}")
+        elif status == "done" and text:
             body = f"Background agent finished: {label}\n\n{text}"
         elif status == "done":
             body = f"Background agent finished: {label}\n\n(It produced no text.)"
         else:
-            body = f"Background agent stopped: {label}\n\n{text or '(no output)'}"
+            body = (f"Background agent stopped: {label} (exit {exit_code})\n\n"
+                    f"{text or '(no output)'}")
         chat_store.append_message(
             thread_id, "assistant", body,
             meta={"kind": "background_result", "autonomous": True,
                   "job": job_id, "status": status},
         )
-        seed = (
-            "[AUTONOMOUS CONTINUATION - not a message from the operator]\n"
-            f"A background agent you started ({label!r}) has finished, and its "
-            "result is the autonomous message directly above this one. Read it "
-            "and carry the conversation forward for the operator: give them the "
-            "answer plainly, or take the clear next step. Do not greet the "
-            "operator or ask what they want. If it produced nothing useful, say "
-            "so briefly and stop."
-        )
+        if timed_out:
+            seed = (
+                "[AUTONOMOUS CONTINUATION - not a message from the operator]\n"
+                f"A background agent you started ({label!r}) was STOPPED at the "
+                f"{mins}-minute wall-clock bound before it finished. It did not "
+                "fail at the task and it did not decide there was nothing to "
+                "report. Whatever it had emitted is in the message directly "
+                "above; treat it as partial. Decide and act: either re-run it "
+                "as smaller pieces, or do the work yourself. Tell the operator "
+                "in one line that it ran out of time, and do not present its "
+                "absence as an answer."
+            )
+        else:
+            seed = (
+                "[AUTONOMOUS CONTINUATION - not a message from the operator]\n"
+                f"A background agent you started ({label!r}) has finished, and its "
+                "result is the autonomous message directly above this one. Read it "
+                "and carry the conversation forward for the operator: give them the "
+                "answer plainly, or take the clear next step. Do not greet the "
+                "operator or ask what they want. If it produced nothing useful, say "
+                "so briefly and stop."
+            )
         chat_drain.request_continuation(thread_id, seed=seed, dedupe_id=f"{job_id}-{thread_id}")
     finally:
         if prev is None:
@@ -232,7 +290,8 @@ def run(argv: list[str] | None = None) -> int:
     # because a background Job worked no ticket).
     try:
         _deliver(thread_id=a.thread, owner_id=a.owner, job_id=a.job_id,
-                 label=a.label or "background agent", status=status, text=text)
+                 label=a.label or "background agent", status=status, text=text,
+                 exit_code=exit_code)
     except Exception as e:
         log.warning("background agent delivery failed for job %s: %s", a.job_id, e)
 

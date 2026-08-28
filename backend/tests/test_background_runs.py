@@ -102,3 +102,48 @@ def test_a_failed_run_still_tells_the_chat(owned):
     assert "stopped" in msgs[0]["content"].lower()
     # A failure still seeds a continuation so the chat says what happened.
     assert any(e.get("auto") for e in chat_queue.read(tid))
+
+
+def test_a_run_the_clock_killed_says_so_and_keeps_what_it_had(owned):
+    """The 2026-08-28 defect: an agent cut off at the wall-clock bound was
+    delivered as "finished", with its partial output dropped, so the chat read a
+    truncated job as a job that found nothing."""
+    tid = chat_store.create_thread("general")["id"]
+    background_runs._deliver(
+        thread_id=tid, owner_id=6, job_id="job-t", label="audit",
+        status="failed", text="half an answer", exit_code=background_runs.TIMED_OUT)
+    msgs = [e for e in chat_log.read_events(tid)
+            if e.get("kind") == "message" and e.get("role") == "assistant"]
+    body = msgs[0]["content"]
+    assert "ran out of time" in body.lower()
+    assert "finished" not in body.lower()
+    assert "half an answer" in body
+    # And the continuation must not tell the next turn the agent finished.
+    seed = [e for e in chat_queue.read(tid) if e.get("auto")][0]
+    assert "STOPPED" in seed["text"]
+    assert "has finished" not in seed["text"]
+
+
+def test_the_timeout_keeps_the_partial_stdout(owned, monkeypatch):
+    """`capture_output` buffers, so a killed run's stdout lives on the exception.
+    It used to be thrown away."""
+    def fake_run(cmd, **kw):
+        raise background_runs.subprocess.TimeoutExpired(
+            cmd, kw.get("timeout", 1), output="partial text so far")
+
+    monkeypatch.setattr(background_runs.subprocess, "run", fake_run)
+    monkeypatch.setattr(background_runs, "_claude_bin", lambda: "/bin/true")
+    from pathlib import Path
+    code, text, usage = background_runs._run_claude(
+        "prompt", Path(str(owned)), 6, "workshop")
+    assert code == background_runs.TIMED_OUT
+    assert text == "partial text so far"
+
+
+def test_the_wall_clock_bound_is_an_hour_and_overridable(owned, monkeypatch):
+    monkeypatch.delenv("WORKSHOP_BACKGROUND_TIMEOUT_S", raising=False)
+    assert background_runs._timeout_s() == 3600
+    monkeypatch.setenv("WORKSHOP_BACKGROUND_TIMEOUT_S", "120")
+    assert background_runs._timeout_s() == 120
+    monkeypatch.setenv("WORKSHOP_BACKGROUND_TIMEOUT_S", "nonsense")
+    assert background_runs._timeout_s() == 3600
