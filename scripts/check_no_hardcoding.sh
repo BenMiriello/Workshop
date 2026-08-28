@@ -143,7 +143,20 @@ fi
 # tracked files, so nothing in it should be skipped for matching a .gitignore.
 _grep_in() { # $1=dir, rest = git-grep args
   local dir="$1"; shift
-  if [[ -d "$dir/.git" ]]; then
+  # `-e`, NOT `-d`. A LINKED WORKTREE'S `.git` IS A FILE, a one-line
+  # `gitdir:` pointer, so a directory test says "not a repo" for exactly the
+  # trees the platform runs isolated work in. The fall-through is not a
+  # harmless second opinion: `--no-index --no-exclude-standard` scans the
+  # whole directory, so the probe walked into `node_modules/` and
+  # `frontend/dist/`, both gitignored, and reported a clean branch as 12 new
+  # absolute home paths and 809 new email addresses. None were in the change.
+  # The same change reviewed in the canonical tree reported none, which made
+  # the completion gate unusable for the isolation model this platform is
+  # moving work toward.
+  #
+  # The extract still takes the `--no-index` branch and must: it has no `.git`
+  # of any kind, so `-e` is false there exactly as `-d` was.
+  if [[ -e "$dir/.git" ]]; then
     git -C "$dir" grep "$@" -- . "${EXCLUDES[@]}" 2>/dev/null
   else
     git -C "$dir" grep --no-index --no-exclude-standard "$@" -- . "${EXCLUDES[@]}" 2>/dev/null

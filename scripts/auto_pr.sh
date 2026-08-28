@@ -97,7 +97,10 @@ if [[ -z "$REPO" ]]; then
   exit 1
 fi
 
-if [[ ! -d "$REPO/.git" ]]; then
+# `-e`, not `-d`: a linked worktree's `.git` is a FILE (a `gitdir:` pointer), so
+# a directory test rejects every worktree as "not a repo". Same root cause as
+# check_no_hardcoding.sh's tracked-file probe.
+if [[ ! -e "$REPO/.git" ]]; then
   echo "auto_pr.sh: $REPO is not a git repo" >&2
   exit 1
 fi
