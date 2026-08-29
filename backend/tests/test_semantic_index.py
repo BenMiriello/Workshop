@@ -848,3 +848,55 @@ class TestTheSupersededPenaltyIsSizedToThisModel:
         assert len(hits) == 1, "a demoted chunk must still be admitted on its raw score"
         assert hits[0]["status"] == "superseded", \
             "and it must arrive LABELLED, or the reader cannot see the demotion"
+
+
+class TestCollectNotesWalksSubdirectories:
+    """Regression for 2026-08-29: collect_notes used d.glob("*.md") so notes
+    in system/ and user/ (added 2026-08-28 commit 1084114e) were invisible."""
+
+    def test_a_note_in_a_subfolder_is_returned(self, tmp_path, monkeypatch):
+        scope_dir = tmp_path / "knowledge"
+        sub = scope_dir / "system"
+        sub.mkdir(parents=True)
+        (sub / "my-note.md").write_text("# My Note\n\nThis note lives in system/.\n")
+
+        from services import knowledge
+        monkeypatch.setattr(knowledge, "all_scope_dirs", lambda: [("development", scope_dir)])
+
+        chunks = si.collect_notes()
+        refs = {c.ref for c in chunks}
+        assert any("my-note" in r for r in refs), (
+            f"subfolder note not found; refs seen: {sorted(refs)}"
+        )
+
+    def test_a_nested_scope_is_indexed_once_under_its_own_scope(self, tmp_path, monkeypatch):
+        """Scope directories NEST: shared/knowledge is the workshop scope and
+        shared/knowledge/development sits inside it. Making the walk recursive
+        made the parent claim the child's notes a second time, under the wrong
+        scope -- and scope drives the reach mask, so that is a leak, not just a
+        duplicate. Measured 2026-08-29: 658 note rows for 345 distinct chunks."""
+        parent = tmp_path / "knowledge"
+        child = parent / "development"
+        (parent / "user").mkdir(parents=True)
+        child.mkdir(parents=True)
+        (parent / "user" / "mine.md").write_text("# Mine\n\nA workshop note.\n")
+        (child / "system" / "theirs.md").parent.mkdir(parents=True)
+        (child / "system" / "theirs.md").write_text("# Theirs\n\nA development note.\n")
+
+        from services import knowledge
+        monkeypatch.setattr(knowledge, "all_scope_dirs",
+                            lambda: [("workshop", parent), ("development", child)])
+
+        chunks = si.collect_notes()
+        by_ref = {}
+        for c in chunks:
+            by_ref.setdefault(c.ref, []).append(c.scope)
+
+        theirs = [r for r in by_ref if "theirs" in r]
+        assert len(theirs) == 1, f"the nested note must appear once, saw {theirs}"
+        assert by_ref[theirs[0]] == ["development"], (
+            f"and only under its own scope, saw {by_ref[theirs[0]]}"
+        )
+        mine = [r for r in by_ref if "mine" in r]
+        assert len(mine) == 1 and by_ref[mine[0]] == ["workshop"], \
+            "the parent's own note still belongs to the parent"

@@ -372,8 +372,28 @@ def collect_notes() -> list[Chunk]:
     except Exception as e:
         log.warning("knowledge scopes unavailable: %s", e)
         roots = []
+    # The walk is RECURSIVE, because the store became path-aware on 2026-08-28
+    # and every note moved into a `system/` or `user/` subfolder; a one-level
+    # glob left 195 of 196 notes out of the index entirely (measured 2026-08-29).
+    #
+    # But SCOPE DIRECTORIES NEST. `shared/knowledge` is the workshop scope and
+    # `shared/knowledge/development`, `system`, `user` and `roles/reviewer` all
+    # sit inside it. A recursive walk from the parent therefore claims the
+    # child's notes a SECOND time, under the WRONG scope -- which is not merely
+    # duplication, because scope drives the reach mask, so a workshop-scope
+    # search would reach development notes it must not see. Attribute each file
+    # to the DEEPEST scope root that contains it.
+    resolved = [(scope, d.resolve()) for scope, d in roots]
+
+    def _nested_under(parent: Path) -> list[Path]:
+        return [o for _, o in resolved if o != parent and parent in o.parents]
+
     for scope, d in roots:
-        for f in sorted(d.glob("*.md")):
+        inner = _nested_under(d.resolve())
+        for f in sorted(d.rglob("*.md")):
+            fr = f.resolve()
+            if any(n == fr or n in fr.parents for n in inner):
+                continue  # belongs to a nested scope; that scope indexes it
             try:
                 raw = f.read_text()
             except Exception:
