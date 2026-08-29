@@ -16737,6 +16737,8 @@ export interface components {
             has_more: boolean;
             /** Last Seq */
             last_seq: number;
+            /** Pending Operation */
+            pending_operation?: string | null;
             /** Queue Error */
             queue_error: string;
             /** Queue Held */
@@ -16936,6 +16938,8 @@ export interface components {
             mode: string;
             /** Model */
             model?: string | null;
+            /** Pending Operation */
+            pending_operation?: string | null;
             /** Permission Mode */
             permission_mode?: string | null;
             /** Queue Error */
