@@ -24,14 +24,11 @@ import { RefreshCw, Trash2 } from "lucide-react";
 import {
   Button, ConfirmDialog, Field, Input, PageHeader, Row, Select, Skeleton,
   Stack, StateBlock, StatusDot, Table, TableScroll, Tag, catFor, formatBytes,
-  shortHttpError, timeAbsolute,
+  timeAbsolute,
 } from "@workshop/ui";
 import AttachmentViewer from "../components/chat/AttachmentViewer";
 import { scopeLabel } from "../lib/tasks";
-
-async function httpFail(r: Response): Promise<Error> {
-  return new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-}
+import { httpFail } from "../lib/http";
 
 /** A file the operator attached to a chat (GET /api/chat/attachments). */
 type StoredFile = {

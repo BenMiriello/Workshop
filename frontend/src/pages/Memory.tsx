@@ -5,8 +5,9 @@ import {
   CheckSquare, ChevronUp, FilePlus, FileText, FolderTree, MessageSquare,
   RefreshCw, Search,
 } from "lucide-react";
-import { Button, ConfirmDialog, PageActionBar, PageHeader, Row, Stack, Input, StateBlock, Skeleton, Tag, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, shortHttpError, userStorage } from "@workshop/ui";
+import { Button, ConfirmDialog, PageActionBar, PageHeader, Row, Stack, Input, StateBlock, Skeleton, Tag, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, userStorage } from "@workshop/ui";
 import { scopeLabel } from "../lib/tasks";
+import { httpFail } from "../lib/http";
 import { useIsWide } from "../lib/useMediaQuery";
 import { useDirectoryPage } from "../components/shell/directory";
 import { useContentTakeover, useDirectoryContent } from "../components/shell/takeover";
@@ -80,12 +81,6 @@ import { DocDocument, NewNoteDocument, NoteDocument } from "./memory/MemoryDocum
 // 5. SEARCH IS A LIST. A query is not containment, so its results are a plain
 //    list in the content pane and never a second tree.
 
-// A helper for the `${r.status} ${await r.text()}` -> shortHttpError swap: a
-// small, throwaway wrapper so every fetch call site below reads the same way
-// rather than repeating the `.catch(() => "")` dance six times.
-async function httpFail(r: Response): Promise<Error> {
-  return new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-}
 
 
 
