@@ -38,15 +38,15 @@ _DEV_APP = {
     "updated_at": None,
 }
 
-_BIRDS_APP = {
+_SAMPLE_APP = {
     "id": uuid.UUID("00000000-0000-0000-0000-000000000002"),
-    "slug": "birds",
-    "name": "Birds",
+    "slug": "sample",
+    "name": "Sample",
     "icon": None,
     "kind": "app",
     "dev_only": False,
     "parent_id": None,
-    "project_slug": "birds",
+    "project_slug": "sample",
     "archived_at": None,
     "created_at": None,
     "updated_at": None,
@@ -82,7 +82,7 @@ def _stub_tenancy(monkeypatch):
 class TestDevOnlyCatalogGate:
     def test_dev_only_absent_from_list_when_dev_mode_off(self, monkeypatch):
         _stub_tenancy(monkeypatch)
-        all_rows = [_DEV_APP, _BIRDS_APP]
+        all_rows = [_DEV_APP, _SAMPLE_APP]
 
         def filtered_list(s, org, *, dev_only=None, **kw):
             if dev_only is False:
@@ -94,11 +94,11 @@ class TestDevOnlyCatalogGate:
         slugs = [r["slug"] for r in result]
         assert "development" not in slugs, \
             "dev_only app must be hidden when dev mode is off"
-        assert "birds" in slugs, "non-dev-only app must still be visible"
+        assert "sample" in slugs, "non-dev-only app must still be visible"
 
     def test_dev_only_visible_when_dev_mode_on(self, monkeypatch, dev_on):
         _stub_tenancy(monkeypatch)
-        all_rows = [_DEV_APP, _BIRDS_APP]
+        all_rows = [_DEV_APP, _SAMPLE_APP]
 
         def filtered_list(s, org, *, dev_only=None, **kw):
             if dev_only is False:

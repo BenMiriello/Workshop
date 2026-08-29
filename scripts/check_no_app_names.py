@@ -229,8 +229,13 @@ _AMBIGUOUS: dict[str, tuple[str, ...]] = {
     # this the Memory page is flagged for reading the knowledge store, which is
     # platform code calling a platform route. The negative lookahead keeps the
     # app's own prefix counted.
+    # `router.*(get|api_route)("/notes"` is the backward-compat redirect in
+    # routes/memory_compat.py that redirects the OLD PLATFORM route `/notes/...`
+    # to the current `/api/memory/notes/...`. The notes-app's prefix is
+    # `/notes-app`, not `/notes`. App-owned files are already excluded from the
+    # scan, so this pattern only fires in platform backward-compat code.
     "notes": (r"notes_all", r"notes and docs", r"knowledge", r"release notes",
-              r"/api/notes(?!-app)"),
+              r"/api/notes(?!-app)", r"""router\.\w+\("/notes[/"']"""),
     "environment": (r"environment variable", r"deployment target", r"\benv\b", r"environments are"),
     "commute": (),
     "birds": (),
