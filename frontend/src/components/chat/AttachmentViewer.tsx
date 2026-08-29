@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { FolderOpen, Download } from "lucide-react";
+import { Download } from "lucide-react";
 import { Button, Modal, StateBlock } from "@workshop/ui";
 import { chatApi } from "../../lib/chat";
 
@@ -39,14 +38,10 @@ export type ViewableAttachment = {
 };
 
 export default function AttachmentViewer({
-  file, onClose, onFilesPage,
+  file, onClose,
 }: {
   file: ViewableAttachment;
   onClose: () => void;
-  /** Set when the viewer was opened FROM the files page, which suppresses the
-   *  "Open in Files" link. A control that navigates you to where you already
-   *  are is noise. */
-  onFilesPage?: boolean;
 }) {
   const url = chatApi.attachmentUrl(file.id);
   const [failed, setFailed] = useState(false);
@@ -128,15 +123,6 @@ export default function AttachmentViewer({
             >
               <Download size={16} aria-hidden /> Download original
             </a>
-          )}
-          {!onFilesPage && (
-            <Link
-              className="ws-btn ws-btn--ghost ws-btn--sm"
-              to={`/chats/files?file=${encodeURIComponent(file.id)}`}
-              onClick={onClose}
-            >
-              <FolderOpen size={16} aria-hidden /> Open in Files
-            </Link>
           )}
           <Button onClick={onClose} data-autofocus>Close</Button>
         </>

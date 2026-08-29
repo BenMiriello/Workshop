@@ -41,7 +41,6 @@ const DeployDetail = lazyPage(() => import("./pages/DeployDetail"));
 const StoreDetail = lazyPage(() => import("./pages/StoreDetail"));
 const Stores = lazyPage(() => import("./pages/Stores"));
 const MemoryPage = lazyPage(() => import("./pages/Memory"));
-const ChatFiles = lazyPage(() => import("./pages/ChatFiles"));
 const Runs = lazyPage(() => import("./pages/Runs"));
 // The review surface (changes-and-review-2026-08-22.md step C4). Lazy: a
 // change page drags a whole patch renderer, and neither screen is on the way
@@ -146,11 +145,6 @@ export default function App() {
           {/* The archive is its own list, not a filter over /chats. Eager like
               Chats itself: it is one small component in the same module. */}
           <Route path="/chats/archived" element={<ChatsArchived />} />
-          {/* Chat attachments. It was the Memory page's fourth tab until
-              2026-08-27; an attachment is a thing you put in a chat, so it
-              lives with the chats (memory-page-and-file-viewer-2026-08-27.md
-              D1). /memory?tab=files still resolves, as a redirect. */}
-          <Route path="/chats/files" element={<ChatFiles />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/new" element={<ProjectNew />} />
           <Route path="/projects/:slug" element={<ProjectDetail />} />

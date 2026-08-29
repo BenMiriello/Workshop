@@ -52,8 +52,8 @@ import { DocDocument, NewNoteDocument, NoteDocument } from "./memory/MemoryDocum
 //   Vault  -> /apps/notes, the notes app's own page. It is that app's private
 //             store and drawing it here was a scope violation as well as a
 //             confusion.
-//   Files  -> /chats/files (pages/ChatFiles.tsx). An attachment is a thing you
-//             put in a chat.
+//   Files  -> /chats. An attachment is a thing you put in a chat, visible
+//             inside that chat.
 //
 // `?tab=` still resolves for all three, as a redirect, so every link handed out
 // still lands somewhere correct.
@@ -109,14 +109,14 @@ const OVERFLOW_AT = 100;
 
 // ---- Page ------------------------------------------------------------------
 
-/** Where the three retired tabs went (D1). `?tab=docs` is NOT here: it is a
+/** Where the two retired tabs went (D1). `?tab=docs` is NOT here: it is a
  *  still-live deep link from services/refs.py's doc resolver, from before notes
  *  and documents merged, and it already means "open the Library", where its
  *  `?path=` selects the document. So it resolves by falling through. */
 const MOVED: Record<string, string> = {
   chats: "/chats",
   vault: "/apps/notes",
-  files: "/chats/files",
+  files: "/chats",
 };
 
 export default function Memory() {
@@ -124,14 +124,7 @@ export default function Memory() {
   const tab = searchParams.get("tab");
   const moved = tab ? MOVED[tab] : undefined;
   if (moved) {
-    // `?file=` is the attachment viewer's deep link and is carried across, so a
-    // link to ONE file still opens narrowed to that file. Every other parameter
-    // was about a page that no longer exists here and is dropped.
-    const file = searchParams.get("file");
-    const to = moved === "/chats/files" && file
-      ? `${moved}?file=${encodeURIComponent(file)}`
-      : moved;
-    return <Navigate to={to} replace />;
+    return <Navigate to={moved} replace />;
   }
   return <Library />;
 }

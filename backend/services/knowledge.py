@@ -156,7 +156,11 @@ def scope_dir(scope_key: str, *, create: bool = False) -> Path:
         # byte-for-byte what it was, now derived from the single mapping.
         d = paths.scope_root(scope_key) / "knowledge"
     if create:
+        existed = d.exists()
         d.mkdir(parents=True, exist_ok=True)
+        if not existed:
+            (d / "system").mkdir(exist_ok=True)
+            (d / "user").mkdir(exist_ok=True)
     return d
 
 
