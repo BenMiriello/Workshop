@@ -236,3 +236,95 @@ row.** The `dev_only` migration was never applied and sits on one of six alembic
 heads, so the app table has no such column. Until that lands, `development` has
 no app place and therefore no Work, Chats or Memory tab, which is the whole
 reason its memory does not appear inside it.
+
+---
+
+# Addendum: what organizes what (2026-08-29, later)
+
+Section 6 read as though the branch were the organizing axis, and the question
+that followed was the right one: an orchestrating thread delegates to threads
+that are **not in its branch**, so what exactly contains what?
+
+The answer is that the containment question is the wrong one, and the design
+above only half-escaped it.
+
+## The mistake: treating a branch as a container
+
+Section 4 said "a thread happens on a branch", and §6 drew branch rows with
+threads nested inside. Read literally that makes a branch a container and a
+thread its member, which breaks immediately:
+
+- An **orchestrator writes no code**, so it belongs to no branch. Under
+  containment it has nowhere to live.
+- **Delegation crosses branches.** A thread on one branch asks for work that
+  happens on another. Containment says that cannot happen; it is the normal
+  case.
+- **A branch is deleted when it merges.** Its threads are not.
+
+## The correction: a branch is a place, and a thread has a current one
+
+- **A branch is a PLACE.** Files, a build, a diff, a preview. It answers
+  *which version of the code*.
+- **A thread is an ACTOR.** It answers *who is working or talking*.
+- A thread has a **current branch**, the way a shell has a working directory.
+  Not membership: a **binding**, and a movable one. A thread with no branch is
+  ordinary, not broken.
+
+Nobody says a terminal lives inside a branch. They say it is *on* one, and can
+switch. That is the whole relation.
+
+## What delegation makes is a call graph, not a tree
+
+Thread A asks thread B for something. That is a link (*who asked whom*), the
+same shape as a ticket's "filed by". It needs no nesting in the UI: the child
+says who opened it, the parent lists what it delegated. Rendering it as a tree
+implies an ownership that is not there, and breaks the moment two threads ask
+the same third one.
+
+## THE PRIMARY AXIS IS THE TICKET
+
+**A ticket is the only object that spans the whole life of a piece of work.** It
+exists before a branch does, while the branch is open, and after the branch is
+merged and deleted. A branch is an artifact of doing the work; a thread is an
+artifact of discussing it. Neither outlives the ticket, so neither can organize
+it.
+
+So:
+
+- **Work (tickets) is the main list.** What needs doing, what is in flight, what
+  is done. Opening a ticket shows its branch (if work has started), the threads
+  on it, its diff, and its runs.
+- **Branches is a lens, not a home.** It answers a different and narrower
+  question: what is unmerged, what has uncommitted work, what can be deleted.
+  That is `git branch` with a UI, and it is genuinely useful, and it is not
+  where you start your day.
+- **Chats stays a flat recency list.** The quick jump. Unchanged.
+
+This supersedes §6's implication that the app's Work tab is branch-first. It is
+ticket-first, with the branch shown on the ticket and a branch lens beside it.
+
+## The things that made branches feel primary, and where they actually go
+
+Each is real, and each is a property of a **ref**, not an organizing principle:
+
+- **A preview/build runs on a branch.** Reached from the ticket ("preview this
+  work") or from the branch lens. The branch is addressable; addressable is not
+  the same as organizing.
+- **Viewing files needs a branch.** The file viewer carries a branch selector
+  defaulting to the default branch, exactly like every code host. That is one
+  control on one screen.
+- **A link to a file carries its branch.** A file ref is
+  `<branch>/<path>`, and resolves inside that branch's worktree. A ref that did
+  not name a branch would be ambiguous, which is the actual requirement here.
+
+## What this settles
+
+- A chat minting many tickets stays exactly as it is, and implies no hierarchy:
+  the chat is the ticket's **provenance**, not its owner.
+- Many threads on one ticket is fine and needs no per-thread assignment: they
+  are listed on the ticket, and one of them holds the branch lease.
+- A ticket normally has one branch. Many is allowed, unencouraged, and does not
+  need to be convenient.
+- There is still no "primary thread" setting. With the ticket as the axis the
+  question does not arise: the ticket is the subject, and the lease says who may
+  write.
