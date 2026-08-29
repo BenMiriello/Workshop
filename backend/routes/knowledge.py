@@ -15,6 +15,23 @@ from services import knowledge
 
 router = APIRouter()
 
+# MOUNTED AT `/memory/scopes` (backend/main.py). It used to be `/knowledge`, one
+# of four prefixes for one concept -- `/knowledge`, `/notes`, `/memory` and an
+# app's `/notes-app` -- while the page they serve is called Memory and the thing
+# they hold is called a note. One word for one concept, settled 2026-08-27 and
+# applied here (ticket MEM-15).
+#
+# EVERY SCOPE-ADDRESSED PATH SITS UNDER `/scopes/`, which is not decoration: the
+# cross-scope listing is `/memory/notes`, and with this router mounted at
+# `/memory` directly its `/{scope_key}/notes` would match `/memory/notes` with
+# scope_key="notes". The extra segment is what makes the merged prefix
+# unambiguous rather than order-dependent.
+#
+# `/notes-app` is deliberately NOT folded in. That prefix belongs to an
+# installed app, not to the platform's memory, and merging them would put an app
+# inside a platform surface -- the thing CLAUDE.md's app-separation rule exists
+# to stop.
+
 
 class PutNoteIn(BaseModel):
     title: str = ""
@@ -157,20 +174,3 @@ async def delete_note(scope_key: str, note_id: str):
         return await knowledge.delete_note(scope_key, note_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
-
-
-@router.post("/{scope_key}/search", response_model=list[SearchHit], response_model_exclude_unset=True)
-async def search(scope_key: str, body: SearchIn):
-    """DEPRECATED. No frontend callers. Use GET /api/memory/search (semantic_index.search)
-    for ranked semantic search. This runs the same plaintext path as ?q= on the notes list."""
-    _scope(scope_key)
-    return await knowledge.search(scope_key, body.query, body.limit)
-
-
-@router.post("/recall", response_model=list[SearchHit], response_model_exclude_unset=True)
-async def recall(body: RecallIn):
-    """DEPRECATED. No frontend callers. Use GET /api/memory/search (semantic_index.search)
-    for ranked semantic search. This runs the same plaintext path as /{scope}/search."""
-    _scope(body.from_scope)
-    _scope(body.target_scope)
-    return await knowledge.recall(body.from_scope, body.target_scope, body.query, body.limit)

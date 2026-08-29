@@ -87,7 +87,7 @@ class VaultNoteAdapter(StoreAdapter):
 
         The platform door used to hold this branch and the reason for it. The
         reason still holds and travels with the code: a knowledge scope keeps
-        its own write door (`PUT /api/knowledge/{scope}/notes/{id}`, which owns
+        its own write door (`PUT /api/memory/scopes/{scope}/notes/{id}`, which owns
         the MEMORY.md index write too), so duplicating it here would give that
         index two writers. It is now expressed as the knowledge adapter simply
         not implementing `write`, rather than as this door naming that case.

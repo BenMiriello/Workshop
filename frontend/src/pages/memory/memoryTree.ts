@@ -36,7 +36,9 @@ export type MemoryNode =
   /** A directory inside docs/, by repo-relative path. */
   | { kind: "docdir"; path: string }
   /** One markdown file, by repo-relative path. */
-  | { kind: "doc"; path: string };
+  | { kind: "doc"; path: string }
+  /** A system/ or user/ folder inside a place's memory tree. */
+  | { kind: "folder"; scope: string; folder: "system" | "user" };
 
 /** The repo-relative root of the committed documents tree. */
 export const DOCS_ROOT = "docs";
@@ -59,6 +61,7 @@ export function encodeMemoryNode(node: MemoryNode): string {
     case "note": return `note:${node.scope}#${node.id}`;
     case "docdir": return `dir:${node.path}`;
     case "doc": return `doc:${node.path}`;
+    case "folder": return `folder:${node.scope}:${node.folder}`;
   }
 }
 
@@ -79,6 +82,14 @@ export function parseMemoryNode(id: string): MemoryNode | null {
     if (hash <= 0 || hash === rest.length - 1) return null;
     return { kind: "note", scope: rest.slice(0, hash), id: rest.slice(hash + 1) };
   }
+  if (kind === "folder") {
+    const colon = rest.indexOf(":");
+    if (colon < 0) return null;
+    const scope = rest.slice(0, colon);
+    const folder = rest.slice(colon + 1);
+    if (folder !== "system" && folder !== "user") return null;
+    return { kind: "folder", scope, folder };
+  }
   return null;
 }
 
@@ -88,7 +99,7 @@ export function childScopes(tree: readonly ScopeNode[], parent: string | null): 
   return tree.filter((n) => (n.parent ?? null) === parent).map((n) => n.key);
 }
 
-/** The notes filed to EXACTLY this scope. `GET /api/notes?scope=` answers with
+/** The notes filed to EXACTLY this scope. `GET /api/memory/notes?scope=` answers with
  *  the scope and everything below it (`scope_tree.reach`), which is right for a
  *  filter and wrong for a level: a note filed to a child scope belongs on the
  *  child's row, not repeated on its parent's. */
@@ -143,6 +154,8 @@ export function parentOf(node: MemoryNode, tree: readonly ScopeNode[]): MemoryNo
       return null;
     case "docs":
       return { kind: "root" };
+    case "folder":
+      return { kind: "root" };
     case "scope": {
       const found = tree.find((n) => n.key === node.scope);
       const parent = found?.parent ?? null;
@@ -179,7 +192,7 @@ export function ancestorsOf(node: MemoryNode, tree: readonly ScopeNode[]): Memor
 
 /** Whether a node is a container (a branch in the tree) or a destination. */
 export function isBranch(node: MemoryNode): boolean {
-  return node.kind === "root" || node.kind === "scope" || node.kind === "docs" || node.kind === "docdir";
+  return node.kind === "root" || node.kind === "scope" || node.kind === "docs" || node.kind === "docdir" || node.kind === "folder";
 }
 
 // ---- The kit's vocabulary --------------------------------------------------
@@ -198,6 +211,7 @@ export function nodeLabel(node: MemoryNode): string {
     case "docdir": return baseName(node.path);
     case "doc": return baseName(node.path);
     case "note": return node.id;
+    case "folder": return node.folder;
   }
 }
 
@@ -209,7 +223,7 @@ export function memoryFileNode(node: MemoryNode): FileTreeNode {
   const icon =
     node.kind === "root" || node.kind === "scope"
       ? "scope"
-      : node.kind === "docs" || node.kind === "docdir"
+      : node.kind === "docs" || node.kind === "docdir" || node.kind === "folder"
         ? "folder"
         : "doc";
   return {
@@ -351,7 +365,7 @@ export function nodeForParams(sel: MemorySelection): MemoryNode | null {
 // ---- Search ----------------------------------------------------------------
 // The tree is containment; a search is a query, and per
 // navigation-shell-2026-08-20.md section 3.5 a query result is a list and never
-// a tree. Notes are filtered server-side by `GET /api/notes?q=`; docs have no
+// a tree. Notes are filtered server-side by `GET /api/memory/notes?q=`; docs have no
 // search route, so their titles and paths are matched here.
 
 export function searchDocs(docs: readonly DocRow[], query: string): DocRow[] {

@@ -7,13 +7,16 @@
 // scope tree are the same component with different adapters"). This file is that
 // second adapter. It reads three endpoints that already exist and adds none:
 //
-//   GET /api/notes/scopes/tree   the scope tree, root-first, with parents
-//   GET /api/notes               every note, filtered to a scope exactly, here
+//   GET /api/memory/scopes/tree   the scope tree, root-first, with parents
+//   GET /api/memory/notes               every note, filtered to a scope exactly, here
 //   GET /api/documents           the committed docs/ index
 //
-// A NOTE IS A SCOPE AND AN ID. Nothing here turns one into a file path; see
-// memoryTree.ts, where the node vocabulary and every decidable rule live and are
-// tested. This file is the fetching and the rendering, and nothing else.
+// THE NAVIGATOR IS PER-PLACE (memory-is-files-2026-08-28.md §3.1). A place
+// switcher above the tree selects which place's memory is shown: Workshop,
+// Development, or any app/project with notes. Inside each place, system/ and
+// user/ folders appear at the top as physical filesystem folders. Notes at the
+// place root follow below them. "Scopes" and "Roles" were group labels on
+// internal addressing concepts; they are gone.
 //
 // TWO SHAPES, ONE ADAPTER, AND NO SECOND IMPLEMENTATION. On a desktop the tree
 // is the kit's `FileTree`, drawn in column two by the shell takeover. On a phone
@@ -26,17 +29,18 @@
 import { useEffect, useState } from "react";
 import {
   FileTree,
+  Select,
   Skeleton,
   timeAgo,
   type FileTreeAdapter,
   type FileTreeLevel,
   type FileTreeNode,
 } from "@workshop/ui";
+import { scopeLabel } from "../../lib/tasks";
 import { getJson } from "./api";
 import {
   DOCS_ROOT,
   baseName,
-  childScopes,
   docLevel,
   drillAncestorsFor,
   encodeMemoryNode,
@@ -60,39 +64,8 @@ function countOf(n: number): string {
   return String(n);
 }
 
-// THE ROOT'S THREE KINDS, NAMED (2026-08-27,
-// memory-page-and-file-viewer-2026-08-27.md D9).
-//
-// Memory's root holds three different ADDRESS kinds and used to draw them as one
-// undifferentiated list of roots: `workshop` and `development` (scope keys),
-// `role:reviewer` (a role key, which `scope_tree.py` deliberately gives a null
-// parent because it is "the second axis, not a tree node" -- and a null parent
-// renders at level 0), and `Documents` (a synthetic node whose children are
-// repo-relative paths, not scope/id pairs). The only thing telling them apart on
-// screen was an icon. The operator's read: "development and role reviewer both
-// have sort of like a stack icon next to it, and I don't know what that means,
-// and then documents is just a folder... it seems like some old thing left over".
-//
-// Nothing here moves and no address changes: the fix is to SAY what the three
-// kinds are. `role:reviewer` is not leftover, it is a live second axis that was
-// being drawn as if it were a first-axis root.
-const GROUP_SCOPES = "Scopes";
-const GROUP_ROLES = "Roles";
-const GROUP_DOCS = "Documents";
-
-/** Whether a root-level scope key is a ROLE. `scope_tree.parse` treats `role:`
- *  as its own kind and gives it no parent, which is exactly why it surfaces at
- *  the root beside the real scope roots. */
-function isRoleScope(key: string): boolean {
-  return key.startsWith("role:");
-}
-
-function scopeNode(key: string, children: number, group?: string): FileTreeNode {
-  return {
-    ...memoryFileNode({ kind: "scope", scope: key }),
-    detail: countOf(children),
-    ...(group ? { group } : {}),
-  };
+function folderNode(scope: string, folder: "system" | "user"): FileTreeNode {
+  return memoryFileNode({ kind: "folder", scope, folder });
 }
 
 /** A note's row. The stored title is what a reader recognises, so it overrides
@@ -117,13 +90,6 @@ function docNode(doc: DocRow): FileTreeNode {
   };
 }
 
-/** How many rows a scope's own level would hold: the scopes directly inside it,
- *  plus the notes filed to exactly it. Both come from responses this source has
- *  already cached, which is why every folder row can carry a count. */
-function scopeCount(tree: readonly ScopeNode[], notes: readonly NoteRow[], key: string): number {
-  return childScopes(tree, key).length + notesInScope(notes, key).length;
-}
-
 /** The same, for a directory of the committed docs tree. */
 function docDirCount(docs: readonly DocRow[], dir: string): number {
   const level = docLevel(docs, dir);
@@ -134,7 +100,6 @@ function docsNode(docs: readonly DocRow[]): FileTreeNode {
   return {
     ...memoryFileNode({ kind: "docs" }),
     detail: countOf(docDirCount(docs, DOCS_ROOT)),
-    group: GROUP_DOCS,
   };
 }
 
@@ -154,27 +119,25 @@ export type MemorySource = {
 /**
  * One source, with the two whole-tree reads cached in it.
  *
+ * `selectedPlace` is the scope key of the currently shown place (e.g.
+ * "workshop", "development", "project:birds"). The root level shows system/,
+ * user/, and the notes filed to exactly that scope. Documents are appended for
+ * the workshop place only.
+ *
  * The scope tree, the docs index and the notes listing are each ONE response
  * describing the whole structure, so caching them is what makes a level a
  * grouping rather than a request, and what lets every container row carry a
- * child count. Notes used to be fetched per scope (`?scope=`, which answers
- * with that scope's whole reach and is then narrowed to an exact match anyway),
- * so the unscoped read is strictly fewer requests for strictly more data. A
- * failed cache entry is dropped, so the tree's Retry really does retry rather
- * than replaying the same rejection.
- *
- * Build it in a `useMemo`: a new source means a new adapter, and the tree drops
- * every level it had loaded and reloads. That is exactly what a refresh wants
- * and exactly what an accidental re-render does not.
+ * child count. Build it in a `useMemo`: a new source means a new adapter, and
+ * the tree drops every level it had loaded and reloads.
  */
-export function createMemorySource(): MemorySource {
+export function createMemorySource(selectedPlace: string = "workshop"): MemorySource {
   let scopesP: Promise<ScopeNode[]> | null = null;
   let docsP: Promise<DocRow[]> | null = null;
   let notesP: Promise<NoteRow[]> | null = null;
 
   const scopes = (): Promise<ScopeNode[]> => {
     if (!scopesP) {
-      scopesP = getJson<{ scopes?: ScopeNode[] }>("/api/notes/scopes/tree")
+      scopesP = getJson<{ scopes?: ScopeNode[] }>("/api/memory/scopes/tree")
         .then((j) => j.scopes ?? [])
         .catch((e) => { scopesP = null; throw e; });
     }
@@ -190,14 +153,12 @@ export function createMemorySource(): MemorySource {
     return docsP;
   };
 
-  // EVERY NOTE, ONCE. `GET /api/notes` unscoped is the same response shape the
-  // per-scope call returns, and one cached copy answers three questions that
-  // used to cost a request each: what is in this scope, how many rows each
-  // CHILD scope holds, and the same for the level above. Filtering to a scope
-  // is `notesInScope`, which is exact-match and pure.
+  // EVERY NOTE, ONCE. `GET /api/memory/notes` unscoped is the same response shape the
+  // per-scope call returns, and one cached copy answers every level without a
+  // request each.
   const notes = (): Promise<NoteRow[]> => {
     if (!notesP) {
-      notesP = getJson<{ notes?: NoteRow[] }>("/api/notes")
+      notesP = getJson<{ notes?: NoteRow[] }>("/api/memory/notes")
         .then((j) => j.notes ?? [])
         .catch((e) => { notesP = null; throw e; });
     }
@@ -207,34 +168,24 @@ export function createMemorySource(): MemorySource {
   const children = async (node: MemoryNode): Promise<FileTreeLevel> => {
     switch (node.kind) {
       case "root": {
-        const [tree, all, allDocs] = await Promise.all([scopes(), notes(), docs()]);
-        // Grouped, and in group order: `flattenTree` emits a header when the
-        // group CHANGES, so roles interleaved with scopes would draw a header
-        // per row. The backend already sorts scopes; this only partitions them.
-        const roots = childScopes(tree, null);
-        return {
-          nodes: [
-            ...roots.filter((k) => !isRoleScope(k))
-              .map((k) => scopeNode(k, scopeCount(tree, all, k), GROUP_SCOPES)),
-            ...roots.filter(isRoleScope)
-              .map((k) => scopeNode(k, scopeCount(tree, all, k), GROUP_ROLES)),
-            docsNode(allDocs),
-          ],
-        };
+        const [, all, allDocs] = await Promise.all([scopes(), notes(), docs()]);
+        const placeNotes = notesInScope(all, selectedPlace);
+        const nodes: FileTreeNode[] = [
+          folderNode(selectedPlace, "system"),
+          folderNode(selectedPlace, "user"),
+          ...placeNotes.map(noteNode),
+        ];
+        // Documents are committed repo docs: shown in the Workshop place only.
+        if (selectedPlace === "workshop") {
+          nodes.push(docsNode(allDocs));
+        }
+        return { nodes };
       }
-      case "scope": {
-        const [tree, all] = await Promise.all([scopes(), notes()]);
-        // No groups below the root: a scope's level is scopes and notes, which
-        // the face and the icon already tell apart, and a header per row is
-        // noise. Grouping answers "what ARE these three different things", and
-        // that question only arises at the root.
-        return {
-          nodes: [
-            ...childScopes(tree, node.scope).map((k) => scopeNode(k, scopeCount(tree, all, k))),
-            ...notesInScope(all, node.scope).map(noteNode),
-          ],
-        };
-      }
+      case "folder":
+        // Ticket 3 wires the files API here so folder contents become visible.
+        // Until then the physical directories exist on disk and the folders show
+        // as empty branches the operator can navigate into.
+        return { nodes: [] };
       case "docs":
       case "docdir": {
         const all = await docs();
@@ -248,8 +199,9 @@ export function createMemorySource(): MemorySource {
         };
       }
       default:
-        // A leaf. The tree never asks, and answering with an empty level is
-        // still the right answer if something ever does.
+        // A leaf (note, doc) or a scope node used for URL state only.
+        // The tree never asks for a leaf's children; an empty level is
+        // the right answer if something ever does.
         return { nodes: [] };
     }
   };
@@ -272,19 +224,20 @@ export function MemoryTreeView({
   source,
   selected,
   onSelect,
+  selectedPlace,
+  onPlaceChange,
 }: {
   source: MemorySource;
   selected: MemoryNode | null;
   onSelect: (node: MemoryNode) => void;
+  selectedPlace: string;
+  onPlaceChange: (place: string) => void;
 }) {
   // The scope tree is needed before the primitive mounts, not after: which
-  // branches start open is read ONCE by `FileTree` (a deep link into
-  // `project:birds` should land with that scope unfolded), and a scope's parent
-  // is only knowable from this response. It is the same cached request the root
-  // level makes, so waiting for it here costs one render and no traffic.
-  //
-  // Mounting once is also what keeps section 3.4's fourth correction true:
-  // nothing but the operator collapses a branch they opened.
+  // branches start open is read ONCE by `FileTree` (a deep link into a note
+  // should land with its branch already open), and ancestry is only knowable
+  // from this response. It is the same cached request the root level makes, so
+  // waiting for it here costs one render and no traffic.
   const [scopeTree, setScopeTree] = useState<ScopeNode[] | null>(null);
   useEffect(() => {
     let live = true;
@@ -308,21 +261,43 @@ export function MemoryTreeView({
     );
   }
 
+  // Places are all scopes that are not role axes. The operator picks one via
+  // the switcher; each has its own system/ and user/ and its own notes.
+  const places = scopeTree.filter((n) => !n.key.startsWith("role:"));
+
   const defaultOpenIds = selected ? drillAncestorsFor(selected, scopeTree).map((n) => n.id) : [];
 
   return (
-    <FileTree
-      className="ws-memory__tree"
-      label="Memory"
-      adapter={source.adapter}
-      defaultOpenIds={defaultOpenIds}
-      selectedId={selected ? encodeMemoryNode(selected) : null}
-      emptyTitle="Nothing in Memory yet"
-      emptyHint="Write a note with New note, or an agent will leave one as it works."
-      onSelect={(node) => {
-        const parsed = parseMemoryNode(node.id);
-        if (parsed) onSelect(parsed);
-      }}
-    />
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {places.length > 1 && (
+        <div style={{ padding: "var(--space-2) var(--space-3)", borderBottom: "1px solid var(--border-faint)", flexShrink: 0 }}>
+          <Select
+            value={selectedPlace}
+            onChange={(e) => onPlaceChange(e.target.value)}
+            aria-label="Memory place"
+            style={{ width: "100%" }}
+          >
+            {places.map((p) => (
+              <option key={p.key} value={p.key}>{scopeLabel(p.key)}</option>
+            ))}
+          </Select>
+        </div>
+      )}
+      <div style={{ flex: "1 1 0", minHeight: 0, overflow: "auto" }}>
+        <FileTree
+          className="ws-memory__tree"
+          label="Memory"
+          adapter={source.adapter}
+          defaultOpenIds={defaultOpenIds}
+          selectedId={selected ? encodeMemoryNode(selected) : null}
+          emptyTitle="Nothing here yet"
+          emptyHint="Write a note with New note, or an agent will leave one as it works."
+          onSelect={(node) => {
+            const parsed = parseMemoryNode(node.id);
+            if (parsed) onSelect(parsed);
+          }}
+        />
+      </div>
+    </div>
   );
 }

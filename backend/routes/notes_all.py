@@ -35,7 +35,7 @@ from pydantic import BaseModel
 from services import knowledge, ownership
 from wsplatform import dev_mode
 
-router = APIRouter(prefix="/notes", tags=["notes"])
+router = APIRouter(prefix="/memory", tags=["memory"])
 
 _PROJECTS_REGISTRY = Path(os.environ.get(
     "WORKSHOP_PROJECTS_REGISTRY", str(ownership._RUNTIME / "projects.json")))
@@ -249,7 +249,7 @@ class ScopeTree(BaseModel):
     scopes: list[ScopeNode]
 
 
-@router.get("", response_model=AllNotes, response_model_exclude_unset=True)
+@router.get("/notes", response_model=AllNotes, response_model_exclude_unset=True)
 async def list_all(scope: str | None = None, q: str | None = None) -> dict:
     """Notes across every scope, each tagged with its resolved `scope` key plus
     `author` / `type` / `pinned` (design doc sec 11: provenance and the ranked-

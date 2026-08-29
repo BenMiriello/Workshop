@@ -16,7 +16,7 @@ from middleware.compression import SSEAwareGZipMiddleware
 # location/birds/health/…) are NOT imported here; they mount from the installed-
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
-from routes import agents, projects, base_apps, relay, services, events, jobs, push, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers, refs as refs_routes, memory_policy as memory_policy_routes, memory as memory_routes
+from routes import agents, projects, base_apps, relay, services, events, jobs, push, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers, refs as refs_routes, memory_policy as memory_policy_routes, memory as memory_routes, memory_compat
 from routes import files as files_routes
 from routes import mcp as mcp_routes
 from routes import model_providers_routes
@@ -340,7 +340,7 @@ _LOOPBACK = [Depends(require_loopback)]
 app.include_router(jobs.router, dependencies=_OPERATOR)  # top-level Job feed (/jobs)
 app.include_router(tasks_all.router, dependencies=_OPERATOR)  # cross-scope task feed (/tasks)
 app.include_router(trackers.router, dependencies=_OPERATOR)  # external tracker connection + triage (/trackers)
-app.include_router(notes_all.router, dependencies=_OPERATOR)  # cross-scope notes feed (/notes)
+app.include_router(notes_all.router, dependencies=_OPERATOR)  # cross-scope notes feed (/memory/notes)
 app.include_router(apps_routes.router, dependencies=_OPERATOR)  # the app entity + its collections (/apps)
 app.include_router(inbox.router, dependencies=_OPERATOR)      # agent inbox (/inbox)
 app.include_router(docs_index.router, dependencies=_OPERATOR)  # docs index, read + write (/docs)
@@ -350,7 +350,14 @@ app.include_router(memory_policy_routes.router, dependencies=_OPERATOR)  # what 
 app.include_router(memory_routes.router, dependencies=_OPERATOR)         # semantic search + index status (/memory)
 app.include_router(agents.router, prefix="/agents", tags=["agents"], dependencies=_OPERATOR)
 app.include_router(projects.router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)
-app.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"], dependencies=_OPERATOR)
+# ONE PREFIX FOR ONE CONCEPT (MEM-15). This was `/knowledge`, alongside
+# `/notes` and `/memory` for the same store, while the page is called Memory and
+# the thing is called a note. Everything scope-addressed sits under
+# `/memory/scopes/` so the wildcard cannot swallow `/memory/notes`; see the
+# comment in routes/knowledge.py. The old paths are served by
+# `routes/memory_compat.py` as redirects.
+app.include_router(knowledge.router, prefix="/memory/scopes", tags=["memory"], dependencies=_OPERATOR)
+app.include_router(memory_compat.router, dependencies=_OPERATOR)  # the retired prefixes, as redirects
 app.include_router(worktrees.router, prefix="/worktrees", tags=["worktrees"], dependencies=_OPERATOR)
 # Git itself, against an explicit repository (workspace-ownership-and-leases
 # 2026-08-22 sec 13.1). Below /worktrees in the layering: /worktrees resolves a

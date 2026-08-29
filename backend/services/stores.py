@@ -466,7 +466,7 @@ class KnowledgeNoteAdapter(StoreAdapter):
     for. Mechanical; the broker is not consulted and cannot waive it.
 
     No `write`: a knowledge scope has its own write door
-    (`PUT /api/knowledge/{scope}/notes/{id}`), which owns the MEMORY.md index
+    (`PUT /api/memory/scopes/{scope}/notes/{id}`), which owns the MEMORY.md index
     write too, and a second writer would desynchronise that index.
     """
 

@@ -88,7 +88,7 @@ describe("notesInScope", () => {
     { id: "b", scope: "project:birds", title: "B", hook: "" },
   ] as NoteRow[];
 
-  // `GET /api/notes?scope=workshop` answers with the scope AND everything it
+  // `GET /api/memory/notes?scope=workshop` answers with the scope AND everything it
   // reaches, so a level has to narrow it or a child's note appears twice.
   it("keeps a reached child's note off its parent's level", () => {
     expect(notesInScope(notes, "workshop").map((n) => n.id)).toEqual(["a"]);

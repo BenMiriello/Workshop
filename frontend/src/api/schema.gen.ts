@@ -6254,84 +6254,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/knowledge/recall": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Recall
-         * @description DEPRECATED. No frontend callers. Use GET /api/memory/search (semantic_index.search)
-         *     for ranked semantic search. This runs the same plaintext path as /{scope}/search.
-         */
-        post: operations["recall_knowledge_recall_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/knowledge/{scope_key}/notes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Notes */
-        get: operations["list_notes_knowledge__scope_key__notes_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/knowledge/{scope_key}/notes/{note_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Note */
-        get: operations["get_note_knowledge__scope_key__notes__note_id__get"];
-        /** Put Note */
-        put: operations["put_note_knowledge__scope_key__notes__note_id__put"];
-        post?: never;
-        /** Delete Note */
-        delete: operations["delete_note_knowledge__scope_key__notes__note_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/knowledge/{scope_key}/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Search
-         * @description DEPRECATED. No frontend callers. Use GET /api/memory/search (semantic_index.search)
-         *     for ranked semantic search. This runs the same plaintext path as ?q= on the notes list.
-         */
-        post: operations["search_knowledge__scope_key__search_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/leases": {
         parameters: {
             query?: never;
@@ -6539,6 +6461,128 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/memory/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List All
+         * @description Notes across every scope, each tagged with its resolved `scope` key plus
+         *     `author` / `type` / `pinned` (design doc sec 11: provenance and the ranked-
+         *     digest facets, shown per row on the Memory page).
+         *
+         *     `scope` filters to that scope AND EVERYTHING IT REACHES (`scope_tree.reach`,
+         *     sec 4.2: "its own and everything else below it"), not an exact match --
+         *     selecting `workshop` also shows `project:*` / `app:*` / unattached agents.
+         *     An unparseable scope falls back to an exact match rather than 400ing, since
+         *     a stale `?scope=` deep link should narrow to nothing found, not break the
+         *     page. `q` filters by a plaintext match (delegated to `knowledge.search`,
+         *     which scans title, hook, and body).
+         */
+        get: operations["list_all_memory_notes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/memory/scopes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Scopes
+         * @description The scope keys that currently have a knowledge directory, for the
+         *     filter/create controls. Cheap directory + registry scan, no note load.
+         */
+        get: operations["list_scopes_memory_scopes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/memory/scopes/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Scopes Tree
+         * @description The same scope keys as `/scopes`, shaped as a tree instead of a flat
+         *     list (design doc sec 11: "a scope filter shaped like the TREE, not a flat
+         *     list"). Each entry carries its `parent` and a `depth`, in root-first
+         *     depth-first order, so a picker can convey containment by indentation alone
+         *     without building a tree widget.
+         *
+         *     A PARENT THAT IS NOT VISIBLE IS SKIPPED, NOT DROPPED. This enumerates the
+         *     scopes that have a knowledge DIRECTORY, while `scope_tree.parent` answers
+         *     for the whole model, so a real parent can be absent here (an app with no
+         *     notes of its own still contains its project). Attaching such a child to the
+         *     root instead of to its nearest visible ancestor promotes it above scopes
+         *     that genuinely contain it: measured 2026-08-23, when `project:<slug>` moved
+         *     under `app:<slug>`, four projects whose app had no notes jumped from under
+         *     `workshop` to the top level, as siblings of `development`. Walking up keeps
+         *     containment truthful under partial visibility, and the `seen` guard means a
+         *     cycle in a hand-edited `.runtime/scope-tree.json` cannot hang the request.
+         */
+        get: operations["list_scopes_tree_memory_scopes_tree_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/memory/scopes/{scope_key}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Notes */
+        get: operations["list_notes_memory_scopes__scope_key__notes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/memory/scopes/{scope_key}/notes/{note_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Note */
+        get: operations["get_note_memory_scopes__scope_key__notes__note_id__get"];
+        /** Put Note */
+        put: operations["put_note_memory_scopes__scope_key__notes__note_id__put"];
+        post?: never;
+        /** Delete Note */
+        delete: operations["delete_note_memory_scopes__scope_key__notes__note_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/memory/search": {
         parameters: {
             query?: never;
@@ -6603,36 +6647,6 @@ export interface paths {
         post?: never;
         /** Clear Credential */
         delete: operations["clear_credential_model_providers__provider_id__credential_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/notes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List All
-         * @description Notes across every scope, each tagged with its resolved `scope` key plus
-         *     `author` / `type` / `pinned` (design doc sec 11: provenance and the ranked-
-         *     digest facets, shown per row on the Memory page).
-         *
-         *     `scope` filters to that scope AND EVERYTHING IT REACHES (`scope_tree.reach`,
-         *     sec 4.2: "its own and everything else below it"), not an exact match --
-         *     selecting `workshop` also shows `project:*` / `app:*` / unattached agents.
-         *     An unparseable scope falls back to an exact match rather than 400ing, since
-         *     a stale `?scope=` deep link should narrow to nothing found, not break the
-         *     page. `q` filters by a plaintext match (delegated to `knowledge.search`,
-         *     which scans title, hook, and body).
-         */
-        get: operations["list_all_notes_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6762,62 +6776,6 @@ export interface paths {
          * @description Case-insensitive full-text search across the vault.
          */
         get: operations["search_notes_notes_app_search_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/notes/scopes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Scopes
-         * @description The scope keys that currently have a knowledge directory, for the
-         *     filter/create controls. Cheap directory + registry scan, no note load.
-         */
-        get: operations["list_scopes_notes_scopes_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/notes/scopes/tree": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Scopes Tree
-         * @description The same scope keys as `/scopes`, shaped as a tree instead of a flat
-         *     list (design doc sec 11: "a scope filter shaped like the TREE, not a flat
-         *     list"). Each entry carries its `parent` and a `depth`, in root-first
-         *     depth-first order, so a picker can convey containment by indentation alone
-         *     without building a tree widget.
-         *
-         *     A PARENT THAT IS NOT VISIBLE IS SKIPPED, NOT DROPPED. This enumerates the
-         *     scopes that have a knowledge DIRECTORY, while `scope_tree.parent` answers
-         *     for the whole model, so a real parent can be absent here (an app with no
-         *     notes of its own still contains its project). Attaching such a child to the
-         *     root instead of to its nearest visible ancestor promotes it above scopes
-         *     that genuinely contain it: measured 2026-08-23, when `project:<slug>` moved
-         *     under `app:<slug>`, four projects whose app had no notes jumped from under
-         *     `workshop` to the top level, as siblings of `development`. Walking up keeps
-         *     containment truthful under partial visibility, and the `seen` guard means a
-         *     cycle in a hand-edited `.runtime/scope-tree.json` cannot hang the request.
-         */
-        get: operations["list_scopes_tree_notes_scopes_tree_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -14885,20 +14843,6 @@ export interface components {
              */
             force_llm: boolean;
         };
-        /** RecallIn */
-        RecallIn: {
-            /** From Scope */
-            from_scope: string;
-            /**
-             * Limit
-             * @default 5
-             */
-            limit: number;
-            /** Query */
-            query: string;
-            /** Target Scope */
-            target_scope: string;
-        };
         /** RecentEvents */
         RecentEvents: {
             /** Count */
@@ -15473,16 +15417,6 @@ export interface components {
             };
             /** Scopes */
             scopes: string[];
-        };
-        /** SearchIn */
-        SearchIn: {
-            /**
-             * Limit
-             * @default 5
-             */
-            limit: number;
-            /** Query */
-            query: string;
         };
         /** SearchResult */
         SearchResult: {
@@ -16574,7 +16508,7 @@ export interface components {
          *     proved itself) are present only for the verb that produces them.
          *
          *     `grant` and `learning` stay `dict`: they are whole records owned by
-         *     `services/permissions.py` and `services/learnings.py`, and narrowing them
+         *     `services/permissions.py` and `services/standing.py`, and narrowing them
          *     from this router is how a response_model silently drops a field its owner
          *     added.
          */
@@ -18277,25 +18211,6 @@ export interface components {
             note_id: string;
             /** Scope */
             scope: string;
-        };
-        /**
-         * SearchHit
-         * @description One matching note. `score` is null on the plaintext path and `debug`
-         *     reads "fallback" there, both kept for shape-compat with older callers that
-         *     predate the semantic layer. `author` is carried so the recall site can
-         *     label a model-distilled note differently from an operator-written one.
-         */
-        routes__knowledge__SearchHit: {
-            /** Author */
-            author: string;
-            /** Debug */
-            debug?: string | null;
-            /** Note Id */
-            note_id: string;
-            /** Score */
-            score?: number | null;
-            /** Text */
-            text: string;
         };
         /** SearchHit */
         routes__memory__SearchHit: {
@@ -29087,205 +29002,6 @@ export interface operations {
             };
         };
     };
-    recall_knowledge_recall_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RecallIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["routes__knowledge__SearchHit"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_notes_knowledge__scope_key__notes_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scope_key: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NoteSummary"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_note_knowledge__scope_key__notes__note_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scope_key: string;
-                note_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NoteDetail"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    put_note_knowledge__scope_key__notes__note_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scope_key: string;
-                note_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PutNoteIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NoteRef"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_note_knowledge__scope_key__notes__note_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scope_key: string;
-                note_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["routes__knowledge__NoteDeleted"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    search_knowledge__scope_key__search_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scope_key: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SearchIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["routes__knowledge__SearchHit"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_leases_leases_get: {
         parameters: {
             query?: {
@@ -29625,6 +29341,209 @@ export interface operations {
             };
         };
     };
+    list_all_memory_notes_get: {
+        parameters: {
+            query?: {
+                scope?: string | null;
+                q?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllNotes"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_scopes_memory_scopes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScopeList"];
+                };
+            };
+        };
+    };
+    list_scopes_tree_memory_scopes_tree_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScopeTree"];
+                };
+            };
+        };
+    };
+    list_notes_memory_scopes__scope_key__notes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_note_memory_scopes__scope_key__notes__note_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_key: string;
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_note_memory_scopes__scope_key__notes__note_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_key: string;
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutNoteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_note_memory_scopes__scope_key__notes__note_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_key: string;
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["routes__knowledge__NoteDeleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     search_memory_search_get: {
         parameters: {
             query: {
@@ -29750,38 +29669,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": Record<string, never>;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_all_notes_get: {
-        parameters: {
-            query?: {
-                scope?: string | null;
-                q?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AllNotes"];
                 };
             };
             /** @description Validation Error */
@@ -30059,46 +29946,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_scopes_notes_scopes_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScopeList"];
-                };
-            };
-        };
-    };
-    list_scopes_tree_notes_scopes_tree_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScopeTree"];
                 };
             };
         };

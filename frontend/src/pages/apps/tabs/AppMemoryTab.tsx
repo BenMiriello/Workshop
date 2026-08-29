@@ -65,7 +65,7 @@ function NewNoteDialog({
     try {
       const id = freshNoteId(t);
       const r = await fetch(
-        `/api/knowledge/${encodeURIComponent(scope)}/notes/${encodeURIComponent(id)}`,
+        `/api/memory/scopes/${encodeURIComponent(scope)}/notes/${encodeURIComponent(id)}`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },

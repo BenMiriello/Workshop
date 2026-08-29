@@ -557,7 +557,7 @@ export default function ProjectDetail() {
   const loadNotes = useCallback(async () => {
     setNotesErr(null);
     try {
-      const r = await fetch(`/api/knowledge/${encodeURIComponent(noteScope)}/notes`);
+      const r = await fetch(`/api/memory/scopes/${encodeURIComponent(noteScope)}/notes`);
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setNotes(await r.json());
     } catch (e) {
@@ -684,7 +684,7 @@ export default function ProjectDetail() {
     try {
       const id = freshNoteId(title);
       const r = await fetch(
-        `/api/knowledge/${encodeURIComponent(noteScope)}/notes/${encodeURIComponent(id)}`,
+        `/api/memory/scopes/${encodeURIComponent(noteScope)}/notes/${encodeURIComponent(id)}`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -1335,7 +1335,7 @@ export default function ProjectDetail() {
             ) : notesErr ? (
               <Notice
                 tone="error"
-                where={`/api/knowledge/${noteScope}/notes`}
+                where={`/api/memory/scopes/${noteScope}/notes`}
                 detail={notesErr}
                 action={<Button size="sm" variant="ghost" onClick={loadNotes}>Retry</Button>}
               >

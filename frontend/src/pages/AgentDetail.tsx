@@ -375,7 +375,7 @@ function CreateAgent() {
 // ---------------------------------------------------------------------------
 // The same scoped-notes substrate the Project detail page uses, on the agent
 // scope. Operator writes and agent writes share it, and it IS injected into the
-// agent's chat context. List via GET /api/knowledge/agent:<slug>/notes, write a
+// agent's chat context. List via GET /api/memory/scopes/agent:<slug>/notes, write a
 // fresh note via the per-note PUT route (same shape as the /notes surface).
 type KnowledgeNote = { id: string; title: string; hook: string; updated?: string | null };
 
@@ -401,7 +401,7 @@ function AgentNotes({ slug }: { slug: string }) {
   const load = useCallback(async () => {
     setNotesErr(null);
     try {
-      const r = await fetch(`/api/knowledge/${encodeURIComponent(scope)}/notes`);
+      const r = await fetch(`/api/memory/scopes/${encodeURIComponent(scope)}/notes`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setNotes(await r.json());
     } catch (e) {
@@ -420,7 +420,7 @@ function AgentNotes({ slug }: { slug: string }) {
     try {
       const id = freshNoteId(t);
       const r = await fetch(
-        `/api/knowledge/${encodeURIComponent(scope)}/notes/${encodeURIComponent(id)}`,
+        `/api/memory/scopes/${encodeURIComponent(scope)}/notes/${encodeURIComponent(id)}`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -476,7 +476,7 @@ function AgentNotes({ slug }: { slug: string }) {
             <StateBlock
               variant="error"
               title="Couldn't load notes"
-              hint={<code>GET /api/knowledge/{scope}/notes ({notesErr})</code>}
+              hint={<code>GET /api/memory/scopes/{scope}/notes ({notesErr})</code>}
               action={<Button size="sm" onClick={load}>Retry</Button>}
             />
           ) : notes.length === 0 ? (

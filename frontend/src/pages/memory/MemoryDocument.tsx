@@ -192,7 +192,7 @@ export function NoteDocument({
   /** Controls the page wants beside this document's own (Up, on a phone). */
   actions?: React.ReactNode;
 }) {
-  const base = `/api/knowledge/${encodeURIComponent(scope)}/notes`;
+  const base = `/api/memory/scopes/${encodeURIComponent(scope)}/notes`;
   const [loaded, setLoaded] = useState<NoteLoaded | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -542,7 +542,7 @@ export function NewNoteDocument({
     try {
       const id = freshNoteId(title);
       await sendJson(
-        `/api/knowledge/${encodeURIComponent(scope)}/notes/${encodeURIComponent(id)}`,
+        `/api/memory/scopes/${encodeURIComponent(scope)}/notes/${encodeURIComponent(id)}`,
         "PUT",
         {
           title: title.trim(), content, hook: hook.trim(),
