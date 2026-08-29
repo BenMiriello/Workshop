@@ -324,3 +324,58 @@ a-project design concludes, this corpus moves with it.
    the author field?
 2. **Do the 96 development notes in the Workshop root move to Development now, or
    with the development-as-a-project migration?** They are misfiled either way.
+
+---
+
+# Correction, 2026-08-29: finding D was wrong reasoning, and the open questions are closed
+
+**Finding D is withdrawn.** It counted the author markers on 145 notes, found one
+written by the operator, and concluded that the `system/` and `user/` split "does
+not carve this corpus". That inference was invalid, and he said why:
+
+> "User is for what I write. Again I haven't written anything because it hasn't
+> been working yet. Remember that. And like I told you, you need to stop basing
+> your designs based off of my past usage during my custom personal implementation
+> that is not representative."
+
+The count measured how long the page has been unusable, not what he wants. It is
+the same error as reading a broken feature's low usage as low demand. **Do not
+design from usage data in this installation.** The features were often broken while
+the data accumulated.
+
+So the rule is simply what he said, and it needs no derivation:
+
+    system/    what the system writes
+    user/      what the operator writes
+
+Applied at write time from the author. Nothing infers it, and no existing note is
+auto-classified into `user/`, because he has not written them.
+
+## The questions in §"Open, and the operator's" are answered
+
+1. **What is `user/` for?** What he writes. Above.
+2. **Do the development notes move now?** Done, 2026-08-29, commit `59283091`. All
+   140 loose notes in the Workshop root were engineering findings about building
+   Workshop and are now in the development scope: 196 there, 0 in the root. The two
+   `MEMORY.md` indexes were merged and the backlink store repointed, verified
+   through the store rather than by listing the directory.
+
+## New finding, and it blocks §3.2
+
+`system/` and `user/` currently hold nothing and cannot. The store addresses a note
+as `(scope, note_id)` and finds its file at `scope_dir(scope)/<note_id>.md`;
+`list_notes` globs `d.glob("*.md")` non-recursively (`knowledge.py:423`) and all
+three routes are `/{scope_key}/notes/{note_id}` with no path. A note placed in
+either folder is unlistable, unreadable, unsearchable and never reaches a prompt.
+Filed as `1ce4b3c853874c3c8323a6bda969abbb`, urgent, and it must land before
+anything is filed into those folders.
+
+## The standing instruction this document is now written under
+
+> "For almost every problem that comes up I just want basically the standard thing
+> that other people are doing to solve such problems and do not overcomplicate it."
+
+Where this doc proposes a mechanism and a common convention exists, the convention
+wins. That applies to the folder structure inside `system/` in particular: seed a
+small obvious set on a fresh install and do not invent a taxonomy for existing
+notes.
