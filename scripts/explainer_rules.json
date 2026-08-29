@@ -1,0 +1,31 @@
+{
+  "_note": "Declaration for scripts/check_explainer_text.py. The application is not a place to leave notes for the operator. Every fact this checker knows is in this file, not in the script; the floor lives in explainer_baseline.json so check_ratchets_not_loosened.py can see it move.",
+  "surfaces": [
+    { "path": "frontend/src", "why": "every screen" },
+    { "path": "packages/ui/src", "why": "the kit's own default copy reaches every screen that does not override it" }
+  ],
+  "patterns": {
+    "explainer-paragraph": {
+      "why": "A muted paragraph of static prose is where a mechanism gets explained. Interpolated text is excluded on purpose: a paragraph carrying a value is reporting STATE ('Showing the first 100 of 340'), and state is not an explainer.",
+      "element": "p",
+      "min_chars": 80,
+      "static_only": true
+    },
+    "format-teaching-placeholder": {
+      "why": "A placeholder naming a FORMAT teaches the format. 'Write the note in Markdown.' is the reported case. A placeholder naming the CONTENT ('One-line summary') is not this and stays.",
+      "attr": "placeholder",
+      "regex": "\\b(markdown|json|yaml|csv|toml|html)\\b"
+    },
+    "help-that-explains": {
+      "why": "A Field's help is the other place explainers hide, usually restating the label and then teaching what the value does downstream. A short help that names units or an example is not this.",
+      "attr": "help",
+      "min_chars": 60,
+      "static_only": true
+    }
+  },
+  "exempt": {
+    "_why": "An empty state names an ACTION and stays; that is design rule 9, which requires an instructional hint. These props are how the kit passes one.",
+    "attrs": ["emptyHint", "hint", "sub", "body", "detail", "aria-label", "title", "label", "confirmLabel", "cancelLabel"],
+    "components": ["StateBlock", "ConfirmDialog", "Notice"]
+  }
+}

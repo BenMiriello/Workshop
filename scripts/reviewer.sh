@@ -612,6 +612,24 @@ else
   AMBIGUOUS+=("prompt_layers_check_unavailable")
 fi
 
+# THE APPLICATION IS NOT A PLACE TO LEAVE NOTES FOR THE OPERATOR. No screen
+# explains its own mechanism in prose: no paragraph under a control describing
+# how a feature ranks, no parenthetical teaching a file format, no help line
+# restating the label above it.
+#
+# A RATCHET, not an absolute, and that is the difference from the prompt-layer
+# gate above. That one could start at zero because its eleven violations were
+# all fixed in one commit; this one inherited 40 across the app, and pretending
+# otherwise would mean either a gate that fails on every run (which is how the
+# app-names gate once thrashed every worker) or 40 deletions nobody reviewed.
+# The Memory surfaces the operator reported ARE at zero.
+#
+# UNCONDITIONAL, for the reason the two whole-tree checks above are: the file a
+# new explainer gets written in is by definition a file nobody thought to add to
+# a gate list. Delta mode keeps it honest about the 40 it inherited.
+EXPLAINER_CHECK="skipped"
+_delta_check EXPLAINER_CHECK "check_explainer_text.py" "explainer_baseline.json"
+
 # One state mechanism for server reads (ADR 0025, "The check" clause 3,
 # generalised to usePoll itself now that the query layer exists). Counts the two
 # LEGACY mechanisms under frontend/src -- usePoll call sites and polling
@@ -961,6 +979,10 @@ if [[ "$PROMPT_LAYERS_CHECK" == "fail" ]]; then
   REASONS+=("installation_fact_in_platform_prompt")
   COMPLETE="false"
 fi
+if [[ "$EXPLAINER_CHECK" == "fail" ]]; then
+  REASONS+=("explainer_text_in_the_application")
+  COMPLETE="false"
+fi
 if [[ "$FRONTEND_STATE_CHECK" == "fail" ]]; then
   REASONS+=("frontend_state_regression")
   COMPLETE="false"
@@ -1057,7 +1079,7 @@ TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
-export FRESH_CLONE_CHECK FRONTEND_STATE_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK MEMORY_REACHABLE_CHECK
+export FRESH_CLONE_CHECK FRONTEND_STATE_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK
 RESULT_JSON=$(python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -1108,6 +1130,7 @@ out = {
     # installation-specific facts, so a new one is not incremental debt,
     # it is a fact about this checkout shipped to every installation.
     "prompt_layers": os.environ.get("PROMPT_LAYERS_CHECK", "skipped"),
+    "explainer_text": os.environ.get("EXPLAINER_CHECK", "skipped"),
     "frontend_state": os.environ.get("FRONTEND_STATE_CHECK", "skipped"),
     "response_model": os.environ.get("RESPONSE_MODEL_CHECK", "skipped"),
     # Absolute, not ratcheted: the tree is at zero raw storage calls, so any
@@ -1147,7 +1170,7 @@ PYEOF
 printf '%s\n' "$RESULT_JSON"
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK frontend_state=$FRONTEND_STATE_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi

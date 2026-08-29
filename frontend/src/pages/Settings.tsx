@@ -231,12 +231,12 @@ function MemorySection() {
 
   return (
     <Section icon={Library}>
+      {/* ONE LINE, and it is here because of SEC-A2 rather than to teach the
+          control: without it this reads as an access control, which it is not.
+          The five sentences that used to be here explained the mechanism, which
+          is not what a screen is for. */}
       <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
-        What each kind of writing lets other chats' searches find. This is a
-        search filter, not a lock: everything here runs as one user, so it never
-        stops anything from being read. It only decides whether a chat's search
-        reaches outside its own scope. Changing one of these retunes what every
-        existing item of that kind answers, not just the next one you write.
+        A search filter, not a lock.
       </p>
 
       {kinds.map(({ key, label, hint }) => (

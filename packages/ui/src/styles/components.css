@@ -3557,8 +3557,16 @@ span.ws-filterchip__open { cursor: default; }
    edge badly; only the editor goes edge to edge, by pulling back out of it. */
 .ws-doc--full .ws-doc__body { padding-inline: var(--page-pad-x); }
 .ws-doc--full .ws-editor { margin-inline: calc(var(--page-pad-x) * -1); }
-/* Full bleed means no side border and no corner to round against the edge. */
-.ws-doc--full .cm-editor { border-inline: 0; border-radius: 0; }
+/* FULL BLEED IS THE PHONE'S, not the desktop's. Edge to edge means no side
+   border and no corner to round against the edge, which is right when the
+   document IS the screen. On a desktop the document sits in the content column
+   and the border is the only thing that says where the editor is: without it an
+   empty editor is a wide dark rectangle on a dark page, which is how a new
+   note's body came to need a sentence telling the operator to type in it. The
+   box says that; a sentence should not have to. */
+@media (max-width: 899px) {
+  .ws-doc--full .cm-editor { border-inline: 0; border-radius: 0; }
+}
 /* THE EDITOR FILLS WHAT IS LEFT, and "what is left" is measured by the layout
    rather than by arithmetic.
  

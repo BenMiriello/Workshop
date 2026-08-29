@@ -393,7 +393,6 @@ export function NoteDocument({
                 label="Hook"
                 htmlFor="memory-note-hook"
                 optional
-                help="A one-line summary shown in the index and lists."
               >
                 <Input
                   id="memory-note-hook"
@@ -415,9 +414,6 @@ export function NoteDocument({
                 </Field>
                 <Checkbox checked={edit.draft.pinned} onChange={(v) => edit.set("pinned", v)} label="Pinned" />
               </Row>
-              <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                Pinned notes, then preferences and decisions, rank first in what gets read into every chat in this scope.
-              </p>
               <Editor
                 value={body}
                 onChange={(v) => {
@@ -427,7 +423,6 @@ export function NoteDocument({
                 }}
                 path="note.md"
                 profile="prose"
-                placeholder="Write the note in Markdown."
                 ariaLabel="Note body, markdown source"
               />
             </>
@@ -630,15 +625,11 @@ export function NewNoteDocument({
             </Field>
             <Checkbox checked={pinned} onChange={setPinned} label="Pinned" />
           </Row>
-          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-            Pinned notes, then preferences and decisions, rank first in what gets read into every chat in this scope.
-          </p>
 
           <Field
             label="Hook"
             htmlFor="new-note-hook"
             optional
-            help="A one-line summary shown in the index and lists."
           >
             <Input
               id="new-note-hook"
@@ -658,7 +649,6 @@ export function NewNoteDocument({
               onChange={setContent}
               path="note.md"
               profile="prose"
-              placeholder="Write the note in Markdown."
               ariaLabel="Note body, markdown source"
             />
           </Field>
@@ -884,9 +874,6 @@ export function DocDocument({
 
           {form === "source" ? (
             <>
-              <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                Saving edits the file on disk. It is not committed, so commit it yourself when ready.
-              </p>
               <Editor
                 value={body}
                 onChange={canEdit ? (v) => {

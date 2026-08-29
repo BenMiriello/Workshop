@@ -1,0 +1,5 @@
+{
+  "_note": "MEASURED FLOOR. Inherited explainer prose that predates this gate. It may only go DOWN: check_ratchets_not_loosened.py blocks re-pinning it upward inside a review. The Memory surfaces were cleared in the commit that added this gate, which is why they are not here.",
+  "allowed": 40,
+  "because": "MEASURED FLOOR 2026-08-28: 40 inherited explainer strings across the app, none of them on Memory, which was cleared in the commit that added this gate. It may only go DOWN. The two the operator reported (how pinned notes rank, and 'Write the note in Markdown') are gone, along with the hook help that restated its own label, the commit explainer under the document editor, and four of the five sentences in the Settings memory section, whose surviving line exists only because SEC-A2 says this must not read as an access control."
+}
