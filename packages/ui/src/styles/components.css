@@ -1233,7 +1233,7 @@ a.ws-btn { text-decoration: none; }
 .ws-searchfield:hover { background-color: var(--bg-inset); }
 .ws-searchfield:focus-within {
   background-color: var(--card); border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: var(--focus-ring);
 }
 .ws-searchfield svg { width: 14px; height: 14px; flex: none; }
 .ws-searchfield input {
@@ -1431,7 +1431,7 @@ span.ws-filterchip__open { cursor: default; }
 .ws-input::placeholder, .ws-textarea::placeholder { color: var(--faint); }
 .ws-input:hover, .ws-select:hover, .ws-textarea:hover { background-color: var(--bg-inset); }
 .ws-input:focus, .ws-select:focus, .ws-textarea:focus {
-  outline: none; background-color: var(--card); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none; background-color: var(--card); border-color: var(--accent);
 }
 .ws-input[readonly], .ws-input[disabled],
 .ws-select[disabled], .ws-textarea[disabled] {
@@ -1440,7 +1440,6 @@ span.ws-filterchip__open { cursor: default; }
 .ws-field--error .ws-input,
 .ws-field--error .ws-select,
 .ws-field--error .ws-textarea { border-color: var(--danger-solid); }
-.ws-field--error .ws-input:focus { box-shadow: 0 0 0 3px var(--danger-soft); }
 
 .ws-select {
   appearance: none;

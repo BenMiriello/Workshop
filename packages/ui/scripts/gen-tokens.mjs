@@ -82,7 +82,7 @@ function cssBlock(selector, paletteId, mode) {
     lines.push(`  --${kebab(k)}: ${v};`);
   }
   lines.push(`  --err: var(--danger);`);
-  lines.push(`  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px ${s.focusRing};`);
+  lines.push(`  --focus-ring: 0 0 0 3px ${s.focusRing};`);
   lines.push(`  --shadow-sm: ${s.shadowSm};`);
   lines.push(`  --shadow-card: ${s.shadowCard};`);
   lines.push(`  --shadow-md: ${s.shadowMd};`);
