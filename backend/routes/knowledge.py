@@ -135,7 +135,7 @@ async def list_notes(scope_key: str):
     return knowledge.list_notes(_scope(scope_key))
 
 
-@router.get("/{scope_key}/notes/{note_id}", response_model=NoteDetail, response_model_exclude_unset=True)
+@router.get("/{scope_key}/notes/{note_id:path}", response_model=NoteDetail, response_model_exclude_unset=True)
 async def get_note(scope_key: str, note_id: str):
     _scope(scope_key)
     try:
@@ -148,7 +148,7 @@ async def get_note(scope_key: str, note_id: str):
     return {"scope": scope_key, "note_id": note_id, "content": body, **meta}
 
 
-@router.put("/{scope_key}/notes/{note_id}", response_model=NoteRef, response_model_exclude_unset=True)
+@router.put("/{scope_key}/notes/{note_id:path}", response_model=NoteRef, response_model_exclude_unset=True)
 async def put_note(scope_key: str, note_id: str, body: PutNoteIn):
     _scope(scope_key)
     try:
@@ -160,7 +160,7 @@ async def put_note(scope_key: str, note_id: str, body: PutNoteIn):
         raise HTTPException(400, str(e))
 
 
-@router.delete("/{scope_key}/notes/{note_id}", response_model=NoteDeleted, response_model_exclude_unset=True)
+@router.delete("/{scope_key}/notes/{note_id:path}", response_model=NoteDeleted, response_model_exclude_unset=True)
 async def delete_note(scope_key: str, note_id: str):
     _scope(scope_key)
     try:

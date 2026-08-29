@@ -29,13 +29,15 @@ from wsplatform import paths
 
 log = logging.getLogger("workshop.knowledge")
 
-# note_id: kebab/hex slug, lowercase, no path separators or dots -> no traversal.
-_NOTE_ID_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+# note_id: kebab/hex slug, optionally one folder prefix (e.g. user/my-note).
+# Only [a-z0-9-] and a single /; no .. or absolute paths -> no traversal.
+_NOTE_ID_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)?")
 _SLUG_RE = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*", re.IGNORECASE)
 
 # MEMORY.md index line: "- [Title](note-id.md) - one-line hook"
+# `id` may be a path (e.g. user/note-name.md) for notes filed in subdirectories.
 _INDEX_RE = re.compile(
-    r"^-\s+\[(?P<title>.*)\]\((?P<id>[a-z0-9-]+)\.md\)(?:\s+-\s+(?P<hook>.*))?\s*$"
+    r"^-\s+\[(?P<title>.*)\]\((?P<id>[a-z0-9/-]+)\.md\)(?:\s+-\s+(?P<hook>.*))?\s*$"
 )
 
 
@@ -229,7 +231,7 @@ def all_scope_dirs() -> list[tuple[str, Path]]:
 
 def _valid_note_id(note_id: str) -> str:
     if not note_id or not _NOTE_ID_RE.fullmatch(note_id):
-        raise ValueError(f"invalid note_id: {note_id!r} (kebab/hex slug required)")
+        raise ValueError(f"invalid note_id: {note_id!r} (slug or folder/slug required)")
     return note_id
 
 
@@ -335,7 +337,9 @@ def enforce_index_cap(scope_key: str, max_lines: int = 200) -> dict:
         hook = meta.get("hook") or ""
         src = d / f"{nid}.md"
         if src.exists():
-            os.replace(src, archive_dir / f"{nid}.md")
+            dest = archive_dir / f"{nid}.md"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(src, dest)
         line = f"- [{title}](archive/{nid}.md)"
         catalog_lines.append(f"{line} - {hook}" if hook else line)
         entries.pop(nid, None)
@@ -420,9 +424,15 @@ def list_notes(scope_key: str) -> list[dict]:
             "updated": _mtime_iso(f),
         })
         seen.add(note_id)
-    for f in sorted(d.glob("*.md")):
-        note_id = f.stem
-        if note_id == "MEMORY" or note_id in seen:
+    for f in sorted(d.rglob("*.md")):
+        rel = f.relative_to(d)
+        if rel.name == "MEMORY.md":
+            continue
+        parts = rel.parts
+        if len(parts) > 1 and parts[0] == "archive":
+            continue
+        note_id = str(rel.with_suffix(""))
+        if note_id in seen:
             continue
         if not _NOTE_ID_RE.fullmatch(note_id):
             continue
