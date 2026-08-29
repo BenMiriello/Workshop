@@ -138,6 +138,10 @@ export type ThreadState = {
   queueHeld: boolean;
   /** Why the queue is not moving, when it stopped for a reason. */
   queueError: string;
+  /** "compact" | "clear" while a fold is running on the SERVER, else null.
+   *  Server truth, not this tab's optimism: a fold started in another tab, or
+   *  before this component mounted, has to disable the button here too. */
+  pendingOperation: string | null;
   /** THE CONTEXT CUT, AS THE SERVER RESOLVES IT: how many messages are no longer
    *  sent verbatim, and whether /clear dropped them or /compact folded them into
    *  a summary.
@@ -192,6 +196,8 @@ export type ThreadAction =
       queued?: QueuedMessage[];
       queueHeld?: boolean;
       queueError?: string;
+      /** Absent leaves what is held, like the queue fields above. */
+      pendingOperation?: string | null;
       /** The cut the server is APPLYING: how many messages are behind it and
        *  which command put them there. Not derived from the boundary events —
        *  see `cut` in ThreadState. */
@@ -306,7 +312,7 @@ export type ThreadAction =
 export type ThreadSnapshot = Pick<
   ThreadState,
   "threadId" | "byId" | "order" | "idBySeq" | "cursor" | "cut"
-  | "queued" | "queueHeld" | "queueError" | "hasMoreOlder"
+  | "queued" | "queueHeld" | "queueError" | "hasMoreOlder" | "pendingOperation"
 >;
 
 /** Lift the cacheable half of a thread's state out, by reference. Nothing here
@@ -324,6 +330,7 @@ export function snapshotThread(state: ThreadState): ThreadSnapshot {
     queued: state.queued,
     queueHeld: state.queueHeld,
     queueError: state.queueError,
+    pendingOperation: state.pendingOperation,
     hasMoreOlder: state.hasMoreOlder,
   };
 }
@@ -339,6 +346,7 @@ export function initialThreadState(threadId: string | null = null): ThreadState 
     queued: [],
     queueHeld: false,
     queueError: "",
+    pendingOperation: null,
     cut: null,
     syncedAt: 0,
     activeTurn: null,
@@ -584,6 +592,13 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
           : (action.queued ?? state.queued),
         queueHeld: superseded ? state.queueHeld : (action.queueHeld ?? state.queueHeld),
         queueError: superseded ? state.queueError : (action.queueError ?? state.queueError),
+        // `?? state` is wrong for this one: null is the MEANINGFUL value (the
+        // fold ended), and `??` would swallow it and leave the button disabled
+        // forever. Absent (older backend) keeps what is held; explicit null
+        // clears it.
+        pendingOperation: superseded ? state.pendingOperation
+          : (action.pendingOperation !== undefined ? action.pendingOperation
+             : state.pendingOperation),
         cut: superseded ? state.cut : nextCut(state.cut, action),
         // A message that made it out of the queue and into the log is no longer
         // pending here either: it was OUR send, arriving late. Reconciled against

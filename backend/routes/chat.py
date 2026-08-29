@@ -514,7 +514,10 @@ async def thread(thread_id: str):
     # Opening a chat shows what is waiting to be sent in it, on the first paint,
     # from the same read that produced the transcript. See _without_messages
     # for why the transcript itself is not in this response.
-    return _without_messages(t) | chat_queue.state(thread_id)
+    # A compact or clear in flight is part of "what is happening in this chat",
+    # and it comes from the same read for the same reason the queue does.
+    return (_without_messages(t) | chat_queue.state(thread_id)
+            | {"pending_operation": thread_ops.pending(thread_id)})
 
 
 # How long a thread stream waits before sending a keepalive. Long enough that an
@@ -726,6 +729,11 @@ async def thread_events(thread_id: str, after: int = 0, limit: int | None = None
         # a message that is in one and not the other. Every device sees the same
         # queue for free.
         **chat_queue.state(thread_id),
+        # A fold in flight rides here for exactly the same reason, and it is the
+        # half that was missing: thread_ops held it in memory, no read published
+        # it, and no stream frame announced it, so the only way to discover a
+        # running compaction was to start a second one and be refused.
+        "pending_operation": thread_ops.pending(thread_id),
     }
 
 

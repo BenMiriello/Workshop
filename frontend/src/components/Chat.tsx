@@ -196,7 +196,6 @@ export default function Chat({
   // running. Everything that used to read a boolean still does (`compacting`),
   // but the log needs the mode to say the true thing on its in-flight line.
   const [folding, setFolding] = useState<FoldMode | null>(null);
-  const compacting = folding !== null;
 
   // The outbox needs the store, and the thread loader needs the outbox (it is
   // what points storage at the conversation being opened). The store is built
@@ -268,6 +267,22 @@ export default function Chat({
     state, stateRef, dispatch, transcript, sync, turnActive, liveShown, hydrated,
     stale, branch, loadOlder, loadingOlder, olderError,
   } = log;
+  // A FOLD IS THE SERVER'S FACT, NOT THIS TAB'S. `folding` is what THIS tab
+  // started, and it is still needed: it carries WHICH fold, and it is set the
+  // instant the button is pressed rather than one sync later.
+  // `state.pendingOperation` is what the SERVER says is running, from the same
+  // read that carries the queue. Either one means a fold is in flight.
+  //
+  // Only the local half existed until 2026-08-29, so a compaction was invisible
+  // to a second tab, to a phone, and to this tab after a remount, while the
+  // operation kept running for up to 190 seconds. The operator compacted,
+  // navigated away, came back to nothing, compacted again, and was told by an
+  // error string that one was already running.
+  // WHICH fold, from either source. The local one wins because it is set the
+  // instant the button is pressed; the server's arrives one sync later.
+  const foldMode: FoldMode | null =
+    folding ?? (state.pendingOperation as FoldMode | null) ?? null;
+  const compacting = foldMode !== null;
   // Sends this browser has made that the server has not taken. The ONLY chat
   // state the browser still owns on its own, and it owns it because the server
   // has never heard of it: a request that did not land. Everything else — the
@@ -618,8 +633,12 @@ export default function Chat({
     compacting,
     // Typed `/compact` and `/clear` ask as well. One rule for the action, not
     // one for the button and another for the keystroke.
-    compact: async () => { setConfirmCompact(true); },
-    clear: async () => { setConfirmClear(true); },
+    // Guarded, because the button is: a fold already running is the one state
+    // where asking again can only be refused by the server. The button goes
+    // inactive; the keystroke does nothing rather than opening a dialog whose
+    // only outcome is an error.
+    compact: async () => { if (!compacting) setConfirmCompact(true); },
+    clear: async () => { if (!compacting) setConfirmClear(true); },
     setErr,
     onSend: () => { followLatest(); },
     // `/new` ASKS. It opens the same dialog the toolbar button does rather than
@@ -1574,7 +1593,7 @@ export default function Chat({
         open={contextOpen}
         onClose={() => setContextOpen(false)}
         threadId={activeId}
-        compacting={compacting}
+        foldMode={foldMode}
         onCompact={() => { setContextOpen(false); setConfirmCompact(true); }}
         onClear={() => { setContextOpen(false); setConfirmClear(true); }}
       />

@@ -360,6 +360,16 @@ class ThreadWithQueue(ThreadSettings, QueueState):
     """GET /threads/{id}: the settings document merged with the queue, from one
     read, so opening a chat shows what is waiting in it on the first paint."""
 
+    # "compact" | "clear" while one is running, else None. It is IN-PROCESS
+    # truth published on a read, NOT a persisted flag: thread_ops holds it in
+    # memory precisely so a crash cannot leave a stale "operation in progress"
+    # behind, and that stays true. What was wrong was that no client could see
+    # it. The operator compacted, navigated away, came back to no indication at
+    # all, compacted again, and was told by an error string that one was already
+    # running. A second client, or the same tab after a remount, had nothing to
+    # read and rendered the button enabled.
+    pending_operation: str | None = None
+
 
 class ThreadDeleted(BaseModel):
     deleted: bool
@@ -489,6 +499,11 @@ class ThreadEvents(BaseModel):
     queued: list[QueuedMessage]
     queue_held: bool
     queue_error: str
+    # On the sync response as well as on the thread document, for the same
+    # reason the queue is on both: the GET paints it once when the chat opens,
+    # and sync is what keeps it true afterwards. A client that only ever saw it
+    # at open would go stale the moment another tab started a fold.
+    pending_operation: str | None = None
 
 
 # ------------------------------------------------------------------- branches

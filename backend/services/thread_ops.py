@@ -39,6 +39,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from services import chat_events
+
 log = logging.getLogger(__name__)
 
 # thread_id -> operation name ("compact" | "clear"). One at most.
@@ -82,6 +84,7 @@ def begin(thread_id: str, op: str) -> bool:
     if thread_id in _PENDING:
         return False
     _PENDING[thread_id] = op
+    chat_events.bump(thread_id)
     return True
 
 
@@ -110,6 +113,11 @@ def end(thread_id: str) -> None:
     op = _PENDING.pop(thread_id, None)
     if op is None:
         return
+    # Say the operation ENDED, for the same reason begin() says it started: a
+    # fold takes 12-190 seconds and the stream was silent for all of it, so a
+    # client that was not the one who pressed the button learned about a
+    # compaction only by trying to start a second one.
+    chat_events.bump(thread_id)
     try:
         from services import chat_drain
         chat_drain.drain_soon(thread_id, reason=f"{op} finished")

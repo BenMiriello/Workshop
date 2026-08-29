@@ -92,14 +92,16 @@ function ServerSub({ row, off }: { row: McpRow; off?: boolean }) {
 }
 
 export default function ContextModal({
-  open, onClose, threadId, onCompact, onClear, compacting,
+  open, onClose, threadId, onCompact, onClear, foldMode,
 }: {
   open: boolean;
   onClose: () => void;
   threadId: string | null;
   onCompact: () => void;
   onClear: () => void;
-  compacting: boolean;
+  /** Which fold is running, from the server as well as this tab.
+   *  Null means none, and only then is the action offered. */
+  foldMode: "compact" | "clear" | null;
 }) {
   const [data, setData] = useState<ContextDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -224,8 +226,19 @@ export default function ContextModal({
               them. Clear is the more destructive of the two (a fold keeps a
               summary; a clear does not) so it sits away from the primary. */}
           <Button variant="ghost" onClick={onClear}>Clear context</Button>
-          <Button onClick={onCompact} disabled={compacting}>
-            {compacting ? "Compacting" : "Compact now"}
+          {/* Inactive while EITHER fold runs, with the reason on hover. The
+              server publishes the operation now, so a fold another tab started
+              disables this too; it used to be refused only after the fact, by
+              an error string. A running CLEAR used to make this read
+              "Compacting", which is why the mode is passed and not a boolean. */}
+          <Button
+            onClick={onCompact}
+            disabled={foldMode !== null}
+            title={foldMode === null ? undefined
+              : `A ${foldMode} is already running in this chat.`}
+          >
+            {foldMode === "compact" ? "Compacting"
+              : foldMode === "clear" ? "Clearing" : "Compact now"}
           </Button>
         </>
       }

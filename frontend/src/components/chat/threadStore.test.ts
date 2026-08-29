@@ -641,3 +641,39 @@ describe("seedThread", () => {
     expect(caughtUp.order).toEqual(cold.order);
   });
 });
+
+describe("pendingOperation", () => {
+  // A compact or clear is the SERVER's fact: it takes 12-190 seconds, and until
+  // 2026-08-29 no read published it, so a second tab, a phone, or the same tab
+  // after a remount showed nothing and offered the button again.
+  const sync = (over: Record<string, unknown> = {}) =>
+    ({ type: "eventsReceived", events: [], lastSeq: 0, activeTurn: null, ...over }) as
+      Parameters<typeof threadReducer>[1];
+
+  it("starts null and takes what the server reports", () => {
+    expect(initialThreadState("t").pendingOperation).toBe(null);
+    const s = apply(initialThreadState("t"), sync({ pendingOperation: "compact" }));
+    expect(s.pendingOperation).toBe("compact");
+  });
+
+  it("CLEARS on an explicit null, because that is how a fold ends", () => {
+    // `?? state.pendingOperation` would swallow the null and leave the button
+    // disabled forever. Absent and null mean different things here.
+    const s = apply(initialThreadState("t"),
+      sync({ pendingOperation: "compact" }),
+      sync({ pendingOperation: null }));
+    expect(s.pendingOperation).toBe(null);
+  });
+
+  it("keeps what it has when the field is absent, like the queue fields", () => {
+    const s = apply(initialThreadState("t"),
+      sync({ pendingOperation: "clear" }),
+      sync({}));
+    expect(s.pendingOperation).toBe("clear");
+  });
+
+  it("rides in the snapshot, so switching chats and back does not lose it", () => {
+    const s = apply(initialThreadState("t"), sync({ pendingOperation: "compact" }));
+    expect(snapshotThread(s).pendingOperation).toBe("compact");
+  });
+});
