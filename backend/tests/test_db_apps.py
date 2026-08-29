@@ -116,3 +116,30 @@ def test_chat_thread_app_id_links_and_lists(two_orgs):
             assert app_repo.count_chats_for_app(s, org_a, app["id"]) == 1
     finally:
         _delete_test_users([uid])
+
+
+def test_dev_only_column_exists_and_filters(two_orgs):
+    """Exercises the real dev_only column — would raise UndefinedColumn if the
+    migration was never applied."""
+    from db import app_repo
+    from db.engine import tenant_session
+
+    org_a, _ = two_orgs
+    with tenant_session(org_a) as s:
+        normal = app_repo.upsert_app(s, org_a, slug="normal-app", name="Normal")
+        dev = app_repo.upsert_app(s, org_a, slug="dev-app", name="Dev",
+                                  dev_only=True)
+
+        assert normal["dev_only"] is False
+        assert dev["dev_only"] is True
+
+        # dev_only=False must exclude dev-only rows
+        prod_rows = app_repo.list_apps(s, org_a, dev_only=False)
+        slugs = [r["slug"] for r in prod_rows]
+        assert "normal-app" in slugs
+        assert "dev-app" not in slugs
+
+        # dev_only=None must return everything
+        all_rows = app_repo.list_apps(s, org_a, dev_only=None)
+        all_slugs = [r["slug"] for r in all_rows]
+        assert "dev-app" in all_slugs

@@ -9359,6 +9359,11 @@ export interface components {
             archived_at?: string | null;
             /** Created At */
             created_at?: string | null;
+            /**
+             * Dev Only
+             * @default false
+             */
+            dev_only: boolean;
             /** Icon */
             icon?: string | null;
             /** Id */

@@ -63,6 +63,7 @@ class App(BaseModel):
     name: str
     icon: str | None = None
     kind: str
+    dev_only: bool = False
     parent_id: str | None = None
     # The file-registry bridge (see db.models.App). None for an
     # installed-only app with no working tree of its own.
