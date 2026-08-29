@@ -2,8 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  Archive, ArchiveRestore, ChevronLeft, ChevronRight,
-  GitBranch, GitMerge, MoreVertical, Plus, Trash2,
+  Archive, ArchiveRestore, ChevronLeft, GitBranch, MoreVertical, Plus, Trash2,
 } from "lucide-react";
 import {
   Button,
@@ -20,7 +19,6 @@ import {
   Select,
   Skeleton,
   StateBlock,
-  StatusDot,
 } from "@workshop/ui";
 import { chatApi, threadAgent, type ThreadSummary } from "../lib/chat";
 import { queryKeys } from "../lib/queryKeys";
@@ -30,8 +28,6 @@ import { pulseDelay } from "./chatPulse";
 import ScopeIcon from "../components/chat/ScopeIcon";
 import { appIcon } from "../apps/registry";
 import { AppGlyph } from "../lib/appIcon";
-import { useBranchesView } from "../components/holders/useBranchesView";
-import { branchLabel, branchState } from "../lib/branchesView";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
 // its own object with an optional context binding (general / project / app /
@@ -174,145 +170,6 @@ function RunningDot({ running, ordinal }: { running: boolean; ordinal: number })
   );
 }
 
-// THE WORKTREE GROUPING.
-//
-// A worktree row carries its name, state and chats. One chat is a direct link
-// (the common case -- one chat per worktree); more than one expands. Chats with
-// no branch (trunk) sit under "Main" below.
-//
-// Worktrees are read from GET /branches?live=true -- the only reader that checks
-// the DISK rather than the record table alone (the record table missed eleven of
-// eleven stranded trees on the first pass). This view intentionally shows
-// worktrees that have NO live chats: a worktree outlives its chats (that is the
-// normal state once a session is archived) and should not disappear when the last
-// chat is filed.
-function WorktreesSection({ threads }: {
-  threads: ThreadSummary[];
-}) {
-  const view = useBranchesView();
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const now = Date.now();
-
-  const branches = view.rows ?? [];
-  if (branches.length === 0 && !view.loading) return null;
-
-  const toggle = (id: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-
-  // Map branch_slug → chats that are pinned there (from the live thread list).
-  const bySlug = useMemo(() => {
-    const m = new Map<string, ThreadSummary[]>();
-    for (const t of threads) {
-      if (!t.branch_slug) continue;
-      const arr = m.get(t.branch_slug) ?? [];
-      arr.push(t);
-      m.set(t.branch_slug, arr);
-    }
-    return m;
-  }, [threads]);
-
-  if (view.loading) {
-    return (
-      <div style={{ display: "grid", gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
-        <Skeleton style={{ height: 44 }} />
-        <Skeleton style={{ height: 44 }} />
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ marginBottom: "var(--space-4)", display: "grid", gap: "var(--space-2)" }}>
-      <div className="ws-chatgroup__head">
-        <SectionLabel>Worktrees</SectionLabel>
-        <span className="ws-card__meta">{branches.length}</span>
-      </div>
-      {branches.map((row) => {
-        const state = branchState(row, view.windows, null, now);
-        const chats = bySlug.get(row.record.branch_slug) ?? [];
-        const isExpanded = expanded.has(row.record.id);
-        const chatUrl = (t: ThreadSummary) =>
-          `/chat/${encodeURIComponent(t.context_key)}?thread=${encodeURIComponent(t.id)}`;
-
-        return (
-          <div key={row.record.id}>
-            <Card compact className="ws-chat-row" style={{ minWidth: 0 }}>
-              <div className="ws-chat-row__head" style={{ alignItems: "center" }}>
-                <StatusDot status={state.kind}>{null}</StatusDot>
-                <GitBranch size={14} aria-hidden style={{ flexShrink: 0, color: "var(--muted)" }} />
-                <strong className="ws-chat-row__title ws-mono">
-                  {branchLabel(row.record)}
-                </strong>
-                <div className="ws-chat-row__meta">
-                  <span className="ws-card__meta">{row.record.project_slug}</span>
-                  {chats.length > 0 && (
-                    <>
-                      <span className="ws-chat-row__sep" aria-hidden>·</span>
-                      <span className="ws-card__meta">{chats.length} chat{chats.length !== 1 ? "s" : ""}</span>
-                    </>
-                  )}
-                  {/* One chat: direct link. Multiple: expand toggle. */}
-                  {chats.length === 1 && (
-                    <Link
-                      to={chatUrl(chats[0])}
-                      className="ws-chat-row__act"
-                      title="Open chat"
-                      aria-label={`Open chat: ${chats[0].title || "New chat"}`}
-                      style={{ display: "flex", alignItems: "center" }}
-                    >
-                      <ChevronRight size={14} aria-hidden />
-                    </Link>
-                  )}
-                  {chats.length > 1 && (
-                    <button
-                      type="button"
-                      className="ws-chat-row__act"
-                      onClick={() => toggle(row.record.id)}
-                      aria-expanded={isExpanded}
-                      title={isExpanded ? "Collapse" : "Expand"}
-                    >
-                      <ChevronRight
-                        size={14}
-                        aria-hidden
-                        style={{ transform: isExpanded ? "rotate(90deg)" : undefined }}
-                      />
-                    </button>
-                  )}
-                </div>
-              </div>
-              {/* One chat: clicking the row goes straight to the chat. */}
-              {chats.length === 1 && (
-                <p className="ws-muted ws-chat-row__snippet">{chats[0].title || "New chat"}</p>
-              )}
-            </Card>
-            {/* Multiple chats: expanded inline list. */}
-            {chats.length > 1 && isExpanded && (
-              <div style={{ display: "grid", gap: "var(--space-1)", paddingLeft: "var(--space-4)", marginTop: "var(--space-1)" }}>
-                {chats.map((t) => (
-                  <Link key={t.id} to={chatUrl(t)} style={{ textDecoration: "none" }}>
-                    <Card compact interactive className="ws-chat-row" style={{ minWidth: 0, cursor: "pointer" }}>
-                      <div className="ws-chat-row__head">
-                        <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
-                        <div className="ws-chat-row__meta">
-                          <span className="ws-card__meta">{relTime(t.updated_at)}</span>
-                        </div>
-                      </div>
-                      <p className="ws-muted ws-chat-row__snippet">{t.last_message || " "}</p>
-                    </Card>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 export default function Chats() {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -363,8 +220,7 @@ export default function Chats() {
   const newChat = () => nav(newChatHref("general"));
 
   const sorted = useMemo(() => {
-    // TRUNK THREADS ONLY: threads with a branch_slug appear in WorktreesSection.
-    const list = threads ? threads.filter((t) => !t.branch_slug) : [];
+    const list = threads ? [...threads] : [];
     if (sort === "oldest") list.sort((a, b) => (a.updated_at || "").localeCompare(b.updated_at || ""));
     else if (sort === "messages") list.sort((a, b) => (b.message_count || 0) - (a.message_count || 0));
     else list.sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
@@ -515,23 +371,6 @@ export default function Chats() {
         />
       ) : (
         <>
-          {/* WORKTREE GROUPS at the top. Threads pinned to a worktree are shown
-              here; the main list below is trunk-only. */}
-          <WorktreesSection threads={threads} />
-
-          {/* MAIN (trunk) chats, ungrouped or date-bucketed as before. The
-              section label only appears when there are worktrees to separate it
-              from -- otherwise the heading would be the only thing on the page. */}
-          {sorted.length > 0 && (
-            <>
-              <div className="ws-chatgroup__head">
-                <SectionLabel>
-                  <GitMerge size={14} aria-hidden /> Main
-                </SectionLabel>
-              </div>
-            </>
-          )}
-
           {groups.map((g) => (
             <div key={g.key} className="ws-chatgroup" style={{ display: "grid", gap: "var(--space-2)" }}>
               {g.label && (
@@ -576,6 +415,14 @@ export default function Chats() {
                       <span className="ws-card__meta">{t.message_count} turns</span>
                       <span className="ws-chat-row__sep" aria-hidden>·</span>
                       <span className="ws-card__meta ws-chat-row__when">{relTime(t.updated_at)}</span>
+                      {t.branch_slug && (
+                        <>
+                          <span className="ws-chat-row__sep" aria-hidden>·</span>
+                          <span className="ws-card__meta" title={t.branch_slug} aria-label="In a worktree">
+                            <GitBranch size={12} aria-hidden />
+                          </span>
+                        </>
+                      )}
                       <button
                         type="button"
                         className="ws-chat-row__act ws-chat-row__archive"
