@@ -374,3 +374,38 @@ others. Is that the permanent design, or is the expectation that Workshop
 platform development eventually lives in a separate repo that an operator
 checks out alongside the platform, the same way the birds rig has its own
 checkout?
+
+---
+
+# Answers to §5, decided 2026-08-29
+
+The operator's standing instruction is "for almost every problem that comes up I
+just want basically the standard thing that other people are doing to solve such
+problems and do not overcomplicate it." All four questions collapse to one answer
+under that rule, and it is the smallest one.
+
+**5.1 Catalog and startup, not the clone.** Dev-only code ships in the repo and is
+gated off at runtime. That is what Django does with an app list, what Rails does
+with a gem group, and what every framework does with a dev toolchain: nobody
+maintains a second repo or a stripped archive per environment. So a production
+install does not show the development app in `GET /apps` and does not register its
+routes, and the files are present and inert. The `.gitattributes` export-ignore
+proposal in §4.2 is dropped: it closes archives but not clones, which means it buys
+a maintained boundary and half a guarantee.
+
+**5.2 No, do not exclude `shared/knowledge/development/`.** They are inert data,
+no route serves them, and nothing reads them at startup. A repo carrying its own
+development history is the normal case, not a leak.
+
+**5.3 The quality gates ship.** `check_*.py`, `reviewer.sh` and the rest are repo
+tooling in the same class as a Makefile or a CI config, and every project ships
+those. No `export-ignore`.
+
+**5.4 The platform repo IS the development app's repo.** A monorepo whose dev
+tooling is one package inside it is an ordinary shape. Do not split it now. If a
+reason to split ever appears it will be concrete, and this can be revisited then.
+
+**What this leaves to build**, and it is much smaller than §4 implied: the
+`dev_only` flag on the app record, the catalog filter, and route registration
+skipping dev-scope routers on a production install, with the measurement that
+proves it. Nothing about packaging, archives, or a second repo.
