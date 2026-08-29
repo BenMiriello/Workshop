@@ -78,7 +78,6 @@ import {
   Notice,
   Row,
   SectionLabel,
-  Select,
   Skeleton,
   Stack,
   StateBlock,
@@ -473,17 +472,12 @@ export function NoteDocument({
 
 export function NewNoteDocument({
   scope,
-  scopes,
-  onScope,
   onCreated,
   onCancel,
   onDirty,
 }: {
   /** Where it will be filed, decided by the tree. */
   scope: string;
-  /** Every scope it could be filed into instead. */
-  scopes: string[];
-  onScope: (next: string) => void;
   onCreated: (scope: string, id: string) => void;
   onCancel: () => void;
   /** Is there anything here to lose. Lifted so the PAGE can refuse to replace
@@ -492,14 +486,12 @@ export function NewNoteDocument({
   onDirty?: (dirty: boolean) => void;
 }) {
   const [title, setTitle] = useState("");
-  const [hook, setHook] = useState("");
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const canSave = !!(title.trim() || content.trim());
-  const dirty = canSave || !!hook.trim();
-  useEffect(() => { onDirty?.(dirty); }, [dirty, onDirty]);
+  useEffect(() => { onDirty?.(canSave); }, [canSave, onDirty]);
 
   const save = useCallback(async () => {
     if (!canSave) return;
@@ -510,7 +502,7 @@ export function NewNoteDocument({
       await sendJson(
         `/api/memory/scopes/${encodeURIComponent(scope)}/notes/${encodeURIComponent(id)}`,
         "PUT",
-        { title: title.trim(), content, hook: hook.trim(), author: "operator" },
+        { title: title.trim(), content, author: "operator" },
       );
       onCreated(scope, id);
     } catch (e) {
@@ -525,7 +517,7 @@ export function NewNoteDocument({
       // on being unmounted to stop saying it is busy.
       setSaving(false);
     }
-  }, [canSave, scope, title, hook, content, onCreated]);
+  }, [canSave, scope, title, content, onCreated]);
 
   return (
     <div className="ws-doc ws-doc--full">
@@ -535,11 +527,7 @@ export function NewNoteDocument({
         variant="title"
         onNameChange={setTitle}
         path={scopeLabel(scope)}
-        // Never saved, so everything in it is unsaved. The dot says so from the
-        // first keystroke rather than only once there is something to compare
-        // against, which is the honest reading for a document with no stored
-        // version behind it.
-        dirty={dirty}
+        dirty={canSave}
       >
         <Button size="sm" variant="ghost" disabled={saving} onClick={onCancel}>
           Discard
@@ -556,54 +544,14 @@ export function NewNoteDocument({
       </DocumentBar>
 
       <div className="ws-doc__body">
-        <Stack gap="lg">
-          {err && <Notice tone="error" detail={err}>That didn't save.</Notice>}
-
-          <Row wrap style={{ gap: "var(--space-4)", alignItems: "flex-end" }}>
-            {/* WHERE IT GOES, changeable. It is drawn first because it is the
-                question the old modal never answered, and it commits on change
-                because nothing has been written yet: there is no stored value
-                at risk, so rule 7's explicit-commit case does not apply. */}
-            <Field label="Goes in" htmlFor="new-note-scope" inline>
-              <Select
-                id="new-note-scope"
-                value={scope}
-                onChange={(e) => onScope(e.target.value)}
-              >
-                {scopes.map((s) => (
-                  <option key={s} value={s}>{scopeLabel(s)}</option>
-                ))}
-              </Select>
-            </Field>
-          </Row>
-
-          <Field
-            label="Hook"
-            htmlFor="new-note-hook"
-            optional
-          >
-            <Input
-              id="new-note-hook"
-              value={hook}
-              onChange={(e) => setHook(e.target.value)}
-              placeholder="One-line summary"
-            />
-          </Field>
-
-          {/* THE BODY IS LABELLED, and the editor says what to put in it.
-              Measured 2026-08-28: an empty editor in a full-width document has
-              no side border and a background a shade off the page's, so a new
-              note's body was 1128x513 of what read as blank page. */}
-          <Field label="Body" className="ws-field--grow">
-            <Editor
-              value={content}
-              onChange={setContent}
-              path="note.md"
-              profile="prose"
-              ariaLabel="Note body, markdown source"
-            />
-          </Field>
-        </Stack>
+        {err && <Notice tone="error" detail={err}>That didn't save.</Notice>}
+        <Editor
+          value={content}
+          onChange={setContent}
+          path="note.md"
+          profile="prose"
+          ariaLabel="Note body, markdown source"
+        />
       </div>
     </div>
   );

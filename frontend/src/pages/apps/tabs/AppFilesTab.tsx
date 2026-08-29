@@ -39,7 +39,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { FilePlus, FolderTree, Lock, RefreshCw, Search } from "lucide-react";
+import { FilePlus, FolderTree, Lock, Search } from "lucide-react";
 import {
   Badge, Button, Card, DocumentBar, Field, FileDrill, FileTree, Input, Modal, Notice,
   Skeleton, Stack, StateBlock, cx, documentBar, drillTrail, formatBytes, shortHttpError, timeAgo,
@@ -603,16 +603,6 @@ function FilesBody({ app }: { app: AppRecord }) {
             >
               <FilePlus aria-hidden />
             </Button>
-            <Button
-              size="sm"
-              icon
-              variant="ghost"
-              onClick={() => setGeneration((n) => n + 1)}
-              aria-label="Reload files"
-              title="Reload"
-            >
-              <RefreshCw aria-hidden />
-            </Button>
           </div>
           <div className="ws-pagecol__treescroll">
             <FileTree
@@ -652,6 +642,7 @@ function FilesBody({ app }: { app: AppRecord }) {
           onClose={() => setCreatingFile(false)}
           onCreated={(path) => {
             setCreatingFile(false);
+            setGeneration((n) => n + 1);
             setParams((prev) => {
               const next = new URLSearchParams(prev);
               next.set("path", path);

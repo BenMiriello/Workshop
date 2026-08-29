@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import {
   CheckSquare, ChevronUp, FilePlus, FileText, FolderTree, MessageSquare,
-  RefreshCw, Search,
+  Search,
 } from "lucide-react";
 import { Button, ConfirmDialog, PageActionBar, PageHeader, Row, Stack, Input, StateBlock, Skeleton, Tag, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, userStorage } from "@workshop/ui";
 import { scopeLabel } from "../lib/tasks";
@@ -421,8 +421,6 @@ function Library() {
     pane = (
       <NewNoteDocument
         scope={creating}
-        scopes={scopeKeys}
-        onScope={setCreating}
         onDirty={setNewNoteDirty}
         onCancel={() => { setCreating(null); setNewNoteDirty(false); }}
         onCreated={(scope, id) => {
@@ -574,25 +572,6 @@ function Library() {
             >
               <FilePlus aria-hidden />
             </Button>
-            {/* RELOAD, DEMOTED RATHER THAN DELETED. The operator asked why it
-                exists at all ("why would the information be stale?"): agents
-                write notes while this page is open and the tree caches
-                whole-index responses, so it genuinely goes stale. What was
-                wrong was its rank -- a labelled button in the content area,
-                beside Search and New note, as if reloading were a thing the
-                operator should be thinking about. It is an icon on the tree's
-                own bar, and `staleReload` below means most of the time it is
-                already done by the time he looks. */}
-            <Button
-              size="sm"
-              icon
-              variant="ghost"
-              onClick={() => setGeneration((n) => n + 1)}
-              aria-label="Reload memory"
-              title="Reload"
-            >
-              <RefreshCw aria-hidden />
-            </Button>
           </div>
           <div className="ws-pagecol__treescroll">
             <MemoryTreeView
@@ -671,14 +650,6 @@ function Library() {
               style={{ width: "100%" }}
             />
           </form>
-          <Button
-            icon
-            aria-label="Reload memory"
-            onClick={() => setGeneration((n) => n + 1)}
-            style={{ flex: "0 0 auto" }}
-          >
-            <RefreshCw aria-hidden />
-          </Button>
           <Button variant="primary" onClick={startNewNote}>
             <FilePlus aria-hidden /> New note
           </Button>
