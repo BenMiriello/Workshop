@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -115,6 +116,10 @@ class TreeState:
     # into the queue/steer/take-over offer that already exists; nothing here
     # decides for the operator.
     blocked_by: dict | None = None
+    # Set when THIS enter() call preempted a prior holder via snapshot-and-fence.
+    # Carries {"holder_kind", "holder_id", "wip_ref"} so the transcript can say
+    # who was displaced and where the snapshot landed.
+    preempted: dict | None = None
 
     @property
     def pinned(self) -> bool:
@@ -138,7 +143,8 @@ class TreeState:
             return None
         known = {f: data.get(f) for f in (
             "cwd", "project_slug", "scope", "branch_slug", "branch", "source",
-            "read_only", "detail", "subject_id", "lease", "blocked_by")}
+            "read_only", "detail", "subject_id", "lease", "blocked_by",
+            "preempted")}
         if not known.get("cwd"):
             return None
         return cls(**known)
@@ -156,6 +162,7 @@ class TreeState:
             "subject_id": self.subject_id,
             "lease": self.lease,
             "blocked_by": self.blocked_by,
+            "preempted": self.preempted,
             "pinned": self.pinned,
             "held": self.held,
         }
@@ -321,8 +328,40 @@ def plan(thread: dict | None, provider: Any, *, fallback_cwd: str,
 
 # --- the write ---------------------------------------------------------------
 
+def _preempt_holder(tree: TreeState, holder: dict) -> dict:
+    """Snapshot the holder's uncommitted work and fence their lease.
+
+    Called only from an attended operator turn. Returns a dict that describes
+    what was taken and from whom, suitable for the transcript notice.
+    """
+    holder_id = str(holder.get("holder_id") or "")
+    holder_kind = str(holder.get("holder_kind") or "")
+    wip_ref: str | None = None
+    if tree.cwd and tree.subject_id and holder_id:
+        try:
+            sha_out = subprocess.run(
+                ["git", "-C", tree.cwd, "stash", "create"],
+                capture_output=True, text=True, timeout=10)
+            sha = (sha_out.stdout or "").strip()
+            if sha:
+                ref = f"refs/wip/{holder_id}"
+                subprocess.run(
+                    ["git", "-C", tree.cwd, "update-ref", ref, sha],
+                    capture_output=True, timeout=10)
+                wip_ref = ref
+        except Exception as exc:
+            log.warning("chat tree: snapshot failed for %s: %s", holder_id, exc)
+        try:
+            leases.fence(SUBJECT_KIND, tree.subject_id)
+        except Exception as exc:
+            log.warning("chat tree: fence failed for %s: %s", tree.subject_id, exc)
+    return {"holder_kind": holder_kind, "holder_id": holder_id,
+            "wip_ref": wip_ref, "branch": tree.branch or ""}
+
+
 def enter(thread_id: str, thread: dict | None, provider: Any, *,
-          fallback_cwd: str, activity: str = "") -> TreeState:
+          fallback_cwd: str, activity: str = "",
+          preempt: bool = False) -> TreeState:
     """Resolve the tree for a turn and take the lease on it, if it is pinned.
 
     NEVER RAISES AND NEVER BLOCKS A TURN. Everything below the pin check is
@@ -332,9 +371,14 @@ def enter(thread_id: str, thread: dict | None, provider: Any, *,
     the enforcement, and with `WORKSHOP_TREE_LEASE_MOUNT` off there is nothing
     for a missing lease to break.
 
-    THE ONE THING IT REFUSES TO DO is take a tree somebody else is holding. That
-    comes back as `blocked_by`, and the caller offers queue, steer or take-over
-    against it -- the verbs that already exist (B6/B7).
+    When `preempt=True` (always the case on the attended operator path), a
+    blocked tree is taken by snapshot-and-fence: the holder's uncommitted work
+    is stashed to refs/wip/<holder_id>, their lease is expired, and this turn
+    acquires normally. `tree.preempted` carries the displaced holder so the
+    transcript can say who was taken from.
+
+    When `preempt=False` (the unattended run path, handled by run_worktree),
+    a busy tree is returned as `blocked_by` and the run queues.
     """
     tree = plan(thread, provider, fallback_cwd=fallback_cwd,
                 holder_id=str(thread_id))
@@ -342,12 +386,15 @@ def enter(thread_id: str, thread: dict | None, provider: Any, *,
         return tree
     holder = tree.blocked_by
     if holder:
-        # Section 8: the answer to a busy tree is a verb, not a silent second
-        # writer. The turn still runs (read-only once the flag is on); what it
-        # does not get is the lease.
-        return replace(tree, lease=None, blocked_by=holder,
-                       detail=f"{holder.get('holder_kind')} "
-                              f"{holder.get('holder_id')} holds this tree.")
+        if not preempt:
+            # Section 8: the answer to a busy tree is a verb, not a silent
+            # second writer. The turn still runs (read-only once the flag is
+            # on); what it does not get is the lease.
+            return replace(tree, lease=None, blocked_by=holder,
+                           detail=f"{holder.get('holder_kind')} "
+                                  f"{holder.get('holder_id')} holds this tree.")
+        snap = _preempt_holder(tree, holder)
+        tree = replace(tree, blocked_by=None, preempted=snap)
     # PRESENCE FIRST, THEN THE LEASE, and the order is load-bearing rather than
     # tidy. Section 6's passive rule is applied on READ: an interactive holder
     # with no live presence reads as `expired` however fresh its `expires_at`

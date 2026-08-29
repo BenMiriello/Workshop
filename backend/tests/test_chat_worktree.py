@@ -129,6 +129,16 @@ def wired(tmp_path, monkeypatch):
                     n += 1
             return n
 
+        @staticmethod
+        def fence(kind, subject_id):
+            calls.append(("fence", kind, subject_id))
+            row = table.get(subject_id)
+            if not row:
+                return None
+            row["generation"] += 1
+            row["state"] = "expired"
+            return row["generation"]
+
     class FakePresence:
         @staticmethod
         def beat(session_id, **kw):
@@ -263,6 +273,68 @@ class TestASecondChatIsOfferedTheVerbs:
         chat_worktree.enter(OTHER, {"branch_slug": "fix-42"}, wired["provider"],
                             fallback_cwd=str(wired["project"]))
         assert OTHER not in wired["beats"]
+
+
+# --- preempt: operator message takes a held tree ------------------------------
+
+class TestPreempt:
+    """An attended operator turn with preempt=True displaces a prior holder.
+
+    Two paths:
+      (a) preempt=True  -> fence the holder, acquire, set tree.preempted
+      (b) preempt=False -> existing blocked_by behaviour unchanged
+    """
+
+    def test_preempt_true_acquires_and_reports_the_displaced_holder(
+            self, wired, monkeypatch):
+        # Path (a): an operator message arrives while THREAD holds the tree.
+        chat_worktree.enter(THREAD, {"branch_slug": "fix-42"}, wired["provider"],
+                            fallback_cwd=str(wired["project"]))
+        # Prevent the real subprocess from running in tests.
+        monkeypatch.setattr(chat_worktree, "subprocess",
+                            type("SP", (), {"run": staticmethod(
+                                lambda *a, **kw: type("R", (), {
+                                    "stdout": "", "returncode": 0})())}))
+        took = chat_worktree.enter(OTHER, {"branch_slug": "fix-42"},
+                                   wired["provider"],
+                                   fallback_cwd=str(wired["project"]),
+                                   preempt=True)
+        assert took.held, "the new session must hold the tree"
+        assert took.lease["holder_id"] == OTHER
+        assert took.blocked_by is None
+        assert took.preempted is not None
+        assert took.preempted["holder_id"] == THREAD
+        assert took.preempted["holder_kind"] == "chat"
+        # The old holder's lease was fenced before acquire.
+        assert any(c[0] == "fence" for c in wired["calls"]), "fence must be called"
+        assert wired["table"][SUBJECT]["holder_id"] == OTHER
+
+    def test_preempt_false_still_queues_not_preempts(self, wired):
+        # Path (b): unattended behaviour unchanged.
+        chat_worktree.enter(THREAD, {"branch_slug": "fix-42"}, wired["provider"],
+                            fallback_cwd=str(wired["project"]))
+        rival = chat_worktree.enter(OTHER, {"branch_slug": "fix-42"},
+                                    wired["provider"],
+                                    fallback_cwd=str(wired["project"]),
+                                    preempt=False)
+        assert not rival.held and rival.blocked_by["holder_id"] == THREAD
+        assert rival.preempted is None
+        assert wired["table"][SUBJECT]["holder_id"] == THREAD
+
+    def test_preempt_writes_preempted_to_as_dict(self, wired, monkeypatch):
+        chat_worktree.enter(THREAD, {"branch_slug": "fix-42"}, wired["provider"],
+                            fallback_cwd=str(wired["project"]))
+        monkeypatch.setattr(chat_worktree, "subprocess",
+                            type("SP", (), {"run": staticmethod(
+                                lambda *a, **kw: type("R", (), {
+                                    "stdout": "", "returncode": 0})())}))
+        took = chat_worktree.enter(OTHER, {"branch_slug": "fix-42"},
+                                   wired["provider"],
+                                   fallback_cwd=str(wired["project"]),
+                                   preempt=True)
+        d = took.as_dict()
+        assert "preempted" in d
+        assert d["preempted"]["holder_id"] == THREAD
 
 
 # --- sections 6 and 7: releasing ----------------------------------------------

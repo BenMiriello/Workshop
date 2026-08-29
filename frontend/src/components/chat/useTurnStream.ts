@@ -324,6 +324,19 @@ export function useTurnStream({
           });
         } catch { /* ignore */ }
       },
+      preempt_notice: (e) => {
+        try {
+          const d = JSON.parse((e as MessageEvent).data || "{}");
+          const p = d.payload || {};
+          const hk = p.holder_kind || "session";
+          const hid = p.holder_id || "unknown";
+          const branch = p.branch ? ` (${p.branch})` : "";
+          const ref = p.wip_ref ? ` Uncommitted work saved to ${p.wip_ref}.` : "";
+          cb.current.onError({
+            text: `Took the tree${branch} from ${hk} ${hid}.${ref}`,
+          });
+        } catch { /* ignore */ }
+      },
       // Defined below, once `finish` exists.
       done: () => { void finish(); },
       end: () => { void finish(); },

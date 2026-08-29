@@ -71,6 +71,10 @@ export const WIRE_KINDS = {
    *  cannot fire at all while WORKSHOP_TREE_LEASE_MOUNT is off, which is
    *  everywhere today. */
   write_blocked: "problem",
+  /** An operator message preempted another holder's lease on this tree. The
+   *  payload carries holder_kind, holder_id, wip_ref and branch so the
+   *  transcript can name who was displaced and where uncommitted work landed. */
+  preempt_notice: "problem",
   /** The turn began. The client already knows: it dispatched `runStarted` when
    *  the operator hit send, before this could arrive. */
   started: "ignored",

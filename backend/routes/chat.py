@@ -3865,7 +3865,8 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         thread_id, t, provider,
         fallback_cwd=(str(provider.dir) if chat_context.is_build_provider(provider)
                       else str(paths.chat_cwd())),
-        activity=f"a chat turn in {t.get('title') or thread_id}")
+        activity=f"a chat turn in {t.get('title') or thread_id}",
+        preempt=True)
 
     if isinstance(provider, chat_context.MakerAgentContextProvider):
         from services import build_agents as _ba

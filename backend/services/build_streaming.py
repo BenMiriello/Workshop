@@ -2680,6 +2680,9 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
         _cleanup_turn_input(turn.id)
         await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)
         return
+    _preempt = (meta.get("tree") or {}).get("preempted")
+    if _preempt:
+        _push(turn, "preempt_notice", _preempt)
     meta["pid"] = proc.pid
     # RECORDED, not recomputed later: `turn_user` is the uid the spawn actually
     # used (None on the self-scope carve-out even with the flag set), so a
