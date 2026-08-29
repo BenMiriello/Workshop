@@ -271,8 +271,7 @@ const MessageBubble = memo(function MessageBubble({
   isLatest: boolean;
   /** Landed while the reader was already looking: earns the one-second flash. */
   arrived?: boolean;
-  /** Handed to the running turn but still below the working indicator, so not
-   *  reached yet: renders dim, like a pending send. See transcriptBlocks. */
+  /** Still in flight (status === "sending"): renders dim until the server confirms. */
   inflight?: boolean;
   selectedModel: string;
   cardCtx: UiCardCtx;
