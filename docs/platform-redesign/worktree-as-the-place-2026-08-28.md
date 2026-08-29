@@ -167,7 +167,7 @@ position still queues.
 not beside the title: the title row is already full, and this is a statement about
 where the page is pointed rather than part of the page's name. Same pill, same menu.
 
-**The chats page.** His idea, and it is the right one: the list groups by worktree.
+**The chats page.** ~~The list groups by worktree.~~ **AMENDED 2026-08-29, see the correction at the end of this document.** The list groups by worktree.
 A worktree row carries its name, its state, and its chats; the common case (one chat)
 links straight through, and the row expands when there is more than one. A chat with no
 worktree (read-only, on Main) sits ungrouped under Main. This makes the worktree
@@ -232,3 +232,33 @@ test tree and arms it in the instance config as its final action.
 - **Does the operator want the preempt in §6 to be silent, or to say so and continue?**
   This proposal says continue and state it. The other reading of his words is a
   confirmation, which he has objected to elsewhere as single-user cruft.
+
+
+---
+
+# Correction, 2026-08-29: the chats page does not group by worktree
+
+Section 7 said the chats list should group by worktree, one row per tree with its
+chats under it. That shipped (`cab63e56`) and it was wrong. What it produced was a
+column of worktree headings above the operator's conversations, most of them named
+`t-<32 hex>` because they predate the naming fix, none of them linking anywhere he
+needed to go, pushing the chats themselves down the page.
+
+> "OBVIOUSLY just jamming a long list of worktrees that have no discernable name,
+> no link to them, no point or use, in top of the chat page, makes no sense."
+
+**The rule instead, which is what every chat application does: a chats page is a
+list of chats, newest first.** A worktree is a property of a chat, so it renders as
+a small label on that chat's row, beside the scope and agent tags that are already
+there, linking to that chat's worktree view. It is not a heading, not a grouping,
+and not a section.
+
+The error underneath it is worth naming, because it is the same one as the Branches
+page: **a thing the system needs to track is not automatically a thing that
+organises the user's screen.** Worktrees are real and they matter; that does not
+make them the axis a list of conversations should be sorted by. The operator said
+as much when the Branches page was retired, and section 7 reintroduced it one level
+down.
+
+What stays from section 7: retiring `/branches` and its nav entry was right and is
+not revisited.
