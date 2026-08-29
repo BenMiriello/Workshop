@@ -22,11 +22,14 @@ Two entry points:
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -62,6 +65,9 @@ _MAX_TURNS = 40
 # uses, so a reader who knows one knows the other.
 TIMED_OUT = 124
 
+# Job dirs older than this are eligible for reaping on the next completed run.
+_REAP_AFTER_DAYS = 7
+
 
 def _claude_bin() -> str:
     """Resolve the claude CLI to a real executable, mirroring scripts/ralph.sh:
@@ -91,6 +97,47 @@ def _scope_cwd(scope: str) -> Path:
     except Exception:
         pass
     return _WORKSHOP_ROOT
+
+
+def _check_tree_dirty() -> bool:
+    """True if the workshop tree has uncommitted changes after a run."""
+    try:
+        r = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(_WORKSHOP_ROOT), capture_output=True, text=True, timeout=10,
+        )
+        return bool(r.stdout.strip())
+    except Exception:
+        return False
+
+
+def _write_status(job_dir: Path, outcome: str, exit_code: int, tree_dirty: bool) -> None:
+    """Write a terminal status file so a finished run is distinguishable from a dead one."""
+    (job_dir / "status.json").write_text(json.dumps({
+        "outcome": outcome,
+        "exit_code": exit_code,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "tree_dirty": tree_dirty,
+    }))
+
+
+def _reap_old_job_dirs() -> int:
+    """Remove job dirs older than _REAP_AFTER_DAYS days. Returns count removed."""
+    bg = _WORKSHOP_ROOT / ".runtime" / "background"
+    if not bg.is_dir():
+        return 0
+    cutoff = time.time() - _REAP_AFTER_DAYS * 86400
+    removed = 0
+    for d in bg.iterdir():
+        if not d.name.startswith("job_"):
+            continue
+        try:
+            if d.stat().st_mtime < cutoff:
+                shutil.rmtree(d)
+                removed += 1
+        except Exception as e:
+            log.warning("reap: could not remove %s: %s", d, e)
+    return removed
 
 
 def launch(*, thread_id: str, owner_id: int, scope: str, prompt: str,
@@ -205,7 +252,7 @@ def _run_claude(prompt: str, cwd: Path, owner_id: int, scope: str) -> tuple[int,
 
 
 def _deliver(*, thread_id: str, owner_id: int, job_id: str, label: str,
-             status: str, text: str, exit_code: int = 0) -> None:
+             status: str, text: str, exit_code: int = 0, tree_dirty: bool = False) -> None:
     """Post the result into the chat and ask it to continue. Mirrors
     run_report's autonomous-tier delivery so the client renders it the same way.
 
@@ -232,6 +279,9 @@ def _deliver(*, thread_id: str, owner_id: int, job_id: str, label: str,
         else:
             body = (f"Background agent stopped: {label} (exit {exit_code})\n\n"
                     f"{text or '(no output)'}")
+        if tree_dirty:
+            body += ("\n\n**Warning: the workspace tree has uncommitted changes after "
+                     "this run. Review and commit or reset before the next apply.**")
         chat_store.append_message(
             thread_id, "assistant", body,
             # ASKS NOTHING: a background agent reporting what it did. Quiet
@@ -280,6 +330,18 @@ def run(argv: list[str] | None = None) -> int:
     ap.add_argument("--prompt-file", required=True)
     a = ap.parse_args(argv)
 
+    # Wire logging to stdout so every message ends up in runner.log. The root
+    # cause of 0-byte logs: the runner's stdout is redirected to runner.log by
+    # the Popen in launch(), but the runner previously produced no output — it
+    # captured claude's stdout internally via capture_output=True and only wrote
+    # through the logging module which had no configured handlers in this
+    # detached subprocess.
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout, force=True,
+                        format="%(asctime)s %(levelname)s %(message)s")
+
+    log.info("runner start: job=%s thread=%s scope=%s label=%r",
+             a.job_id, a.thread, a.scope, a.label)
+
     # Open the Job record HERE, not in launch(): this process was given
     # WORKSHOP_RUNTIME pointing at the bind-mounted runtime root, so its jobs
     # writes persist where the backend reads them. pid is ours, the process the
@@ -294,13 +356,23 @@ def run(argv: list[str] | None = None) -> int:
     exit_code, text, usage = _run_claude(prompt, _scope_cwd(a.scope), a.owner, a.scope)
     status = "done" if exit_code == 0 else "failed"
 
+    log.info("claude finished: exit=%d status=%s text_chars=%d", exit_code, status, len(text))
+
+    tree_dirty = _check_tree_dirty()
+    if tree_dirty:
+        log.warning("tree is dirty: uncommitted changes in workspace after run")
+
+    outcome = "timed_out" if exit_code == TIMED_OUT else status
+    _write_status(_job_dir(a.job_id), outcome=outcome, exit_code=exit_code,
+                  tree_dirty=tree_dirty)
+
     # Deliver first, so the chat has the result even if the ledger write hiccups;
     # then close the Job (finish() also runs run_report, which is a no-op here
     # because a background Job worked no ticket).
     try:
         _deliver(thread_id=a.thread, owner_id=a.owner, job_id=a.job_id,
                  label=a.label or "background agent", status=status, text=text,
-                 exit_code=exit_code)
+                 exit_code=exit_code, tree_dirty=tree_dirty)
     except Exception as e:
         log.warning("background agent delivery failed for job %s: %s", a.job_id, e)
 
@@ -308,6 +380,11 @@ def run(argv: list[str] | None = None) -> int:
     if usage:
         ev["usage"] = usage
     jobs.finish(a.job_id, status=status, exit_code=exit_code, evidence=ev)
+
+    reaped = _reap_old_job_dirs()
+    if reaped:
+        log.info("reaped %d old job dir(s) older than %d days", reaped, _REAP_AFTER_DAYS)
+
     return 0
 
 

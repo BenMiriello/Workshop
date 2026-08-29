@@ -184,3 +184,36 @@ def test_the_runner_can_actually_write(owned, monkeypatch):
     assert cmd.count("--disallowedTools") == 1
     tail = cmd[cmd.index("--disallowedTools") + 1:]
     assert any("git push" in t for t in tail)
+
+
+def test_nonzero_exit_is_distinguishable_from_success(owned, monkeypatch, tmp_path):
+    """A run that exits non-zero writes outcome=failed in status.json; zero writes done.
+    The two files are distinct, so a finished run can never look like a dead one."""
+    import json as _json
+    monkeypatch.setattr(background_runs, "_deliver", lambda **kw: None)
+    monkeypatch.setattr(background_runs, "_check_tree_dirty", lambda: False)
+    monkeypatch.setattr(background_runs, "_reap_old_job_dirs", lambda: 0)
+    pf = tmp_path / "p.txt"
+    pf.write_text("do the thing")
+
+    outcomes = {}
+    for exit_code, expected_outcome in [(0, "done"), (1, "failed")]:
+        jid = f"status-distinguish-{exit_code}"
+        jdir = tmp_path / jid
+        jdir.mkdir()
+        monkeypatch.setattr(background_runs, "_job_dir", lambda _jid, _d=jdir: _d)
+        monkeypatch.setattr(background_runs, "_run_claude",
+                            lambda *a, _ec=exit_code, **k: (_ec, "output text", {}))
+        background_runs.run(["--job-id", jid, "--thread", "t-9", "--owner", "6",
+                             "--scope", "workshop", "--label", "probe",
+                             "--prompt-file", str(pf)])
+        st = _json.loads((jdir / "status.json").read_text())
+        outcomes[exit_code] = st["outcome"]
+        assert st["outcome"] == expected_outcome, (
+            f"exit {exit_code}: expected outcome={expected_outcome!r}, got {st['outcome']!r}"
+        )
+        assert st["exit_code"] == exit_code
+        assert "timestamp" in st
+        assert "tree_dirty" in st
+
+    assert outcomes[0] != outcomes[1], "success and failure produced the same outcome field"
