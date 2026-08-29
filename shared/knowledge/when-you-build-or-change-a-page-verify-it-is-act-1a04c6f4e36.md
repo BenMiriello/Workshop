@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+When you build or change a page, verify it is actually REACHABLE from the nav the operator uses and SERVED to his origin, not merely that the component renders in a screenshot. Check the nav entry exists in the scope he browses, and confirm the served bundle (build-info on his origin) carries the change. 'It renders' is not 'it is delivered'.

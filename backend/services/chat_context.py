@@ -341,16 +341,22 @@ TASK_PATCH_PROTOCOL = (
 )
 
 # The `learning-note` block: deterministic capture of a durable operator
-# preference or correction into the learnings store, applied server-side in the
-# finalize path (exactly like task-patch) and stripped from the reply. Described
-# to the personas that should emit it. This is IN ADDITION to compaction-time
-# distillation, by design; emit it only for explicit, lasting signals.
+# preference or correction, applied server-side in the finalize path (exactly
+# like task-patch) and stripped from the reply. Described to the personas that
+# should emit it. This is IN ADDITION to compaction-time distillation, by
+# design; emit it only for explicit, lasting signals.
+#
+# THE FENCE TAG IS UNCHANGED ON PURPOSE. What it writes is now a standing note
+# in the one memory store (ticket 81198145), and `standing note` is the name the
+# plan settled on; the TAG stays `learning-note` because it is a protocol token
+# every persona already emits, and renaming a token to match a naming decision
+# would break every in-flight prompt to fix nothing the operator can see.
 LEARNING_NOTE_PROTOCOL = (
     "=== CAPTURING A PREFERENCE (learning-note) ===\n"
     "When the operator states a DURABLE preference or correction (\"always X\", "
     "\"stop doing Y\", \"I prefer Z\", or corrects something you should not repeat), "
-    "record it so it is not forgotten, by emitting ONE fenced block (it is applied "
-    "to the learnings store and hidden from your reply):\n"
+    "record it so it is not forgotten, by emitting ONE fenced block (it is "
+    "recorded in memory and hidden from your reply):\n"
     "```learning-note\n"
     "{\"note\": \"<the durable lesson in one sentence>\", \"scope\": \"workshop\"}\n"
     "```\n"
@@ -1371,48 +1377,44 @@ def runtime_briefing(provider: "ContextProvider") -> str:
 
 
 def learnings_context(provider: "ContextProvider") -> str:
-    """The learned-memory block for a provider's chat: workspace guardrails plus,
-    for a scoped agent/project/app, that scope's own accumulated memory. Empty
-    string when there is nothing to inject."""
+    """The standing notes this chat reads, as a prompt block. Empty when there
+    are none.
+
+    ONE BLOCK NOW, NOT TWO. This used to call `learnings.memory_block` twice,
+    once for a `global` scope and once for the chat's own, because the old store
+    had a scope whose entire definition was "injected everywhere". The note
+    store already has one of those: `workshop` is the widest element of every
+    read-union (`knowledge.read_layers`), so `standing.block` walks the union
+    and the second call has nothing left to do. The token ceiling is unchanged
+    and is documented on `standing._BLOCK_TOKEN_BUDGET`: two calls at the 900
+    default were always a 1,800 ceiling, and one call carries both allowances.
+
+    The layer that mattered here is `workshop`, and it still does. It used to be
+    EXCLUDED alongside `global`, on the reading that a general chat is already
+    covered by the workspace guardrails. It was not: they were different stores,
+    and `workshop` is where every preference captured from a chat lands, because
+    `task_scope.apply_learning_note` defaults a fence to
+    `knowledge.scope_for_context("general")`, which is `workshop`. So the
+    capture path reported success and wrote to a store nothing read; measured
+    2026-08-12, 11 records written over three weeks, none ever retrieved. That
+    cannot recur here, because there is no second store to write to.
+    """
     try:
-        from services import learnings
+        from services import standing
     except Exception:
         return ""
-    parts: list[str] = []
-    try:
-        g = learnings.memory_block(learnings.GLOBAL)
-    except Exception:
-        g = ""
-    if g:
-        parts.append("=== LEARNINGS (workspace guardrails) ===\n" + g)
     try:
         scope = provider.knowledge_scope()
     except Exception:
         scope = "workshop"
-    # `workshop` used to be excluded here alongside `global`, on the reading
-    # that a general chat is already covered by the workspace guardrails. It is
-    # not: `global` and `workshop` are DIFFERENT stores, and `workshop` is where
-    # every preference captured from a chat lands, because
-    # `task_scope.apply_learning_note` defaults a learning-note fence to
-    # `knowledge.scope_for_context("general")`, which is `workshop`.
-    #
-    # So the capture path reported success and wrote to a store nothing read.
-    # Measured 2026-08-12: 11 records, written between 2026-07-18 and that day,
-    # none ever retrieved. The worker does not read it either (project_ralph
-    # only ever passes `project:*` or `agent:*`), so those eleven operator
-    # corrections reached nothing at all.
-    #
-    # Only `global` stays excluded, and that one is right: it is already the
-    # first block.
-    if scope != learnings.GLOBAL:
-        try:
-            m = learnings.memory_block(scope)
-        except Exception:
-            m = ""
-        if m:
-            label = "OPERATOR PREFERENCES" if scope == "workshop" else f"AGENT MEMORY (scope: {scope})"
-            parts.append(f"=== {label} ===\n" + m)
-    return "\n\n".join(parts)
+    try:
+        block = standing.block(scope)
+    except Exception:
+        return ""
+    if not block:
+        return ""
+    label = "OPERATOR PREFERENCES" if scope == "workshop" else f"AGENT MEMORY (scope: {scope})"
+    return f"=== {label} ===\n" + block
 
 
 def orientation_manifest(provider: "ContextProvider") -> str:

@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+When a ticket is unexecutable because a prerequisite does not exist yet, file the prerequisite and wire depends_on rather than blocking the ticket and calling it the operator's decision; escalate only when the CHOICE is genuinely the operator's, not when the missing step is knowable.

@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+When a bug recurs after being 'fixed', suspect an unconnected seam rather than a wrong rule: check that the two halves (server emit and client subscribe) are actually wired, and pin the contract with a test that reads both sides.

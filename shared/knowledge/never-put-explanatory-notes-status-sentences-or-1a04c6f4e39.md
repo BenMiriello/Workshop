@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+Never put explanatory notes, status sentences, or 'showing N of M / this will paginate' style meta-text into the actual app UI. The operator repeatedly has to catch and remove these. Do the normal, obvious thing (real pagination, real ellipsis) instead of narrating the app's behavior to the user inside the app.

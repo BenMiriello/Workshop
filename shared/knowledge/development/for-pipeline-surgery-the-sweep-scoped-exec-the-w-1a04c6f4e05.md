@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+For pipeline surgery (the sweep, scoped_exec, the worker's own runner), do the work in-chat rather than filing it to the autonomous loop: an agent editing the runner that is executing it is the hazard being fixed. Delegate independent backend/frontend work to subagents freely.

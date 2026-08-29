@@ -1,0 +1,2 @@
+<!-- author: legacy-md; reach: always -->
+DO NOT claim "verified end-to-end" / "tested" without an actual curl, run, or test invocation in the same tick. If verification was skipped, say "shipped, verification deferred to next tick" — don't claim what you didn't do.

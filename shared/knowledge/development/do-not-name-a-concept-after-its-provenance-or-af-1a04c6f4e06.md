@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+Do not name a concept after its provenance or after an internal mechanism; name it after what it does for the operator, and never expose a concept he cannot see and prune. 'Learnings' failed both tests and he rejected it twice.

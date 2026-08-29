@@ -548,9 +548,9 @@ def apply_learning_note(context_key: str | None, reply: str) -> tuple[str, list[
         except Exception:
             scope = "workshop"
 
-    from services import learnings
+    from services import standing
     try:
-        res = learnings.record_feedback(note, source="chat", scope=scope)
+        res = standing.record(note, source="operator", scope=scope)
     except ValueError as e:
         return cleaned, [f"(learning note skipped: {e})"]
     # The write path reconciles and can decline (ADR 0022): a candidate that is
@@ -565,10 +565,10 @@ def apply_learning_note(context_key: str | None, reply: str) -> tuple[str, list[
         reason = res.get("reason") or "not a durable guardrail"
         return cleaned, [f"(learning note not captured: {reason})"]
     if resolution in ("supersede", "update"):
-        return cleaned, [f"Updated an existing preference in learnings ({scope})."]
+        return cleaned, [f"Updated an existing preference in {scope} memory."]
     if resolution == "noop":
-        return cleaned, [f"Preference already recorded in learnings ({scope})."]
-    return cleaned, [f"Captured a preference in learnings ({scope})."]
+        return cleaned, [f"Preference already recorded in {scope} memory."]
+    return cleaned, [f"Captured a preference in {scope} memory."]
 
 
 def _note_id_from_title(title: str) -> str:

@@ -1,0 +1,6 @@
+<!-- author: self; chat: 703d91609b684f0fad28797d1d0667bc -->
+Measured 2026-08-25 across every recent development-scope thread: assistant turns contain ZERO `thinking` segments. The 2026-08-23 fix (commit 26ae0a2) captures `thinking_delta` from `--include-partial-messages` and folds it as a collapsed 'Thought' disclosure, but live `claude -p` spawns enable no extended-thinking budget, so no thinking_delta frames arrive and the feature never fires. Bundle (40d58bfb) and backend (55333fce) are in sync, so it is not a stale build.
+
+What the operator sees as 'thinking text' is interim assistant NARRATION: the plain `text` segments the model writes between tool calls. Those land in `work` (Transcript.tsx AssistantTurn splits off only the trailing run of `text` as the answer). SettledWork collapses them on a settled turn, but a STREAMING turn keeps the work section open (openInitial(streaming)=open), so a long/stuck live turn renders every narration paragraph in full, interleaved with tool rows: the pre-fix wall. Confirmed by screenshot of thread 95f7fd7f (turn ends on a tool, no trailing answer, 'Working 11m37s', ~15 stacked paragraphs).
+
+Corrected direction: fold narration as its own channel; group collapse default-closed except the running group or user-opened; decide separately whether to enable real extended thinking or drop the inert capture.

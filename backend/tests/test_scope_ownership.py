@@ -154,10 +154,19 @@ class TestUnqualifiedScopesArePartitionedByDirectory:
         ownership.set_current_owner(two_users["op"])
         assert knowledge.scope_dir("workshop") == repo / "shared" / "knowledge"
 
-    def test_learnings_follow_the_same_split(self, two_users, monkeypatch):
-        from services import learnings
-        monkeypatch.setenv("WORKSHOP_RUNTIME", str(two_users["tmp"] / "rt"))
+    def test_standing_notes_follow_the_same_split(self, two_users, monkeypatch):
+        """This used to assert it of `.runtime/learnings`, which had its own
+        per-owner root. That store is gone (ticket 81198145) and a standing note
+        is a note, so the split it follows is the note store's -- the same one
+        the test above pins. Asserted here explicitly rather than deleted,
+        because "the second store splits too" was a real claim and losing it
+        silently is how a second store gets rebuilt without one."""
+        from services import knowledge, standing
+        repo = two_users["tmp"] / "repo"
+        monkeypatch.setenv("WORKSHOP_ROOT", str(repo))
         ownership.set_current_owner(two_users["op"])
-        op_dir = learnings._dir()
+        op_dir = knowledge.scope_dir("workshop")
         ownership.set_current_owner(two_users["member"])
-        assert learnings._dir() != op_dir
+        assert knowledge.scope_dir("workshop") != op_dir
+        # And a standing note is read out of exactly that directory.
+        assert standing.valid_scope("workshop") == "workshop"

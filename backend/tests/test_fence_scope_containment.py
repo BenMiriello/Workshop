@@ -89,23 +89,28 @@ class TestNoteFence:
 
 
 class TestLearningFence:
+    # The RECEIPT WORDING changed on 2026-08-28 when the learnings store folded
+    # into the note store (ticket 81198145): it no longer names a store that
+    # exists. What these tests are actually about -- that a member's fence
+    # cannot reach someone else's project, and falls back to the chat's own
+    # scope -- is unchanged, and is still what the assertions turn on.
     def test_a_member_learning_may_reach_their_own_workshop(self, instance):
         ownership.set_current_owner(instance["member"])
         _cleaned, labels = task_scope.apply_learning_note(
             "project:alpha", _learning("workshop"))
-        assert labels == ["Captured a preference in learnings (workshop)."]
+        assert labels == ["Captured a preference in workshop memory."]
 
     def test_a_member_learning_cannot_reach_someone_elses_project(self, instance):
         ownership.set_current_owner(instance["member"])
         _cleaned, labels = task_scope.apply_learning_note(
             "project:alpha", _learning("project:owned-by-op"))
-        assert labels == ["Captured a preference in learnings (project:alpha)."]
+        assert labels == ["Captured a preference in project:alpha memory."]
 
     def test_the_operator_override_still_works(self, instance):
         ownership.set_current_owner(instance["op"])
         _cleaned, labels = task_scope.apply_learning_note(
             "project:alpha", _learning("workshop"))
-        assert labels == ["Captured a preference in learnings (workshop)."]
+        assert labels == ["Captured a preference in workshop memory."]
 
 
 class TestUnknownKeysDoNotInventAStore:

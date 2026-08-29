@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+Chat rendering: the noisy channel to fold is interim assistant NARRATION (plain text segments between tool calls), not model 'thinking'. Live claude -p turns emit zero thinking_delta, so the 2026-08-23 'Thought fold' (26ae0a2) captures nothing and is inert. Do not design chat display around 'thinking' as if it were the visible reasoning.

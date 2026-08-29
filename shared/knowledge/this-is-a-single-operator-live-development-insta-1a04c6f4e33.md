@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+This is a single-operator LIVE development instance (working scope 'development'), NOT a production deployment; the DB's RLS/least-privilege/admin-DSN hardening is tenancy and security doctrine, not evidence of a prod environment. Do not apply a 'production' mental model or call it production.

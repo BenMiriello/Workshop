@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+When capturing notes/learnings, capture the load-bearing substance of what the operator said (the design, the requirements, the decision and its why) at the right scope and tier, not the last salient phrase. A one-line learning that drops the main content is a capture failure; weight and coverage matter more than reacting to a keyword.

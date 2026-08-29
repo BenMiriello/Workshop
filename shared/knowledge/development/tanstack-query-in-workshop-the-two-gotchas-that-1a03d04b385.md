@@ -1,0 +1,10 @@
+<!-- author: self; chat: 95f7fd7fe8f6413dbcea1b7e80d47979 -->
+Adopted 2026-08-25/26. `frontend/src/lib/queryClient.ts` is the single client. Two things bit us that the library's documentation does not warn about.
+
+**1. `focusManager` does NOT listen to `window.focus`.** Read `node_modules/@tanstack/query-core/build/modern/focusManager.js`: the default `#setup` registers ONLY `visibilitychange`. `packages/ui/src/usePoll.ts` deliberately listens to both, and says why: "a PWA restored from the app switcher does not always fire visibilitychange, and a poll that silently never resumes is worse than one that never paused." Workshop is an installed PWA, so migrating a poll to `useQuery` without fixing this makes its resume behaviour WEAKER. `queryClient.ts` now calls `focusManager.setEventListener(...)` to register both. Do not remove it.
+
+**Subtlety inside the fix:** the listener must call `onFocus()` with NO ARGUMENT. Passing `true` routes through `setFocused`, which (a) drops a repeat of the value it already holds, so the second of a visibilitychange/focus pair for one restore is swallowed, and worse (b) latches `#focused` permanently true, and `queryObserver.js` gates every `refetchInterval` tick on `refetchIntervalInBackground || focusManager.isFocused()` — so every migrated poll would keep firing on a backgrounded phone, destroying the pause-while-hidden property.
+
+**2. Pause-while-hidden is behavioural, not mechanical.** react-query keeps its `setInterval` armed while hidden and merely SKIPS the fetch; `usePoll` clears the timer outright. No network either way, but a JS timer still fires. Irrelevant at 15-60s, measurable for a 1.2s or 800ms poll. If it matters: `refetchInterval: (q) => document.hidden ? false : N`.
+
+**Also settled:** retry policy has one definition. `TRANSIENT_BACKOFF_MS` ([400,1200,2500]) is exported from `packages/ui/src/httpError.ts` and drives BOTH the retry bound and `retryDelay`. Before this, the kit waited 4.1s and a query waited 7.0s (react-query's exponential default) riding out the same backend restart.

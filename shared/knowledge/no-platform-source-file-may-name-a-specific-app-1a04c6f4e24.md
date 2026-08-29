@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+No platform source file may name a specific app (no registry entry, no `if app_id ==`, no icon import, no status probe, no test fixture, no mobile permission string). An app declares what it is and the platform reads the declaration; anything the platform needs to know is a field on the app record, never a branch in platform code. The operator's requirement is that a production deploy for another user contains zero trace of his apps (budget, finance, birds, location, commute, notes, health).

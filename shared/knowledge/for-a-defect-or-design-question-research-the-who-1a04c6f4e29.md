@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+For a defect or design question, research the whole picture and write the design before touching code. Do not open with a quick patch, even an obviously correct one-liner.

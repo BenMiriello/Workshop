@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+A passing test suite is not evidence a feature works: never claim soundness from green tests. Prove behaviour by executing the real path (probes/end-to-end), and check whether a test exists for the property that actually matters, not just adjacent ones.

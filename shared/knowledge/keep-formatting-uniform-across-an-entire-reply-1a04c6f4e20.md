@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+Keep formatting uniform across an entire reply: if part of it uses headers, short paragraphs or a table, all of it should. Never open with dense run-on paragraphs and then switch to structured sections halfway through.

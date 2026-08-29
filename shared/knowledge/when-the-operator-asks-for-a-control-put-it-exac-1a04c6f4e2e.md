@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+When the operator asks for a control, put it exactly where he specified (e.g. an icon in the message bubble's bottom-right corner, beside Copy/Branch), and never add standing explainer text narrating a mechanism. Fix the bug asked for; do not paper over it with perpetual UI. He has corrected this shape repeatedly.

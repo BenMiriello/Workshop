@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+Build the generic verb into the platform and let the thing being acted on declare its own particulars, with stack defaults in one documented table. Do not hardcode a port, credential, tool version or app name into a platform capability. Applies to preview/screenshot, worktree provisioning, and anything similar.

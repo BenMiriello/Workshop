@@ -1,0 +1,2 @@
+<!-- author: legacy-md; reach: always -->
+DO NOT write "Here you would do X" / "User can extend this by Y" / "Left as exercise" in code comments. These are placeholder prose pretending to be implementation. If the task requires X to actually work, do X — or split the task.

@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+Design platform systems for the production/cloud target (AWS, multi-user, our choice of DB version and filesystem), not around the local dev box's quirks (ext4, disk fullness, how it's already built). The local machine is one runtime profile among many, not the design constraint. Choose the right filesystem/Postgres and run that locally (containerized if needed).

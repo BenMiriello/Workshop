@@ -1,0 +1,2 @@
+<!-- author: legacy-md; reach: always -->
+DO NOT mark `[x]` when the task description still has "needs operator", "still needs", "deferred", or "pending until" — those are by definition not done. If you can't finish, the task is `[~] BLOCKED: <specific reason>`, not `[x]`.

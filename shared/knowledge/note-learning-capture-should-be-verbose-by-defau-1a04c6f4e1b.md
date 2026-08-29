@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+Note/learning capture should be VERBOSE by default: capture the full weight of what the operator said, not the last salient phrase. Apply discretion only to CLASSIFY (task vs. task-context vs. reference vs. durable preference) and tier/scope correctly, not to decide whether to capture at all. Over-capture and prune later beats under-capturing the load-bearing content.

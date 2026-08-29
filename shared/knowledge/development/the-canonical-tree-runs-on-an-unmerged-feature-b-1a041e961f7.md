@@ -1,0 +1,10 @@
+<!-- author: self; chat: 50cf71c1e6564676b908b6f33ddf9fe1 -->
+Measured 2026-08-27.
+
+**The live Workshop runs from `feat/client-state-consolidation`, not `main`.** `/workspace` (the canonical tree, the one the operator's origin is built from) is checked out on that branch, which is **26 commits ahead of main and 0 behind**. Every chat committing in the canonical tree is landing on that branch, not on main: the client-state/TanStack work, the dashboard build, the chats-page rebuild, the birds/apps cache reads, the usage `token_usage.py` work and the refs fix are all sitting there together. Nothing is lost, but nothing has merged either, so `main` does not contain any of the last day's work. This is the concrete instance of the 'work finished but never merged to main' hazard raised in the platform-redesign thread.
+
+**All ten locked worktrees under `branches/development/` are finished leftovers.** Each of their `wt/development/*` branches is **0 commits ahead of main** and 111-198 commits behind it, i.e. fully merged and long stale, while still holding a `locked` worktree and ~777M. They are not in-flight work. Do not assume a locked worktree means an agent owns live changes; check `git rev-list --left-right --count main...<branch>` first.
+
+**`.runtime/worktree-<12hex>.lock` files are not a leak.** They are `work_driver.tree_lock`'s per-tree flock (`queue_key` = first 12 hex of md5 of the dir path). flock files are deliberately never unlinked, so the 1192 of them dated 23-26 Aug are expected residue. They do record ~1192 distinct tree paths locked in four days, which is a useful measure of worktree churn.
+
+**Disk is the standing risk:** the volume holding the tree is at 99% (about 20GB free of 1.8T), and most of the consumption is outside the workshop tree and outside an agent's reachable paths. Worktree-per-ticket work should assume space is scarce and avoid full copies (this is why the dep clone is hardlinked).

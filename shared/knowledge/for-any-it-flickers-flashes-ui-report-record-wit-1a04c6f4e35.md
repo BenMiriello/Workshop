@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+For any 'it flickers/flashes' UI report, record with a MutationObserver on document.body, not a requestAnimationFrame sampler — rAF samples once per frame and averages sub-frame states away, which is exactly the evidence needed.

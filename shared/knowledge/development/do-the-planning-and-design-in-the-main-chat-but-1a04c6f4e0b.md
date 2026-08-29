@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+Do the planning and design in the main chat, but delegate the implementation to separate chats acting as agents, track every piece as a ticket with an id, and mark tickets done as they land rather than reporting completion in prose.

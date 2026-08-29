@@ -134,8 +134,8 @@ def _safe_scope(scope_key: str) -> str:
     """A scope key as ONE filename component — see memory_keeper._safe_scope,
     which had the identical defect: `:` -> `-` left `/` and `..` intact, and
     `state_path`'s caller writes to whatever comes back."""
-    from services import learnings
-    return learnings._valid_scope(scope_key).replace(":", "-")
+    from services import standing
+    return standing.valid_scope(scope_key).replace(":", "-")
 
 
 def state_path(scope_key: str) -> Path:

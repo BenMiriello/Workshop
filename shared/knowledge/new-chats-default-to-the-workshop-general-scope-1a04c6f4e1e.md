@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+New chats default to the workshop ('general') scope unless launched from within a scoped surface (project/app/scoped chat), which they inherit; an existing chat always opens in its own stored scope, never the last scope the picker was left on.

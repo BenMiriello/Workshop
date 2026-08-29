@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+When building from a mockup, treat its example item counts (rows per card, tiles per page) as drawing constraints rather than product rules: show everything and scroll. And never make a card's alarm colour permanent, because a hue that never varies carries no information.

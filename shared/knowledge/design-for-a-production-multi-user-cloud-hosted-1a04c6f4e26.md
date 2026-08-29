@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+Design for a production, multi-user, cloud-hosted deployment, never for the operator's current home machine. Anything tied to his specific setup (a consumer GPU, a local daemon like gpubrokerd, nvidia-smi, host filesystem scans) does not belong in platform core and must be removed or moved behind a config seam, not quarantined. Be ruruthless and comprehensive about this; timidity born of 'we've always used this custom setup' is the exact thing to undo.

@@ -1,0 +1,20 @@
+<!-- author: operator -->
+User notes on notes/memory/scopes/development/other
+
+we need a development project. development on workshop needs to go in a project. only in development env/mode of course. nothing of the development app/code/capability should ever serve in production. instead of doing the 'development' work on workshop IN the workshop/home scope, this would make more sense. need to research think and plan how to redesign/rework things.
+
+The memory page makes no sense. I gave very clear instructions about it being files and a file viewer/editor and having a normal file viewer for memories and for files (like source code files - different page but shares a great deal with memories) and folder tree viewer. Yet i still see this form for creating a note which directly and flagrantly contradicts that design direction. I could give more feedback about how bad the form and page is but it'd be a waste cause none of it is going to remain anyways - the whole idea/structure is wrong.
+
+Note on css/styling rules: All over the place i see double-line borders when selecting areas like inputs. A while ago i pointed out how bad this looked and said that the global style rule had to be changed. It seems instead of fixing it this was changed ONLY for the few places i could see it such as the chat message input. that was a mistake. when i say to solve things globally i mean it - and I trust you to follow my instructions when I'm clear so it's very annoying to have to hound you to actually do what I say like this.
+
+I also said it was wrong to have to click reload to get updates so instead of FIXING this you moved the reload button somewhere else. Why?
+
+THe memory name input is all wrong. is this what we have for files too? abysmal. again its like some horrible form/file-editor hybrid. and it autofills with 'untitled note' so if you ever clear it it immediately FILLS with that text its so fucking annoying you can never just clear it and write something new. this is BASIC logic and UI. is this how we're doing the file viewer/editor too? surely hopefully not. both these should be basically the same. we must be using a common and applicable file viewer/editor package as the foundation for our own file viewer/editor - one with code editing and highlighting and other capabilities. tiptap? other? something good for viewing/editing other kinds of files too though like regular text and other. did we not already do this?
+
+The file tree viewer doesnt make sense. at least in 'memory'. at least in workshop home memory. i dont want to have to describe a basic filetree navigator and viewer since it should be basic/obvious. what we have is NOT sensible or common. as established long ago there should be system memories and user memories. then we have a light starting folder structure in system and user can do what they want in user memories. 
+
+Stop putting explainer text all over the place - the aplication itself is not a place for you to leave notes to me! how many times and how many ways to i have to tell you to never ever fucking do this again?! like "Pinned notes, then preferences and decisions, rank first in what gets read into every chat in this scope." or "Write the note in markdown" or so many other things. fucking STOP THIS PATTERN FOREVER!
+
+I fucking hate that you have to pick a 'type' for a memory - makes no sense. the choices make no sense and having to pick a type makes no sense. remove all of that. idk what 'pinned' is i dont need that remove that all entirely. dont just delete the ui delete the entire feature/data.
+
+yeah so having 'scopes' in the folder tree navigator makes no sense. all of this sucks. should be memories in workshop root, and in development app, and in each other app. all different file trees. make this right and make it normal and make sense. remove and refactor all the other bs that obviously is overdone, wrong, clearly wrong idea, not normal, weird. like this. dont just barely patch it on the surface while retaining the rot and wrong ideas underneath. ACTUALLY FULLY FIX IT AND REDESIGN AND OO IT RIGHT!

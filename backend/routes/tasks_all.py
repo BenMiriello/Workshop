@@ -36,7 +36,7 @@ from routes.api_models import (DeletedOut, Job, LabelCount, Readiness, Task,
                                TaskLink)
 from services import (tasks, task_scope, task_dedup, task_decision, jobs, ownership,
                       work_review,
-                      knowledge, learnings, permissions, ticket_readiness,
+                      knowledge, standing, permissions, ticket_readiness,
                       latitude as latitude_svc)
 from wsplatform.http import DEFAULT_PAGE, MAX_PAGE, Page, PageMeta
 
@@ -1079,7 +1079,8 @@ _DECISION_VERB = {
 
 
 def _learnings_scope(scope: str) -> str:
-    """The learnings scope a task's scope mints into. `knowledge.scope_for_context`
+    """The memory scope a task's scope mints a standing note into.
+    `knowledge.scope_for_context`
     owns the mapping (a build agent linked to a project shares that project's
     scope), so a rule lands where that scope's chats and sweeps will read it."""
     return knowledge.scope_for_context(scope)
@@ -1110,7 +1111,7 @@ class TaskReviewOut(BaseModel):
     proved itself) are present only for the verb that produces them.
 
     `grant` and `learning` stay `dict`: they are whole records owned by
-    `services/permissions.py` and `services/learnings.py`, and narrowing them
+    `services/permissions.py` and `services/standing.py`, and narrowing them
     from this router is how a response_model silently drops a field its owner
     added."""
 
@@ -1249,12 +1250,12 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
             # came from, so two answers to two different blocks count as two
             # independent confirmations and re-answering one block does not.
             try:
-                rec = learnings.record(rule, source=f"review:{scope}:{task_id}",
-                                       scope=lscope, tags=["block"])
+                rec = standing.record(rule, source=f"review:{scope}:{task_id}",
+                                      scope=lscope)
             except ValueError as e:
                 raise HTTPException(400, str(e))
             out["learning"] = rec
-            out["promotion"] = learnings.promote_when_stable(lscope, rec["id"])
+            out["promotion"] = standing.is_stable(lscope, rec.get("note_id") or "")
             tasks.update(root, task_id, evidence={
                 "kind": "review",
                 "ref": f"rule ({lscope}): {rule}",

@@ -21,7 +21,7 @@ The write path is the mem0/ACE shape the design (Section 6) settled on:
   Apply   itemized deltas only (ACE context-collapse guard): every write is a
           single bulleted add/update/retire line. Semantic facts append to the
           scope knowledge note (a superseded fact is annotated "was X, now Y",
-          never deleted); procedural insights route to learnings.py.
+          never deleted); procedural insights become standing notes.
   Promote a procedure to a proposed skill when the same pattern recurs (>= 3
           times) in the scope's learnings, recording a skill-proposal note for
           the operator to confirm. Skill CREATION stays operator-confirmed: the
@@ -44,7 +44,7 @@ import re
 import time
 from pathlib import Path
 
-from services import jobs, knowledge, learnings
+from services import jobs, knowledge, standing
 
 # The single per-scope note that holds consolidated semantic facts. Every write is
 # an appended bullet (itemized delta); existing bullets are never rewritten.
@@ -70,7 +70,7 @@ _CONSOLIDATED_HEADER = (
 DISTILLED_NOTE = "chat-distilled"
 
 # Near-duplicate threshold on canonical token-set jaccard (matches learnings).
-_NEAR_DUP_JACCARD = learnings._NEAR_DUP_JACCARD
+_NEAR_DUP_JACCARD = standing.NEAR_DUP_JACCARD
 # A candidate carrying a supersession cue only RETIRES a prior fact it is actually
 # about; this is the low similarity floor for "about the same thing".
 _SUPERSEDE_SIM_FLOOR = 0.30
@@ -185,11 +185,11 @@ def _safe_scope(scope_key: str) -> str:
     HTTP-reachable (scope keys here come from agent definition frontmatter), but
     a build agent writes those files, so "not reachable" is a statement about
     today's callers rather than about this function. Validated the same way
-    `learnings._valid_scope` does, which is the module that already got this
+    `standing.valid_scope` does, which is the module that already got this
     right. See the 2026-08-11 scope-separation security audit section 2.
     """
-    from services import learnings
-    return learnings._valid_scope(scope_key).replace(":", "-")
+    from services import standing
+    return standing.valid_scope(scope_key).replace(":", "-")
 
 
 def _watermark_path(scope_key: str) -> Path:
@@ -354,7 +354,7 @@ def _learnings_scope(scope_key: str) -> str:
 
 def _safe_list_learnings(learn_scope: str) -> list[dict]:
     try:
-        return learnings.list_learnings(learn_scope)
+        return standing.list_standing(learn_scope)
     except Exception:
         return []
 
@@ -375,14 +375,14 @@ def _route_semantic(candidate: str, existing: list[str]) -> tuple[str, str | Non
     Returns (decision, matched_bullet). NOOP on an exact canonical duplicate;
     RETIRE (supersede) when the candidate carries a negation/supersession cue and
     is about a similar prior fact; UPDATE on a near-duplicate; ADD otherwise."""
-    cand_tokens = learnings._token_set(candidate)
-    cand_canon = learnings._canonical(candidate)
+    cand_tokens = standing.token_set(candidate)
+    cand_canon = standing.canon_hash(candidate)
     best_sim = 0.0
     best_bullet: str | None = None
     for b in existing:
-        if learnings._canonical(b) == cand_canon:
+        if standing.canon_hash(b) == cand_canon:
             return ("noop", b)
-        sim = learnings._jaccard(cand_tokens, learnings._token_set(b))
+        sim = standing.jaccard(cand_tokens, standing.token_set(b))
         if sim > best_sim:
             best_sim = sim
             best_bullet = b
@@ -504,7 +504,7 @@ def _apply_semantic(scope_key: str, candidates: list[str], *, dry_run: bool) -> 
 
 
 def _apply_procedural(scope_key: str, candidates: list[str], *, dry_run: bool) -> dict:
-    """Route procedural insights to learnings.py, which does its own jaccard
+    """Route procedural insights to standing.py, which does its own jaccard
     dedup (a duplicate attaches provenance rather than dropping the signal). When
     dry_run is True it simulates that dedup (same canonical-hash + jaccard test)
     to report add/noop without recording anything."""
@@ -513,16 +513,16 @@ def _apply_procedural(scope_key: str, candidates: list[str], *, dry_run: bool) -
 
     if dry_run:
         existing = _safe_list_learnings(learn_scope)
-        hashes = {learnings._canon_hash(e.get("text", "")) for e in existing}
-        tokensets = [learnings._token_set(e.get("text", "")) for e in existing]
+        hashes = {standing.canon_hash(e.get("text", "")) for e in existing}
+        tokensets = [standing.token_set(e.get("text", "")) for e in existing]
         for cand in candidates:
             cand = (cand or "").strip()
             if not cand:
                 continue
-            h = learnings._canon_hash(cand)
-            ts = learnings._token_set(cand)
+            h = standing.canon_hash(cand)
+            ts = standing.token_set(cand)
             dup = h in hashes or any(
-                learnings._jaccard(ts, x) >= _NEAR_DUP_JACCARD for x in tokensets)
+                standing.jaccard(ts, x) >= _NEAR_DUP_JACCARD for x in tokensets)
             if dup:
                 counts["noop"] += 1
             else:
@@ -536,8 +536,8 @@ def _apply_procedural(scope_key: str, candidates: list[str], *, dry_run: bool) -
         if not cand:
             continue
         try:
-            res = learnings.record(
-                cand, source="memory-keeper", scope=learn_scope, tags=["consolidated"],
+            res = standing.record(
+                cand, source="memory-keeper", scope=learn_scope,
             )
         except Exception:
             continue
@@ -557,7 +557,7 @@ def _slugify(text: str, *, max_words: int = 5) -> str:
 
 def _draft_skill_body(lessons: list[str]) -> str:
     """Assemble a proposed SKILL.md body deterministically (no model call), the
-    same shape learnings.distill_skill would use. We draft rather than call
+    same shape a distilled skill would use. We draft rather than call
     distill_skill because that writes a live skill; skill creation is operator-
     confirmed, so the keeper only files a proposal."""
     preamble = ("Proposed skill drafted by the memory-keeper from a repeated "
@@ -602,7 +602,7 @@ def _promote_skills(scope_key: str, *, dry_run: bool) -> int:
         if not dry_run:
             proposal = (
                 f"# Skill proposal: {name}\n\n"
-                f"Recurred {recur} times in the {learn_scope} learnings. "
+                f"Recurred {recur} times in {learn_scope} memory. "
                 "Operator: confirm to create this skill (it is NOT active yet).\n\n"
                 f"Proposed name: {name}\n\n"
                 f"Description: recurring procedure distilled from operator/reviewer feedback.\n\n"
@@ -632,7 +632,7 @@ def run_consolidation(scope_key: str, dry_run: bool = False) -> dict:
 
     When ``dry_run`` is True this is a pure PREVIEW: it does the full gather +
     route + counts but performs NO writes at all (no note writes, no
-    learnings.record, no skill-proposal files, no index-cap write, no watermark
+    standing.record, no skill-proposal files, no index-cap write, no watermark
     advance), so a verification/preview run never mutates the tree. When False it
     applies the itemized deltas, enforces the index cap, and advances the
     watermark on success."""

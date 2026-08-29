@@ -297,49 +297,56 @@ def c_index_is_not_ancient(name: str) -> None:
     check(name, PASS, f"index built {age_h:.1f}h ago")
 
 
-# --- the learnings store ---------------------------------------------------
+# --- standing notes ---------------------------------------------------------
+# These read the NOTE store now. `.runtime/learnings/*.jsonl` folded into it on
+# 2026-08-28 (ticket 81198145), so the three checks that read JSONL rows are
+# two checks that read notes plus one that is deleted rather than ported: "the
+# learnings GC can actually fire" asked whether a garbage collector's
+# precondition was falsified by the injector, and there is no collector, no
+# retrieval counter and nothing to falsify. Reading no longer writes at all.
 
-def _learning_rows() -> list[dict]:
-    from wsplatform import paths
 
-    root = Path(paths.runtime_dir()) / "learnings"
+def _standing_rows() -> list[dict]:
+    """Every standing note in every scope the store knows, as {scope,id,text}."""
+    from services import knowledge, standing
+
     rows: list[dict] = []
-    if not root.is_dir():
-        return rows
-    for f in sorted(root.glob("*.jsonl")):
-        for line in f.read_text().splitlines():
-            line = line.strip()
-            if line:
-                try:
-                    rows.append(json.loads(line))
-                except Exception:
-                    pass
+    try:
+        scopes = [key for key, _d in knowledge.all_scope_dirs()]
+    except Exception:
+        scopes = ["workshop"]
+    for scope in scopes:
+        try:
+            for r in standing.list_standing(scope):
+                rows.append({**r, "scope": scope})
+        except Exception:
+            continue
     return rows
 
 
-def c_no_machine_noise_in_learnings(name: str) -> None:
+def c_no_machine_noise_in_standing_notes(name: str) -> None:
     """A status token is a log line, not a guardrail. Two of these were injected
     into every agent prompt for a month."""
-    rows = _learning_rows()
+    rows = _standing_rows()
     junk = [r for r in rows
             if len((r.get("text") or "").strip()) < 60
             and ":" in (r.get("text") or "")
             and " " not in (r.get("text") or "").split(":")[0]]
     if junk:
-        check(name, FAIL, "machine-status rows still present: "
+        check(name, FAIL, "machine-status notes still present: "
                           + "; ".join(repr(r.get("text")) for r in junk[:4]))
         return
-    check(name, PASS, f"{len(rows)} rows, none is a bare status token")
+    check(name, PASS, f"{len(rows)} standing notes, none is a bare status token")
 
 
-def c_no_duplicate_learnings(name: str) -> None:
+def c_no_duplicate_standing_notes(name: str) -> None:
     """A revision must supersede, not sit beside the thing it revises."""
-    rows = _learning_rows()
+    rows = _standing_rows()
     seen: dict[tuple, list[str]] = {}
     for r in rows:
         text = (r.get("text") or "").strip().lower()
-        # first twelve significant words: catches an edited restatement, which
-        # an exact-hash dedupe misses by construction
+        # First twelve significant words: catches an edited restatement, which
+        # an exact-hash dedupe misses by construction.
         key = (r.get("scope"), tuple(text.split()[:12]))
         if len(key[1]) < 6:
             continue
@@ -350,42 +357,7 @@ def c_no_duplicate_learnings(name: str) -> None:
         check(name, FAIL, f"{len(dupes)} near-duplicate group(s), e.g. "
                           f"{' '.join(first[1][:8])!r} x{len(dupes[first])}")
         return
-    check(name, PASS, f"{len(rows)} rows, no near-duplicate groups")
-
-
-def c_learnings_gc_can_fire(name: str) -> None:
-    """Before T1, `memory_block` stamped last_retrieved on every render and
-    `prune_stale` kept anything recent, so the collector's precondition was
-    falsified by the injector and it could never archive anything."""
-    from services import learnings
-
-    if not hasattr(learnings, "prune_stale"):
-        check(name, SKIP, "no prune_stale in learnings")
-        return
-    rows = _learning_rows()
-    if not rows:
-        check(name, SKIP, "no learnings to reason about")
-        return
-    # Everything carrying an identical, always-today last_retrieved is the
-    # signature of the bug: the counter measures rendering, not relevance.
-    stamps = {r.get("last_retrieved") for r in rows if r.get("last_retrieved")}
-    counts = {r.get("retrieval_count") for r in rows if r.get("retrieval_count")}
-    if len(rows) > 4 and len(counts) == 1:
-        check(name, FAIL,
-              f"every row shares retrieval_count={counts.pop()!r}: the counter "
-              "measures rendering, not selection, so prune_stale can never fire")
-        return
-    check(name, PASS, f"{len(stamps)} distinct retrieval stamps, "
-                      f"{len(counts)} distinct counts")
-
-
-def c_provenance_is_capped(name: str) -> None:
-    rows = _learning_rows()
-    worst = max((len(r.get("provenance") or []) for r in rows), default=0)
-    if worst > 25:
-        check(name, FAIL, f"a single row carries {worst} provenance entries")
-        return
-    check(name, PASS, f"largest provenance array is {worst}")
+    check(name, PASS, f"{len(rows)} standing notes, no near-duplicate groups")
 
 
 # --- dead substrates -------------------------------------------------------
@@ -455,10 +427,8 @@ CHECKS = [
     ("a note write marks the index stale", c_index_knows_about_note_writes),
     ("chat/ticket/doc writes mark the index stale", c_index_knows_about_chats_and_tickets),
     ("the index is not ancient", c_index_is_not_ancient),
-    ("no machine noise in learnings", c_no_machine_noise_in_learnings),
-    ("no duplicate learnings", c_no_duplicate_learnings),
-    ("the learnings GC can actually fire", c_learnings_gc_can_fire),
-    ("provenance arrays are capped", c_provenance_is_capped),
+    ("no machine noise in standing notes", c_no_machine_noise_in_standing_notes),
+    ("no duplicate standing notes", c_no_duplicate_standing_notes),
     ("dead memory substrates are gone", c_dead_substrates_are_gone),
     ("Letta memory was exported before removal", c_letta_memory_was_exported),
     ("the persona does not lie about injection", c_persona_does_not_lie),

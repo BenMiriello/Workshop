@@ -1,0 +1,2 @@
+<!-- author: chat; reach: always -->
+When the operator provides a reference (uploaded image, zip, design export, or link), open and actually view every piece in its highest-fidelity form before writing any code; for a visual task, treat done as the rendered result screenshotted and compared side by side against that reference, never against your own memory of it. Do not substitute repo source that merely resembles it, and if the operator says it is still wrong, assume your model is wrong before blaming cache, build, or reachability.
