@@ -15,8 +15,8 @@ import { queryKeys } from "../../lib/queryKeys";
 //   Row 1: a statement — the worktree this chat is in, its state, who else is
 //   in it. Not a control.
 //   Then: "Move this chat to..." — a secondary action, one level down.
-//   Then: "Open the worktree" — the Branches page, where branch, lease, diff,
-//   merge and discard live.
+//   Then: "Open the worktree" - the chat list, filtered to this branch. It used
+//   to mean the Branches page; that page is deleted.
 //
 // Nobody picks a worktree on the normal path. This pill names where you are.
 //
@@ -139,8 +139,10 @@ export default function TreePill({ threadId }: { threadId: string }) {
           Move this chat to...
         </MenuItem>
 
-        {/* Only when in a worktree (not trunk): the detail view where branch,
-            lease, diff, merge and discard live. */}
+        {/* Only when in a worktree (not trunk): the chat list, where the other
+            chats on this branch are. It used to open the Branches page, which
+            is deleted; branch, lease, diff, merge and discard move to the app's
+            Work tab (threads-branches-and-pages-2026-08-29.md). */}
         {tree?.branch_slug && (
           <MenuItem
             icon={<GitBranch size={14} aria-hidden />}

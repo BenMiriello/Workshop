@@ -46,8 +46,12 @@ const Runs = lazyPage(() => import("./pages/Runs"));
 // change page drags a whole patch renderer, and neither screen is on the way
 // into the app.
 const Changes = lazyPage(() => import("./pages/Changes"));
-// Branches page is retired (worktree-as-the-place-2026-08-28.md §7): its
-// content is folded into the Chats page, which now groups by worktree.
+// The Branches page is retired and its component is deleted. /branches
+// redirects to /chats, which is a FLAT list of chats: the grouping-by-worktree
+// version shipped and was reverted the same day (ticket 65cb8c6f), because
+// unnamed t-<hex> slugs pushed the actual conversations down the page. A branch
+// is a small tag on a chat row. The branch-centred view belongs in the app's
+// Work tab, not on the global chat list -- threads-branches-and-pages-2026-08-29.md §6.
 const ChangeReview = lazyPage(() => import("./pages/ChangeReview"));
 const RunDetail = lazyPage(() => import("./pages/RunDetail"));
 const Usage = lazyPage(() => import("./pages/Usage"));
