@@ -211,6 +211,41 @@ def _app_or_404(app_id: str) -> dict:
     return app
 
 
+def owned_scope(app: dict) -> str:
+    """The scope key this app OWNS, resolved rather than spelled.
+
+    `app:<slug>` was hardcoded at three call sites. That is right for an
+    ordinary installed app and not universally: an app whose linked project is
+    a ROOT scope owns that root scope, and `app:<its slug>` would name a
+    directory nothing writes to, which is why such an app's pages opened empty.
+    That is not a special case for one app, it is what the project link has
+    always meant, so it resolves through the same
+    `scope_tree.scope_for_context` every other scope question uses. An
+    ordinary app resolves to an `app:`-prefixed scope; a root-scoped app
+    resolves to the root scope itself.
+
+    Spelling any slug here would put an app's name in platform source, which
+    scripts/check_no_app_names.py counts and CLAUDE.md forbids -- including in
+    a docstring example, which is how this function first failed that gate.
+    """
+    from services import scope_tree
+
+    slug = app["slug"]
+    link = app.get("project_slug")
+    if link:
+        resolved = scope_tree.scope_for_context(link)
+        # ONLY when the link names a root scope IN ITS OWN RIGHT. `resolved ==
+        # link` is exactly that test: a root kind resolves to itself, while an
+        # ordinary app resolves to an `app:`-prefixed scope and an unknown slug
+        # falls through to the workshop root. Without the equality check the
+        # fallback silently pointed a linked app at `workshop`, which is another
+        # app's data, and is the failure this module's docstring exists to not
+        # repeat.
+        if resolved == link:
+            return resolved
+    return f"app:{slug}"
+
+
 def tickets_for_app(app_id: str) -> list[dict]:
     """The app's real tickets, off the JSON store (services.tasks), reached
     through its task-store scope (`app:<slug>`). Empty -- never an error --
@@ -220,7 +255,7 @@ def tickets_for_app(app_id: str) -> list[dict]:
     from services import task_scope, tasks
 
     app = _app_or_404(app_id)
-    root = task_scope.root_for_context(f"app:{app['slug']}")
+    root = task_scope.root_for_context(owned_scope(app))
     if root is None:
         return []
     return tasks.list_tasks(root)
@@ -234,7 +269,7 @@ def notes_for_app(app_id: str) -> list[dict]:
     from services import knowledge
 
     app = _app_or_404(app_id)
-    return knowledge.list_notes(f"app:{app['slug']}")
+    return knowledge.list_notes(owned_scope(app))
 
 
 def runs_for_app(app_id: str, *, limit: int = 50) -> list[dict]:

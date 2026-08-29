@@ -34,15 +34,26 @@ from dataclasses import dataclass
 from services import installed_apps
 from wsplatform import paths
 
-__all__ = ["AppRoster", "load", "all_app_slugs", "linked_project_slug"]
+__all__ = ["AppRoster", "load", "all_app_slugs", "linked_project_slug",
+           "is_self_slug"]
 
-# The platform's own dev-loop project (`self: true` in the registry, and the
-# one name ADR 0014 reserves for the platform repo). It sits in the same file
-# as every real project, but it is not something the operator installed as an
-# app -- it is this checkout's own source -- so it is excluded from the app
-# roster on that ground, the same way `scope_tree` gives `development` its
-# own kind rather than treating it as a project like any other.
-_SELF_PROJECT_SLUG = "development"
+# THE SELF-HOSTING PROJECT IS AN APP, and it is recognised by its DECLARATION
+# (`self: true` in the registry), never by its slug.
+#
+# It used to be excluded from the roster by a hardcoded slug, on the reasoning
+# that this checkout's own source is not something the operator installed. The
+# consequence was two hardcodes pointing at each other: because the roster
+# refused to name it, `db/app_backfill.py` had to spell the same slug again to
+# put the row back, and it was the only app in the tree created by literal
+# rather than by declaration. Between them they were four of the lines
+# `scripts/check_no_app_names.py` counts, and CLAUDE.md forbids exactly this:
+# "an app declares what it is and the platform reads the declaration".
+#
+# It is still not an INSTALLED app, so it never enters `linked` (which is
+# installed-and-project-both) and `scope_tree` is unaffected: it keeps the
+# root scope its notes and chats actually live in.
+def _is_self(rec: object) -> bool:
+    return bool(isinstance(rec, dict) and rec.get("self"))
 
 
 @dataclass(frozen=True)
@@ -53,8 +64,16 @@ class AppRoster:
     `installed_apps.installed_app_ids()` and the projects registry already
     have."""
     installed: tuple[str, ...]     # from .runtime/installed-apps.json, in order
-    projects: dict[str, dict]       # slug -> project record, minus the self project
+    projects: dict[str, dict]       # slug -> project record, self project included
     linked: dict[str, str]          # app slug -> project slug, where both exist
+
+    @property
+    def self_slugs(self) -> frozenset[str]:
+        """Slugs whose project record declares `self: true`. An app row for one
+        of these is `dev_only`: it is this installation's own source, so it must
+        not appear in a production catalog. Read from the declaration so no
+        caller has to know which slug that is."""
+        return frozenset(s for s, rec in self.projects.items() if _is_self(rec))
 
 
 def _load_projects() -> dict[str, dict]:
@@ -71,8 +90,7 @@ def _load_projects() -> dict[str, dict]:
 
 def load() -> AppRoster:
     installed = tuple(installed_apps.installed_app_ids())
-    projects = {slug: rec for slug, rec in _load_projects().items()
-                if slug != _SELF_PROJECT_SLUG}
+    projects = _load_projects()
     linked = {slug: slug for slug in installed if slug in projects}
     return AppRoster(installed=installed, projects=projects, linked=linked)
 
@@ -115,3 +133,12 @@ def linked_project_slug(app_slug: str) -> str | None:
     if app_slug in roster.projects and app_slug not in roster.installed:
         return app_slug
     return None
+
+
+def is_self_slug(app_slug: str) -> bool:
+    """True when this slug is the installation's own source, by declaration.
+
+    The one question `db/app_backfill.py` needs answered to set `dev_only`
+    without spelling a slug.
+    """
+    return app_slug in load().self_slugs

@@ -98,19 +98,21 @@ def _backfill_apps(s) -> dict[str, str]:
         project_title = None
         if project_slug:
             project_title = (roster.projects.get(project_slug) or {}).get("title")
+        # `dev_only` from the project's own `self: true` declaration. The
+        # installation's own source gets a row like any other app, and the
+        # catalog filter hides it on a production install; it does NOT get
+        # left out of the table, because an absent row cannot own chats,
+        # notes or tickets, which is what left its pages empty.
+        #
+        # This used to be a second, hardcoded upsert spelling the slug, forced
+        # by app_links excluding that same slug from the roster by name. Both
+        # literals are gone: the registry declares it and both sides read the
+        # declaration (CLAUDE.md: an app declares what it is).
         row = app_repo.upsert_app(
             s, org_id, slug=slug, name=_display_name(slug, project_title),
-            icon=_icon(slug), project_slug=project_slug)
+            icon=_icon(slug), project_slug=project_slug,
+            dev_only=app_links.is_self_slug(slug))
         ids[slug] = row["id"]
-
-    # The development app is not in installed-apps.json (it is the platform
-    # repo itself, not an installed app), so it is not in all_app_slugs().
-    # Upsert it separately with dev_only=True so the catalog filter can hide
-    # it on a production install without requiring the row to be absent.
-    dev_row = app_repo.upsert_app(
-        s, org_id, slug="development", name="Workshop (development)",
-        project_slug="development", dev_only=True)
-    ids["development"] = dev_row["id"]
 
     return ids
 
@@ -132,11 +134,19 @@ def _backfill_chats(s, app_ids: dict[str, str]) -> dict:
     # by slug equality today (app_links.linked_project_slug), but this does
     # not assume that stays true -- it is a real reverse lookup, not a mirror
     # of the forward one.
-    project_to_app: dict[str, str] = {}
+    # RESOLVED SCOPE -> app_id, for every app. Keying on the resolved scope
+    # rather than branching on its prefix is what makes this uniform: an
+    # ordinary app resolves to `app:<slug>`, an app filed against its project
+    # view resolves to `project:<slug>`, and an app whose linked project IS a
+    # root scope resolves to that root scope. All three are just keys here.
+    #
+    # The prefix branching below used to handle the first two and write off
+    # every root scope as unlinkable, which left 177 threads unlinked and an
+    # app page that opened to nothing.
+    scope_to_app: dict[str, str] = {}
     for slug, aid in app_ids.items():
-        ps = app_links.linked_project_slug(slug)
-        if ps:
-            project_to_app[ps] = aid
+        ps = app_links.linked_project_slug(slug) or slug
+        scope_to_app[scope_tree.scope_for_context(ps)] = aid
 
     rows = s.execute(text(
         "SELECT id, context_key FROM chat_thread WHERE org_id = :org "
@@ -148,21 +158,15 @@ def _backfill_chats(s, app_ids: dict[str, str]) -> dict:
     for row in rows:
         thread_id, context_key = row[0], row[1]
         scope = scope_tree.scope_for_context(context_key)
-        app_id = None
-        if scope.startswith("app:"):
-            app_id = app_ids.get(scope.split(":", 1)[1])
-        elif scope.startswith("project:"):
-            app_id = project_to_app.get(scope.split(":", 1)[1])
+        app_id = scope_to_app.get(scope)
         if app_id:
             s.execute(text(
                 "UPDATE chat_thread SET app_id = :app WHERE id = :id"),
                 {"app": app_id, "id": thread_id})
             linked += 1
         else:
-            reason = ("root scope (workshop/development)" if scope in
-                      ("workshop", "development") else
-                      "agent scope" if scope.startswith("agent:") else
-                      "app/project scope with no matching app row")
+            reason = ("agent scope" if scope.startswith("agent:")
+                      else "no app owns this scope")
             reasons[reason] = reasons.get(reason, 0) + 1
 
     return {"total_chat_threads": total, "linked": linked,
