@@ -671,42 +671,7 @@ async def list_agents():
     # else `makers.summary` needs is a single flock probe and a dict lookup.
     sessions = presence.directory() if any(a.get("role") == "maker" for a in reg) else []
 
-    out: list[dict] = []
-    for a in reg:
-        out.append({
-            "id": a.get("id"),
-            "slug": a.get("slug"),
-            "name": a.get("name"),
-            "purpose": a.get("purpose"),
-            "triggers": a.get("triggers") or [],
-            "limits": a.get("limits") or {},
-            "autonomy": triggers.triggers_to_preset(a.get("triggers") or []),
-            # Per-agent autonomy MODE (autonomy-model 2026-07-18): the target
-            # field name is `autonomy`, but until C7 rewrites AutonomyPanel to
-            # read this shape, we surface it under `autonomy_mode` so nothing
-            # breaks. Coherence-migration C7 flips the frontend + backend swap.
-            "autonomy_mode": a.get("autonomy") or agents_registry.DEFAULT_AUTONOMY,
-            "role": a.get("role"),
-            "mentionable": bool(a.get("mentionable")),
-            "delegatable": bool(a.get("delegatable")),
-            # null = inherit, and it must stay null over the wire: defaulting it
-            # here would make an unset agent look like a deliberate `standard`.
-            "latitude": a.get("latitude"),
-            "capabilities": a.get("capabilities") or [],
-            "memory": a.get("memory"),
-            "project_slug": a.get("project_slug"),
-            "scope": a.get("scope"),
-            "state": a.get("state"),
-            "claude_session": a.get("claude_session"),
-            "created_at": a.get("created"),
-            "last_active": a.get("last_active") or a.get("created"),
-            "source": a.get("source"),
-            # Null for everything that is not a maker with a tree. A maker's
-            # live block is joined here and stored nowhere -- see
-            # services/makers.py.
-            "maker": _maker_summary(a, sessions, reg),
-        })
-
+    out = [agents_registry.roster_projection(a, sessions=sessions, roster=reg) for a in reg]
     out.sort(key=lambda a: a.get("last_active") or a.get("created_at") or "", reverse=True)
     return out
 
@@ -1588,18 +1553,6 @@ async def delete_agent(agent_id: str):
 # These are two-segment paths, so they never fall into the `/{agent_id}`
 # catch-all, which matches a single segment only.
 
-
-def _maker_summary(rec: dict, sessions: list[dict],
-                   roster: list[dict] | None = None) -> dict | None:
-    """The roster's compact maker block, or None. Never raises: a roster that
-    500s because one agent's tree went missing is worse than a null."""
-    if rec.get("role") != "maker":
-        return None
-    try:
-        return makers.summary(rec, sessions=sessions, roster=roster)
-    except Exception:
-        log.warning("could not read maker state for %s", rec.get("slug"), exc_info=True)
-        return None
 
 
 def _maker(agent_id: str) -> dict:

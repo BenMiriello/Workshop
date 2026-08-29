@@ -317,5 +317,6 @@ def agents_for_app(app_id: str) -> list[dict]:
     project_slug = app_links.linked_project_slug(app["slug"])
     if not project_slug:
         return []
-    return [a for a in agents_registry.list_agents()
-            if a.get("project_slug") == project_slug]
+    raw = [a for a in agents_registry.list_agents()
+           if a.get("project_slug") == project_slug]
+    return [agents_registry.roster_projection(a) for a in raw]

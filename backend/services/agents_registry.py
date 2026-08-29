@@ -735,6 +735,50 @@ def list_agents(*, include_retired: bool = False) -> list[dict]:
     return out
 
 
+def roster_projection(rec: dict, sessions: list[dict] | None = None,
+                      roster: list[dict] | None = None) -> dict:
+    """Project one raw registry record into the RosterAgent wire shape.
+
+    Shared by /agents and /apps/{id}/agents so both routes serve identical
+    projections.  The autonomy field swap is coherence-migration C7: the
+    registry stores the MODE under `autonomy`; the wire sends the PRESET under
+    `autonomy` and the MODE under `autonomy_mode`.
+    """
+    from services import makers  # deferred: makers imports agents_registry
+
+    maker_summary = None
+    if rec.get("role") == "maker":
+        try:
+            maker_summary = makers.summary(rec, sessions=sessions, roster=roster)
+        except Exception:
+            log.warning("could not read maker state for %s", rec.get("slug"), exc_info=True)
+
+    return {
+        "id": rec.get("id"),
+        "slug": rec.get("slug"),
+        "name": rec.get("name"),
+        "purpose": rec.get("purpose"),
+        "triggers": rec.get("triggers") or [],
+        "limits": rec.get("limits") or {},
+        "autonomy": triggers.triggers_to_preset(rec.get("triggers") or []),
+        "autonomy_mode": rec.get("autonomy") or DEFAULT_AUTONOMY,
+        "role": rec.get("role"),
+        "mentionable": bool(rec.get("mentionable")),
+        "delegatable": bool(rec.get("delegatable")),
+        "latitude": rec.get("latitude"),
+        "capabilities": rec.get("capabilities") or [],
+        "memory": rec.get("memory"),
+        "project_slug": rec.get("project_slug"),
+        "scope": rec.get("scope"),
+        "state": rec.get("state"),
+        "claude_session": rec.get("claude_session"),
+        "created_at": rec.get("created"),
+        "last_active": rec.get("last_active") or rec.get("created"),
+        "source": rec.get("source"),
+        "maker": maker_summary,
+    }
+
+
 def get(slug: str) -> dict | None:
     """Resolve an agent by slug or routing id."""
     for r in list_agents(include_retired=True):
