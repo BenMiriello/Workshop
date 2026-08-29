@@ -553,7 +553,7 @@ export default function Chat({
     // in-flight line is rendered from it rather than from the transcript, so
     // without it the log does not follow down to the one thing that just
     // appeared at its foot.
-    followDeps: [transcript, state.queued, folding, vsnap.state, vsnap.sentences, vsnap.lastUser],
+    followDeps: [transcript, state.queued, foldMode, vsnap.state, vsnap.sentences, vsnap.lastUser],
     hasContent: transcript.length > 0,
     // Restore the scroll position per thread when returning to it.
     //
@@ -637,8 +637,14 @@ export default function Chat({
     // where asking again can only be refused by the server. The button goes
     // inactive; the keystroke does nothing rather than opening a dialog whose
     // only outcome is an error.
-    compact: async () => { if (!compacting) setConfirmCompact(true); },
-    clear: async () => { if (!compacting) setConfirmClear(true); },
+    compact: async () => {
+      if (foldMode) { setErr({ text: `A ${foldMode} is already running in this chat.`, endpoint: null }); return; }
+      setConfirmCompact(true);
+    },
+    clear: async () => {
+      if (foldMode) { setErr({ text: `A ${foldMode} is already running in this chat.`, endpoint: null }); return; }
+      setConfirmClear(true);
+    },
     setErr,
     onSend: () => { followLatest(); },
     // `/new` ASKS. It opens the same dialog the toolbar button does rather than
@@ -1399,7 +1405,7 @@ export default function Chat({
       renderBranch={renderBranch}
       branchHead={branch.head}
       queued={queuedWaiting}
-      folding={folding}
+      folding={foldMode}
       onStop={onStopClick}
       stopping={stopping}
       onStopFold={cancelFold}

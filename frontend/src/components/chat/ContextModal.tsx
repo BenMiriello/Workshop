@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { foldControls, type FoldMode } from "./foldControls";
 import { Link } from "react-router-dom";
 import { Check, ChevronRight, Pencil, RefreshCw } from "lucide-react";
 import {
@@ -101,8 +102,10 @@ export default function ContextModal({
   onClear: () => void;
   /** Which fold is running, from the server as well as this tab.
    *  Null means none, and only then is the action offered. */
-  foldMode: "compact" | "clear" | null;
+  foldMode: FoldMode | null;
 }) {
+  // One rule for both fold buttons; see foldControls.
+  const folds = foldControls(foldMode);
   const [data, setData] = useState<ContextDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -225,20 +228,31 @@ export default function ContextModal({
               because this is where the operator is when the number worries
               them. Clear is the more destructive of the two (a fold keeps a
               summary; a clear does not) so it sits away from the primary. */}
-          <Button variant="ghost" onClick={onClear}>Clear context</Button>
+          {/* Both controls come from one rule (foldControls), so Clear cannot
+              drift back into being reachable while Compact is inert. */}
+          <Button
+            variant="ghost"
+            onClick={folds.clear.inert ? undefined : onClear}
+            aria-disabled={folds.clear.inert || undefined}
+            title={folds.clear.reason}
+          >
+            {folds.clear.label}
+          </Button>
           {/* Inactive while EITHER fold runs, with the reason on hover. The
               server publishes the operation now, so a fold another tab started
               disables this too; it used to be refused only after the fact, by
               an error string. A running CLEAR used to make this read
               "Compacting", which is why the mode is passed and not a boolean. */}
+          {/* aria-disabled, NOT disabled: a natively disabled button drops
+              pointer events, so its reason never fires on a tap and does not
+              fire at all in some browsers, and the reason is the point. The kit
+              styles both the same (components.css) and Menu.tsx does this too. */}
           <Button
-            onClick={onCompact}
-            disabled={foldMode !== null}
-            title={foldMode === null ? undefined
-              : `A ${foldMode} is already running in this chat.`}
+            onClick={folds.compact.inert ? undefined : onCompact}
+            aria-disabled={folds.compact.inert || undefined}
+            title={folds.compact.reason}
           >
-            {foldMode === "compact" ? "Compacting"
-              : foldMode === "clear" ? "Clearing" : "Compact now"}
+            {folds.compact.label}
           </Button>
         </>
       }
