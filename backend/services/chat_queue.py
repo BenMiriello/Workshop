@@ -60,6 +60,7 @@ because the server is what forms turns.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -403,7 +404,6 @@ def write_continuation(thread_id: str, *, text: str, client_id: str) -> bool:
     client_id was already on disk (idempotent: the same job finishing twice
     does not double-fire).
     """
-    import json
     p = continuation_path(thread_id)
     chat_log.thread_dir(thread_id).mkdir(parents=True, exist_ok=True)
     try:
@@ -427,7 +427,6 @@ def write_continuation(thread_id: str, *, text: str, client_id: str) -> bool:
 
 def read_continuation(thread_id: str) -> "dict | None":
     """The pending wake signal for this thread, or None."""
-    import json
     p = continuation_path(thread_id)
     if not p.exists():
         return None
