@@ -163,7 +163,12 @@ function Library() {
   // adapter changes and leaves its open set alone, which is what makes a
   // reload safe to do behind the operator's back (see `staleReload` below).
   const [generation, setGeneration] = useState(0);
-  const source = useMemo(() => createMemorySource(), [generation]);
+  // The place is the scope key that selects which tree is shown: "workshop",
+  // "development", or any project/app scope. It comes from the URL's ?scope=
+  // param, which also carries the note's scope when a note is open, so the
+  // place and the selection share one param without conflict.
+  const selectedPlace = searchParams.get("scope") || "workshop";
+  const source = useMemo(() => createMemorySource(selectedPlace), [generation, selectedPlace]);
   const [filterText, setFilterText] = useState("");
   const [scopeTree, setScopeTree] = useState<ScopeNode[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
@@ -504,7 +509,7 @@ function Library() {
     pane = (
       <StateBlock
         icon={<FolderTree aria-hidden />}
-        title={selected?.kind === "scope" ? `Nothing open in ${scopeLabel(selected.scope)}` : "Nothing open"}
+        title="Nothing open"
         // Arriving here opens the tree in column two, so the control that asks
         // for it is drawn only when it is not already on screen beside this.
         hint={treeOpen
@@ -569,8 +574,8 @@ function Library() {
               icon
               variant="ghost"
               onClick={startNewNote}
-              aria-label={`New note in ${scopeLabel(newNoteScope)}`}
-              title={`New note in ${scopeLabel(newNoteScope)}`}
+              aria-label="New note"
+              title="New note"
             >
               <FilePlus aria-hidden />
             </Button>
@@ -595,7 +600,19 @@ function Library() {
             </Button>
           </div>
           <div className="ws-pagecol__treescroll">
-            <MemoryTreeView source={filteredSource} selected={selected} onSelect={select} />
+            <MemoryTreeView
+              source={filteredSource}
+              selected={selected}
+              onSelect={select}
+              selectedPlace={selectedPlace}
+              onPlaceChange={(place) => setParams((next) => {
+                next.set("scope", place);
+                next.delete("note");
+                next.delete("path");
+                next.delete("q");
+                next.delete("new");
+              })}
+            />
           </div>
         </>,
         host,
@@ -611,7 +628,7 @@ function Library() {
       {chrome.header && (
         <PageHeader
           title="Memory"
-          sub="The notes and documents this system knows, by scope. What agents read and write."
+          sub="Notes and documents. What agents read and write."
         />
       )}
       {/* THE PAGE HAS NO CONTROL ROW ANY MORE (D5). It used to draw Search,
