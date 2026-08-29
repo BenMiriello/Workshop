@@ -84,7 +84,12 @@ def test_delivery_posts_the_result_and_seeds_a_continuation(owned):
     assert len(msgs) == 1
     assert "the answer is 42" in msgs[0]["content"]
     assert msgs[0]["meta"]["kind"] == "background_result"
-    assert msgs[0]["meta"]["autonomous"] is True
+    # NOT `autonomous`. A background agent's report asks nothing of
+    # anybody; the flag it used to set meant "nobody was watching",
+    # which was the producer guessing about the room rather than saying
+    # what the message wanted. See services/run_report.py.
+    assert msgs[0]["meta"]["asks"] == "notify"
+    assert "autonomous" not in msgs[0]["meta"]
     # And the chat is asked to continue on its own.
     seeds = [e for e in chat_queue.read(tid) if e.get("auto")]
     assert len(seeds) == 1

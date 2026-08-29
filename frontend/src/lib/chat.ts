@@ -246,16 +246,33 @@ export type ChatMsg = {
     // The model that produced this assistant message — drives per-model display
     // handling (how aggressively to collapse thinking/tools, elision sizes).
     model?: string;
-    // WHO PUT THIS HERE. True on a message the platform posted into the thread
-    // with nobody watching: a finished job's run report, a question a sweep hit
-    // and had to ask. It is not "the assistant replied to you", and the log has
-    // to say so before the words are read, so these carry the autonomous agency
-    // tier (rail + tint + label) instead of rendering as an ordinary reply.
-    // Written by services/run_report.py and services/question_report.py.
-    autonomous?: boolean;
-    // What that background write WAS: "run_report" | "ticket_question". Carried
-    // for the label; `autonomous` alone decides the treatment, so a new kind of
-    // background post gets it right by setting that flag and nothing else.
+    // WHAT THIS MESSAGE WANTS FROM A PERSON. The axis the emphasis follows.
+    //
+    //   notify    FYI. Nothing is waiting on anyone.
+    //   question  Uncertain, and asking rather than guessing.
+    //   review    Proposes an action, for approve / edit / reject.
+    //
+    // Written by services/run_report.py, question_report.py and
+    // background_runs.py. Taxonomy from agent-interaction-model-2026-07-31.md.
+    //
+    // THIS REPLACED `autonomous`, which was a boolean the producer set at write
+    // time meaning "nobody was watching". Two things were wrong with it. It was
+    // a GUESS about the room, not a fact about the message, so the operator
+    // sitting in a thread when a report arrived read a label describing his own
+    // absence and asked what the category was for. And it collapsed the one
+    // message that needed him (a sweep's question) into the same treatment as
+    // the ones that did not (a finished run's report), so the rail and the tint
+    // marked provenance while the reader's actual question is "does this want
+    // something from me". Whether anybody was attending is an observed fact,
+    // read live, not a stored flag.
+    asks?: "notify" | "question" | "review";
+    // WHO SENT IT. "platform", or "run:<job id>". Rendered as the attribution
+    // line on a notify. Anything that is not the operator is a sender like any
+    // other; there is no separate tier for "the platform".
+    sender?: string;
+    // What this write WAS: "run_report" | "ticket_question" | "background_result".
+    // Read for the sender's display name, and to place messages stored before
+    // `asks` existed (see asksOf in MessageList).
     kind?: string;
     // WHICH ticket a `ticket_question` post is about. Written by
     // question_report.py since it shipped, and read by nothing until the inline

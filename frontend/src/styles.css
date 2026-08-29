@@ -924,7 +924,8 @@ input[type="range"].grad::-moz-range-thumb {
 /* A failure is STATUS, and status is outline: a transparent box with a hairline
    in the danger tone, never a red fill. A filled error block is the loudest
    thing in a log, and it reads as an alarm rather than as one turn that did not
-   land. (Agency is what gets a fill here; see .chat-msg.autonomous below.) */
+   land. (A message waiting on you is what gets a rail here; see
+   .chat-msg.waiting below.) */
 .chat-bubble.error {
   background: transparent; color: var(--fg);
   border: 1px solid color-mix(in oklab, var(--danger), transparent 62%);
@@ -947,33 +948,43 @@ input[type="range"].grad::-moz-range-thumb {
   border-bottom-right-radius: 4px;
 }
 
-/* ---- AUTONOMOUS MESSAGE — it moved with nobody watching -------------------
-   A run report, a question from a sweep, anything the platform posted into this
-   thread while you were not here. It is the one bubble that is TINTED, because
-   provenance is exactly what a reader needs to know before reading the words:
-   a 2px rail in the autonomous tone and a soft fill of the same tier.
+/* ---- A MESSAGE THAT IS WAITING ON YOU -------------------------------------
+   The rail and the label are spent on ONE thing: this message asks a person for
+   something (`asks: question` or `review`) and cannot go on until it gets it.
 
-   Only this. Assistant replies stay neutral card — tinting every bubble by tier
+   THIS USED TO BE `.chat-msg.autonomous`, and it marked the wrong axis. That
+   class was set from a boolean the producer wrote meaning "nobody was
+   watching", so a finished run's report, which wants nothing, wore the same
+   rail and tint as a sweep's blocking question. The emphasis announced
+   provenance while the reader's question is "does this want something from me",
+   and an operator sitting in the thread when a report arrived got a word about
+   his own absence.
+
+   A message that is not from the operator and asks nothing is now an ordinary
+   attributed bubble: it names its sender in .chat-byline and takes no rail and
+   no tint, which is what every chat system does with a bot or a tool result.
+
+   Only this. Ordinary replies stay neutral card: tinting bubbles by category
    turns a long log into a quilt and hurts readability on exactly the messages
    that are longest. */
-.chat-msg.autonomous .chat-bubble {
+.chat-msg.waiting .chat-bubble {
   background: var(--card);
   border-left: 2px solid var(--live);
   border-radius: 3px 12px 12px 3px;
 }
-/* The TINT is arrival-only. Provenance is permanent, so the rail and the label
-   are permanent; "this wants you" is not, so the fill goes with the flash. A
-   cron report from last week is a fact about the past, and a bubble still lit
-   up a week later teaches the reader that the colour means nothing. */
-.chat-msg.autonomous .chat-bubble.error { background: transparent; }
-.chat-autonomous-tag {
+/* The TINT is arrival-only, and unlike the old rule that is now consistent: the
+   rail says "waiting on you", which stays true until it is answered, and the
+   fill says "this just arrived", which does not. A question from last week is
+   still waiting; it is not still new. */
+.chat-msg.waiting .chat-bubble.error { background: transparent; }
+.chat-waiting-tag {
   display: inline-flex; align-items: center; gap: 0.3rem;
   margin-bottom: var(--space-1);
   font-family: var(--font-mono); font-size: 10px; line-height: 1.6;
   letter-spacing: var(--label-spacing); text-transform: uppercase;
   color: var(--live);
 }
-.chat-autonomous-tag svg { width: 12px; height: 12px; stroke-width: 1.8; }
+.chat-waiting-tag svg { width: 12px; height: 12px; stroke-width: 1.8; }
 
 /* Byline over an agent's reply (@mention). Reads as attribution, not as a
    status: same weight and hue as the other in-bubble meta rows, sitting above

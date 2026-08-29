@@ -100,9 +100,16 @@ def post_for_task(task: dict, request: dict, *, scope: str | None = None) -> boo
             ownership.set_current_owner(owner)
             chat_store.append_message(
                 thread_id, "assistant", _compose(task, request, scope),
-                # AUTONOMOUS: a sweep hit a block and had to ask. Marked so
-                # the thread shows who is speaking before the words are read.
-                meta={"kind": "ticket_question", "autonomous": True,
+                # ASKS A QUESTION. A sweep hit a block it will not guess past,
+                # so a person has to answer before the work can go on. This is
+                # the case that KEEPS the emphasised treatment, because
+                # something is genuinely waiting.
+                #
+                # This replaced `autonomous: True`. The old flag marked this the
+                # same as a finished run's report, which asks nothing, so the
+                # one message that needed the operator looked exactly like the
+                # ones that did not.
+                meta={"kind": "ticket_question", "asks": "question",
                       "sender": "platform",
                       "ticket": task.get("id"),
                       "scope": scope, "block_kind": request.get("kind")},

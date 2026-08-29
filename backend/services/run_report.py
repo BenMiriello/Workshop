@@ -324,11 +324,17 @@ def post_for_job(job_id: str, status: str = "done") -> int:
                 ownership.set_current_owner(owner)
                 chat_store.append_message(
                     thread_id, "assistant", _summarize(job, tickets, status),
-                    # AUTONOMOUS: nobody was watching. The client renders
-                    # these with the autonomous agency tier (rail + tint +
-                    # label) rather than as an ordinary assistant reply, which
-                    # is what they are not. See frontend/src/lib/chat.ts.
-                    meta={"kind": "run_report", "autonomous": True,
+                    # ASKS NOTHING. A finished run's report is an FYI: the work
+                    # is done and nothing is waiting on a person, so it renders
+                    # as a quiet attributed block naming its sender rather than
+                    # with a rail and a tint. See frontend/src/lib/chat.ts.
+                    #
+                    # This replaced `autonomous: True`, which encoded the
+                    # producer's guess at write time about whether anybody was
+                    # watching. That is not a property of the message and it was
+                    # routinely wrong: the operator sitting in the thread when a
+                    # report arrived read a label describing his own absence.
+                    meta={"kind": "run_report", "asks": "notify",
                           "sender": f"run:{job_id}",
                           "job": job_id, "status": status,
                           "tickets": [t.get("id") for t in tickets]},

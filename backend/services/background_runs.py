@@ -228,7 +228,10 @@ def _deliver(*, thread_id: str, owner_id: int, job_id: str, label: str,
                     f"{text or '(no output)'}")
         chat_store.append_message(
             thread_id, "assistant", body,
-            meta={"kind": "background_result", "autonomous": True,
+            # ASKS NOTHING: a background agent reporting what it did. Quiet
+            # attributed block, same as a run report. See run_report.py for why
+            # this replaced `autonomous: True`.
+            meta={"kind": "background_result", "asks": "notify",
                   "sender": f"run:{job_id}", "job": job_id, "status": status},
         )
         if timed_out:

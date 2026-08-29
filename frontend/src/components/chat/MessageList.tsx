@@ -213,12 +213,32 @@ function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: strin
   return <AnswerBody source={m.content} cfg={modelDisplay(model)} expanded={isLatest} cardCtx={cardCtx} />;
 }
 
-// What the platform posted, in three words, so the tier's label says which kind
-// of unattended write this was rather than only that it was one.
-function autonomousLabel(kind?: string): string {
-  if (kind === "run_report") return "Autonomous run";
-  if (kind === "ticket_question") return "Autonomous, needs you";
-  return "Autonomous";
+// WHAT THIS MESSAGE WANTS FROM A PERSON, for a message stored before `asks`
+// existed. The producers write `asks` now (run_report, question_report,
+// background_runs); this places the transcripts already on disk, which carry
+// `kind` and the retired `autonomous` boolean instead.
+//
+// A question is the only one that was ever waiting, so everything else is a
+// notify. No migration: `kind` was always written beside the old flag, so the
+// answer is already in the record.
+function asksOf(meta?: { asks?: string; kind?: string }): "notify" | "question" | "review" {
+  const asks = meta?.asks;
+  if (asks === "question" || asks === "review" || asks === "notify") return asks;
+  return meta?.kind === "ticket_question" ? "question" : "notify";
+}
+
+// WHO SENT IT, for the attribution line on a quiet message. `sender` is
+// "platform" or "run:<job id>"; neither is something to put on screen as-is.
+//
+// This is deliberately the ONLY place that turns a sender id into a name, so
+// richer names (a named agent, a named sweep) become a change here and nowhere
+// else. Until senders carry one, a run says it is a run, which is true and is
+// what the reader needs to know.
+function senderName(meta?: { sender?: string; kind?: string }): string {
+  if (meta?.kind === "background_result") return "Background agent";
+  if (meta?.kind === "run_report") return "Run";
+  if (meta?.sender?.startsWith("run:")) return "Run";
+  return "Workshop";
 }
 
 // THE ARRIVAL FLASH is gated on this and nothing else: a message whose ts is
@@ -272,20 +292,33 @@ const MessageBubble = memo(function MessageBubble({
   // and an empty box above the stopped-reply line reads as a rendering
   // fault rather than as a turn the operator ended. See replyBody.hasBubble.
   const body = hasBubble(msg);
-  // WHO PUT THIS HERE. A run report or a sweep's question was posted with
-  // nobody watching, and that is the first thing a reader needs — so it takes
-  // the autonomous agency tier (rail, tint, label) rather than passing itself
-  // off as a reply to something you said. Everything else stays the neutral
-  // card: tinting bubbles by tier turns a long log into a quilt.
-  const autonomous = msg.role === "assistant" && !!msg.meta?.autonomous;
+  // DOES THIS WANT SOMETHING FROM YOU. That is the reader's actual question and
+  // it is what the emphasis follows now.
+  //
+  // It used to follow `meta.autonomous`, the producer's guess about whether
+  // anybody was in the room, so a finished run's report (which wants nothing)
+  // and a sweep's blocking question (which wants an answer) wore the identical
+  // rail, tint and label. The emphasis marked provenance and said nothing about
+  // urgency, which is why an operator watching a report arrive read a word about
+  // his own absence and asked what the category was for.
+  //
+  // A message that is not from the operator and asks nothing is an ordinary
+  // attributed message: it names its sender and takes no rail, no tint and no
+  // tier, which is what every chat system does with a bot or a tool result.
+  // There is no third rendering.
+  const asks = msg.role === "assistant" ? asksOf(msg.meta) : "notify";
+  const waiting = asks === "question" || asks === "review";
+  // Attribution belongs on anything the operator did not send and did not ask
+  // for directly. `meta.agent` (an @mention reply) already had a byline; a
+  // platform-sent message gets the same one, from the same rule.
+  const attributed = msg.role === "assistant" && !!msg.meta?.sender;
   return (
     // THE ENTER ANIMATION GOES ON THE ROW FOR ASSISTANT MESSAGES ONLY. User
     // messages were already visible as a pending bubble before committing, so
     // starting at opacity:0 would make the message vanish and reappear — the
     // exact dim-state loss the operator reported. Gated on `arrived` (newer than
     // list mount), never on mount, for the same reasons as the assistant case.
-    <div className={`chat-msg ${msg.role}${autonomous ? " autonomous" : ""}${arrived && msg.role === "assistant" ? " chat-msg--enter" : ""}`}
-         {...(autonomous ? { "data-agency": "autonomous" as const } : {})}>
+    <div className={`chat-msg ${msg.role}${waiting ? " waiting" : ""}${arrived && msg.role === "assistant" ? " chat-msg--enter" : ""}`}>
       {/* --copyable reserves the inline room the copy button occupies, so the
           button never lands on top of the last line of text. It is only set
           when there IS something to copy. */}
@@ -299,16 +332,23 @@ const MessageBubble = memo(function MessageBubble({
           )}
           {msg.role === "assistant" ? (
             <>
-              {autonomous && (
-                <div className="chat-autonomous-tag">
-                  <Radio size={12} strokeWidth={1.8} aria-hidden />
-                  <span>{autonomousLabel(msg.meta?.kind)}</span>
-                </div>
-              )}
-              {msg.meta?.agent && (
+              {/* ONE ATTRIBUTION LINE, whoever sent it. An @mentioned agent
+                  already had this byline; a run report and a sweep's question
+                  now use the same one instead of a tier of their own. `agent`
+                  wins when both are present: a named agent is a better name
+                  than a sender id. */}
+              {(msg.meta?.agent || attributed) && (
                 <div className="chat-byline">
                   <Bot size={13} strokeWidth={1.8} aria-hidden />
-                  <span>{msg.meta.agent}</span>
+                  <span>{msg.meta?.agent || senderName(msg.meta)}</span>
+                </div>
+              )}
+              {/* Said only when something is actually waiting on a person, and
+                  said in words rather than as a category name. */}
+              {waiting && (
+                <div className="chat-waiting-tag">
+                  <Radio size={12} strokeWidth={1.8} aria-hidden />
+                  <span>{asks === "review" ? "Needs your review" : "Needs your answer"}</span>
                 </div>
               )}
               {msg.meta?.timeout && (
