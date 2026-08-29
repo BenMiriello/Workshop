@@ -97,10 +97,34 @@ describe("the working indicator never goes quiet on a running turn", () => {
     expect(indicatorLabel(deriveTurnLifecycle(running))).toBe("Working");
   });
 
-  it("names the step in flight rather than the flat 'Working'", () => {
+  it("does NOT name the step in flight: one word for a running turn", () => {
+    // REVERSES THIS TEST'S EARLIER ASSERTION, which expected "Running" for a
+    // live Bash step. The per-tool verb table is deleted (turnStatus.ts): the
+    // step list underneath already names every tool exactly, so the indicator
+    // was a blurrier second copy of it that changed every few hundred
+    // milliseconds. Operator asked for the custom verbs to go twice; the first
+    // time only one entry changed and the table stayed.
     const segments: ChatSegment[] = [{ t: "tool", name: "Bash", at: 1, input: {} } as ChatSegment];
     expect(indicatorLabel(deriveTurnLifecycle({ ...running, activeTurn: run({ segments }) })))
-      .toBe("Running");
+      .toBe("Working");
+  });
+
+  it("says the same one word whichever tool is in flight", () => {
+    // The property that makes the table unreconstructable: no tool name may
+    // change this string. Re-adding any per-tool verb fails here.
+    for (const name of ["Bash", "Read", "Grep", "WebSearch", "mcp__workshop__search"]) {
+      const segments: ChatSegment[] = [{ t: "tool", name, at: 1, input: {} } as ChatSegment];
+      expect(indicatorLabel(deriveTurnLifecycle({ ...running, activeTurn: run({ segments }) })))
+        .toBe("Working");
+    }
+  });
+
+  it("still says a turn is blocked on the operator, which is a state not a verb", () => {
+    // The one survivor of the delete. A pending approval is the case where the
+    // operator has to act, so it must not read as ordinary work.
+    const segments: ChatSegment[] = [{ t: "approval", id: "a", state: "pending" } as ChatSegment];
+    expect(indicatorLabel(deriveTurnLifecycle({ ...running, activeTurn: run({ segments }) })))
+      .toBe("Waiting");
   });
 
   it("says so while the socket is being retried", () => {

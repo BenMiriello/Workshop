@@ -36,72 +36,51 @@
 import type { ChatSegment } from "../../lib/chat";
 import { isRunning } from "./grouping";
 
-// Maps a tool call name to a short active-verb phrase for the indicator.
+// ONE WORD FOR A RUNNING TURN. There is no per-tool verb table any more.
 //
-// VERBS, NOT TOOL NAMES. The indicator is the live read on "what is happening
-// right now" — a verb phrase fits that register; a raw identifier ("Bash", "mcp__workshop__search")
-// fits the settled transcript. Unknown names fall back to the name itself so the
-// label is never blank, even for a tool added after this table was written.
-const TOOL_VERB: Record<string, string> = {
-  Read: "Reading",
-  Write: "Writing",
-  Edit: "Editing",
-  Bash: "Running",
-  Grep: "Searching",
-  Glob: "Scanning",
-  WebFetch: "Fetching",
-  WebSearch: "Searching",
-  // NOT "Delegating". A subagent is an internal mechanism of how the turn is
-  // run, and the indicator answers "what is happening for me right now", so it
-  // names the work rather than the plumbing. Reported 2026-08-27: "why did you
-  // start doing custom working text I never asked for... what determines that?"
-  // What determines it is the live tool; the fix was the word, not the table.
-  Agent: "Working",
-  NotebookEdit: "Editing",
-  EnterPlanMode: "Planning",
-  ExitPlanMode: "Planning",
-  EnterWorktree: "Setting up",
-  ExitWorktree: "Wrapping up",
-  TaskCreate: "Tracking",
-  TaskUpdate: "Tracking",
-  TaskGet: "Tracking",
-  TaskList: "Tracking",
-  TaskStop: "Tracking",
-  TaskOutput: "Tracking",
-  CronCreate: "Scheduling",
-  CronDelete: "Scheduling",
-  CronList: "Scheduling",
-  RemoteTrigger: "Triggering",
-  PushNotification: "Notifying",
-  ScheduleWakeup: "Scheduling",
-  Monitor: "Monitoring",
-};
+// There was: a `TOOL_VERB` map of ~30 entries turning each tool name into its
+// own present participle, so the indicator read "Reading", then "Running", then
+// "Searching", then "Scanning", changing every few hundred milliseconds for the
+// whole turn.
+//
+// It is deleted rather than trimmed, and deleted rather than reduced to a
+// shorter map, because a smaller table is the same design and drifts back one
+// entry at a time. That already happened: the operator asked for the custom
+// verbs to go on 2026-08-27 ("why did you start doing custom working text I
+// never asked for... what determines that?"), and what changed was ONE entry
+// (Agent, from "Delegating" to "Working") while the table stayed. He asked
+// again. There is now nothing left to shrink.
+//
+// The reasoning that justified it was that a verb phrase fits the live register
+// better than a raw identifier. True, and beside the point: the question is
+// whether the indicator should carry tool detail AT ALL. It should not. The step
+// list directly underneath already names every tool exactly, in order, with its
+// own duration, so the indicator was a second, blurrier copy of information that
+// was already on screen, and the only thing its churn communicated was churn.
+// One steady word plus the elapsed clock is what every mature chat UI shows, and
+// it is what `indicatorElapsed` below is already built for.
+//
+// TWO STATES SURVIVE, and neither is a tool verb:
+//   "Waiting"  the turn is blocked on the operator answering an approval. That
+//              is a different STATE, not a description of work, and it is the
+//              one case where the operator has to do something. Dropping it
+//              would leave a blocked turn looking like a busy one.
+//   "Working"  everything else that is running.
+// The other wordings a running turn can take ("Reconnecting", "Still running",
+// "Stopping") live in turnLifecycle.indicatorLabel and are about the socket and
+// the stop, not about the work.
 
-function toolVerb(name: string): string {
-  if (TOOL_VERB[name]) return TOOL_VERB[name];
-  // mcp__server__function → capitalize the function part
-  if (name.startsWith("mcp__")) {
-    const parts = name.split("__");
-    const fn = parts[parts.length - 1].replace(/_/g, " ");
-    return fn.charAt(0).toUpperCase() + fn.slice(1);
-  }
-  return name;
-}
-
-/** What a live turn is doing right now, based on its current segments.
+/** What a live turn is doing right now.
  *
- *  Scans backwards to find the most recently issued step that is still in
- *  flight — a tool with `at` set but no result yet, or a subagent that has not
- *  reported back. Falls back to "Working" when the model is thinking between
- *  steps, which is the case where there is genuinely nothing more specific to
- *  say. */
+ *  One word, plus the one exception that is a state rather than an activity: a
+ *  turn blocked on a pending approval says so, because the operator is the only
+ *  thing that can unblock it. Everything else is "Working".
+ *
+ *  Still scans backwards through the segments rather than returning a constant,
+ *  because finding the pending approval is what the scan is for. */
 export function currentActivity(segments: ChatSegment[]): string {
   for (let i = segments.length - 1; i >= 0; i--) {
     const seg = segments[i];
-    if (seg.t === "tool" && isRunning(seg)) return toolVerb(seg.name);
-    // Same reason as the TOOL_VERB entry above: the indicator names the work,
-    // not the plumbing that runs it.
-    if (seg.t === "agent" && !seg.done) return "Working";
     if (seg.t === "approval" && seg.state === "pending") return "Waiting";
   }
   return "Working";
