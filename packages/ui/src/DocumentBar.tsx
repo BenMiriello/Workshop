@@ -73,6 +73,13 @@ export interface DocumentBarProps {
    *  a note has no rename route anywhere else, so this bar is where its title is
    *  changed (D7, and the wikilink rewrite in D11 is what makes that safe). */
   onNameChange?: (next: string) => void;
+  /** What an EMPTY name reads as. A PLACEHOLDER, so it is the input's
+   *  placeholder and the span's text when there is no name yet, and never the
+   *  input's VALUE: passing it as the value is how a name field ends up
+   *  refilling itself the moment you clear it, which is a field you cannot
+   *  empty. Reported 2026-08-28 on a new note whose title read "Untitled note"
+   *  and would not go away. */
+  namePlaceholder?: string;
   /** The name is FINISHED being edited: blur, or Enter. Given for a name whose
    *  write is a real operation rather than a field in a form that will be saved
    *  later -- a FILE rename moves bytes on disk and repoints every ref that
@@ -102,8 +109,8 @@ export interface DocumentBarProps {
 }
 
 export function DocumentBar({
-  name, variant = "file", onNameChange, onNameCommit, path, dirty = false,
-  onBack, backLabel, meta, children, className,
+  name, variant = "file", onNameChange, onNameCommit, namePlaceholder,
+  path, dirty = false, onBack, backLabel, meta, children, className,
 }: DocumentBarProps) {
   const nameEl = onNameChange ? (
     // Sized to its own content so the bar's layout does not jump as you type,
@@ -112,7 +119,8 @@ export function DocumentBar({
     <input
       className="ws-docbar__name ws-docbar__nameinput"
       value={name}
-      size={Math.max(8, Math.min(60, name.length + 1))}
+      placeholder={namePlaceholder}
+      size={Math.max(8, Math.min(60, (name || namePlaceholder || "").length + 1))}
       onChange={(e) => onNameChange(e.target.value)}
       onBlur={onNameCommit}
       onKeyDown={(e) => {
@@ -124,7 +132,9 @@ export function DocumentBar({
       aria-label={variant === "title" ? "Title" : "Filename"}
     />
   ) : (
-    <span className="ws-docbar__name">{name}</span>
+    <span className={cx("ws-docbar__name", !name && "ws-docbar__name--empty")}>
+      {name || namePlaceholder}
+    </span>
   );
   return (
     <div className={cx("ws-docbar", variant === "title" && "ws-docbar--title", className)}>

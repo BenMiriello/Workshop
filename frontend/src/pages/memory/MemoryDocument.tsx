@@ -557,6 +557,14 @@ export function NewNoteDocument({
       onCreated(scope, id);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      // ALWAYS, not only on the failure path. The success path used to leave
+      // `saving` true and rely on this component being unmounted by the parent
+      // clearing `creating`; the parent does that through a router param, so
+      // for as long as that takes, a save that had already landed in 6ms was
+      // still a spinning button. The operator wrote 4,084 bytes, watched it
+      // spin, and concluded the page did not work. A component must not depend
+      // on being unmounted to stop saying it is busy.
       setSaving(false);
     }
   }, [canSave, scope, title, hook, content, noteType, pinned, onCreated]);
@@ -564,7 +572,8 @@ export function NewNoteDocument({
   return (
     <div className="ws-doc ws-doc--full">
       <DocumentBar
-        name={title || "Untitled note"}
+        name={title}
+        namePlaceholder="Untitled note"
         variant="title"
         onNameChange={setTitle}
         path={scopeLabel(scope)}

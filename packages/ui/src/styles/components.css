@@ -3463,6 +3463,9 @@ span.ws-filterchip__open { cursor: default; }
    absent one; the scope is on screen a second time under the body. */
 .ws-docbar__path { display: none; flex: 0 1 auto; color: var(--faint); }
 .ws-docbar__name { flex: 0 1 auto; color: var(--fg); }
+/* A name that is not there yet reads as a placeholder, not as a name. */
+.ws-docbar__name--empty { color: var(--faint); }
+.ws-docbar__nameinput::placeholder { color: var(--faint); }
 /* THE TITLE VARIANT (DocumentBar.tsx, 2026-08-27). A record's title is prose,
    so it is drawn in the sans face at the body size; everything else about the
    bar is identical, which is the point of sharing it. */

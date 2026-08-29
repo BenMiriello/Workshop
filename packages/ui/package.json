@@ -1,6 +1,6 @@
 {
   "name": "@workshop/ui",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "type": "module",
   "description": "Workshop Design System: React primitives over a token layer. The tokens are usable on their own, with no React, by any consumer that can load a stylesheet.",
   "license": "MIT",

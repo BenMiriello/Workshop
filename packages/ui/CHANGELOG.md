@@ -12,6 +12,19 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.7.5 - 2026-08-28 - a name field you can actually empty
+
+**Patch, additive.** One new optional prop.
+
+### Added
+
+- **`DocumentBar` takes `namePlaceholder`.** What an empty name reads as. It is
+  the input's `placeholder` and the span's text when there is no name yet, and
+  never the input's VALUE. A caller passing `name={title || "Untitled note"}`
+  has built a field that refills itself the moment you clear it: every
+  keystroke that empties it puts the fallback back, so the name cannot be
+  emptied at all. Reported 2026-08-28 against a new Memory note.
+
 ## 0.7.4 - 2026-08-28 - a name in the document bar can be committed
 
 **Patch, additive.** One new optional prop.
