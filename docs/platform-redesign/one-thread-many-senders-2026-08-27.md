@@ -1,7 +1,13 @@
 # One thread, many senders
 
 **Date:** 2026-08-27
-**Status:** proposed. Not ratified, nothing built against it yet.
+**Status:** **PARTLY BUILT, and superseded on the thread half.** The MESSAGE half
+shipped 2026-08-27/28 and is live: `sender` and `asks` on a message, the wake
+signal as thread state rather than a queued message, `meta.autonomous` deleted,
+and the transcript rules in §6. The THREAD half (one entity, `armed_by` /
+`attended_by`, thread-to-thread send) did NOT ship and is superseded by
+`threads-branches-and-pages-2026-08-29.md`, which is the model of record. Note
+`sender` lives in the message `meta` JSON, not a column.
 **Supersedes:** D4 of `agent-interaction-model-2026-07-31.md` ("agent-initiated
 messages do not land in the transcript"), and its restatement as law in
 `agent-governance-addendum-2026-08-04.md` §4 rule 6 and

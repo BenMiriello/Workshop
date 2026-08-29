@@ -1,6 +1,13 @@
 # Primitive agent roles, triage loop, and template catalog (2026-07-18)
 
-> **STATUS: DESIGN, PARTIALLY BUILT.** This doc distills the research and
+> **STATUS: PARTIALLY BUILT, and SUPERSEDED on the agent model by
+> `threads-branches-and-pages-2026-08-29.md`.** Two claims in this doc are now
+> false: the role CHECK constraint at `backend/db/models.py:606` is gone (the
+> whole `agent` table was dropped by migration `def2cbf58df8`), and role is a
+> file-only enum. What stands: `role` as a WRITE-AUTHORITY set, consumed by
+> `services/agent_authority.py:59`. What replaces the rest: an agent is not an
+> object, it is a thread that is armed. R4 was never built and `reviewer` has no
+> runner at all. This doc distills the research and
 > synthesis from `agent-roles-research-2026-07-16.md` and
 > `synthesis-agent-protocols-2026-07-16.md` into the actionable reference for
 > implementation phases R0-R4.

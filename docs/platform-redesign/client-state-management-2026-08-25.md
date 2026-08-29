@@ -1,6 +1,11 @@
 # Client state management: audit and recommendation (2026-08-25)
 
-Status: PROPOSAL. Nothing here is built. The bug that prompted it IS fixed and
+Status: **BUILT 2026-08-26**, and the status line said "nothing here is built"
+for three days after it was. Implemented on branch `feat/client-state-consolidation`
+over eight commits (`d26dccfc` .. `a82f4582`); the implementation record is
+`client-state-implementation-2026-08-26.md`. Read the CORRECTION at the foot of
+this file before acting on anything here: what shipped was a MECHANISM migration
+(`usePoll` sites 43 to 1), not coverage, and the gate measures the mechanism. The bug that prompted it IS fixed and
 live (commit `2277cc60`); this doc is about why it happened and what to do so
 the next one does not.
 
@@ -235,3 +240,49 @@ it is small enough to do without a migration plan. Stages 2 and 3 add a
 dependency to a codebase that has deliberately owned its primitives, and that is
 a judgement call about direction rather than a technical finding. This document
 recommends taking it, and does not act on it.
+
+---
+
+## CORRECTION, 2026-08-29: what shipped was the mechanism, not the coverage
+
+Measured against the tree three days after this landed.
+
+The ratchet in `scripts/check_frontend_state.py` counts `usePoll` call sites and
+`setInterval` timers. That is the question "did you choose the retired
+mechanism", and by that measure the work is done: 43 sites down to 1.
+
+It is not the question that matters. The pattern
+
+```
+useEffect(() => { fetch(url).then(r => r.json()).then(setState) }, [])
+```
+
+is invisible to the gate, and it is what **22 of the platform pages, all eight
+per-app tabs, and `ContextModal` actually do**. Those pages were never on
+`usePoll`, so the ratchet never counted them and the migration never reached
+them. Weight, not count, is the measure: the three largest platform pages
+(`ProjectDetail` at 1801 lines and 23 raw fetches, `AgentDetail`, `AgentBuild`)
+are all in the untouched column.
+
+Consequences that were live on 2026-08-29:
+
+- `Tickets.tsx` has zero `useQuery` and never refreshes, while agents mutate
+  tickets continuously. Its detail page polls the same record under a different
+  key with a different owner.
+- `AgentDetail` writes with raw `fetch` and never invalidates the key the roster
+  polls, so the list shows the old record.
+- Six per-app tabs keep independent mount-once copies of facts `queryKeys`
+  already addresses.
+- `TreePill` calls `setQueryData` with no `invalidateQueries`, leaving two other
+  keys holding the same fact stale for up to 60 seconds.
+- `Memory.tsx` hand-rolls a `visibilitychange` listener: a private
+  re-implementation of the `refetchOnWindowFocus` the query client already
+  provides, needed only because the page is not on the layer.
+
+Also worth stating plainly, because it was reported as a regression: **chat
+message ordering and read-state were never in this migration's scope.** The dim
+"unread" state on a sent message comes from `transcriptBlocks.spokenThroughIndex`
+and predates this work. A gate that reads green next to a user-visible
+regression is the specific failure mode to avoid repeating.
+
+The fix is to measure the right thing: ticket `e40fc161`.

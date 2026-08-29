@@ -1,8 +1,15 @@
 # Retrieval in production: what gets embedded, when, and who queries it
 
 - Date: 2026-08-27
-- Status: **DECISIONS. Design only; nothing here is built and nothing in the
-  live index changes because of this document.** Every numbered decision states
+- Status: **DECISIONS, and the "nothing is built" clause was wrong even when
+  written.** A real local ONNX embedder and semantic index already existed
+  (`services/embeddings.py`, `services/semantic_index.py`) and the live index
+  holds 12,212 chunks. What this doc specifies and what is genuinely NOT built:
+  ref-keyed chunks (step 1), a checkpointed build (step 2), a precomputed reach
+  mask (step 3), a sweep that iterates every owner (step 4, it pins the operator
+  today), and `open_ref` (step 5). Step 6 shipped. Separately, the note
+  collector globs one level while the store went path-aware, so 195 of 196 notes
+  are absent from the index entirely; that is a bug, not a step. Every numbered decision states
   what was chosen, what was rejected, and why.
 - Owner boundary, because three threads are touching adjacent things this week:
   - **This doc owns the retrieval SUBSTRATE**: the corpus, the trigger, the
