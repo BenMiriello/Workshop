@@ -73,6 +73,9 @@ class Worktree(BaseModel):
     # and a ticket can adopt it later.
     ticket_id: str | None = None
     allocated_by: str | None = None
+    # The human-readable label derived from the ticket title (migration b9f3e2d07a16).
+    # NULL for trees created before the naming fix; not back-filled.
+    display_name: str | None = None
     # NULL when nothing recorded this tree. "No record" and "a record that says
     # allocated" are different facts, and conflating them is what let `/branches`
     # report eleven abandoned trees as no trees at all; see

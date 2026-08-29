@@ -10323,6 +10323,8 @@ export interface components {
             branch_slug: string;
             /** Dir */
             dir: string;
+            /** Display Name */
+            display_name?: string | null;
             /** Head */
             head?: string | null;
             /**
@@ -17706,6 +17708,8 @@ export interface components {
             branch_slug: string;
             /** Created At */
             created_at?: string | null;
+            /** Display Name */
+            display_name?: string | null;
             /** Head Sha */
             head_sha?: string | null;
             /** Id */

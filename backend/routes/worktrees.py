@@ -50,6 +50,11 @@ class BranchRow(BaseModel):
     branch_slug: str
     branch: str
     dir: str
+    # The human-readable label derived from the ticket title, or None for trees
+    # created before the naming fix (migration b9f3e2d07a16). ADR 0023 clause 6:
+    # if this field is absent the route silently drops it and the UI shows the
+    # raw t-<hex> slug instead.
+    display_name: str | None = None
     head: str | None = None
     # git refuses to remove or prune a locked worktree, and every tree the task
     # allocator makes is locked, so a caller deciding whether one can be reaped

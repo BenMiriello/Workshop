@@ -458,6 +458,13 @@ class Ticket(Base, Timestamps, SoftDelete):
         nullable=False, server_default="none")
     effort: Mapped[str | None] = mapped_column(String(16))
 
+    # bug | feature | task, or NULL. Added by migration a1b2c7e40d59 and never
+    # declared here, so the models and the migrations disagreed and the schema
+    # drift test has been red since. Nothing writes it yet (every open ticket
+    # reads NULL); persisting it is ticket 6a9dda58. Declared regardless,
+    # because a column the ORM cannot see is a column no query can use.
+    work_type: Mapped[str | None] = mapped_column(String(16))
+
     parent_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
 
     created_by_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -975,6 +982,10 @@ class Worktree(Base, Timestamps, SoftDelete):
 
     status: Mapped[str] = mapped_column(String(20), nullable=False,
                                         server_default="allocated")
+
+    # The human-readable label the slug was derived from (migration b9f3e2d07a16).
+    # NULL for trees created before the naming fix; not back-filled.
+    display_name: Mapped[str | None] = mapped_column(Text)
 
     # The commit the merge produced, and when the directory left the disk.
     merged_sha: Mapped[str | None] = mapped_column(String(40))
