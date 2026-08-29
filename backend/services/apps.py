@@ -72,6 +72,7 @@ def _shape(row: dict) -> dict:
         "name": row["name"],
         "icon": row.get("icon"),
         "kind": row["kind"],
+        "dev_only": bool(row.get("dev_only", False)),
         "parent_id": str(row["parent_id"]) if row.get("parent_id") else None,
         "project_slug": row.get("project_slug"),
         "archived_at": _iso(row.get("archived_at")),
@@ -85,28 +86,41 @@ def _shape(row: dict) -> dict:
 def list_apps(*, kind: str | None = None, archived: bool | None = None) -> list[dict]:
     from db import app_repo
     from db.engine import tenant_session
+    from wsplatform import dev_mode
     org_id, _ = _require_db()
+    dev_only_filter: bool | None = None if dev_mode.dev_mode_on() else False
     with tenant_session(org_id) as s:
-        rows = app_repo.list_apps(s, org_id, kind=kind, archived=archived)
+        rows = app_repo.list_apps(s, org_id, kind=kind, archived=archived,
+                                  dev_only=dev_only_filter)
     return [_shape(r) for r in rows]
 
 
 def get_app(app_id: str) -> dict | None:
     from db import app_repo
     from db.engine import tenant_session
+    from wsplatform import dev_mode
     org_id, _ = _require_db()
     with tenant_session(org_id) as s:
         row = app_repo.get_app(s, org_id, app_id)
-    return None if row is None else _shape(row)
+    if row is None:
+        return None
+    if row.get("dev_only") and not dev_mode.dev_mode_on():
+        return None
+    return _shape(row)
 
 
 def get_app_by_slug(slug: str) -> dict | None:
     from db import app_repo
     from db.engine import tenant_session
+    from wsplatform import dev_mode
     org_id, _ = _require_db()
     with tenant_session(org_id) as s:
         row = app_repo.get_app_by_slug(s, org_id, slug)
-    return None if row is None else _shape(row)
+    if row is None:
+        return None
+    if row.get("dev_only") and not dev_mode.dev_mode_on():
+        return None
+    return _shape(row)
 
 
 def create_app(*, slug: str, name: str, icon: str | None = None,

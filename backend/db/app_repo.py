@@ -39,7 +39,8 @@ def _row(r: Any) -> dict | None:
 def upsert_app(s: Session, org_id: UUID | str, *, slug: str, name: str,
                kind: str = "app", icon: str | None = None,
                project_slug: str | None = None,
-               parent_id: UUID | str | None = None) -> dict:
+               parent_id: UUID | str | None = None,
+               dev_only: bool = False) -> dict:
     """Insert-or-update by `(org_id, slug)` among LIVE rows.
 
     Slug is the natural key here on purpose ("a slug is a label, never an
@@ -54,21 +55,24 @@ def upsert_app(s: Session, org_id: UUID | str, *, slug: str, name: str,
     if existing is not None:
         s.execute(text(
             "UPDATE app SET name = :name, kind = :kind, icon = :icon, "
-            "project_slug = :project_slug, parent_id = :parent_id "
+            "project_slug = :project_slug, parent_id = :parent_id, "
+            "dev_only = :dev_only "
             "WHERE id = :id"),
             {"name": name, "kind": kind, "icon": icon,
              "project_slug": project_slug,
              "parent_id": str(parent_id) if parent_id else None,
+             "dev_only": dev_only,
              "id": existing["id"]})
         return get_app(s, org_id, existing["id"])
     app_id = uuid7()
     s.execute(text(
         "INSERT INTO app (id, org_id, slug, name, kind, icon, project_slug, "
-        "parent_id) VALUES (:id, :org, :slug, :name, :kind, :icon, "
-        ":project_slug, :parent_id)"),
+        "parent_id, dev_only) VALUES (:id, :org, :slug, :name, :kind, :icon, "
+        ":project_slug, :parent_id, :dev_only)"),
         {"id": app_id, "org": str(org_id), "slug": slug, "name": name,
          "kind": kind, "icon": icon, "project_slug": project_slug,
-         "parent_id": str(parent_id) if parent_id else None})
+         "parent_id": str(parent_id) if parent_id else None,
+         "dev_only": dev_only})
     return get_app(s, org_id, app_id)
 
 
@@ -107,9 +111,12 @@ def get_app_by_project_slug(s: Session, org_id: UUID | str,
 
 
 def list_apps(s: Session, org_id: UUID | str, *, kind: str | None = None,
-             archived: bool | None = None) -> list[dict]:
+             archived: bool | None = None,
+             dev_only: bool | None = None) -> list[dict]:
     """Live apps for this org. `archived=None` (the default) returns both
     archived and unarchived; `True`/`False` filters on `archived_at`.
+    `dev_only=False` excludes dev-only apps (the production default);
+    `dev_only=None` returns all rows.
     Soft-deleted rows are never returned, regardless of `archived`."""
     where = ["org_id = :org", "deleted_at IS NULL"]
     params: dict[str, Any] = {"org": str(org_id)}
@@ -118,6 +125,9 @@ def list_apps(s: Session, org_id: UUID | str, *, kind: str | None = None,
         params["kind"] = kind
     if archived is not None:
         where.append("archived_at IS NOT NULL" if archived else "archived_at IS NULL")
+    if dev_only is not None:
+        where.append("dev_only = :dev_only")
+        params["dev_only"] = dev_only
     sql = f"SELECT * FROM app WHERE {' AND '.join(where)} ORDER BY name"
     return [dict(r._mapping) for r in s.execute(text(sql), params).all()]
 
@@ -125,7 +135,7 @@ def list_apps(s: Session, org_id: UUID | str, *, kind: str | None = None,
 def update_app(s: Session, org_id: UUID | str, app_id: UUID | str,
                **fields: Any) -> dict | None:
     allowed = ("name", "icon", "slug", "kind", "parent_id", "project_slug",
-               "archived_at")
+               "archived_at", "dev_only")
     sets = {k: v for k, v in fields.items() if k in allowed}
     if not sets:
         return get_app(s, org_id, app_id)

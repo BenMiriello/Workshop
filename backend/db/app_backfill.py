@@ -84,6 +84,7 @@ def plan() -> dict:
 def _backfill_apps(s) -> dict[str, str]:
     """Upsert one `app` row per roster slug. Returns slug -> app_id."""
     from db import app_repo
+    from wsplatform import dev_mode
 
     org_id = _org_id(s)
     if org_id is None:
@@ -101,6 +102,16 @@ def _backfill_apps(s) -> dict[str, str]:
             s, org_id, slug=slug, name=_display_name(slug, project_title),
             icon=_icon(slug), project_slug=project_slug)
         ids[slug] = row["id"]
+
+    # The development app is not in installed-apps.json (it is the platform
+    # repo itself, not an installed app), so it is not in all_app_slugs().
+    # Upsert it separately with dev_only=True so the catalog filter can hide
+    # it on a production install without requiring the row to be absent.
+    dev_row = app_repo.upsert_app(
+        s, org_id, slug="development", name="Workshop (development)",
+        project_slug="development", dev_only=True)
+    ids["development"] = dev_row["id"]
+
     return ids
 
 

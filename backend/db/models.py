@@ -331,6 +331,8 @@ class App(Base, Timestamps, SoftDelete):
     # 2.1: budget, birds, location, commute, notes-app). NULL means this app
     # has no working tree of its own (an installed-only app with no repo).
     project_slug: Mapped[str | None] = mapped_column(String(64))
+    dev_only: Mapped[bool] = mapped_column(Boolean, nullable=False,
+                                           server_default="false")
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
