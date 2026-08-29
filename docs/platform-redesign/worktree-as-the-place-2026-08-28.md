@@ -167,7 +167,7 @@ position still queues.
 not beside the title: the title row is already full, and this is a statement about
 where the page is pointed rather than part of the page's name. Same pill, same menu.
 
-**The chats page.** ~~The list groups by worktree.~~ **AMENDED 2026-08-29, see the correction at the end of this document.** The list groups by worktree.
+**The chats page.** **SUPERSEDED 2026-08-29 by the correction at the end of this document: the chats page does NOT group by worktree.** What this section originally said, kept for the record: the list groups by worktree.
 A worktree row carries its name, its state, and its chats; the common case (one chat)
 links straight through, and the row expands when there is more than one. A chat with no
 worktree (read-only, on Main) sits ungrouped under Main. This makes the worktree
