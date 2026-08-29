@@ -35,7 +35,7 @@ import {
   Tags,
   Wrench,
 } from "lucide-react";
-import { appPlaces } from "../../apps/registry";
+import { useAppPlaces } from "../../apps/useAppPlaces";
 import { userStorage } from "../../lib/storage";
 import { buildPlaces, pageFor, placeFor, type ShellPage, type ShellPlace } from "./places";
 import { useTakeover } from "./takeover";
@@ -129,8 +129,11 @@ export function useShell(): Shell {
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
-  // The app catalog cannot change without a reload, so this is built once.
-  const places = useMemo(() => buildPlaces(appPlaces(), ICONS), []);
+  // WHICH apps exist comes from the platform, not from what this bundle ships
+  // UI for. See useAppPlaces: an app the platform knew about any other way had
+  // no dock tile at all.
+  const apps = useAppPlaces();
+  const places = useMemo(() => buildPlaces(apps, ICONS), [apps]);
 
   const [memory, setMemory] = useState<ShellMemory>(() =>
     parseMemory(userStorage.local.getItem(STORAGE_KEY)),
