@@ -140,10 +140,22 @@ describe("path helpers", () => {
 });
 
 describe("parentOf walks containment, not history", () => {
-  it("takes a note up to its scope", () => {
+  it("takes a root-level note up to the root", () => {
     expect(parentOf({ kind: "note", scope: "project:birds", id: "x" }, tree)).toEqual({
-      kind: "scope",
-      scope: "project:birds",
+      kind: "root",
+    });
+  });
+
+  it("takes a folder note up to its folder", () => {
+    expect(parentOf({ kind: "note", scope: "development", id: "system/mem-a" }, tree)).toEqual({
+      kind: "folder",
+      scope: "development",
+      folder: "system",
+    });
+    expect(parentOf({ kind: "note", scope: "development", id: "user/pref-b" }, tree)).toEqual({
+      kind: "folder",
+      scope: "development",
+      folder: "user",
     });
   });
 
@@ -173,12 +185,16 @@ describe("parentOf walks containment, not history", () => {
 });
 
 describe("ancestorsOf", () => {
-  it("reads root first, and excludes the node itself", () => {
+  it("root-level note has only the root as ancestor", () => {
     expect(ancestorsOf({ kind: "note", scope: "agent:scout", id: "x" }, tree)).toEqual([
       { kind: "root" },
-      { kind: "scope", scope: "workshop" },
-      { kind: "scope", scope: "project:birds" },
-      { kind: "scope", scope: "agent:scout" },
+    ]);
+  });
+
+  it("folder note has root then folder as ancestors", () => {
+    expect(ancestorsOf({ kind: "note", scope: "development", id: "system/mem-a" }, tree)).toEqual([
+      { kind: "root" },
+      { kind: "folder", scope: "development", folder: "system" },
     ]);
   });
 
@@ -201,6 +217,7 @@ describe("the kit's vocabulary", () => {
 
   it("labels a leaf from its address, which the level builder then overrides", () => {
     expect(nodeLabel({ kind: "note", scope: "workshop", id: "how-to" })).toBe("how-to");
+    expect(nodeLabel({ kind: "note", scope: "workshop", id: "system/how-to" })).toBe("how-to");
     expect(nodeLabel({ kind: "doc", path: "docs/a/b.md" })).toBe("b.md");
   });
 
@@ -229,7 +246,13 @@ describe("the kit's vocabulary", () => {
 describe("drillAncestorsFor is the phone's trail", () => {
   it("drops the root, which a trail always starts with anyway", () => {
     expect(drillAncestorsFor({ kind: "note", scope: "agent:scout", id: "x" }, tree).map((n) => n.id))
-      .toEqual(["scope:workshop", "scope:project:birds", "scope:agent:scout"]);
+      .toEqual([]);
+  });
+
+  it("places a folder note under its folder in the trail", () => {
+    expect(
+      drillAncestorsFor({ kind: "note", scope: "development", id: "system/mem-a" }, tree).map((n) => n.id),
+    ).toEqual(["folder:development:system"]);
   });
 
   it("ends on the level the document is IN, which is where Up lands", () => {
@@ -315,11 +338,18 @@ describe("URL addressing keeps the links refs.py already handed out", () => {
     return nodeForParams({ scope: q.get("scope"), note: q.get("note"), path: q.get("path") });
   };
 
-  it("opens /memory?scope=&note= and walks up to that note's scope", () => {
-    const node = readHref("/memory?scope=agent:scout&note=ports-abc");
-    expect(node).toEqual({ kind: "note", scope: "agent:scout", id: "ports-abc" });
+  it("opens /memory?scope=&note= for a root-level note with no trail", () => {
+    const node = readHref("/memory?scope=development&note=ports-abc");
+    expect(node).toEqual({ kind: "note", scope: "development", id: "ports-abc" });
     const trail = drillAncestorsFor(node!, tree);
-    expect(trail[trail.length - 1].id).toBe("scope:agent:scout");
+    expect(trail).toEqual([]);
+  });
+
+  it("opens /memory?scope=&note= for a folder note with the folder as trail", () => {
+    const node = readHref("/memory?scope=development&note=system%2Fmem-a");
+    expect(node).toEqual({ kind: "note", scope: "development", id: "system/mem-a" });
+    const trail = drillAncestorsFor(node!, tree);
+    expect(trail[trail.length - 1].id).toBe("folder:development:system");
   });
 
   it("opens /memory?tab=docs&path= and walks up to that document's folder", () => {

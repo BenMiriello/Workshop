@@ -161,8 +161,16 @@ export function parentOf(node: MemoryNode, tree: readonly ScopeNode[]): MemoryNo
       const parent = found?.parent ?? null;
       return parent ? { kind: "scope", scope: parent } : { kind: "root" };
     }
-    case "note":
-      return { kind: "scope", scope: node.scope };
+    case "note": {
+      const slash = node.id.indexOf("/");
+      if (slash > 0) {
+        const folder = node.id.slice(0, slash);
+        if (folder === "system" || folder === "user") {
+          return { kind: "folder", scope: node.scope, folder };
+        }
+      }
+      return { kind: "root" };
+    }
     case "docdir":
     case "doc": {
       const dir = dirName(node.path);
@@ -210,7 +218,10 @@ export function nodeLabel(node: MemoryNode): string {
     case "scope": return scopeLabel(node.scope);
     case "docdir": return baseName(node.path);
     case "doc": return baseName(node.path);
-    case "note": return node.id;
+    case "note": {
+      const slash = node.id.indexOf("/");
+      return slash < 0 ? node.id : node.id.slice(slash + 1);
+    }
     case "folder": return node.folder;
   }
 }

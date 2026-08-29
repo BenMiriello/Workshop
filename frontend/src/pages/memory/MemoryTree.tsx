@@ -71,9 +71,11 @@ function folderNode(scope: string, folder: "system" | "user"): FileTreeNode {
 /** A note's row. The stored title is what a reader recognises, so it overrides
  *  the id `memoryFileNode` can name it by; the address is unchanged. */
 function noteNode(note: NoteRow): FileTreeNode {
+  const slash = note.id.indexOf("/");
+  const slug = slash < 0 ? note.id : note.id.slice(slash + 1);
   return {
     ...memoryFileNode({ kind: "note", scope: note.scope, id: note.id }),
-    label: note.title || note.id,
+    label: note.title || slug,
     detail: timeAgo(note.updated, { suffix: false }) || undefined,
   };
 }
@@ -169,11 +171,11 @@ export function createMemorySource(selectedPlace: string = "workshop"): MemorySo
     switch (node.kind) {
       case "root": {
         const [, all, allDocs] = await Promise.all([scopes(), notes(), docs()]);
-        const placeNotes = notesInScope(all, selectedPlace);
+        const rootNotes = notesInScope(all, selectedPlace).filter((n) => !n.id.includes("/"));
         const nodes: FileTreeNode[] = [
           folderNode(selectedPlace, "system"),
           folderNode(selectedPlace, "user"),
-          ...placeNotes.map(noteNode),
+          ...rootNotes.map(noteNode),
         ];
         // Documents are committed repo docs: shown in the Workshop place only.
         if (selectedPlace === "workshop") {
@@ -181,11 +183,12 @@ export function createMemorySource(selectedPlace: string = "workshop"): MemorySo
         }
         return { nodes };
       }
-      case "folder":
-        // Ticket 3 wires the files API here so folder contents become visible.
-        // Until then the physical directories exist on disk and the folders show
-        // as empty branches the operator can navigate into.
-        return { nodes: [] };
+      case "folder": {
+        const all = await notes();
+        const prefix = `${node.folder}/`;
+        const folderNotes = notesInScope(all, node.scope).filter((n) => n.id.startsWith(prefix));
+        return { nodes: folderNotes.map(noteNode) };
+      }
       case "docs":
       case "docdir": {
         const all = await docs();
