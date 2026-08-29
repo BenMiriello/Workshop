@@ -955,7 +955,7 @@ def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
 # here loses accuracy -- this only decides WHEN a patch earns the trip.
 _LIST_RELEVANT_META_FIELDS = frozenset({
     "title", "_seed_title", "archived_at", "mode",
-    "model", "agent_id", "context_key",
+    "model", "agent_id", "context_key", "branch_slug",
 })
 # NOT `scope`/`scope_locked`/`participants`. Nothing writes any of those keys
 # any more: the mirror's `scope` column is DERIVED from `context_key` (which is

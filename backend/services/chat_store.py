@@ -772,6 +772,7 @@ def _summary_row(thread_id: str) -> dict | None:
         "context_tokens": ctx_tokens or None,
         "context_window": (context_window.window_for(meta.get("model"), ctx_tokens)
                            if ctx_tokens else None),
+        "branch_slug": meta.get("branch_slug"),
     }
 
 

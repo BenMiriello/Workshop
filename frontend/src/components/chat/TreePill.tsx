@@ -144,7 +144,7 @@ export default function TreePill({ threadId }: { threadId: string }) {
         {tree?.branch_slug && (
           <MenuItem
             icon={<GitBranch size={14} aria-hidden />}
-            onSelect={() => nav("/branches")}
+            onSelect={() => nav("/chats")}
           >
             Open the worktree
           </MenuItem>

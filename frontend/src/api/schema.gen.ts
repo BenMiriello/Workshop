@@ -16830,6 +16830,8 @@ export interface components {
             agent_id?: string | null;
             /** Archived At */
             archived_at?: string | null;
+            /** Branch Slug */
+            branch_slug?: string | null;
             /** Context Key */
             context_key: string;
             /** Context Tokens */

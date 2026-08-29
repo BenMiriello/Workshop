@@ -105,6 +105,7 @@ def _shape_row(row: dict) -> dict:
         "context_tokens": ctx_tokens or None,
         "context_window": (context_window.window_for(row.get("model"), ctx_tokens)
                            if ctx_tokens else None),
+        "branch_slug": (state or {}).get("branch_slug"),
     }
 
 

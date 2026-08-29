@@ -757,7 +757,10 @@ def sync_thread_fields(s: Session, tid: UUID | str, meta: dict) -> None:
          # deleted; the `||` merge leaves the old key on rows that already have
          # one, which is what the T4 dead-schema pass clears along with the
          # column it lives in.
-         "state": _json({"meta_updated_at": meta.get("updated_at")})})
+         "state": _json({
+             "meta_updated_at": meta.get("updated_at"),
+             "branch_slug": meta.get("branch_slug"),
+         })})
 
 
 # --- the thread list, in one query ------------------------------------------

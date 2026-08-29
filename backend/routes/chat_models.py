@@ -147,6 +147,9 @@ class ThreadSummary(BaseModel):
     # needs the draft and only the composer has that.
     context_tokens: int | None = None
     context_window: int | None = None
+    # WHICH WORKTREE THIS CHAT IS PINNED TO. None for trunk (Main). Added so
+    # the Chats page can group threads by worktree without a per-thread call.
+    branch_slug: str | None = None
 
 
 class StoredCardState(BaseModel):
