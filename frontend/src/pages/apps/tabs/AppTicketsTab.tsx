@@ -8,14 +8,15 @@
 // 400s on an unlinked app's scope (routes/tasks_all.py's `_require_root`),
 // which is exactly the "looks like a bug" failure mode this whole build is
 // supposed to stop shipping.
-import { useCallback, useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { ListChecks } from "lucide-react";
 import { Card, CardGrid, Row, SectionLabel, StatusDot } from "@workshop/ui";
 import { taskStatusKind, taskStatusLabel, ticketHref, title as taskTitle } from "../../../lib/tasks";
 import type { AppRecord } from "../../../lib/apps";
 import { AppTabPage, CollectionBody } from "./AppTabShell";
 import { unlinkedReason } from "./appTabState";
+import { queryKeys } from "../../../lib/queryKeys";
 
 // The shape observed off services/tasks.list_tasks(): a Task record, read the
 // same loose way ProjectDetail.tsx reads it (the route has no response_model
@@ -23,33 +24,25 @@ import { unlinkedReason } from "./appTabState";
 type AppTicket = { id: string; text?: string; title?: string; body?: string; status: string };
 
 function TicketsBody({ app }: { app: AppRecord }) {
-  const [tickets, setTickets] = useState<AppTicket[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
   const endpoint = `/api/apps/${app.id}/tickets`;
   const scope = `app:${app.slug}`;
-
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
+  const q = useQuery({
+    queryKey: queryKeys.apps.tickets(app.id),
+    queryFn: async (): Promise<AppTicket[]> => {
       const r = await fetch(endpoint);
       if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => "")}`);
       const d = await r.json();
-      setTickets((d.tickets ?? []) as AppTicket[]);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      setTickets([]);
-    }
-  }, [endpoint]);
-
-  useEffect(() => { load(); }, [load]);
+      return (d.tickets ?? []) as AppTicket[];
+    },
+  });
 
   return (
     <section>
       <SectionLabel icon={<ListChecks aria-hidden />}>Tickets</SectionLabel>
       <CollectionBody
-        items={tickets}
-        err={err}
-        reload={load}
+        items={q.data ?? null}
+        err={q.isError ? (q.error instanceof Error ? q.error.message : String(q.error)) : null}
+        reload={() => void q.refetch()}
         endpoint={endpoint}
         emptyTitle="No open tickets"
         emptyHint={unlinkedReason("tickets", app.project_slug, 0) ?? "Nothing filed against this app yet."}

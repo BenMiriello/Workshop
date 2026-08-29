@@ -1,13 +1,14 @@
 // The Deploys tab: this app's deploy targets, through its linked project
 // (services/apps.py deploys_for_app -- `deploys.list_by_project(...)`, empty
 // when unlinked). GET /api/apps/{id}/deploys.
-import { useCallback, useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { Rocket } from "lucide-react";
 import { Card, Row, SectionLabel, Stack, StatusPill } from "@workshop/ui";
 import type { AppRecord } from "../../../lib/apps";
 import { AppTabPage, CollectionBody } from "./AppTabShell";
 import { unlinkedReason } from "./appTabState";
+import { queryKeys } from "../../../lib/queryKeys";
 
 // The shape observed off services/deploys.list_by_project() -- see
 // components/DeploysPanel.tsx's own hand-written `Deploy` type, same
@@ -21,32 +22,24 @@ type AppDeploy = {
 };
 
 function DeploysBody({ app }: { app: AppRecord }) {
-  const [deploys, setDeploys] = useState<AppDeploy[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
   const endpoint = `/api/apps/${app.id}/deploys`;
-
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
+  const q = useQuery({
+    queryKey: queryKeys.apps.deploys(app.id),
+    queryFn: async (): Promise<AppDeploy[]> => {
       const r = await fetch(endpoint);
       if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => "")}`);
       const d = await r.json();
-      setDeploys((d.deploys ?? []) as AppDeploy[]);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      setDeploys([]);
-    }
-  }, [endpoint]);
-
-  useEffect(() => { load(); }, [load]);
+      return (d.deploys ?? []) as AppDeploy[];
+    },
+  });
 
   return (
     <section>
       <SectionLabel icon={<Rocket aria-hidden />}>Deploys</SectionLabel>
       <CollectionBody
-        items={deploys}
-        err={err}
-        reload={load}
+        items={q.data ?? null}
+        err={q.isError ? (q.error instanceof Error ? q.error.message : String(q.error)) : null}
+        reload={() => void q.refetch()}
         endpoint={endpoint}
         emptyTitle="No deploy targets"
         emptyHint={unlinkedReason("deploys", app.project_slug, 0) ?? "This app has no deploy target configured yet."}

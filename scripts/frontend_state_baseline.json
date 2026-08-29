@@ -2,5 +2,6 @@
   "_comment": "Ratchet baseline for check_frontend_state.py. These counts may only go DOWN. A new server read in frontend/src goes through the query layer at frontend/src/lib/queryClient.ts; `usePoll` and hand-rolled polling setInterval timers are the LEGACY mechanisms and both are on their way to zero. usepoll_sites counts call sites under frontend/src only (the hook's definition in packages/ui/src/usePoll.ts is a separate, breaking, MINOR-bump ticket). raw_poll_intervals counts setInterval timers that reach the network -- the non-poll timers (clock ticks, audio meters, debounces, watchdogs) are exempted one by one, with a reason each, in _TIMER_ALLOW inside the checker. inline_query_keys counts cache keys written as an array literal where they are used instead of being built by a key module (frontend/src/lib/queryKeys.ts for the platform, a queries.ts beside an app's fetchers for an app). It is pinned at 0, so unlike the other two it FAILS on the first new one rather than freezing a debt: there was no debt left to freeze.",
   "usepoll_sites": 1,
   "raw_poll_intervals": 2,
-  "inline_query_keys": 0
+  "inline_query_keys": 0,
+  "fetch_reads_off_query_layer": 155
 }

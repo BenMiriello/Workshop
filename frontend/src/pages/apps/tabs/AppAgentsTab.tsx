@@ -2,13 +2,14 @@
 // with a matching project_slug), mirroring the project build view's agent
 // list. NOT the app's chat persona -- services/apps.py's own docstring is
 // explicit about that distinction. GET /api/apps/{id}/agents.
-import { useCallback, useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { Bot } from "lucide-react";
 import { Card, CardGrid, Row, SectionLabel, Tag, catFor } from "@workshop/ui";
 import type { AppRecord } from "../../../lib/apps";
 import { AppTabPage, CollectionBody } from "./AppTabShell";
 import { unlinkedReason } from "./appTabState";
+import { queryKeys } from "../../../lib/queryKeys";
 
 // The shape observed off services/agents_registry.list_agents(), not a wire
 // contract: the route declares `list[dict[str, Any]]` (no response_model yet,
@@ -23,32 +24,24 @@ type RosterAgent = {
 };
 
 function AgentsBody({ app }: { app: AppRecord }) {
-  const [agents, setAgents] = useState<RosterAgent[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
   const endpoint = `/api/apps/${app.id}/agents`;
-
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
+  const q = useQuery({
+    queryKey: queryKeys.apps.agents(app.id),
+    queryFn: async (): Promise<RosterAgent[]> => {
       const r = await fetch(endpoint);
       if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => "")}`);
       const d = await r.json();
-      setAgents((d.agents ?? []) as RosterAgent[]);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      setAgents([]);
-    }
-  }, [endpoint]);
-
-  useEffect(() => { load(); }, [load]);
+      return (d.agents ?? []) as RosterAgent[];
+    },
+  });
 
   return (
     <section>
       <SectionLabel icon={<Bot aria-hidden />}>Agents</SectionLabel>
       <CollectionBody
-        items={agents}
-        err={err}
-        reload={load}
+        items={q.data ?? null}
+        err={q.isError ? (q.error instanceof Error ? q.error.message : String(q.error)) : null}
+        reload={() => void q.refetch()}
         endpoint={endpoint}
         emptyTitle="No agents linked"
         emptyHint={unlinkedReason("agents", app.project_slug, 0) ?? "No roster agent is linked to this app's project yet."}

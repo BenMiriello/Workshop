@@ -112,6 +112,10 @@ export const queryKeys = {
     all: () => ["tasks"] as const,
     list: (scope: string) => ["tasks", scope] as const,
     detail: (scope: string, id: string) => ["tasks", scope, id, "detail"] as const,
+    filteredList: (paramsStr: string) => ["tasks", "filtered-list", paramsStr] as const,
+    scopes: () => ["tasks", "scopes"] as const,
+    labels: (scope: string) => ["tasks", "labels", scope] as const,
+    assignees: (scope: string) => ["tasks", "assignees", scope] as const,
   },
 
   usage: {
@@ -145,6 +149,12 @@ export const queryKeys = {
      * the cache's.
      */
     launcherStatuses: () => ["apps", "launcher", "statuses"] as const,
+    chats: (appId: string) => ["apps", appId, "chats"] as const,
+    agents: (appId: string) => ["apps", appId, "agents"] as const,
+    tickets: (appId: string) => ["apps", appId, "tickets"] as const,
+    runs: (appId: string) => ["apps", appId, "runs"] as const,
+    deploys: (appId: string) => ["apps", appId, "deploys"] as const,
+    notes: (appId: string) => ["apps", appId, "notes"] as const,
   },
 
   presence: {

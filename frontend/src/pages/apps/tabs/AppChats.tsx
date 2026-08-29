@@ -1,44 +1,37 @@
 // The Chats tab: every conversation bound to this app, real for every app
 // (services/apps.py chats_for_app -- Postgres, chat_thread.app_id, no
 // project link required). GET /api/apps/{id}/chats.
-import { useCallback, useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { MessagesSquare, Plus } from "lucide-react";
 import { Button, Card, CardGrid, Row, SectionLabel } from "@workshop/ui";
 import { newChatHref } from "../../../lib/chatSelection";
 import type { components } from "../../../api/schema.gen";
 import type { AppRecord } from "../../../lib/apps";
 import { AppTabPage, CollectionBody } from "./AppTabShell";
+import { queryKeys } from "../../../lib/queryKeys";
 
 type AppChat = components["schemas"]["AppChat"];
 
 function ChatsBody({ app }: { app: AppRecord }) {
-  const [chats, setChats] = useState<AppChat[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
   const endpoint = `/api/apps/${app.id}/chats`;
-
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
+  const q = useQuery({
+    queryKey: queryKeys.apps.chats(app.id),
+    queryFn: async (): Promise<AppChat[]> => {
       const r = await fetch(endpoint);
       if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => "")}`);
       const d = await r.json();
-      setChats(d.chats ?? []);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      setChats([]);
-    }
-  }, [endpoint]);
-
-  useEffect(() => { load(); }, [load]);
+      return d.chats ?? [];
+    },
+  });
 
   return (
     <section>
       <SectionLabel icon={<MessagesSquare aria-hidden />}>Chats</SectionLabel>
       <CollectionBody
-        items={chats}
-        err={err}
-        reload={load}
+        items={q.data ?? null}
+        err={q.isError ? (q.error instanceof Error ? q.error.message : String(q.error)) : null}
+        reload={() => void q.refetch()}
         endpoint={endpoint}
         emptyTitle="No chats yet"
         emptyHint={`Open a chat scoped to ${app.name} to see it here.`}

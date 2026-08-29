@@ -19,9 +19,11 @@
 // /work so existing links keep resolving.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button, Card, Field, Input, Modal, PageActionBar, Row, Select, Skeleton, Stack, StateBlock, Textarea, shortHttpError } from "@workshop/ui";
 import { type Task, cleanTitle, scopeLabel, ticketHref } from "../lib/tasks";
+import { queryKeys } from "../lib/queryKeys";
 import {
   PAGE_SIZE, apiQuery, clampPage, defaultFilters, isNarrowed, pageCount,
   pageItems, parseFilters, parsePage, parseSort, parseView, writeParams,
@@ -43,6 +45,7 @@ export default function Tickets() {
   const nav = useNavigate();
   const [search, setSearch] = useSearchParams();
   const wide = useIsWide();
+  const qc = useQueryClient();
 
   // The URL IS the filter state (frontend/CLAUDE.md: view, scope and tab belong
   // in the URL), so a filtered list is a link and the back button walks real
@@ -80,12 +83,6 @@ export default function Tickets() {
   const filters = useMemo<TicketFilters>(
     () => ({ ...urlFilters, q: qDraft }), [urlFilters, qDraft]);
 
-  const [data, setData] = useState<TasksResp | null>(null);
-  const [scopes, setScopes] = useState<string[]>([]);
-  const [labels, setLabels] = useState<LabelCount[]>([]);
-  const [assignees, setAssignees] = useState<LabelCount[]>([]);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [sheet, setSheet] = useState(false);
 
@@ -123,28 +120,61 @@ export default function Tickets() {
     writeUrl({ ...carried, q: urlFilters.q }, sort, next);
   }, [urlFilters, sort, view, search, writeUrl]);
 
-  // ONE PAGE, always. This used to grow its own `limit` and refetch, which on a
-  // large queue asks the server for every row it has and renders all of them.
-  // The board does not use this at all: it pages per lane (TicketBoard).
-  const refresh = useCallback(async () => {
-    if (view === "board") return;
-    setLoading(true);
-    setErr(null);
-    try {
+  const dataQuery = useQuery({
+    queryKey: queryKeys.tasks.filteredList(
+      view === "board" ? "" : apiQuery(urlFilters, sort, PAGE_SIZE, (page - 1) * PAGE_SIZE).toString()
+    ),
+    queryFn: async (): Promise<TasksResp> => {
       const params = apiQuery(urlFilters, sort, PAGE_SIZE, (page - 1) * PAGE_SIZE);
       const r = await fetch(`/api/tasks?${params.toString()}`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setData(await r.json());
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-    // urlFilters is rebuilt each render; its VALUE is what matters here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, view, page]);
+      return r.json();
+    },
+    enabled: view !== "board",
+    staleTime: 0,
+  });
 
-  useEffect(() => { refresh(); }, [refresh]);
+  const scopesQuery = useQuery({
+    queryKey: queryKeys.tasks.scopes(),
+    queryFn: async (): Promise<string[]> => {
+      const r = await fetch("/api/tasks/scopes");
+      const j = r.ok ? await r.json() : { scopes: [] };
+      return orderScopes(j.scopes ?? []);
+    },
+    staleTime: 60_000,
+  });
+
+  const labelScope = urlFilters.scope ?? "";
+  const labelsQuery = useQuery({
+    queryKey: queryKeys.tasks.labels(labelScope),
+    queryFn: async (): Promise<LabelCount[]> => {
+      const p = labelScope ? `?scope=${encodeURIComponent(labelScope)}` : "";
+      const r = await fetch(`/api/tasks/labels${p}`);
+      const j = r.ok ? await r.json() : { labels: [] };
+      return (j.labels ?? []) as LabelCount[];
+    },
+    staleTime: 30_000,
+  });
+
+  const assigneesQuery = useQuery({
+    queryKey: queryKeys.tasks.assignees(labelScope),
+    queryFn: async (): Promise<LabelCount[]> => {
+      const p = labelScope ? `?scope=${encodeURIComponent(labelScope)}` : "";
+      const r = await fetch(`/api/tasks/assignees${p}`);
+      const j = r.ok ? await r.json() : { assignees: [] };
+      return (j.assignees ?? []) as LabelCount[];
+    },
+    staleTime: 30_000,
+  });
+
+  const data = dataQuery.data ?? null;
+  const scopes = scopesQuery.data ?? [];
+  const labels = labelsQuery.data ?? [];
+  const assignees = assigneesQuery.data ?? [];
+  const err = !dataQuery.isFetching && dataQuery.isError
+    ? (dataQuery.error instanceof Error ? dataQuery.error.message : String(dataQuery.error))
+    : null;
+  const loading = dataQuery.isPending;
 
   // A page the data cannot support (filtered down while sitting on page 9) is
   // corrected rather than shown empty.
@@ -153,31 +183,6 @@ export default function Tickets() {
     const safe = clampPage(page, data.total);
     if (safe !== page) goToPage(safe);
   }, [data, page, goToPage]);
-
-  useEffect(() => {
-    fetch("/api/tasks/scopes")
-      .then((r) => (r.ok ? r.json() : { scopes: [] }))
-      .then((j) => setScopes(orderScopes(j.scopes ?? [])))
-      .catch(() => setScopes([]));
-  }, []);
-
-  // The tag vocabulary, scoped with the list: a label is free text with no
-  // registry, so the tickets themselves are the only source for "what tags
-  // exist", and the menu must offer the ones this list can actually match.
-  useEffect(() => {
-    const p = urlFilters.scope ? `?scope=${encodeURIComponent(urlFilters.scope)}` : "";
-    fetch(`/api/tasks/labels${p}`)
-      .then((r) => (r.ok ? r.json() : { labels: [] }))
-      .then((j) => setLabels(j.labels ?? []))
-      .catch(() => setLabels([]));
-    // Same shape, same reason: an assignee is `operator` or `agent:<slug>`,
-    // agents are registered at runtime, and nothing else knows which of them
-    // hold tickets in this scope.
-    fetch(`/api/tasks/assignees${p}`)
-      .then((r) => (r.ok ? r.json() : { assignees: [] }))
-      .then((j) => setAssignees(j.assignees ?? []))
-      .catch(() => setAssignees([]));
-  }, [urlFilters.scope]);
 
   const rows = data?.tasks ?? [];
   const total = data?.total ?? 0;
@@ -202,7 +207,7 @@ export default function Tickets() {
         variant="error"
         title="Couldn't load tickets"
         hint={<><code>/api/tasks</code> ({err})</>}
-        action={<Button size="sm" onClick={refresh}>Retry</Button>}
+        action={<Button size="sm" onClick={() => void dataQuery.refetch()}>Retry</Button>}
       />
     );
   } else if (!data && loading) {
@@ -365,6 +370,7 @@ export default function Tickets() {
           onClose={() => setCreating(false)}
           onCreated={(t) => {
             setCreating(false);
+            void qc.invalidateQueries({ queryKey: queryKeys.tasks.all() });
             nav(ticketHref(t.scope ?? "workshop", t.id));
           }}
         />

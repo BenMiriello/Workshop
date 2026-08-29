@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { Trash2, Plus, Bot, Brain, MessageSquare, Clock, StickyNote, ListChecks, Activity } from "lucide-react";
 import type { Project } from "@shared/types";
 import { ActionBar, Badge, Button, Card, Checkbox, ConfirmDialog, Field, Input, Notice, PageHeader, Row, SectionLabel, Segmented, Select, Skeleton, StateBlock, StatusDot, StatusPill, Stack, Tag, Textarea, catFor, type SegmentedOption, useCrumbLabel, shortHttpError, timeAbsolute } from "@workshop/ui";
@@ -16,6 +17,7 @@ import {
   type UnifiedAgent,
 } from "../lib/agentTriggers";
 import { ticketHref } from "../lib/tasks";
+import { queryKeys } from "../lib/queryKeys";
 
 // One Agent, one config surface, typed by ROLE. There is no `runtime` field.
 // This page is the definition (editable), triggers, the grant set
@@ -512,6 +514,7 @@ function AgentNotes({ slug }: { slug: string }) {
 // ---------------------------------------------------------------------------
 function ExistingAgent({ agentId }: { agentId: string }) {
   const nav = useNavigate();
+  const qc = useQueryClient();
   const [agent, setAgent] = useState<AgentDetailData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[] | null>(null);
@@ -644,6 +647,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
       setFlash(true);
       setTimeout(() => setFlash(false), 2000);
       await load();
+      void qc.invalidateQueries({ queryKey: queryKeys.agents.list() });
     } catch (e) {
       setErr(String(e));
     } finally {

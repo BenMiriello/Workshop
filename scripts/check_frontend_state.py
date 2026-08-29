@@ -116,6 +116,8 @@ SCAN_PREFIX = "frontend/src/"
 QUERY_LAYER = "frontend/src/lib/queryClient.ts"
 
 _USEPOLL = re.compile(r"\busePoll\s*\(")
+_FETCH_READ = re.compile(r"\bfetch\s*\(")
+_METHOD_WRITE = re.compile(r'\bmethod\s*:\s*["\'](POST|PUT|DELETE|PATCH)["\']\s*', re.IGNORECASE)
 # A cache key written as an array literal where it is USED, rather than built by
 # a key module. `queryKey: ["chat", "threads"]` and `queryKey: ["chat",
 # "threads", null]` are two cache entries, and TanStack types a key as
@@ -313,6 +315,7 @@ def scan(root: Path = ROOT) -> dict:
     intervals: list[dict] = []
     inline_keys: list[dict] = []
     exempt: list[dict] = []
+    fetch_reads: list[dict] = []
 
     for rel in tracked_files(root):
         if not _is_source(rel):
@@ -354,6 +357,14 @@ def scan(root: Path = ROOT) -> dict:
                 (exempt if why else intervals).append(
                     {"file": rel, "line": i, "text": stripped, **({"why": why} if why else {})}
                 )
+            if _FETCH_READ.search(line):
+                win_fwd = "\n".join(lines[i - 1 : i - 1 + _WINDOW])
+                if _METHOD_WRITE.search(win_fwd):
+                    continue  # it's a write
+                win_bck = "\n".join(lines[max(0, i - 1 - 5) : i])
+                if re.search(r'\bqueryFn\s*:', win_bck) or re.search(r'\bqueryKey\s*:', win_bck):
+                    continue  # already on the query layer
+                fetch_reads.append({"file": rel, "line": i, "text": stripped})
 
     # A stale exemption is REPORTED, never failed. Failing it would mean that
     # deleting an allowlisted timer -- unambiguously progress -- breaks the
@@ -378,9 +389,11 @@ def scan(root: Path = ROOT) -> dict:
         "usepoll_sites": len(polls),
         "raw_poll_intervals": len(intervals),
         "inline_query_keys": len(inline_keys),
+        "fetch_reads_off_query_layer": len(fetch_reads),
         "usepoll": polls,
         "intervals": intervals,
         "inline_keys": inline_keys,
+        "fetch_reads": fetch_reads,
         "exempt_timers": exempt,
         "exempt_polls": exempt_polls,
         "stale_allowlist_entries": stale,
@@ -406,11 +419,12 @@ def _new_sites(now: list[dict], before: list[dict]) -> list[dict]:
     return out
 
 
-_METRICS = ("usepoll_sites", "raw_poll_intervals", "inline_query_keys")
+_METRICS = ("usepoll_sites", "raw_poll_intervals", "inline_query_keys", "fetch_reads_off_query_layer")
 _SITES = {
     "usepoll_sites": "usepoll",
     "raw_poll_intervals": "intervals",
     "inline_query_keys": "inline_keys",
+    "fetch_reads_off_query_layer": "fetch_reads",
 }
 
 
@@ -520,6 +534,8 @@ def main() -> int:
           f"setInterval timers that reach the network")
     print(f"  inline_query_keys  {result['inline_query_keys']:>4}  "
           f"cache keys spelled at a call site, not built by a key module")
+    print(f"  fetch_reads_off_query_layer {result['fetch_reads_off_query_layer']:>4}  "
+          f"fetch-as-read calls not on the query layer")
     print(f"  (exempt            {len(result['exempt_timers']):>4}  "
           f"non-poll timers, allowlisted in the checker)")
     for e in result["exempt_polls"]:

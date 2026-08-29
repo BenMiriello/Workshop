@@ -21,8 +21,10 @@
 //
 // `?note=<id>` is the address, matching how AppFilesTab carries `?path=`, so a
 // note is deep-linkable and the browser Back button walks out of it.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "../../../lib/queryKeys";
 import { ChevronLeft, Plus, StickyNote } from "lucide-react";
 import {
   Button, Card, CardGrid, Field, Input, Modal, Notice, Row, Stack, Textarea, timeAbsoluteShort,
@@ -120,27 +122,26 @@ function NewNoteDialog({
 
 function MemoryBody({ app }: { app: AppRecord }) {
   const scope = `app:${app.slug}`;
-  const [notes, setNotes] = useState<AppNote[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const endpoint = `/api/apps/${app.id}/notes`;
+  const qc = useQueryClient();
   const [composing, setComposing] = useState(false);
   const [params, setParams] = useSearchParams();
-  const endpoint = `/api/apps/${app.id}/notes`;
   const openId = params.get("note");
 
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
+  const q = useQuery({
+    queryKey: queryKeys.apps.notes(app.id),
+    queryFn: async (): Promise<AppNote[]> => {
       const r = await fetch(endpoint);
       if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => "")}`);
       const d = await r.json();
-      setNotes((d.notes ?? []) as AppNote[]);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      setNotes([]);
-    }
-  }, [endpoint]);
+      return (d.notes ?? []) as AppNote[];
+    },
+  });
 
-  useEffect(() => { load(); }, [load]);
+  const invalidateNotes = useCallback(
+    () => void qc.invalidateQueries({ queryKey: queryKeys.apps.notes(app.id) }),
+    [qc, app.id]
+  );
 
   const close = useCallback(() => {
     setParams((prev) => {
@@ -168,8 +169,8 @@ function MemoryBody({ app }: { app: AppRecord }) {
           key={`${scope}/${openId}`}
           scope={scope}
           noteId={openId}
-          onChanged={() => { load(); }}
-          onDeleted={() => { load(); close(); }}
+          onChanged={invalidateNotes}
+          onDeleted={() => { invalidateNotes(); close(); }}
           actions={
             <Button onClick={close} aria-label={`Back to ${app.name} memory`}>
               <ChevronLeft aria-hidden /> Memory
@@ -193,13 +194,13 @@ function MemoryBody({ app }: { app: AppRecord }) {
           app={app}
           scope={scope}
           onClose={() => setComposing(false)}
-          onCreated={(id) => { setComposing(false); load(); openNote(id); }}
+          onCreated={(id) => { setComposing(false); invalidateNotes(); openNote(id); }}
         />
       )}
       <CollectionBody
-        items={notes}
-        err={err}
-        reload={load}
+        items={q.data ?? null}
+        err={q.isError ? (q.error instanceof Error ? q.error.message : String(q.error)) : null}
+        reload={() => void q.refetch()}
         endpoint={endpoint}
         emptyTitle="No notes yet"
         emptyHint={`Notes here are shared with ${app.name}'s agents and go into its chat context.`}
