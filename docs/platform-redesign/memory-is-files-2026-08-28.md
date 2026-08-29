@@ -224,3 +224,103 @@ only in development env/mode of course. nothing of the development app/code/
 capability should ever serve in production." That touches scope resolution, the app
 registry, prompt layers, and what ships in a production build. It is a separate
 research and design effort and gets its own doc, not a paragraph here.
+
+---
+
+# Investigation, 2026-08-28 (later): five findings, three of which change §3 and §5
+
+Measured on the tree after the proposal above was written, at the operator's
+instruction to look further before building. Where this section and the proposal
+disagree, this section is what was counted.
+
+## A. The on-disk layout is ALREADY per-place. §3.1 is mostly a presentation change.
+
+    shared/knowledge/*.md                96 notes   the Workshop root
+    shared/knowledge/development/*.md    49 notes   Development
+    projects/<slug>/knowledge/*.md        2 + 2     per project (commute, development)
+    apps/<name>/knowledge/                          per app, present, empty here
+    shared/knowledge/roles/                         empty
+
+So "memories in workshop root, and in development app, and in each other app, all
+different file trees" is already true of the DISK. The scope node in the navigator
+is a UI invention layered on top of a layout that already has the shape the
+operator asked for. That makes the tree work smaller and safer than §3.1 implied:
+the presentation changes, the files do not move.
+
+## B. `note_type` and `pinned` have no consumers outside two files.
+
+Grepped across `backend/services`, `backend/routes` and `backend/mcp`: every other
+hit for "pinned" is ownership-pinning or a UI comment. The only real consumers are
+`knowledge.py` itself and `standing.py`. So the deletion in §5 is contained.
+
+What they actually do: `_index_rank_key` (`knowledge.py:731`) orders notes for a
+digest bounded by `DEFAULT_INDEX_TOKEN_BUDGET = 800`, pinned first, then type, then
+recency. Deleting both leaves that ordering as recency, which is a real loss of
+signal and needs the successor named in the next finding.
+
+## C. The successor already landed, today.
+
+`reach` (`_NOTE_REACH = ("index", "always", "search")`, default `index`) is the
+axis that replaces type and pinned, and it is better than both because it states
+what a note DOES rather than what kind of thing it is:
+
+    always    injected verbatim into every prompt in its scope
+    index     appears in the bounded digest
+    search    findable, never automatic
+
+It shipped in `a4bda009` ("a note carries how far it reaches into a prompt") and
+`services/standing.py` is built on it. So §5's claim that ranking "answers from the
+standing-note mechanism" is not a promise, it is a description of code that exists.
+
+**One coupling to sequence:** `standing.py` writes notes with
+`note_type="preference"` in three places (lines 406, 418, 429), and that file is
+still uncommitted work in flight under ticket 81198145. The type deletion has to
+land after it, or on top of it, not beside it.
+
+## D. The system/user split does not carve this corpus. It needs the operator.
+
+Author markers across all 145 notes:
+
+    derived:claude-sonnet-5    ~62    written by a summarizer
+    self                       ~35    written by an agent in a chat
+    (no marker)                ~13    older, unattributed
+    operator                     1    his note from today
+
+A split on authorship would put roughly 144 notes in `system/` and 1 in `user/`.
+That is not a folder structure, it is a relabelling. **The memory store is almost
+entirely machine-written notes about the machine**, which is worth saying plainly
+because it changes what the Memory page is FOR. §3.2 stands as the target shape,
+but the rule that assigns existing notes to a side is an open question and is
+listed as such below.
+
+## E. The Workshop root is full of development notes, which is the memory-store
+version of §9.
+
+Sampling the 96 root notes by title: "a flex item with default min-width silently
+defers", "agents must come from explicit declarations", "chat composer input
+retention fixed via clearNow", "a lazy route blanks permanently on a stale chunk".
+These are engineering findings about building Workshop, sitting in the root scope
+that is supposed to hold memories about this installation and its owner.
+
+So the operator's instinct that development belongs in its own project is visible
+here too, independently of the code: the highest-traffic memory scope in the system
+is a development log filed under the user's own root. Whatever the development-as-
+a-project design concludes, this corpus moves with it.
+
+## Consequences for the build order in §8
+
+- Step 4 (the trees) is smaller than written: presentation plus the `system`/`user`
+  presentation, with no file movement for the per-place part.
+- Step 3 (delete type and pinned) must sequence AFTER the standing-note fold lands,
+  because that file writes a type.
+- A new step, before either: decide what `system/` and `user/` mean given finding D.
+
+## Open, and the operator's
+
+1. **Given that 144 of 145 memories are machine-written, what is `user/` for?** Is
+   it where he writes, with everything the system learned in `system/`? Or is the
+   split about SUBJECT (memories about him and his preferences versus memories about
+   the code), which would cut the corpus very differently and cannot be derived from
+   the author field?
+2. **Do the 96 development notes in the Workshop root move to Development now, or
+   with the development-as-a-project migration?** They are misfiled either way.
