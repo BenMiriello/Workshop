@@ -102,39 +102,17 @@ _STOPWORDS = {
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
-# scope key -> file. `global` and `workshop` are plain names; the rest use the
-# knowledge scope shape (`project:slug` etc). ':' -> '-' for a safe filename.
-_SAFE_SCOPE_RE = re.compile(r"[a-z0-9][a-z0-9:_-]*", re.IGNORECASE)
-
-
-# --- roots -------------------------------------------------------------------
-def _dir() -> Path:
-    """Per-owner. Learnings are durable operator feedback — "prefers brevity",
-    "always rebuild dist" — injected into every turn's prompt by
-    `learnings_context`. One directory meant one person's corrections steering
-    everybody's agents, so this follows `shared/knowledge/` (see
-    `knowledge._shared_knowledge_root`) rather than being gated off for
-    non-operators, which is what it was before and which left a second user's
-    Workshop unable to learn anything at all."""
-    from services import ownership
-    d = ownership.workspace_path(knowledge._runtime() / "learnings", "learnings")
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _valid_scope(scope_key: str) -> str:
-    scope_key = (scope_key or "").strip()
-    if scope_key in (GLOBAL, "workshop"):
-        return scope_key
-    if _SAFE_SCOPE_RE.fullmatch(scope_key):
-        # Defer to knowledge for the structured shapes so we reject junk.
-        knowledge._parse_scope(scope_key)
-        return scope_key
-    raise ValueError(f"invalid learnings scope: {scope_key!r}")
-
-
-def _path(scope_key: str) -> Path:
-    return _dir() / (_valid_scope(scope_key).replace(":", "-") + ".jsonl")
+# THE SEPARATE LEARNINGS STORE IS GONE, and this is where it used to be
+# addressed. A standing note is a note with `reach: always`; there is no
+# `.runtime/learnings/*.jsonl` any more and nothing reads one.
+#
+# `_dir`, `_path`, `_valid_scope` and `_SAFE_SCOPE_RE` outlived the fold
+# (d4045b9f) unreferenced, and `_dir` re-created the directory as a side effect
+# of being called. That mattered: an audit on 2026-08-29 saw the leftover files
+# on disk plus this code and reported the fold as never done, when
+# `list_standing("development")` had been serving all 53 rows from the note
+# store the whole time. Dead code that names a retired store is not neutral; it
+# is a false claim the next reader has to disprove.
 
 
 # --- canonicalization + dedup ------------------------------------------------
