@@ -45,13 +45,13 @@ function entry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
 }
 
 describe("treeLabel", () => {
-  it("calls the trunk Shared, whatever git calls the ref", () => {
-    // It used to print the ref itself, which is `main` almost everywhere, and
-    // a toolbar reading "main" beside a control that switches conversation
-    // BRANCHES is the exact ambiguity this pill exists to remove. The ref is
-    // still named, in the menu's first row, where you are choosing.
-    expect(treeLabel(tree({ default_ref: "master" }))).toBe("Shared");
-    expect(treeLabel(tree({ default_ref: "" }))).toBe("Shared");
+  it("names the trunk by its branch ref, falling back to Main", () => {
+    // worktree-as-the-place-2026-08-28 §3: one name, not two. "Shared tree ·
+    // main" was replaced by the branch name itself ("main"). The trunk is
+    // called what its branch is called.
+    expect(treeLabel(tree({ default_ref: "master" }))).toBe("master");
+    expect(treeLabel(tree({ default_ref: "main" }))).toBe("main");
+    expect(treeLabel(tree({ default_ref: "" }))).toBe("Main");
   });
 
   it("names the pin when there is one", () => {

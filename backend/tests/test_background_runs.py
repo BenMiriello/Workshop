@@ -90,10 +90,12 @@ def test_delivery_posts_the_result_and_seeds_a_continuation(owned):
     # what the message wanted. See services/run_report.py.
     assert msgs[0]["meta"]["asks"] == "notify"
     assert "autonomous" not in msgs[0]["meta"]
-    # And the chat is asked to continue on its own.
-    seeds = [e for e in chat_queue.read(tid) if e.get("auto")]
-    assert len(seeds) == 1
-    assert seeds[0]["client_id"] == "auto-job-9-" + tid
+    # And the chat is asked to continue on its own — via thread state, not the queue.
+    # The continuation file holds the wake signal; the operator's queue is empty.
+    assert chat_queue.read(tid) == []
+    entry = chat_queue.read_continuation(tid)
+    assert entry is not None
+    assert entry["client_id"] == "auto-job-9-" + tid
 
 
 def test_a_failed_run_still_tells_the_chat(owned):
@@ -106,7 +108,8 @@ def test_a_failed_run_still_tells_the_chat(owned):
     assert len(msgs) == 1
     assert "stopped" in msgs[0]["content"].lower()
     # A failure still seeds a continuation so the chat says what happened.
-    assert any(e.get("auto") for e in chat_queue.read(tid))
+    # The wake signal is thread state, not a queue entry.
+    assert chat_queue.read_continuation(tid) is not None
 
 
 def test_a_run_the_clock_killed_says_so_and_keeps_what_it_had(owned):
@@ -124,7 +127,9 @@ def test_a_run_the_clock_killed_says_so_and_keeps_what_it_had(owned):
     assert "finished" not in body.lower()
     assert "half an answer" in body
     # And the continuation must not tell the next turn the agent finished.
-    seed = [e for e in chat_queue.read(tid) if e.get("auto")][0]
+    # The wake signal is thread state, not a queue entry.
+    seed = chat_queue.read_continuation(tid)
+    assert seed is not None
     assert "STOPPED" in seed["text"]
     assert "has finished" not in seed["text"]
 
@@ -152,3 +157,30 @@ def test_the_wall_clock_bound_is_an_hour_and_overridable(owned, monkeypatch):
     assert background_runs._timeout_s() == 120
     monkeypatch.setenv("WORKSHOP_BACKGROUND_TIMEOUT_S", "nonsense")
     assert background_runs._timeout_s() == 3600
+
+
+def test_the_runner_can_actually_write(owned, monkeypatch):
+    """The 2026-08-28 defect: no --permission-mode, so a detached agent with
+    nobody to ask ended every run by requesting approval to write its report."""
+    seen = {}
+
+    class Done:
+        returncode = 0
+        stdout = '{"result": "ok", "usage": {}}'
+        stderr = ""
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        return Done()
+
+    monkeypatch.setattr(background_runs.subprocess, "run", fake_run)
+    monkeypatch.setattr(background_runs, "_claude_bin", lambda: "/bin/true")
+    from pathlib import Path
+    background_runs._run_claude("prompt", Path(str(owned)), 6, "workshop")
+    cmd = seen["cmd"]
+    i = cmd.index("--permission-mode")
+    assert cmd[i + 1] == "bypassPermissions"
+    # And the irreversible actions are still denied by name, in one group.
+    assert cmd.count("--disallowedTools") == 1
+    tail = cmd[cmd.index("--disallowedTools") + 1:]
+    assert any("git push" in t for t in tail)

@@ -168,8 +168,14 @@ def _run_claude(prompt: str, cwd: Path, owner_id: int, scope: str) -> tuple[int,
     except Exception as e:
         log.warning("background agent: no MCP config (%s); running without search", e)
 
+    # bypassPermissions: a detached process with nobody to ask was ending every
+    # run by requesting approval for file writes (measured 2026-08-28, job
+    # job_1787934884118_2f00). Destructive git ops are still denied by name.
     cmd = [_claude_bin(), "-p", prompt, "--output-format", "json",
-           "--max-turns", str(_MAX_TURNS), *mcp_flags]
+           "--max-turns", str(_MAX_TURNS),
+           "--permission-mode", "bypassPermissions",
+           "--disallowedTools", "Bash(git push *),Bash(git push),Bash(rm -rf *)",
+           *mcp_flags]
     try:
         out = subprocess.run(
             cmd, cwd=str(cwd), stdin=subprocess.DEVNULL,

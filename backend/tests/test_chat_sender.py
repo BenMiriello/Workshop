@@ -87,12 +87,50 @@ def test_run_report_and_operator_message_are_distinguishable(tid):
     assert operator_sender != run_sender
 
 
-def test_continuation_seed_queue_entry_carries_platform_sender(tid):
-    """The queued-entry API returns sender=platform for a continuation seed."""
-    chat_drain.request_continuation(tid, seed="read and continue", dedupe_id="jobA-" + tid)
-    seeds = [e for e in chat_queue.read(tid) if e.get("auto")]
-    assert len(seeds) == 1
-    assert seeds[0]["sender"] == "platform"
+def test_continuation_seed_writes_thread_state_not_queue(tid):
+    """A wake signal is thread state, not a queue entry.
+
+    After request_continuation: the continuation file holds the seed,
+    the operator's queue is empty (no user bubble), and the signal is
+    idempotent on the same dedupe_id.
+    """
+    ok = chat_drain.request_continuation(
+        tid, seed="read and continue", dedupe_id="jobA-" + tid)
+    assert ok is True
+    # Thread state: continuation file exists
+    entry = chat_queue.read_continuation(tid)
+    assert entry is not None
+    assert entry["text"] == "read and continue"
+    assert entry["auto"] is True
+    assert entry["client_id"] == "auto-jobA-" + tid
+    # Operator queue: no entry (no user bubble in the browser)
+    assert chat_queue.read(tid) == []
+    # Idempotent: same dedupe_id does not double-arm
+    ok2 = chat_drain.request_continuation(
+        tid, seed="read and continue", dedupe_id="jobA-" + tid)
+    assert ok2 is True
+    assert chat_queue.read_continuation(tid) is not None
+
+
+def test_background_run_produces_one_transcript_record(tid):
+    """A background agent finishing writes exactly one message (the report) and
+    no queued user entry — the wake signal is thread state, invisible in the
+    transcript and in the operator's queue.
+    """
+    background_runs._deliver(
+        thread_id=tid, owner_id=6, job_id="job-77", label="audit",
+        status="done", text="found nothing")
+    # One assistant message (the report)
+    msgs = [e for e in chat_log.read_events(tid) if e.get("kind") == "message"]
+    assert len(msgs) == 1
+    assert msgs[0]["role"] == "assistant"
+    assert msgs[0]["meta"]["sender"] == "run:job-77"
+    # No operator-voice queue entry (no user bubble)
+    assert chat_queue.read(tid) == []
+    # The wake signal is in the continuation file, not the queue
+    entry = chat_queue.read_continuation(tid)
+    assert entry is not None
+    assert entry["auto"] is True
 
 
 def test_question_report_carries_platform_sender(tid, owned):

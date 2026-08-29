@@ -151,28 +151,88 @@ def request_continuation(thread_id: str, *, seed: str, dedupe_id: str) -> bool:
     This is the write half of fire-and-continue. A run's completion handler
     (services/run_report) calls it, and that handler runs in the DETACHED WORKER
     process, not the backend, so all this can safely do is persist the seed: the
-    enqueue writes the queue file (idempotent on `dedupe_id`, so re-finishing the
-    same job cannot double-fire), and `drain_soon` starts the turn immediately
-    IF we happen to be on the backend's event loop, or no-ops if we are not. When
-    it no-ops, the backend's `continuation_loop` picks the seed up on its next
-    pass. Either way the turn starts exactly once, and survives a restart in
-    between because the seed is on disk. Returns True if the seed was persisted.
+    file write is idempotent on `dedupe_id` (client_id), so re-finishing the
+    same job cannot double-fire, and `drain_continuation_soon` starts the turn
+    immediately IF we happen to be on the backend's event loop, or no-ops if we
+    are not. When it no-ops, the backend's `continuation_loop` picks the seed up
+    on its next pass. Either way the turn starts exactly once, and survives a
+    restart in between because the seed is on disk. Returns True if the seed was
+    persisted.
+
+    NOTE: the seed is NOT recorded in the transcript. It is thread state — a
+    pending wake reason — not an operator message. The browser never shows it.
+    The model receives the text as its next user turn (already_recorded=True),
+    but the transcript holds only the report above it and the reply below it.
     """
     if not (seed or "").strip():
         return False
     try:
-        chat_queue.enqueue(
+        written = chat_queue.write_continuation(
             thread_id,
             text=seed,
             client_id=f"auto-{dedupe_id}",
-            auto=True,
-            sender="platform",
         )
+        if not written:
+            # Same job already armed this thread — idempotent.
+            return True
     except Exception as e:  # pragma: no cover - defensive: a run must still close
-        log.warning("continuation seed for %s could not be queued: %s", thread_id, e)
+        log.warning("continuation seed for %s could not be written: %s", thread_id, e)
         return False
-    drain_soon(thread_id, reason="continuation")
+    drain_continuation_soon(thread_id, reason="continuation")
     return True
+
+
+async def drain_continuation(thread_id: str, *, reason: str = "") -> bool:
+    """Start the turn a continuation wake signal is arming, if the thread is idle.
+
+    The continuation file holds at most one pending wake reason. If the thread
+    is already running, this is a no-op: the drain fires again from
+    continuation_loop after the turn finishes and the thread is idle.
+    """
+    if _starter is None:  # pragma: no cover - set at import by routes/chat
+        return False
+    lock = _lock_for(thread_id)
+    if lock.locked():
+        return False
+    async with lock:
+        entry = chat_queue.read_continuation(thread_id)
+        if not entry:
+            return False
+        from services import chat_store
+        if chat_store.active_turn_id(thread_id):
+            return False
+        from services import thread_ops
+        if thread_ops.pending(thread_id):
+            return False
+        try:
+            started = await _starter(thread_id, [entry])
+        except Exception as e:
+            log.warning("continuation drain failed for %s (%s): %s", thread_id, reason, e)
+            return False
+        if not started:
+            return False
+        chat_queue.clear_continuation(thread_id)
+        log.info("chat drain: continuation turn started on %s (%s)",
+                 thread_id, reason or "drain")
+        return True
+
+
+def drain_continuation_soon(thread_id: str, *, reason: str = "") -> None:
+    """Fire-and-forget continuation drain, for callers that must not wait."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover - off-loop caller (worker process)
+        return
+    task = loop.create_task(_guarded_continuation(thread_id, reason))
+    _DRAIN_TASKS.add(task)
+    task.add_done_callback(_DRAIN_TASKS.discard)
+
+
+async def _guarded_continuation(thread_id: str, reason: str) -> None:
+    try:
+        await drain_continuation(thread_id, reason=reason)
+    except Exception as e:  # pragma: no cover - defensive
+        log.warning("continuation drain task failed for %s: %s", thread_id, e)
 
 
 def _all_owner_ids() -> list[int]:
@@ -200,10 +260,10 @@ async def continuation_loop(*, interval: float = 5.0) -> None:
 
     The seed is usually written by a worker process that cannot reach this event
     loop (see request_continuation), so nothing else would ever start that turn.
-    This is that trigger: it is the backend, it outlives every run, and `drain`
-    already refuses to start while a turn or a thread-op is in flight, so a seed
-    simply waits here until the thread is genuinely free. Only threads that have
-    a seed are touched, so an idle system does no work.
+    This is that trigger: it is the backend, it outlives every run, and
+    `drain_continuation` already refuses to start while a turn or a thread-op is
+    in flight, so a seed simply waits here until the thread is genuinely free.
+    Only threads that have a seed are touched, so an idle system does no work.
 
     Runs with NO owner pinned, so it pins each owner in turn before reading that
     owner's chat stores (see _all_owner_ids). Setting the owner on this task
@@ -217,6 +277,13 @@ async def continuation_loop(*, interval: float = 5.0) -> None:
             for owner_id in _all_owner_ids():
                 ownership.set_current_owner(owner_id)
                 try:
+                    for tid in chat_queue.threads_with_continuation():
+                        try:
+                            await drain_continuation(tid, reason="continuation")
+                        except Exception as e:  # pragma: no cover - defensive
+                            log.warning("continuation drain failed for %s: %s", tid, e)
+                    # Backward compat: threads with old queue-based auto entries
+                    # (written before this change; drain them the old way).
                     for tid in chat_queue.threads_with_queues():
                         try:
                             if chat_queue.has_auto(tid):
@@ -230,7 +297,7 @@ async def continuation_loop(*, interval: float = 5.0) -> None:
 
 
 async def drain_all(*, reason: str = "startup") -> int:
-    """Every thread holding a queue, across every owner. Runs at startup.
+    """Every thread holding a queue or continuation, across every owner. Runs at startup.
 
     A backend that went down while a turn was running comes back with the turn
     gone and the queue still there. Nothing else would ever notice: the browser
@@ -247,6 +314,12 @@ async def drain_all(*, reason: str = "startup") -> int:
     for owner_id in _all_owner_ids():
         ownership.set_current_owner(owner_id)
         try:
+            for tid in chat_queue.threads_with_continuation():
+                try:
+                    if await drain_continuation(tid, reason=reason):
+                        sent += 1
+                except Exception as e:  # pragma: no cover - defensive
+                    log.warning("startup continuation drain failed for %s: %s", tid, e)
             for tid in chat_queue.threads_with_queues():
                 try:
                     if await drain(tid, reason=reason):

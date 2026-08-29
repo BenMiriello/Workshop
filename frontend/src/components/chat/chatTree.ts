@@ -34,14 +34,14 @@ const HEX_ID_KEEP = 8;
  * "something about branches", not WHICH tree, so at 390px the pill answered
  * nothing.
  *
- * "Shared" rather than the ref's own name for the trunk, because the ref is
- * usually `main` and a toolbar reading `main` beside a conversation picker that
- * also says branch is the exact ambiguity this control exists to avoid. The
- * full name, with the ref, is the first row of the menu.
+ * The trunk is named by its branch ("main", "develop", whatever the project
+ * chose) rather than "Shared" -- that word was invented and doubled the name
+ * ("Shared tree · main"). The spec (worktree-as-the-place-2026-08-28 §3)
+ * replaced it: one name, the trunk's own branch name.
  */
 export function treeLabel(tree: ChatWorktree | null): string {
   if (!tree) return "Tree";
-  if (!tree.branch_slug) return "Shared";
+  if (!tree.branch_slug) return tree.default_ref || "Main";
   if (tree.display_name) return tree.display_name;
   const slug = tree.branch_slug;
   const m = /^(t-)?([0-9a-f]+)$/i.exec(slug.trim());

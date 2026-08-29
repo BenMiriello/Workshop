@@ -374,6 +374,93 @@ def threads_with_queues() -> list[str]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Continuation wake signals (thread state, not operator queue entries)
+# ---------------------------------------------------------------------------
+#
+# A continuation seed is not a message. It is a wake reason: a background run
+# finished and it armed this thread to take its own next turn. Nothing about it
+# belongs in the operator's queue — the queue is for messages the operator typed
+# and believes are pending, and the browser renders every entry in his voice.
+#
+# Storing the seed separately (continuation.json beside queue.json) achieves the
+# same durability — it survives a backend restart — without the queue's side
+# effects: no SSE bump, no user bubble, no "sent but pending" affordance.
+#
+# Idempotent on client_id so re-finishing the same job cannot double-fire.
+
+CONTINUATION_FILE = "continuation.json"
+
+
+def continuation_path(thread_id: str) -> "Path":
+    return chat_log.thread_dir(thread_id) / CONTINUATION_FILE
+
+
+def write_continuation(thread_id: str, *, text: str, client_id: str) -> bool:
+    """Arm this thread for its own next turn.
+
+    Returns True if the wake signal was written, False if a signal with this
+    client_id was already on disk (idempotent: the same job finishing twice
+    does not double-fire).
+    """
+    import json
+    p = continuation_path(thread_id)
+    chat_log.thread_dir(thread_id).mkdir(parents=True, exist_ok=True)
+    try:
+        if p.exists():
+            data = json.loads(p.read_text() or "{}")
+            if isinstance(data, dict) and data.get("client_id") == client_id:
+                return False
+    except Exception:
+        pass
+    entry = {
+        "client_id": client_id,
+        "text": text,
+        "sender": "platform",
+        "auto": True,
+        "ts": chat_log.now_iso(),
+        "received_at": chat_log.now_iso(),
+    }
+    chat_log._write_json_atomic(p, entry)
+    return True
+
+
+def read_continuation(thread_id: str) -> "dict | None":
+    """The pending wake signal for this thread, or None."""
+    import json
+    p = continuation_path(thread_id)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text() or "{}")
+        if isinstance(data, dict) and data.get("client_id"):
+            return data
+    except Exception:
+        pass
+    return None
+
+
+def clear_continuation(thread_id: str) -> None:
+    """Remove the wake signal after the turn it armed has started."""
+    p = continuation_path(thread_id)
+    try:
+        p.unlink(missing_ok=True)
+    except OSError as e:  # pragma: no cover - defensive
+        log.debug("could not remove continuation for %s: %s", thread_id, e)
+
+
+def threads_with_continuation() -> list[str]:
+    """Every thread holding a pending continuation wake signal."""
+    out: list[str] = []
+    for tid in chat_log.list_thread_ids():
+        try:
+            if continuation_path(tid).exists():
+                out.append(tid)
+        except Exception:  # pragma: no cover - defensive
+            continue
+    return out
+
+
 def joined_text(entries: list[dict]) -> str:
     """What the model reads for a drained batch.
 
