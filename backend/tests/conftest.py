@@ -320,3 +320,33 @@ def _isolate_usage_ledger(tmp_path, monkeypatch):
     monkeypatch.setattr(usage_ledger, "LEDGER_PATH", ledger)
     monkeypatch.setattr(usage_ledger, "BUDGET_CONFIG_PATH", budget)
     assert usage_ledger.LEDGER_PATH == ledger, "usage ledger is not isolated"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_jobs_log(tmp_path, monkeypatch):
+    """Keep the test suite out of the operator's real jobs feed.
+
+    `jobs.start()` appends to `.runtime/jobs.jsonl`, which is live operator
+    state: the dashboard's "Running now" card, the runs feed and the liveness
+    watchdog all read it. Nothing isolated it, so any test that opened a Job
+    wrote a real `running` row into the running app.
+
+    Measured 2026-08-29: the operator's dashboard showed nine runs in flight
+    when three processes existed. `test_apps_api.py` opens a Job for its fixture
+    app on every run, and those rows carry no pid, so `reconcile_stuck` will not
+    write them off for two hours (its pid-less branch is a ceiling meant for
+    records that predate pid recording). Every test run put a fresh phantom on
+    the dashboard for two hours.
+
+    Patches the env var AND the module attribute, for the reason spelled out in
+    `_isolate_usage_ledger`: `JOBS_LOG` is bound at import, so an env-only fix
+    depends on import order, while the shell writers reach the log through a
+    subprocess that reads the env. The collapse cache keys on the path itself,
+    so it invalidates correctly the moment the attribute moves.
+    """
+    log = tmp_path / "jobs.jsonl"
+    monkeypatch.setenv("WORKSHOP_JOBS_LOG", str(log))
+    from services import jobs
+
+    monkeypatch.setattr(jobs, "JOBS_LOG", log)
+    assert jobs.JOBS_LOG == log, "jobs log is not isolated"
