@@ -204,9 +204,9 @@ def _scope_roots() -> list[tuple[str, Path]]:
 
 class NoteRow(BaseModel):
     """One note in the cross-scope view, tagged with the scope it resolved in
-    plus the provenance and ranked-digest facets the Memory page shows per row.
-    `_mtime` is stripped by `list_notes_meta` on purpose -- it is a ranking
-    input, not something a reader should depend on."""
+    plus the provenance the Memory page shows per row. `_mtime` is stripped by
+    `list_notes_meta` on purpose -- it is a ranking input, not something a
+    reader should depend on."""
 
     id: str
     title: str
@@ -214,8 +214,6 @@ class NoteRow(BaseModel):
     updated: str | None = None
     scope: str
     author: str | None = None
-    type: str | None = None
-    pinned: bool | None = None
     chat: str | None = None
 
 

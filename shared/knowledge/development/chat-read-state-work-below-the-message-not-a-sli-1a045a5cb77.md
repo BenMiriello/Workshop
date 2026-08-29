@@ -1,4 +1,4 @@
-<!-- author: self; type: decision; chat: 95f7fd7fe8f6413dbcea1b7e80d47979 -->
+<!-- author: self; chat: 95f7fd7fe8f6413dbcea1b7e80d47979 -->
 The dim/solid state on a user message means "has the turn reached this". It is computed in `transcriptBlocks.ts`.
 
 **The distinction that keeps getting lost** (three rounds now: 2026-08-16, 2026-08-18, 2026-08-27): where the working indicator RENDERS and what the turn has REACHED are different questions.

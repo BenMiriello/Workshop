@@ -1,4 +1,4 @@
-<!-- author: self; type: decision; chat: 50cf71c1e6564676b908b6f33ddf9fe1 -->
+<!-- author: self; chat: 50cf71c1e6564676b908b6f33ddf9fe1 -->
 Interaction contract for worktrees, branches and leases, decided 2026-08-28 after the operator rejected the shipped tree control.
 
 **The worktree is the one visible noun.** The branch is named after it and never named separately. The lease is shown as status and never managed by hand. Exposing worktree + branch + lease as three controls was explicitly ruled out by the operator as 'giving them all of the tools... shapeless and confusing'.

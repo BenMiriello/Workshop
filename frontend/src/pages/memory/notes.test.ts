@@ -1,14 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { authorLabel, chatRefsIn, freshNoteId, noteTypeLabel } from "./notes";
-
-describe("noteTypeLabel", () => {
-  it("defaults to the backend's default and title-cases", () => {
-    expect(noteTypeLabel()).toBe("Fact");
-    expect(noteTypeLabel("")).toBe("Fact");
-    expect(noteTypeLabel("decision")).toBe("Decision");
-    expect(noteTypeLabel(" PREFERENCE ")).toBe("Preference");
-  });
-});
+import { authorLabel, chatRefsIn, freshNoteId } from "./notes";
 
 describe("authorLabel", () => {
   it("reads the origin vocabulary", () => {

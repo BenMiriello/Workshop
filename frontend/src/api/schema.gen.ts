@@ -13670,12 +13670,11 @@ export interface components {
         };
         /**
          * NoteDetail
-         * @description One note's body plus its provenance and facets, in one read, so the
-         *     editor can round-trip them without a second endpoint.
+         * @description One note's body plus its provenance, in one read, so the editor can
+         *     round-trip them without a second endpoint.
          *
          *     `author` is an origin string (see services/origin) and is "" on older
          *     notes. `chat` is the originating thread id, or "" when none was recorded.
-         *     `type` is the note kind the ranked digest reads.
          */
         NoteDetail: {
             /** Author */
@@ -13686,12 +13685,10 @@ export interface components {
             content: string;
             /** Note Id */
             note_id: string;
-            /** Pinned */
-            pinned: boolean;
+            /** Reach */
+            reach: string;
             /** Scope */
             scope: string;
-            /** Type */
-            type: string;
         };
         /**
          * NoteLink
@@ -13750,9 +13747,9 @@ export interface components {
         /**
          * NoteRow
          * @description One note in the cross-scope view, tagged with the scope it resolved in
-         *     plus the provenance and ranked-digest facets the Memory page shows per row.
-         *     `_mtime` is stripped by `list_notes_meta` on purpose -- it is a ranking
-         *     input, not something a reader should depend on.
+         *     plus the provenance the Memory page shows per row. `_mtime` is stripped by
+         *     `list_notes_meta` on purpose -- it is a ranking input, not something a
+         *     reader should depend on.
          */
         NoteRow: {
             /** Author */
@@ -13763,14 +13760,10 @@ export interface components {
             hook: string;
             /** Id */
             id: string;
-            /** Pinned */
-            pinned?: boolean | null;
             /** Scope */
             scope: string;
             /** Title */
             title: string;
-            /** Type */
-            type?: string | null;
             /** Updated */
             updated?: string | null;
         };
@@ -14633,13 +14626,6 @@ export interface components {
              * @default
              */
             hook: string;
-            /**
-             * Note Type
-             * @default
-             */
-            note_type: string;
-            /** Pinned */
-            pinned?: boolean | null;
             /**
              * Title
              * @default

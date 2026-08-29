@@ -642,20 +642,12 @@ async def apply_note_block(context_key: str | None, reply: str,
             scope = "workshop"
 
     note_id = _note_id_from_title(title or "note")
-    # An optional `type` lets a durable DECISION be filed as a decision-typed
-    # note, which is its one home now (the operator moved decisions into memory,
-    # 2026-08-25, rather than a second copy in docs/decisions). Unknown or absent
-    # type falls back to put_note's own default; a decision ranks above a fact in
-    # recall (`knowledge._TYPE_RANK`).
-    ntype = (block.get("type") or "").strip().lower()
-    if ntype not in knowledge._NOTE_TYPES:
-        ntype = ""
     try:
         # `author` is an origin string (services/origin): which speaker wrote
         # this. Without it, a note the assistant wrote, one an @mentioned agent
         # wrote, and one distilled from a compaction are identical on recall.
         await knowledge.put_note(scope, note_id, title or note_id, body, author=author,
-                                 note_type=ntype, chat_id=thread_id or "")
+                                 chat_id=thread_id or "")
     except ValueError as e:
         # Report what actually failed. put_note validates the scope AND the note
         # id, so blaming the scope for either sent the operator looking at a

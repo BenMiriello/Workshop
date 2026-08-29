@@ -37,15 +37,10 @@ class PutNoteIn(BaseModel):
     title: str = ""
     content: str
     hook: str = ""
-    # Optional metadata (design doc sec 5 / sec 11): `author` is an origin
-    # string (services/origin), sent by the operator's own editor as
-    # "operator" on create and omitted on edit so an edit does not reassign
-    # who wrote the note. `note_type` and `pinned` drive the ranked ambient
-    # digest (knowledge.index_block); omitting either preserves what is
-    # already on disk (knowledge._with_meta).
+    # `author` is an origin string (services/origin), sent by the operator's
+    # own editor as "operator" on create and omitted on edit so an edit does
+    # not reassign who wrote the note.
     author: str = ""
-    note_type: str = ""
-    pinned: bool | None = None
 
 
 class SearchIn(BaseModel):
@@ -83,19 +78,17 @@ class NoteSummary(BaseModel):
 
 
 class NoteDetail(BaseModel):
-    """One note's body plus its provenance and facets, in one read, so the
-    editor can round-trip them without a second endpoint.
+    """One note's body plus its provenance, in one read, so the editor can
+    round-trip them without a second endpoint.
 
     `author` is an origin string (see services/origin) and is "" on older
-    notes. `chat` is the originating thread id, or "" when none was recorded.
-    `type` is the note kind the ranked digest reads."""
+    notes. `chat` is the originating thread id, or "" when none was recorded."""
 
     scope: str
     note_id: str
     content: str
     author: str
-    type: str
-    pinned: bool
+    reach: str
     chat: str
 
 
@@ -161,7 +154,7 @@ async def put_note(scope_key: str, note_id: str, body: PutNoteIn):
     try:
         return await knowledge.put_note(
             scope_key, note_id, body.title, body.content, body.hook,
-            author=body.author, note_type=body.note_type, pinned=body.pinned,
+            author=body.author,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))

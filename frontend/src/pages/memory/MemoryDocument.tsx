@@ -67,11 +67,10 @@
 // dot going out is the receipt.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Eye, Lock, Pencil, Pin, Trash2 } from "lucide-react";
+import { Eye, Lock, Pencil, Trash2 } from "lucide-react";
 import {
   Badge,
   Button,
-  Checkbox,
   ConfirmDialog,
   DocumentBar,
   Field,
@@ -83,7 +82,6 @@ import {
   Skeleton,
   Stack,
   StateBlock,
-  StatusDot,
   Tag,
   catFor,
   documentBar,
@@ -102,7 +100,7 @@ import { scopeHref, scopeLabel } from "../../lib/tasks";
 import { useResolvedRefs } from "../../lib/useResolvedRefs";
 import { getJson, sendJson } from "./api";
 import { baseName, dirName } from "./memoryTree";
-import { NOTE_TYPES, authorLabel, chatRefsIn, freshNoteId, noteTypeLabel, type NoteType } from "./notes";
+import { authorLabel, chatRefsIn, freshNoteId } from "./notes";
 
 type NoteDetail = components["schemas"]["NoteDetail"];
 type NoteSummary = components["schemas"]["NoteSummary"];
@@ -171,11 +169,9 @@ type NoteLoaded = {
   updated: string | null;
   content: string;
   author: string;
-  type: NoteType;
-  pinned: boolean;
 };
 
-type NoteDraft = { title: string; hook: string; content: string; type: NoteType; pinned: boolean };
+type NoteDraft = { title: string; hook: string; content: string };
 
 export function NoteDocument({
   scope,
@@ -227,8 +223,6 @@ export function NoteDocument({
           updated: row?.updated ?? null,
           content: detail.content ?? "",
           author: detail.author ?? "",
-          type: ((detail.type as NoteType) || "fact"),
-          pinned: !!detail.pinned,
         });
       },
       (e: unknown) => { if (live) setErr(e instanceof Error ? e.message : String(e)); },
@@ -241,8 +235,6 @@ export function NoteDocument({
       title: loaded?.title ?? "",
       hook: loaded?.hook ?? "",
       content: loaded?.content ?? "",
-      type: loaded?.type ?? "fact",
-      pinned: loaded?.pinned ?? false,
     }),
     [loaded],
   );
@@ -256,10 +248,7 @@ export function NoteDocument({
           content: draft.content,
           hook: draft.hook.trim(),
           // `author` is deliberately omitted: an edit does not reassign who
-          // wrote the note. The two facets ARE sent, since the operator just
-          // chose them.
-          note_type: draft.type,
-          pinned: draft.pinned,
+          // wrote the note.
         });
       } catch (e) {
         setSaveErr(e instanceof Error ? e.message : String(e));
@@ -400,20 +389,6 @@ export function NoteDocument({
                   onChange={(e) => edit.set("hook", e.target.value)}
                 />
               </Field>
-              <Row wrap style={{ gap: "var(--space-4)", alignItems: "flex-end" }}>
-                <Field label="Type" htmlFor="memory-note-type" inline>
-                  <Select
-                    id="memory-note-type"
-                    value={edit.draft.type}
-                    onChange={(e) => edit.set("type", e.target.value as NoteType)}
-                  >
-                    {NOTE_TYPES.map((t) => (
-                      <option key={t} value={t}>{noteTypeLabel(t)}</option>
-                    ))}
-                  </Select>
-                </Field>
-                <Checkbox checked={edit.draft.pinned} onChange={(v) => edit.set("pinned", v)} label="Pinned" />
-              </Row>
               <Editor
                 value={body}
                 onChange={(v) => {
@@ -444,10 +419,6 @@ export function NoteDocument({
                   </Link>
                 ) : (
                   <Tag hue={catFor(scope)}>{scopeLabel(scope)}</Tag>
-                )}
-                <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{noteTypeLabel(loaded.type)}</span>
-                {loaded.pinned && (
-                  <StatusDot status="ok"><Pin size={12} strokeWidth={1.8} aria-hidden /> Pinned</StatusDot>
                 )}
               </Row>
               <Provenance author={loaded.author} updated={loaded.updated} body={loaded.content} />
@@ -523,16 +494,11 @@ export function NewNoteDocument({
   const [title, setTitle] = useState("");
   const [hook, setHook] = useState("");
   const [content, setContent] = useState("");
-  const [noteType, setNoteType] = useState<NoteType>("fact");
-  const [pinned, setPinned] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const canSave = !!(title.trim() || content.trim());
-  // Anything typed at all, not just the two fields that make it saveable: a hook
-  // and a type the operator chose are work, and losing them silently is the
-  // thing this reports.
-  const dirty = canSave || !!hook.trim() || pinned || noteType !== "fact";
+  const dirty = canSave || !!hook.trim();
   useEffect(() => { onDirty?.(dirty); }, [dirty, onDirty]);
 
   const save = useCallback(async () => {
@@ -544,10 +510,7 @@ export function NewNoteDocument({
       await sendJson(
         `/api/memory/scopes/${encodeURIComponent(scope)}/notes/${encodeURIComponent(id)}`,
         "PUT",
-        {
-          title: title.trim(), content, hook: hook.trim(),
-          author: "operator", note_type: noteType, pinned,
-        },
+        { title: title.trim(), content, hook: hook.trim(), author: "operator" },
       );
       onCreated(scope, id);
     } catch (e) {
@@ -562,7 +525,7 @@ export function NewNoteDocument({
       // on being unmounted to stop saying it is busy.
       setSaving(false);
     }
-  }, [canSave, scope, title, hook, content, noteType, pinned, onCreated]);
+  }, [canSave, scope, title, hook, content, onCreated]);
 
   return (
     <div className="ws-doc ws-doc--full">
@@ -612,18 +575,6 @@ export function NewNoteDocument({
                 ))}
               </Select>
             </Field>
-            <Field label="Type" htmlFor="new-note-type" inline>
-              <Select
-                id="new-note-type"
-                value={noteType}
-                onChange={(e) => setNoteType(e.target.value as NoteType)}
-              >
-                {NOTE_TYPES.map((t) => (
-                  <option key={t} value={t}>{noteTypeLabel(t)}</option>
-                ))}
-              </Select>
-            </Field>
-            <Checkbox checked={pinned} onChange={setPinned} label="Pinned" />
           </Row>
 
           <Field

@@ -1,4 +1,4 @@
-<!-- author: self; type: decision; chat: 05496adf046447b7bef13a3cf64ff81f -->
+<!-- author: self; chat: 05496adf046447b7bef13a3cf64ff81f -->
 Measured 2026-08-26 across real CLI session files under ~/.claude/projects/-workspace/*.jsonl: 29 genuine trigger:auto compact_boundary events across 28 headless (entrypoint=sdk-cli, cwd=/workspace) sessions, firing at preTokens ~126k-153k and collapsing to postTokens ~6k-20k, dated 2026-08-22..2026-08-26. So compaction_adapter.capabilities() native_auto=True is CORRECT.
 
 This CONTRADICTS shared/knowledge/development/headless-claude-p-has-no-native-compaction-manua-*.md, whose probe drove context only to ~40k using CLAUDE_CODE_AUTO_COMPACT_WINDOW / CLAUDE_AUTOCOMPACT_PCT_OVERRIDE (which have no effect in -p) and so never reached the real ~126k threshold. The note's narrow facts (env knobs dead, manual /compact dead in -p) hold; its generalization 'automatic compaction does NOT fire' is wrong.

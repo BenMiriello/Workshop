@@ -1,13 +1,10 @@
 """The ambient index (`knowledge.index_block`) is a ranked, token-capped digest,
 not a listing of every note (Phase 0 of docs/platform-redesign/
-memory-and-documentation-model-2026-08-14.md, sec 5.5). Four properties are
-load-bearing and covered here:
+memory-and-documentation-model-2026-08-14.md, sec 5.5). Key properties:
 
   - it truncates at a token budget and DECLARES what it left out, rather than
     presenting a partial list as complete;
-  - pinned notes rank first, ahead of recency and type;
-  - a note with no `type`/`pinned` metadata at all (every note written before
-    this existed) still parses and still renders, defaulting to fact/unpinned;
+  - most-recently-updated notes rank first;
   - `layered_index_block` spends ONE total budget across every layer it
     renders (narrowest layer first), rather than the per-layer budget being
     multiplied by the number of layers in a turn.
@@ -89,18 +86,8 @@ class TestTruncationDeclaresRemainder:
         assert block.startswith("- A very very very long title")
 
 
-class TestPinnedRanksFirst:
-    def test_pinned_beats_more_recent_unpinned(self, tree):
-        _put("workshop", "old-pin", "Old pinned note", "body", pinned=True)
-        _touch("workshop", "old-pin", time.time() - 1000)
-        _put("workshop", "new-plain", "Newer unpinned note", "body")
-        _touch("workshop", "new-plain", time.time())
-
-        block = knowledge.index_block("workshop")
-        first_line = block.splitlines()[0]
-        assert "Old pinned note" in first_line
-
-    def test_recency_breaks_ties_among_unpinned(self, tree):
+class TestRecencyRanking:
+    def test_more_recent_note_ranks_first(self, tree):
         _put("workshop", "a", "Note A", "body")
         _touch("workshop", "a", time.time() - 1000)
         _put("workshop", "b", "Note B", "body")
@@ -110,19 +97,6 @@ class TestPinnedRanksFirst:
         titles = [l for l in block.splitlines() if l.startswith("- ")]
         assert titles[0].startswith("- Note B")
         assert titles[1].startswith("- Note A")
-
-    def test_type_breaks_ties_among_unpinned_same_mtime(self, tree):
-        now = time.time()
-        _put("workshop", "a-fact", "A fact note", "body", note_type="fact")
-        _touch("workshop", "a-fact", now)
-        _put("workshop", "b-decision", "A decision note", "body",
-             note_type="decision")
-        _touch("workshop", "b-decision", now)
-
-        block = knowledge.index_block("workshop")
-        titles = [l for l in block.splitlines() if l.startswith("- ")]
-        assert titles[0].startswith("- A decision note")
-        assert titles[1].startswith("- A fact note")
 
 
 class TestNoMetadataStillParses:
@@ -137,19 +111,6 @@ class TestNoMetadataStillParses:
 
         block = knowledge.index_block("workshop")
         assert "Ancient note" in block
-
-    def test_it_defaults_to_fact_and_unpinned(self, tree):
-        body = "no marker at all"
-        assert knowledge.note_type(body) == "fact"
-        assert knowledge.note_pinned(body) is False
-
-    def test_an_author_only_marker_still_defaults_type_and_pinned(self, tree):
-        body = "<!-- author: operator -->\nsome content"
-        author, rest = knowledge.split_author(body)
-        assert author == "operator"
-        assert rest == "some content"
-        assert knowledge.note_type(body) == "fact"
-        assert knowledge.note_pinned(body) is False
 
     def test_editing_an_old_note_does_not_invent_metadata(self, tree):
         """Writing a note with no author/type/pinned given must not stamp a
@@ -223,43 +184,6 @@ class TestLayeredBudgetIsOneTotal:
         assert "- " not in workshop_block
 
 
-class TestTypeOutranksRecency:
-    """Defect found by the coordinator after the first cut of the layered
-    budget shipped: ranking put recency ABOVE type, so a busy day of
-    same-mtime `fact` writes swept the top of the digest ahead of standing
-    `preference`/`decision` notes untouched for months. Type must outrank
-    age; recency is only the tiebreak within a type."""
-
-    def test_an_old_preference_outranks_a_brand_new_fact(self, tree):
-        _put("workshop", "old-pref", "An old standing preference", "body",
-             note_type="preference")
-        _touch("workshop", "old-pref", time.time() - 10_000_000)  # long ago
-
-        _put("workshop", "new-fact", "A fact written just now", "body",
-             note_type="fact")
-        _touch("workshop", "new-fact", time.time())
-
-        block = knowledge.index_block("workshop")
-        titles = [l for l in block.splitlines() if l.startswith("- ")]
-        assert titles[0].startswith("- An old standing preference"), (
-            "a brand-new fact outranked a months-old preference")
-        assert titles[1].startswith("- A fact written just now")
-
-    def test_an_old_decision_outranks_a_brand_new_reference(self, tree):
-        _put("workshop", "old-decision", "An old standing decision", "body",
-             note_type="decision")
-        _touch("workshop", "old-decision", time.time() - 10_000_000)
-
-        _put("workshop", "new-reference", "A reference written just now", "body",
-             note_type="reference")
-        _touch("workshop", "new-reference", time.time())
-
-        block = knowledge.index_block("workshop")
-        titles = [l for l in block.splitlines() if l.startswith("- ")]
-        assert titles[0].startswith("- An old standing decision")
-        assert titles[1].startswith("- A reference written just now")
-
-
 class TestGovernanceFloor:
     """Defect found by the coordinator: pure narrowest-first allocation
     starves the GOVERNANCE layer (`read_layers`'s first, widest element -
@@ -272,7 +196,7 @@ class TestGovernanceFloor:
         long_hook = "enough hook text on every single line to cost real tokens here"
         for i in range(10):
             _put("workshop", f"w-{i}", f"Workshop preference {i}", "body",
-                 note_type="preference", hook=long_hook)
+                 hook=long_hook)
         # Far more notes than a 200-token total could ever hold, so pure
         # narrowest-first allocation would consume the whole budget here and
         # leave nothing for workshop.
@@ -307,8 +231,7 @@ class TestGovernanceFloor:
         """Workshop (governance) has only ONE short note, far under its
         floor. The unspent floor must not be wasted: the narrower layer
         should be able to use it."""
-        _put("workshop", "solo", "The only workshop note", "body",
-             note_type="preference")
+        _put("workshop", "solo", "The only workshop note", "body")
         for i in range(30):
             _put("project:demo", f"p-{i}", f"Project note {i}", "body",
                  hook="a hook long enough to cost real tokens on its own")

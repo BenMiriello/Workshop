@@ -9,15 +9,6 @@ import type { components } from "../../api/schema.gen";
 export type NoteRow = components["schemas"]["NoteRow"];
 export type NoteDetail = components["schemas"]["NoteDetail"];
 
-export const NOTE_TYPES = ["decision", "fact", "reference", "preference"] as const;
-export type NoteType = (typeof NOTE_TYPES)[number];
-
-/** The note kind, title-cased, defaulting the way the backend does. */
-export function noteTypeLabel(t?: string | null): string {
-  const v = (t || "fact").trim().toLowerCase();
-  return v.charAt(0).toUpperCase() + v.slice(1);
-}
-
 /**
  * Who wrote it. `author` is an origin string (services/origin on the backend):
  * "operator", "self", "agent:<slug>", "derived:<model>", "tool:<name>", or ""

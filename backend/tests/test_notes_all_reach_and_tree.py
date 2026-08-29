@@ -53,7 +53,7 @@ def tree(tmp_path, monkeypatch):
 
     async def seed():
         await knowledge.put_note("workshop", "w1", "Workshop note", "house style",
-                                  author="operator", note_type="preference", pinned=True)
+                                  author="operator")
         await knowledge.put_note("project:alpha", "a1", "Alpha note", "alpha body",
                                   author="agent:builder")
         await knowledge.put_note("project:beta", "b1", "Beta note", "beta body")
@@ -91,17 +91,13 @@ class TestReachBasedScopeFilter:
 
 
 class TestMetaOnEveryRow:
-    def test_author_type_pinned_are_present(self, tree):
+    def test_author_is_present(self, tree):
         from routes import notes_all
         result = asyncio.run(notes_all.list_all(scope="workshop"))
         w1 = next(n for n in result["notes"] if n["id"] == "w1")
         assert w1["author"] == "operator"
-        assert w1["type"] == "preference"
-        assert w1["pinned"] is True
         a1 = next(n for n in result["notes"] if n["id"] == "a1")
         assert a1["author"] == "agent:builder"
-        assert a1["type"] == "fact"  # default
-        assert a1["pinned"] is False
 
 
 class TestScopeTree:

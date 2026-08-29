@@ -29,8 +29,7 @@ def _meta(**kw):
     """A marker built the way `_put_note_sync` builds one."""
     return knowledge._with_meta(
         kw.get("body", "body"), kw.get("author", "operator"),
-        kw.get("type", ""), kw.get("pinned"),
-        "", knowledge._DEFAULT_NOTE_TYPE, False,
+        "",
         kw.get("chat", ""), "", kw.get("reach", ""), "",
     )
 
@@ -41,17 +40,15 @@ def test_reach_defaults_to_index_everywhere_it_is_absent():
     assert knowledge.note_reach(_meta()) == "index"
 
 
-def test_an_old_marker_still_reads_correctly():
-    """Every note in the store already has a marker in the OLD shape, and the
-    new field sits in the middle of it. This is the migration's real risk."""
+def test_a_marker_with_removed_fields_still_reads_correctly():
+    """Notes on disk may still have type/pinned fields (written before the
+    migration); the regex tolerates them without capturing them."""
     old = "<!-- author: derived:letta-export; type: reference -->\nbody"
     assert knowledge.note_reach(old) == "index"
-    assert knowledge.note_type(old) == "reference"
     assert knowledge.split_author(old) == ("derived:letta-export", "body")
 
     older = "<!-- author: agent:x; type: decision; pinned: true; chat: t-1 -->\nb"
     assert knowledge.note_reach(older) == "index"
-    assert knowledge.note_pinned(older) is True
     assert knowledge.note_chat(older) == "t-1"
 
 
@@ -73,8 +70,8 @@ def test_an_unknown_reach_falls_back_rather_than_being_stored():
 
 
 def test_reach_survives_an_edit_that_does_not_mention_it(scope):
-    """Round-tripping a note through the editor must not silently erase it, the
-    same rule author, type, pinned and chat already have."""
+    """Round-tripping a note through the editor must not silently erase reach,
+    the same rule author and chat already have."""
     knowledge._put_note_sync(scope, "n", "N", "v1", author="operator", reach="always")
     assert knowledge.note_reach((knowledge.scope_dir(scope) / "n.md").read_text()) == "always"
 
@@ -94,14 +91,3 @@ def test_note_meta_reports_it(scope):
     knowledge._put_note_sync(scope, "n", "N", "b", author="operator", reach="always")
     assert knowledge.note_meta(scope, "n")["reach"] == "always"
     assert knowledge.note_meta(scope, "missing")["reach"] == "index"
-
-
-def test_the_facets_do_not_collide(scope):
-    """pinned ranks a note inside the index; reach decides whether it is in the
-    index at all. They are different questions and both must survive."""
-    knowledge._put_note_sync(scope, "n", "N", "b", author="operator",
-                             note_type="preference", pinned=True, reach="always")
-    body = (knowledge.scope_dir(scope) / "n.md").read_text()
-    assert knowledge.note_reach(body) == "always"
-    assert knowledge.note_pinned(body) is True
-    assert knowledge.note_type(body) == "preference"

@@ -1,4 +1,4 @@
-<!-- author: self; type: decision; chat: 05496adf046447b7bef13a3cf64ff81f -->
+<!-- author: self; chat: 05496adf046447b7bef13a3cf64ff81f -->
 Mechanism (verified in-tree 2026-08-26): a chat's image attachment is delivered as a native Anthropic image block only on the turn it is uploaded. In backend/services/build_streaming.py (~line 2419) the blocks are built from meta["attachments"], which is per-message; a later turn with no new upload gets _atts=[] and no image. The base64 is deliberately kept out of the journal, so nothing re-injects it, and it does not survive compaction (it becomes a text mention like 'your screenshot').
 
 Why it matters: this is the systemic driver behind the 2026-08-26 chats-page failure where an agent 'refused to look' at a mockup. It had not refused; the mockup was visible for one turn, then decayed to a description, and on every later turn 'look at the mockup' pointed at an image no longer in context. Combined with anchoring on the existing page and no grounding/verification gate, the agent built confidently from a decayed memory and verified against its own model instead of the reference.

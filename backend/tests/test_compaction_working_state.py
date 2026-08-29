@@ -200,7 +200,6 @@ class TestAFoldWritesTheScopesWorkingState:
                / f"{knowledge.WORKING_STATE_NOTE_ID}.md").read_text()
         assert knowledge.note_chat(raw) == tid
         assert raw.startswith("<!-- author: derived:")
-        assert knowledge.note_pinned(raw) is True
 
     def test_a_second_fold_updates_the_note_instead_of_adding_a_second_one(
             self, scoped, monkeypatch):

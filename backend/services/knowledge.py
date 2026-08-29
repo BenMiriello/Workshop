@@ -670,73 +670,46 @@ def _noun(word: str, n: int) -> str:
 # being bounded by it - see that constant's comment for the measured numbers.)
 DEFAULT_INDEX_TOKEN_BUDGET = 800
 
-# `preference` and `decision` outrank `fact` and `reference` (lower number sorts
-# first) REGARDLESS OF AGE. A preference stated months ago still governs; a
-# fact written this morning usually does not, and ranking recency above type
-# let a single busy day's worth of same-mtime facts sweep the top of the
-# digest ahead of standing house-style preferences that had not been touched
-# since they were written. Recency is the tiebreak WITHIN a type, never above
-# it.
-_TYPE_RANK = {"preference": 0, "decision": 0, "fact": 1, "reference": 1}
-
-
 def _ranked_notes(scope_key: str) -> list[dict]:
-    """`list_notes()` plus each note's `author` / `pinned` / `type` / `chat` /
-    raw mtime, read from its metadata marker. One extra file read per note
-    (small scopes; the same cost class list_notes already pays per-note for
-    mtime)."""
+    """`list_notes()` plus each note's `author` / `chat` / raw mtime, read
+    from its metadata marker. One extra file read per note (small scopes; the
+    same cost class list_notes already pays per-note for mtime)."""
     d = scope_dir(scope_key)
     out = []
     for n in list_notes(scope_key):
         f = d / f"{n['id']}.md"
-        author, pinned, ntype, chat, mtime = "", False, _DEFAULT_NOTE_TYPE, "", 0.0
-        reach = _DEFAULT_NOTE_REACH
+        author, chat, mtime = "", "", 0.0
         if f.exists():
             try:
-                a, t, r, p, c, _ = _parse_meta_line(f.read_text())
+                a, _r, c, _ = _parse_meta_line(f.read_text())
                 author = a
-                pinned = bool(p)
-                ntype = t or _DEFAULT_NOTE_TYPE
-                reach = r or _DEFAULT_NOTE_REACH
                 chat = c
                 mtime = f.stat().st_mtime
             except OSError:
                 pass
-        out.append({**n, "author": author, "pinned": pinned, "type": ntype,
-                    "chat": chat, "_mtime": mtime})
+        out.append({**n, "author": author, "chat": chat, "_mtime": mtime})
     return out
 
 
 def list_notes_meta(scope_key: str) -> list[dict]:
     """Public entry point onto `_ranked_notes`: `list_notes()` plus `author` /
-    `pinned` / `type` / `chat` per note, for a cross-scope listing that needs to
-    show provenance and the ambient-injection facets (memory-and-documentation-
-    model-2026-08-14.md sec 11, "provenance on every item"). `chat` is the
-    originating thread id, or "" when it was never recorded. Drops the private
-    `_mtime` sort key that `index_block` needs and callers outside this module
-    should not depend on."""
+    `chat` per note. `chat` is the originating thread id, or "" when it was
+    never recorded. Drops the private `_mtime` sort key that `index_block`
+    needs and callers outside this module should not depend on."""
     return [{k: v for k, v in n.items() if k != "_mtime"} for n in _ranked_notes(scope_key)]
 
 
 def note_meta(scope_key: str, note_id: str) -> dict:
-    """`{author, type, reach, pinned, chat}` for one note, defaults applied. Used by
-    the per-note GET route so the editor can show and round-trip provenance and
-    the type/pinned/chat facets without a second endpoint. `chat` is the
-    originating thread id, or "" when it was never recorded."""
-    author, ntype, reach, pinned, chat = _stored_meta(scope_key, note_id)
-    return {"author": author, "type": ntype, "reach": reach,
-            "pinned": pinned, "chat": chat}
+    """`{author, reach, chat}` for one note, defaults applied. Used by the
+    per-note GET route so the editor can show and round-trip provenance.
+    `chat` is the originating thread id, or "" when it was never recorded."""
+    author, reach, chat = _stored_meta(scope_key, note_id)
+    return {"author": author, "reach": reach, "chat": chat}
 
 
 def _index_rank_key(n: dict) -> tuple:
-    """Pinned first, then type, then most-recently-updated WITHIN that type,
-    then id (stable). Type outranks recency: see _TYPE_RANK's comment."""
-    return (
-        0 if n.get("pinned") else 1,
-        _TYPE_RANK.get(n.get("type") or _DEFAULT_NOTE_TYPE, 1),
-        -(n.get("_mtime") or 0.0),
-        n.get("id") or "",
-    )
+    """Most-recently-updated first, then id (stable tiebreak)."""
+    return (-(n.get("_mtime") or 0.0), n.get("id") or "")
 
 
 def index_block(scope_key: str, max_tokens: int = DEFAULT_INDEX_TOKEN_BUDGET) -> str:
@@ -795,30 +768,20 @@ def get_note(scope_key: str, note_id: str) -> str | None:
     return body
 
 
-# --- metadata: author, type, pinned -------------------------------------------
+# --- metadata: author, reach, chat -------------------------------------------
 # A note the operator hand-wrote, one the model wrote through a ```note``` block
 # last week, and one distilled during compaction were byte-identical on
-# re-entry, so nothing downstream could weigh them differently. Author rides in
-# an HTML comment on the first line of the body rather than in MEMORY.md: the
-# index line is regex-parsed with an already-optional ` - hook` tail, and a
-# second optional tail there would be ambiguous for any hook containing " - ".
+# re-entry, so nothing downstream could weigh them differently. Author, reach,
+# and chat ride in an HTML comment on the first line of the body rather than in
+# MEMORY.md: the index line is regex-parsed with an already-optional ` - hook`
+# tail, and a second optional tail there would be ambiguous for any hook
+# containing " - ".
 #
-# `type` and `pinned` are OPTIONAL fields added to that SAME marker, per the
-# design doc sec 5 ("every note carries a type") rather than a third mechanism
-# or a sidecar file. A note with no marker at all, or an author-only marker
-# (every note written before this existed, which is most of them), still
-# parses: type defaults to "fact", pinned defaults to False.
-#
-# `chat` is a FOURTH optional field on the same marker (design doc sec 5.2:
-# "every note carries provenance ... originating chat ref"). Same reasoning as
-# type/pinned: extending the one marker line rather than a sidecar file or a
-# second mechanism. It carries the bare thread id (uuid4 hex; see
-# services/chat_store), not a full `workshop:chat/<id>#<msg>` ref, because a
-# note is written from the turn's finalize path before any reply message id
-# exists to anchor a citation. "" (the default) means not recorded, which is
-# the honest state for every note written before this existed and for one
-# filed outside a chat (the operator's own editor) -- never backfilled, never
-# guessed.
+# `chat` is an optional field on the same marker (design doc sec 5.2: "every
+# note carries provenance ... originating chat ref"): the bare thread id
+# (uuid4 hex; see services/chat_store). "" means not recorded, which is the
+# honest state for every note written before this existed or one filed outside
+# a chat -- never backfilled, never guessed.
 #
 # The note's TIMESTAMP is not duplicated here: the file's own mtime
 # (`list_notes`'s `updated` field) is already the write time and re-deriving a
@@ -826,8 +789,6 @@ def get_note(scope_key: str, note_id: str) -> str | None:
 #
 # See docs/decisions/0015-transcript-structure-and-content-provenance.md §8 and
 # docs/platform-redesign/memory-and-documentation-model-2026-08-14.md §5.
-_NOTE_TYPES = ("decision", "fact", "reference", "preference")
-_DEFAULT_NOTE_TYPE = "fact"
 
 # HOW FAR A NOTE REACHES INTO A PROMPT, which is the field that folded the
 # separate learnings store into this one (2026-08-28; the decision is
@@ -858,60 +819,39 @@ _DEFAULT_NOTE_REACH = "index"
 
 _META_RE = re.compile(
     r"^<!--\s*author:\s*(?P<author>[^;>]*?)"
-    r"(?:;\s*type:\s*(?P<type>[a-z]+))?"
+    r"(?:;\s*type:\s*[a-z]+)?"
     r"(?:;\s*reach:\s*(?P<reach>[a-z]+))?"
-    r"(?:;\s*pinned:\s*(?P<pinned>true|false))?"
+    r"(?:;\s*pinned:\s*(?:true|false))?"
     r"(?:;\s*chat:\s*(?P<chat>[^;>]*?))?"
     r"\s*-->\s*\n?"
 )
 
 
-def _parse_meta_line(body: str) -> tuple[str, str, str, bool | None, str, str]:
-    """(author, type, reach, pinned, chat, body-without-the-marker).
+def _parse_meta_line(body: str) -> tuple[str, str, str, str]:
+    """(author, reach, chat, body-without-the-marker).
 
-    `type` is "" and `pinned` is None when the marker (or that field of it) is
-    absent, rather than defaulted here: callers that MERGE a write need to tell
-    "not specified this call" (fall back to what's on disk) from "explicitly
-    fact/unpinned". `chat` is "" both when absent and when explicitly recorded
-    empty -- there is no tri-state for it, since an empty originating chat is
-    never a meaningful claim to preserve over one already on disk (see
-    `_with_meta`). Callers that just want to RENDER a value use `note_type` /
-    `note_pinned` below, which apply the default.
+    `reach` is "" when the marker (or that field of it) is absent, rather than
+    defaulted here: callers that MERGE a write need to tell "not specified this
+    call" from "explicitly index". `chat` is "" both when absent and when
+    explicitly recorded empty. Callers that just want to RENDER a value use
+    `note_reach` / `note_chat` below, which apply the default.
     """
     m = _META_RE.match(body or "")
     if not m:
-        return "", "", "", None, "", (body or "")
+        return "", "", "", (body or "")
     author = (m.group("author") or "").strip()
-    note_type = (m.group("type") or "").strip().lower()
-    if note_type not in _NOTE_TYPES:
-        note_type = ""
     reach = (m.group("reach") or "").strip().lower()
     if reach not in _NOTE_REACH:
         reach = ""
-    pinned_raw = (m.group("pinned") or "").strip().lower()
-    pinned = True if pinned_raw == "true" else (False if pinned_raw == "false" else None)
     chat = (m.group("chat") or "").strip()
-    return author, note_type, reach, pinned, chat, (body or "")[m.end():]
+    return author, reach, chat, (body or "")[m.end():]
 
 
 def split_author(body: str) -> tuple[str, str]:
     """(author, body-without-the-marker). Author is "" on notes written before
     this existed, which is most of them and is not an error."""
-    author, _type, _reach, _pinned, _chat, rest = _parse_meta_line(body)
+    author, _reach, _chat, rest = _parse_meta_line(body)
     return author, rest
-
-
-def note_type(body: str) -> str:
-    """The note's type, defaulting to "fact" when the marker carries none."""
-    _, t, _, _, _, _ = _parse_meta_line(body)
-    return t or _DEFAULT_NOTE_TYPE
-
-
-def note_pinned(body: str) -> bool:
-    """Whether the note is pinned, defaulting to False when the marker carries
-    none."""
-    _, _, _, p, _, _ = _parse_meta_line(body)
-    return bool(p)
 
 
 def note_reach(body: str) -> str:
@@ -919,72 +859,57 @@ def note_reach(body: str) -> str:
 
     "index" for every note written before this field existed, which is the
     correct reading: they were written to be looked up, not to be injected."""
-    _, _, r, _, _, _ = _parse_meta_line(body)
+    _, r, _, _ = _parse_meta_line(body)
     return r or _DEFAULT_NOTE_REACH
 
 
 def note_chat(body: str) -> str:
     """The originating chat's thread id, or "" when it was never recorded
     (every note written before this existed, or one filed outside a chat)."""
-    _, _, _, _, c, _ = _parse_meta_line(body)
+    _, _, c, _ = _parse_meta_line(body)
     return c
 
 
-def _stored_meta(scope_key: str, note_id: str) -> tuple[str, str, str, bool, str]:
-    """(author, type, reach, pinned, chat) already on disk for this note,
-    defaults applied."""
+def _stored_meta(scope_key: str, note_id: str) -> tuple[str, str, str]:
+    """(author, reach, chat) already on disk for this note, defaults applied."""
     f = scope_dir(scope_key) / f"{note_id}.md"
     if not f.exists():
-        return "", _DEFAULT_NOTE_TYPE, _DEFAULT_NOTE_REACH, False, ""
+        return "", _DEFAULT_NOTE_REACH, ""
     try:
-        author, t, r, p, c, _ = _parse_meta_line(f.read_text())
-        return author, (t or _DEFAULT_NOTE_TYPE), (r or _DEFAULT_NOTE_REACH), bool(p), c
+        author, r, c, _ = _parse_meta_line(f.read_text())
+        return author, (r or _DEFAULT_NOTE_REACH), c
     except OSError:
-        return "", _DEFAULT_NOTE_TYPE, _DEFAULT_NOTE_REACH, False, ""
+        return "", _DEFAULT_NOTE_REACH, ""
 
 
-def _with_meta(body: str, author: str, note_type_: str, pinned: bool | None,
-              fallback_author: str, fallback_type: str, fallback_pinned: bool,
+def _with_meta(body: str, author: str,
+              fallback_author: str,
               chat_id: str = "", fallback_chat: str = "",
               reach: str = "", fallback_reach: str = "") -> str:
-    """Stamp author/type/pinned/chat onto a body, PRESERVING what is already
-    recorded for a field that this call does not specify. An edit that passes
-    no author is an edit, not a claim of anonymity, and the same now holds for
-    type, pinned and chat: round-tripping a note through the editor must not
-    silently erase them. Fallbacks come from disk rather than from the passed
-    body, because `get_note` strips the marker before anything else sees it.
+    """Stamp author/reach/chat onto a body, PRESERVING what is already recorded
+    for a field that this call does not specify. An edit that passes no author
+    is an edit, not a claim of anonymity; the same holds for reach and chat:
+    round-tripping a note through the editor must not silently erase them.
+    Fallbacks come from disk rather than from the passed body, because
+    `get_note` strips the marker before anything else sees it.
 
     `chat_id` is never fabricated or guessed here: an empty call preserves
     whatever chat (possibly none) is already recorded, exactly like author.
 
-    When the result would carry no author, the default type, the default
-    reach, not be pinned and no chat, the marker is omitted entirely so an
-    untouched old note stays byte-for-byte what it was."""
-    (existing_author, existing_type, existing_reach, existing_pinned,
-     existing_chat, clean) = _parse_meta_line(body)
+    When the result would carry no author, the default reach, and no chat,
+    the marker is omitted entirely so an untouched old note stays byte-for-byte
+    what it was."""
+    existing_author, existing_reach, existing_chat, clean = _parse_meta_line(body)
     a = (author or "").strip() or existing_author or fallback_author
-    t = (note_type_ or "").strip().lower()
-    if t not in _NOTE_TYPES:
-        t = existing_type or fallback_type or _DEFAULT_NOTE_TYPE
     r = (reach or "").strip().lower()
     if r not in _NOTE_REACH:
         r = existing_reach or fallback_reach or _DEFAULT_NOTE_REACH
-    if pinned is not None:
-        p = bool(pinned)
-    elif existing_pinned is not None:
-        p = existing_pinned
-    else:
-        p = fallback_pinned
     c = (chat_id or "").strip() or existing_chat or fallback_chat
-    if not a and t == _DEFAULT_NOTE_TYPE and r == _DEFAULT_NOTE_REACH and not p and not c:
+    if not a and r == _DEFAULT_NOTE_REACH and not c:
         return clean
     marker = f"<!-- author: {a}"
-    if t != _DEFAULT_NOTE_TYPE:
-        marker += f"; type: {t}"
     if r != _DEFAULT_NOTE_REACH:
         marker += f"; reach: {r}"
-    if p:
-        marker += "; pinned: true"
     if c:
         marker += f"; chat: {c}"
     marker += " -->\n"
@@ -1051,8 +976,7 @@ def _retitle_wikilinks(scope_key: str, note_id: str, old_title: str, new_title: 
 
 
 async def put_note(scope_key: str, note_id: str, title: str, content: str, hook: str = "",
-                   author: str = "", note_type: str = "", pinned: bool | None = None,
-                   chat_id: str = "", reach: str = "") -> dict:
+                   author: str = "", chat_id: str = "", reach: str = "") -> dict:
     """Write a note. The async entry point, which is what every caller uses.
 
     The work is entirely synchronous file IO and lives in `_put_note_sync`
@@ -1063,13 +987,11 @@ async def put_note(scope_key: str, note_id: str, title: str, content: str, hook:
     implementation for sync callers -- is exactly the kind of parallel system
     this repo is removing. One implementation, two doors."""
     return _put_note_sync(scope_key, note_id, title, content, hook=hook,
-                          author=author, note_type=note_type, pinned=pinned,
-                          chat_id=chat_id, reach=reach)
+                          author=author, chat_id=chat_id, reach=reach)
 
 
 def _put_note_sync(scope_key: str, note_id: str, title: str, content: str, hook: str = "",
-                   author: str = "", note_type: str = "", pinned: bool | None = None,
-                   chat_id: str = "", reach: str = "") -> dict:
+                   author: str = "", chat_id: str = "", reach: str = "") -> dict:
     """Write a note (source of truth on disk).
 
     1. write `<note-id>.md` atomically,
@@ -1080,17 +1002,11 @@ def _put_note_sync(scope_key: str, note_id: str, title: str, content: str, hook:
     "agent:<slug>", "derived:<model>". Optional, and absent on every note written
     before it existed.
 
-    `note_type` is one of decision/fact/reference/preference (defaults to "fact"
-    when never set). `pinned` is a tri-state: None means "leave whatever is
-    already on disk (False for a new note)"; True/False sets it explicitly. Both
-    are optional metadata (design doc sec 5); omitting them keeps an existing
-    note's write path unchanged.
-
     `reach` is how far the note reaches into a prompt: "index" (the default,
     title and hook in the scope index), "always" (body injected verbatim into
     every prompt in scope, which is what a standing note is), or "search"
     (findable, never surfaced). Empty preserves whatever is on disk, exactly
-    like `author` and the two facets.
+    like `author` and `chat_id`.
 
     `chat_id` is the thread id of the conversation that produced this note
     (design doc sec 5.2: "some retention of the chat that it came from ...
@@ -1102,11 +1018,10 @@ def _put_note_sync(scope_key: str, note_id: str, title: str, content: str, hook:
     _valid_note_id(note_id)
     d = scope_dir(scope_key, create=True)
 
-    (stored_author, stored_type, stored_reach, stored_pinned,
-     stored_chat) = _stored_meta(scope_key, note_id)
+    stored_author, stored_reach, stored_chat = _stored_meta(scope_key, note_id)
     _atomic_write(d / f"{note_id}.md",
-                  _with_meta(content, author, note_type, pinned,
-                            stored_author, stored_type, stored_pinned,
+                  _with_meta(content, author,
+                            stored_author,
                             chat_id, stored_chat, reach, stored_reach))
 
     idx = _read_index(scope_key)
@@ -1409,15 +1324,6 @@ def write_working_state(scope_key: str, sections: str, *, author: str = "",
         scope_key, WORKING_STATE_NOTE_ID, WORKING_STATE_TITLE,
         _WORKING_STATE_HEADER + text + "\n",
         hook=WORKING_STATE_HOOK, author=author,
-        # `reference` rather than `decision` or `fact`: the note POINTS AT the
-        # current state of a piece of work. The decisions inside it are real,
-        # but they are recorded here as part of a snapshot that expires, and
-        # typing the whole thing `decision` would rank an expiring snapshot
-        # alongside the standing decisions in `_TYPE_RANK`.
-        note_type="reference",
-        # Pinned: it is the one note in the scope whose whole purpose is to be
-        # found again by somebody who does not know it exists.
-        pinned=True,
         chat_id=chat_id,
     )
 
@@ -1439,7 +1345,7 @@ def read_working_state(scope_key: str) -> tuple[str, str]:
     body = get_note(scope_key, WORKING_STATE_NOTE_ID)
     if not body or not body.strip():
         return "", ""
-    _author, _type, _reach, _pinned, chat = _stored_meta(scope_key, WORKING_STATE_NOTE_ID)
+    _author, _reach, chat = _stored_meta(scope_key, WORKING_STATE_NOTE_ID)
     return _bound_working_state(_sections_only(body)), chat
 
 
@@ -1477,10 +1383,6 @@ def write_manifest(scope_key: str, body: str, *, author: str = "") -> dict:
     return _put_note_sync(
         scope_key, MANIFEST_NOTE_ID, MANIFEST_TITLE, text + "\n",
         hook=MANIFEST_HOOK, author=author,
-        # `reference`: it points at the current shape of the work. Not `decision`
-        # (it is not one standing choice) and not `fact` (it is editable intent).
-        note_type="reference",
-        pinned=True,
     )
 
 

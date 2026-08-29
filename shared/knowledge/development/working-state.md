@@ -1,4 +1,4 @@
-<!-- author: derived:claude-haiku-4-5-20251001; type: reference; pinned: true; chat: 50cf71c1e6564676b908b6f33ddf9fe1 -->
+<!-- author: derived:claude-haiku-4-5-20251001; chat: 50cf71c1e6564676b908b6f33ddf9fe1 -->
 Written automatically when a chat in this scope compacts, and overwritten by
 the next compaction here. It is the handoff a new chat in this scope reads to
 continue the work without the old transcript.

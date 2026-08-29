@@ -1,4 +1,4 @@
-<!-- author: self; type: decision; chat: f1b0f8cddafd4a438bc0a7931a023f57 -->
+<!-- author: self; chat: f1b0f8cddafd4a438bc0a7931a023f57 -->
 A turn that ends on narration and a turn that crashed look identical from the next turn's seat, and both look identical to work that never happened. The check is three commands and it takes a minute:
 
 1. `git log --oneline --all | grep -i '<distinctive commit subject>'` finds the commits. `--since` alone is unreliable: another agent's 50 commits can push yours past `head -20`.
