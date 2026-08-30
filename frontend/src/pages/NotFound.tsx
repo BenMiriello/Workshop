@@ -22,7 +22,7 @@ export default function NotFound() {
         icon={<FileQuestion aria-hidden />}
         title="This page does not exist"
         hint={<code>{pathname}</code>}
-        action={<Link to="/">Go home</Link>}
+        action={<Link className="ws-link" to="/">Go home</Link>}
       />
     </>
   );
