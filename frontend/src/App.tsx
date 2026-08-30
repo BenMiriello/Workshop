@@ -60,6 +60,7 @@ const Settings = lazyPage(() => import("./pages/Settings"));
 // The seven per-app tabs (app-is-the-entity-2026-08-20.md sec 9 stage C).
 // Generic over `:appSlug` -- these name no app, unlike the routes appRoutes()
 // contributes below, so they live here rather than in apps/registry.tsx.
+const NotFound = lazyPage(() => import("./pages/NotFound"));
 const AppChats = lazyPage(() => import("./pages/apps/tabs/AppChats"));
 const AppAgentsTab = lazyPage(() => import("./pages/apps/tabs/AppAgentsTab"));
 const AppMemoryTab = lazyPage(() => import("./pages/apps/tabs/AppMemoryTab"));
@@ -221,6 +222,10 @@ export default function App() {
           {/* Old /location web-geolocation page removed. Owntracks iOS now
               posts to /api/location/owntracks; viewer lives at /apps/location. */}
           <Route path="/location" element={<Navigate to="/apps/location" replace />} />
+          {/* A URL this app does not have says so. Without this, an unmatched
+              path rendered the shell with an empty main, which is the same
+              picture a failed load and a broken build produce. */}
+          <Route path="*" element={<NotFound />} />
         </Routes>
         </AppSuspense>
     </Shell>
