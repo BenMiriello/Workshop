@@ -17,6 +17,16 @@ describe("monogram", () => {
 
   it("survives a one-character name and an empty one", () => {
     expect(monogram("X")).toBe("X");
+  });
+
+  it("does not take punctuation as an initial", () => {
+    // "Development (this Workshop)" rendered as "D(" in the dock: the split
+    // produced "(this" as the second word and its first character is a paren.
+    expect(monogram("Development (this Workshop)")).toBe("DT");
+    expect(monogram("(parenthesised)")).toBe("PA");
+    // A name that is ONLY punctuation still gets to be itself: there is no
+    // letter to prefer, so the original characters stand.
+    expect(monogram("!!!")).toBe("!!");
     expect(monogram("")).toBe("?");
     expect(monogram("   ")).toBe("?");
   });

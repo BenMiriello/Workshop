@@ -128,8 +128,16 @@ export function iconComponent(name: string): ComponentType<LucideProps> | null {
 export function monogram(name: string): string {
   const clean = (name ?? "").trim();
   if (!clean) return "?";
-  const words = clean.split(/[\s._/-]+/).filter(Boolean);
+  // LEADING PUNCTUATION IS NOT AN INITIAL. An app titled "Development (this
+  // Workshop)" splits into three words, the second of which is "(this", and
+  // taking its first character rendered the tile as "D(" -- a monogram that
+  // reads as a typo. Only `\p{P}` is stripped, never `\p{S}`: an emoji is a
+  // symbol, and an app whose name starts with one is naming itself.
+  const words = clean.split(/[\s._/-]+/)
+    .map((w) => w.replace(/^\p{P}+/u, ""))
+    .filter(Boolean);
   if (words.length > 1) return (words[0][0] + words[1][0]).toUpperCase();
+  if (words.length === 1) return Array.from(words[0]).slice(0, 2).join("").toUpperCase();
   // Array.from, not slice: an emoji or any astral-plane first character is one
   // grapheme and two UTF-16 code units, and slice(0, 2) would cut it in half.
   return Array.from(clean).slice(0, 2).join("").toUpperCase();
