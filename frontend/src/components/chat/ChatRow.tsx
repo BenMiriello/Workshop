@@ -133,8 +133,14 @@ export default function ChatRow({
               <span className="ws-chat-row__sep ws-chat-row__sep--model" aria-hidden>·</span>
             </>
           )}
-          <span className="ws-card__meta">{t.message_count} turns</span>
-          <span className="ws-chat-row__sep" aria-hidden>·</span>
+          {/* A count is only shown when there is one. A surface whose source
+              does not carry it must not print "undefined turns" or claim 0. */}
+          {typeof t.message_count === "number" && t.message_count > 0 && (
+            <>
+              <span className="ws-card__meta">{t.message_count} turns</span>
+              <span className="ws-chat-row__sep" aria-hidden>·</span>
+            </>
+          )}
           <span className="ws-card__meta ws-chat-row__when">{relTime(t.updated_at)}</span>
           {t.branch_slug && (
             <>
