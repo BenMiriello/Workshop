@@ -267,7 +267,13 @@ def test_a_continuation_seed_starts_a_turn_attributed_to_no_one(tid, monkeypatch
     # The starter is what decides HOW a batch becomes a turn; the drop-after is
     # drain()'s job and is covered by the batching tests. Here we pin the routing:
     # a lone auto seed starts a turn with already_recorded=True and no user turn.
-    assert _a.run(chat_routes._start_queued_batch(tid, chat_queue.read(tid))) is True
+    # THE SEED IS ITS OWN STORE, not an entry in the message queue. It moved
+    # out of `chat_queue.read` into `read_continuation` (one pending wake per
+    # thread, dedupes by overwrite), and these tests kept reading the queue and
+    # got []. `drain_continuation` is the half that starts it.
+    entry = chat_queue.read_continuation(tid)
+    assert entry is not None
+    assert _a.run(chat_routes._start_queued_batch(tid, [entry])) is True
     assert len(seen) == 1
     assert seen[0]["content"] == "read the result above and continue"
     assert seen[0]["already_recorded"] is True
@@ -280,11 +286,17 @@ def test_a_continuation_seed_starts_a_turn_attributed_to_no_one(tid, monkeypatch
 
 def test_a_continuation_seed_is_idempotent_on_the_job(tid):
     """Re-finishing the same run (a retry, a restart replaying the close) must not
-    stack continuations: the seed dedupes on the job+thread id."""
+    stack continuations: there is ONE pending wake per thread, so the second
+    request leaves the same single seed rather than a second one."""
     chat_drain.request_continuation(tid, seed="continue once", dedupe_id="jobX-" + tid)
     chat_drain.request_continuation(tid, seed="continue once", dedupe_id="jobX-" + tid)
-    seeds = [e for e in chat_queue.read(tid) if e.get("auto")]
-    assert len(seeds) == 1
+    entry = chat_queue.read_continuation(tid)
+    assert entry is not None
+    assert entry["text"] == "continue once"
+    assert entry["client_id"] == "auto-jobX-" + tid
+    # And nothing leaked into the ordinary message queue, which is what the
+    # browser drains: a wake signal is thread state, never an operator message.
+    assert chat_queue.read(tid) == []
 
 
 def test_a_continuation_waits_behind_operator_messages(tid, starter):
@@ -303,11 +315,13 @@ def test_a_continuation_does_not_fire_while_a_turn_runs(tid, starter):
     message: a continuation must never start a rival to a live turn."""
     chat_drain.request_continuation(tid, seed="continue", dedupe_id="jobZ-" + tid)
     chat_store.begin_turn(tid, "run-1")
-    assert asyncio.run(chat_drain.drain(tid, reason="test")) is False
+    assert asyncio.run(chat_drain.drain_continuation(tid, reason="test")) is False
     assert starter == []
     chat_store.release_turn(tid, "run-1")
-    assert asyncio.run(chat_drain.drain(tid, reason="test")) is True
+    assert asyncio.run(chat_drain.drain_continuation(tid, reason="test")) is True
     assert starter[0][0].get("auto") is True
+    # Started once, and the seed is cleared so it cannot fire again.
+    assert chat_queue.read_continuation(tid) is None
 
 
 def test_an_archived_chat_does_not_fire_its_queue(tid, starter):

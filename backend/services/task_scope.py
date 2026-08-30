@@ -128,6 +128,29 @@ def _raw_root_for_context(context_key: str | None) -> Path | None:
     return None
 
 
+def _names_the_self_project(context_key: str | None) -> bool:
+    """Is this a `project:<slug>` naming the installation's own source?
+
+    By DECLARATION (`self: true` in the project registry, read through
+    app_links), never by comparing paths. A path comparison is a filesystem
+    question and has the wrong failure mode for an interlock: where the
+    checkout is reachable under a second path, or the registry's stored dir is
+    not reachable from this process, it quietly answers False and the alias
+    resolves.
+
+    A missing or unreadable registry answers False, which is the same answer it
+    gave before this existed: this narrows an address, it does not grant one.
+    """
+    key = context_key or ""
+    if not key.startswith("project:"):
+        return False
+    try:
+        from services import app_links
+        return app_links.is_self_slug(key.split(":", 1)[1])
+    except Exception:  # pragma: no cover - defensive
+        return False
+
+
 def root_for_context(context_key: str | None) -> Path | None:
     """The task-store directory for a chat's context binding, or None if the
     binding has no task scope (app chats) or the binding is refused.
@@ -154,6 +177,21 @@ def root_for_context(context_key: str | None) -> Path | None:
     from services import scope_owner
     if not scope_owner.may_reach(context_key):
         return None
+    # ONE NAME, DECIDED BY THE DECLARATION, not by comparing paths.
+    #
+    # The check below asks "does this root resolve to the platform repo", which
+    # is a filesystem question, and a filesystem question has the wrong failure
+    # mode for an interlock: on a box where the checkout is reachable under a
+    # second path, or where the registry's stored dir is not reachable from
+    # this process at all, the comparison quietly answers False and the alias
+    # resolves. Measured 2026-08-30.
+    #
+    # The registry already declares which project IS the installation's own
+    # source (`self: true`, read by app_links.is_self_slug). A `project:<slug>`
+    # naming it is the alias ADR 0014 sec 4 forbids, whatever any path says, so
+    # it is refused here before the filesystem is consulted at all.
+    if _names_the_self_project(context_key):
+        return None
     root = _raw_root_for_context(context_key)
     if root is None:
         return None
@@ -176,10 +214,29 @@ def dev_mode_refusal(context_key: str | None) -> str | None:
     """Why `root_for_context` returned None, when the reason was the gate and
     not an unknown scope. None means "not gated" — the caller should report the
     scope as unknown, which is then true."""
+    from wsplatform import dev_mode
+    # THE ALIAS IS REFUSED, NOT UNKNOWN. `root_for_context` turns a
+    # `project:<self slug>` away by declaration before it looks at the
+    # filesystem, so this has to recognise the same case or the caller reports
+    # "unknown scope" (400) for a scope that exists and was deliberately
+    # refused (403). Refused whether or not developer mode is on: the point of
+    # ADR 0014 sec 4 is that the repo has exactly ONE address, and the flag
+    # governs that one, not its aliases.
+    if _names_the_self_project(context_key):
+        # WHICH RULE IS REFUSING decides what to say. With developer mode off
+        # the answer the caller needs is the dev-mode one, naming the flag that
+        # would change it; the alias is beside the point to someone who cannot
+        # reach the repo at all. With it on, the flag is not the reason, the
+        # second address is, so say that instead.
+        from wsplatform import paths as _paths
+        if not dev_mode.dev_mode_on():
+            return dev_mode.self_dir_refusal(
+                _paths.workshop_root(), f"the {context_key} scope")
+        return (f"{context_key} is a second address for the platform repo. Use "
+                f"the {DEVELOPMENT_SCOPE} scope, which is its one name.")
     root = _raw_root_for_context(context_key)
     if root is None:
         return None
-    from wsplatform import dev_mode
     if dev_mode.is_self_dir(root) and not dev_mode.dev_mode_on():
         return dev_mode.self_dir_refusal(root, f"the {context_key} scope")
     return None

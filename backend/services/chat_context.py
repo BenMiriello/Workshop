@@ -1915,9 +1915,24 @@ class ProjectContextProvider(ContextProvider):
             _reg = paths.projects_registry()
             rec = (json.loads(_reg.read_text()).get("projects") or {}).get(slug) if _reg.exists() else None
             if rec:
-                if rec.get("dir"):
-                    self.dir = _Path(rec["dir"])
                 self.is_self = bool(rec.get("self"))
+                if self.is_self:
+                    # THE SELF PROJECT'S DIRECTORY IS DERIVED, NOT STORED.
+                    #
+                    # A self-hosting installation's project IS the workshop
+                    # root; that is what `self: true` means. Reading a stored
+                    # absolute path here spelled the same directory twice, and
+                    # the two spellings can differ for the same tree: on a box
+                    # where the checkout is reachable under more than one path
+                    # (a bind mount, a container), `paths.workshop_root()` and
+                    # the registry string are different strings for one inode,
+                    # so every equality check between them fails and the guard
+                    # that decides whether a chat is running against the
+                    # platform's own source is answering about a path rather
+                    # than about a tree. Deriving it means there is one answer.
+                    self.dir = paths.workshop_root()
+                elif rec.get("dir"):
+                    self.dir = _Path(rec["dir"])
         except Exception:
             pass
 

@@ -85,11 +85,33 @@ def is_self_dir(path: str | Path) -> bool:
     every route to the platform repo has in common.
 
     For "would writing here touch the platform repo", use `is_in_self_repo`,
-    which is the containment question rather than the identity one."""
+    which is the containment question rather than the identity one.
+
+    IDENTITY IS THE TREE, NOT THE STRING. This compared resolved paths only,
+    and `resolve()` does not see through a bind mount: on any box where the
+    checkout is reachable under a second path (a container, a bind mount, a
+    mount --rbind of a home directory), the same directory has two names, this
+    returned False for one of them, and the developer-mode interlock was
+    silently open on that path. Measured 2026-08-30 in this installation's own
+    sandbox, where the repo is `/workspace` here and `/home/clawd-a/workshop`
+    to the host: `project:development` resolved to the platform repo, which
+    ADR 0014 sec 4 exists to forbid.
+
+    So the string comparison stays as the fast path, and a stat comparison
+    (device + inode) is the fallback: two names for one directory are one
+    directory, whatever they are spelled. A missing path simply is not the
+    root."""
     try:
-        return Path(path).resolve() == WORKSHOP_ROOT
+        candidate = Path(path).resolve()
     except OSError:
         return False
+    if candidate == WORKSHOP_ROOT:
+        return True
+    try:
+        a, b = candidate.stat(), WORKSHOP_ROOT.stat()
+    except OSError:
+        return False
+    return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
 
 
 def is_in_self_repo(path: str | Path) -> bool:
