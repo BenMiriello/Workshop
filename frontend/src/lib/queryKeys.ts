@@ -149,10 +149,6 @@ export const queryKeys = {
      * the cache's.
      */
     launcherStatuses: () => ["apps", "launcher", "statuses"] as const,
-    /** WHICH apps exist, off the launcher. Not the frontend registry: that
-     *  lists only apps with bundled UI, so an app the platform knows about any
-     *  other way was missing from the dock and the dashboard card. */
-    launcher: () => ["apps", "launcher"] as const,
     chats: (appId: string) => ["apps", appId, "chats"] as const,
     agents: (appId: string) => ["apps", appId, "agents"] as const,
     tickets: (appId: string) => ["apps", appId, "tickets"] as const,
