@@ -1,14 +1,19 @@
-// WHAT THE TWO FOLD BUTTONS SAY AND WHETHER THEY ACT, as one rule in one place.
+// WHAT THE TWO CONTEXT BUTTONS SAY AND WHETHER THEY ACT, as one rule in one
+// place.
 //
 // The rule is here rather than inline in ContextModal because the modal renders
 // through a portal and cannot be exercised without a DOM harness, which this
 // tree deliberately does not have (frontend/CLAUDE.md: extract the pure rule
 // into its own module so it can be executed). It earned that: the first pass
-// disabled Compact and left Clear reachable, so a second fold was still one tap
-// away, and it labelled a running CLEAR "Compacting" because it took a boolean
-// and could not tell the two folds apart.
+// disabled Compact and left Clear reachable, so a second cut was still one tap
+// away.
+//
+// ONLY A CLEAR CAN BE RUNNING HERE. It used to be either, because compaction
+// was a server-side fold that held the thread the same way a clear does.
+// Compaction is now the provider's own /compact, run as an ordinary turn, and a
+// turn needs no hold: a second press queues behind it and says so.
 
-export type FoldMode = "compact" | "clear";
+export type FoldMode = "clear";
 
 export type FoldControl = {
   /** Inert. Rendered as `aria-disabled`, never the native `disabled`: a
@@ -21,12 +26,11 @@ export type FoldControl = {
   reason?: string;
 };
 
-const reasonFor = (running: FoldMode) =>
-  `A ${running} is already running in this chat.`;
+const REASON = "A clear is already running in this chat.";
 
-/** Both controls, from the one fact that either fold is running. `running` is
- *  the SERVER's answer merged with this tab's, so a fold started elsewhere
- *  makes these inert too. */
+/** Both controls, from the one fact that a clear is running. `running` is the
+ *  SERVER's answer merged with this tab's, so a clear started elsewhere makes
+ *  these inert too. */
 export function foldControls(running: FoldMode | null): {
   compact: FoldControl; clear: FoldControl;
 } {
@@ -36,19 +40,10 @@ export function foldControls(running: FoldMode | null): {
       clear: { inert: false, label: "Clear context" },
     };
   }
-  // BOTH inert, whichever is running: the server refuses a clear during a
-  // compact exactly as it refuses a second compact, so offering it is offering
-  // an error.
+  // BOTH inert. A clear moves the cut out from under the conversation, so
+  // starting a compaction against it is offering an error.
   return {
-    compact: {
-      inert: true,
-      label: running === "compact" ? "Compacting" : "Compact now",
-      reason: reasonFor(running),
-    },
-    clear: {
-      inert: true,
-      label: running === "clear" ? "Clearing" : "Clear context",
-      reason: reasonFor(running),
-    },
+    compact: { inert: true, label: "Compact now", reason: REASON },
+    clear: { inert: true, label: "Clearing", reason: REASON },
   };
 }

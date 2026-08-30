@@ -60,7 +60,6 @@ from services import skills
 from services import llm_router
 from services import build_streaming
 from services import draft_store
-from services import compaction_adapter
 
 log = logging.getLogger("workshop.chat")
 router = APIRouter()
@@ -1628,7 +1627,7 @@ def _build_prompt(
     if ambient_block:
         parts.append(ambient_block)
     # THIS SCOPE'S WORKING STATE, written by the last compaction that happened
-    # anywhere in this scope (routes/chat._write_working_state ->
+    # anywhere in this scope (routes/chat._write_working_state_now ->
     # knowledge.write_working_state). It is what makes compaction worth
     # something to a chat OTHER than the one that compacted: objective,
     # decisions with their reasons, done, not done, shortcuts owed, open
@@ -1641,14 +1640,7 @@ def _build_prompt(
     # budget, which is spent on note titles and would be emptied by one
     # handoff. Best-effort like its neighbours; never blocks the reply.
     try:
-        ws_block = chat_context.working_state_block(
-            provider,
-            # Suppress it for the chat that wrote it, but only when that chat
-            # is actually carrying the text: after a /clear the summary is
-            # gone and the note is the only copy left, and that chat needs it
-            # as much as any other.
-            exclude_chat=(thread_id if summary.strip() else ""),
-        )
+        ws_block = chat_context.working_state_block(provider)
     except Exception as e:
         log.warning("chat working state block failed for %s: %s", provider.key, e)
         ws_block = ""
@@ -1903,174 +1895,86 @@ async def cancel_thread_operation(thread_id: str):
     return {"cancelled": bool(op), "operation": op or ""}
 
 
+# The command Workshop sends to run the CLI's own compaction. A constant so the
+# route, the queue's command test and `build_streaming`'s "replace the CLI's
+# context-usage dump with one sentence" branch are all naming the same string.
+_COMPACT_COMMAND = "/compact"
+
+
 @router.post("/threads/{thread_id}/compact", response_model=cm.CompactResult, response_model_exclude_unset=True)
 async def compact_thread(thread_id: str):
-    """Reclaim the LIVE window: drop the session, keep the transcript.
+    """Compact this chat by running the CLI's OWN `/compact` on its session.
 
-    THE CLI CAN ACTUALLY DO THIS, and this docstring said the opposite for
-    months. Corrected 2026-08-27; the paragraph below is kept because the wrong
-    version was reasoned from twice and the reason it was wrong is the useful
-    part.
+    WORKSHOP NO LONGER SUMMARIZES ANYTHING ITSELF. Until 2026-08-29 this
+    endpoint ran a custom fold: a Haiku call summarized everything but a
+    ~4000-token tail, the summary was stored on the thread, the cut moved, and
+    the live session was detached so the next turn would re-assemble
+    `summary + tail`. That was ~280 lines carrying a token-budget walk, a
+    user-turn alignment pass, a "meaningful fold" guardrail, a deferred landing
+    task and a cancel protocol, and every one of those knobs was an answer to
+    the question "what should a compaction keep" -- a question this project
+    never actually had to answer, because the provider answers it.
 
-    What it used to say: `/compact` sent as a raw turn is parsed, in headless
-    mode (`-p --input-format stream-json`), into a local-command block that
-    nothing executes. The turn at 2026-08-12T05:10:18Z came back in two seconds
-    having recorded
+    So it is deleted and the provider's own compaction is what runs. The CLI
+    compacts here (measured 2026-08-27 on 2.1.143 with this backend's own spawn
+    flags: `trigger:manual`, 27,088 -> 2,104 tokens in 17.4s), and it is already
+    what happens UNASKED when a window fills -- 29 `trigger:auto` boundaries on
+    record. The button and the automatic path now do the same thing, which they
+    did not before.
 
-        user    <command-name>/compact</command-name>
-        system  local_command
-                <local-command-caveat> ... DO NOT respond to these messages
+    IT IS A TURN, because that is what a slash command is. `_is_raw_command`
+    sends a single-line "/" message to the CLI verbatim instead of wrapping it
+    in a prompt, which is what makes the CLI register it as a command rather
+    than read it as text. `build_streaming` already handles the rest end to end:
+    it watches for the `compact_boundary` meta event, replaces the CLI's
+    context-usage dump with one sentence, writes the boundary the transcript
+    draws its divider from, and re-derives the window reading.
 
-    with no `compact_boundary` behind it.
+    SO THIS DOES NOT WAIT FOR IT. It returns the turn that is now running; the
+    divider, the reply and the new meter reading arrive on the change stream
+    like any other turn's output. Reporting a fold count here is not possible
+    any more and was never worth much: the count Workshop reported described
+    Workshop's own fold, not the provider's.
 
-    THAT WAS A FALSE NEGATIVE. Those exact records are also what a WORKING
-    `/compact` writes, and the boundary lands at the END of the operation, which
-    takes 12 to 190 seconds in every case on record. The test read the
-    transcript two seconds in. Re-measured 2026-08-27 on the installed 2.1.143,
-    spawned with this backend's own flags: a `/compact` turn ran, recorded
-    `trigger:manual`, 27,088 -> 2,104 tokens, `durationMs` 17,446, and
-    `<local-command-stdout>Compacted </local-command-stdout>`; a resumed turn
-    afterwards started from the collapsed context. It takes focus instructions
-    as `<command-args>` too. Corroborating, from the session files: three
-    `trigger:manual` boundaries fired in headless runs on 2026-08-12 itself,
-    and 29 `trigger:auto` ones have fired since at 126k-153k tokens. The
-    control-request list quoted here (initialize, set_model, ... set_color) is
-    real and still contains no compaction verb; that only means there is no
-    CONTROL-PROTOCOL trigger, which is not the same as no trigger.
+    NOTHING IS DELETED, still. The transcript is append-only and untouched.
+    Compaction shrinks what the MODEL is handed, never what the operator can
+    read.
 
-    NONE OF THAT CHANGES WHAT THIS ENDPOINT DOES TODAY. It still runs Workshop's
-    own fold, and whether it should keep doing so now that the CLI's own
-    compaction is reachable is an open operator decision, deliberately not
-    settled here. See section 1 and section 3 of
-    docs/platform-redesign/chat-context-and-compaction-2026-08-25.md.
-
-    DETACHING IS HALF THE ANSWER, and on its own it is not compaction. The next
-    turn mints a fresh session and re-assembles the prompt, so the CLI's private
-    copy of the conversation goes. But the prompt it re-assembles is the whole
-    transcript, so a long chat comes straight back to where it was. Measured on
-    2026-08-12: the cut was recorded, the meter subtracted it, and the prompt
-    still carried every message from before it, because `_assemble_full_prompt`
-    never applied the cut at all. Both this and /clear were bookkeeping.
-
-    So this folds, and the fold is the point:
-
-      1. everything except roughly the last `_COMPACT_KEEP_TAIL_TOKENS` worth
-         of the tail (walked newest to oldest, see `_fold_summary`) is summarized
-         into a running summary stored on the thread;
-      2. the cut moves to that point, so the prompt carries `summary + tail`;
-      3. the live session is detached, so the next turn actually uses it.
-
-    NOTHING IS DELETED. The log is append-only and untouched: the operator's
-    transcript still shows every message, and the summary stands in only for
-    what the MODEL is handed. A `boundary` event records the fold, so the
-    divider in the transcript is read rather than guessed and says the same
-    thing on every device.
-
-    IT REPORTS WHAT HAPPENED, including nothing. The summarizer is a model call
-    and it can fail; when it does, this says so and changes nothing, rather than
-    answering 200 over a fold that did not happen. That failure is not
-    hypothetical: this call passed its whole prompt as an argv element until
-    today, so it died with E2BIG on exactly the threads long enough to need
-    compacting, the error was swallowed as best-effort, and the chat said
-    "Compacted. Earlier messages are now a summary." over it."""
+    THE SCOPE'S WORKING STATE IS STILL WRITTEN, and it is a separate feature
+    that happened to ride on the fold's summary. See `_write_working_state`:
+    one note per scope, so a chat that does not exist yet can continue from
+    this one. It runs in the background off the transcript as it stands right
+    now, and never delays or fails the compaction."""
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
-    provider = chat_context.get_provider(t.get("context_key"))
-    # THE SEAM, CONSULTED: this is the fact from the docstring above (no
-    # reachable native compaction in headless mode) made queryable instead of
-    # asserted in prose. Nothing branches on it yet -- there is only one
-    # adapter -- but the fold below is what `native_manual=False` means in
-    # practice, and a future API adapter answering `True` here is what lets
-    # the route layer stop needing this whole custom fold at all.
-    caps = _cli_adapter.capabilities()
-    log.debug("compact: adapter capabilities for %s: %s", thread_id, caps)
-    # ONE OPERATION AT A TIME, and admission respects it: from here until the
-    # fold lands (or is handed to the landing task), a new message on this
-    # thread queues instead of becoming a turn against the pre-fold prompt.
-    # That is the 2026-08-14 incident: compact pressed, a message sent during
-    # the ~30s summarize started a turn carrying the whole 467k transcript, and
-    # the boundary then landed mid-turn. See services/thread_ops.
-    if not thread_ops.begin(thread_id, "compact"):
-        # REFUSED is not DEFERRED: nothing was computed and nothing will land
-        # from THIS request. Saying "deferred" here made the client promise a
-        # landing that was never going to happen.
-        return {"folded": 0, "session_reset": False, "busy": True,
-                "error": "", "summary_chars": 0}
-    handed_off = False
+    # Off the transcript AS IT IS NOW, before the provider collapses it. Fired
+    # and not awaited: the operator pressed compact to reclaim context, and a
+    # handoff note is not allowed to stand between them and that.
+    _spawn_working_state(thread_id, t)
     try:
-        fold_n, summary, folded_through, error = await _fold_summary(thread_id, t)
-        # Called off while the summarizer ran, which is the whole window the
-        # stop control is offered in. Nothing has been written yet (the fold's
-        # writes are all in _land_fold), so there is nothing to undo.
-        if thread_ops.cancelled(thread_id):
-            return {"folded": 0, "session_reset": False, "cancelled": True,
-                    "error": "", "summary_chars": 0}
-        if error or fold_n <= 0:
-            # Nothing to land. Detaching alone is still useful (it is what
-            # /clear's session half does) and touches no ordering, so it
-            # happens inline whatever the thread is doing.
-            session_reset = _detach_live_session(thread_id, t, provider)
-            # A REAL RECLAIM WITH NO RECORD OF IT is the bug this closes: a
-            # thread whose tail is already short drops its live session on
-            # every compact, folds nothing, and used to leave no trace at all
-            # in the transcript. Written only when a session actually existed
-            # to drop (`session_reset`) and the summarizer did not fail
-            # (`error`, which is a genuine problem, not "nothing to do") -
-            # otherwise there is nothing true to say happened.
-            if session_reset and not error:
-                chat_store.note_session_reset(thread_id)
-            return {"folded": 0, "session_reset": session_reset,
-                    "error": error or "", "summary_chars": 0}
-        rid = chat_store.active_turn_id(thread_id)
-        if rid and build_streaming.turn_is_live(rid):
-            # A reply is being written. The fold's WRITES wait for it: landing
-            # a boundary mid-turn is how a reply ends up on the far side of the
-            # divider from the messages it answers. The summary is computed
-            # from a count-from-the-front, so it names the same messages
-            # however long the wait runs. The task is HELD (thread_ops), and
-            # handed_off flips only once it exists: a create_task that raised
-            # would otherwise skip end() and hold the door forever.
-            thread_ops.land_in_background(
-                thread_id, _land_fold_when_quiet(thread_id, summary, folded_through))
-            handed_off = True
-            return {"folded": fold_n, "session_reset": False, "deferred": True,
-                    "error": "", "summary_chars": len(summary)}
-        session_reset = _land_fold(thread_id, summary, folded_through)
-        return {"folded": fold_n, "session_reset": session_reset,
-                "error": "", "summary_chars": len(summary)}
-    finally:
-        if not handed_off:
-            thread_ops.end(thread_id)
+        res = await _send(thread_id, _COMPACT_COMMAND)
+    except Exception as e:  # noqa: BLE001 - report it, do not 500 the button
+        log.warning("compact: could not start the command turn on %s: %s", thread_id, e)
+        return {"error": str(e)}
+    # QUEUED IS AN ACCEPTANCE, not a refusal. A command cannot be spoken into a
+    # running turn (see `_send`), so it waits in the thread's own queue and the
+    # drain sends it the moment the turn ends. Saying "busy, nothing happened"
+    # over that would be false.
+    if res.get("queued"):
+        return {"queued": True}
+    return {"turn_id": res.get("turn_id") or ""}
 
 
-# How much of the tail stays verbatim, in TOKENS rather than message records.
-# A message record is the wrong unit: a tool-heavy agentic turn can be one
-# record holding dozens of content blocks, so "keep the last N records" can
-# keep a huge multi-tool turn or a trivial sliver depending on shape alone,
-# with no relationship to what the context window (or the meter, or any future
-# per-token billing) actually measures. ~4000 tokens is picked to cover "the
-# last real exchange" -- a user message plus a substantial reply -- without
-# being so large that a short chat's whole history reads as "the tail" and the
-# fold never triggers. Tunable; there is no usage data behind this number yet,
-# see docs/platform-redesign/compaction-both-paths-plan-2026-08-20.md (f)#1.
-_COMPACT_KEEP_TAIL_TOKENS = 4000
+def _spawn_working_state(thread_id: str, t: dict) -> None:
+    """Kick off the scope's working-state note without blocking the caller.
 
-# A fold below this many kept-verbatim messages would cut a thread's current
-# exchange out from under it, so the guardrail in `_fold_summary` always keeps
-# at least this many regardless of the token budget.
-_COMPACT_KEEP_TAIL_MIN = 2
-
-
-def _est_tokens(msg: dict) -> int:
-    """Chars-to-tokens proxy for one message: len(content) / 4, the same
-    approximation `_context_estimate` already uses for a whole prompt
-    (`len(prompt) / 4`, above). Deliberately not a real tokenizer -- this path
-    only needs to pick a reasonable cut point, not bill anyone a cent, and a
-    real tokenizer would be a new dependency for a comparison that a rough
-    proxy already answers well enough."""
-    content = msg.get("content") or ""
-    return max(1, round(len(content) / 4))
+    Best effort in the strongest sense: a failure to schedule is a log line.
+    Nothing about compaction depends on this."""
+    try:
+        asyncio.create_task(asyncio.to_thread(_write_working_state_now, thread_id, t))
+    except Exception as e:  # noqa: BLE001
+        log.warning("compact: could not schedule the working state for %s: %s", thread_id, e)
 
 
 def _fmt_for_summary(messages: list[dict]) -> str:
@@ -2087,16 +1991,15 @@ def _fmt_for_summary(messages: list[dict]) -> str:
 
 def _summary_prompt(prev_summary: str, to_fold: list[dict]) -> str:
     """The exact text `_summarize_sync` sends. Split out so the ledger estimate
-    in `_fold_summary` can measure the SAME prompt `call_cloud` actually saw,
-    without duplicating it out of sync or re-plumbing `_summarize_sync`'s
-    return type (tests monkeypatch that function directly)."""
+    can measure the SAME prompt `call_cloud` actually saw, without duplicating
+    it out of sync or re-plumbing `_summarize_sync`'s return type (tests
+    monkeypatch that function directly)."""
     headings = "\n".join(f"## {h}" for h in knowledge.WORKING_STATE_SECTIONS)
     return (
-        "You are compacting a chat transcript to reclaim context. What you write "
-        "replaces the folded messages, and it is also saved as this scope's "
-        "WORKING STATE: the handoff a different session reads later to continue "
-        "this work without the transcript. Write it as a handoff, not as a "
-        "story about a conversation.\n\n"
+        "You are writing this scope's WORKING STATE from a chat transcript: the "
+        "handoff a DIFFERENT session reads later to continue this work without "
+        "the transcript. Write it as a handoff, not as a story about a "
+        "conversation.\n\n"
         "Use EXACTLY these six headings, all of them, in this order, spelled "
         "exactly like this:\n"
         f"{headings}\n\n"
@@ -2127,15 +2030,15 @@ def _summary_prompt(prev_summary: str, to_fold: list[dict]) -> str:
         "operator's stated preferences in their own words. Drop pleasantries, "
         "repetition, and narration of the work as it happened. Write plainly, no "
         "em-dashes, no emojis. Keep the whole thing under about 500 words: it is "
-        "carried in every later prompt, so its length is a cost paid on every "
-        "turn.\n\n"
-        "You are given the working state so far, if there is one, and the messages "
-        "to fold into it. Return the UPDATED working state: merge the new messages "
+        "carried into the prompt of every other chat in this scope, so its "
+        "length is a cost paid on every one of their turns.\n\n"
+        "You are given the working state so far, if there is one, and the "
+        "conversation to fold into it. Return the UPDATED working state: merge it "
         "in, move items from Not done to Done as they finish, drop what has stopped "
         "being true, and keep everything from the earlier state that is still "
         "true.\n\n"
         + (f"=== WORKING STATE SO FAR ===\n{prev_summary}\n\n" if prev_summary else "")
-        + f"=== MESSAGES TO FOLD IN ===\n{_fmt_for_summary(to_fold)}\n\n"
+        + f"=== THE CONVERSATION ===\n{_fmt_for_summary(to_fold)}\n\n"
         "=== OUTPUT ===\nThe updated working state only. Start with the first "
         "heading. No preamble, no closing remark."
     )
@@ -2153,141 +2056,23 @@ def _summarize_sync(prev_summary: str, to_fold: list[dict]) -> str:
     return (res.get("text") or "").strip()
 
 
-async def _fold_summary(thread_id: str, t: dict) -> tuple[int, str, int, str]:
-    """Summarize everything but the tail, WITHOUT writing anything.
+def _write_working_state_now(thread_id: str, t: dict) -> None:
+    """Write this SCOPE's working state, so a chat that does not exist yet can
+    continue from this one.
 
-    Returns (messages folded, summary, folded_through, error). `(0, ...)` with
-    an empty error means there was nothing to fold; with an error it means the
-    fold was attempted and failed. The caller reports both; neither is silent.
+    THIS IS WHAT MAKES COMPACTION WORTH ANYTHING TO ANYONE ELSE, and it is a
+    separate feature from compaction itself. The provider's `/compact` collapses
+    ONE session's window; nothing about that reaches another chat, so a new chat
+    in the same scope would start by re-deriving what the last session already
+    worked out. The hand-written `HANDOFF-*.md` files under docs are what that
+    looks like when somebody remembers to do it manually.
 
-    Compute and landing are split on purpose: this half takes tens of seconds
-    (a model call) and holds no ordering guarantees, so it runs while the
-    thread lives its life; the landing half (`_land_fold`) is a handful of
-    writes and runs only on a quiet thread. The cut is a COUNT FROM THE FRONT
-    and appends land at the back, so the count still names the same messages
-    however many arrive between the two halves.
-    """
-    msgs = [m for m in (t.get("messages") or [])
-            if not (m.get("meta") or {}).get("streaming")]
-    ct = int(t.get("cleared_through", 0) or 0)
-    tail = msgs[ct:] if 0 < ct <= len(msgs) else msgs
-
-    # Walk the tail NEWEST to OLDEST, spending the token budget as we go, and
-    # keep messages verbatim until it runs out. This is the fix over a fixed
-    # record count: a thread whose last 6 records are one 50-tool-call turn
-    # used to force fold_n to 0 (the tail alone blew the record count with
-    # nothing to compare it to), while a thread whose last 6 records are six
-    # one-line replies over-retained almost nothing worth keeping.
-    #
-    # The first `_COMPACT_KEEP_TAIL_MIN` messages are kept unconditionally, so
-    # a single message bigger than the whole budget (a long paste, a huge tool
-    # result) can never empty the tail out from under the exchange in
-    # progress; every message after that is kept only while the running total
-    # stays inside the budget.
-    keep_n = 0
-    budget = _COMPACT_KEEP_TAIL_TOKENS
-    for m in reversed(tail):
-        cost = _est_tokens(m)
-        if keep_n >= _COMPACT_KEEP_TAIL_MIN and budget - cost < 0:
-            break
-        budget -= cost
-        keep_n += 1
-    fold_n = len(tail) - keep_n
-
-    # Keep the verbatim tail starting at a user turn so a reply is never
-    # stranded from its prompt. The token-budget walk above stops purely on
-    # cost, which can land the cut mid-exchange -- the oldest kept message
-    # is the ASSISTANT half of an exchange whose own user prompt just fell
-    # on the folded side. Fold one fewer message at a time until the oldest
-    # kept message is role == "user", or until there is nothing left above
-    # it to fold instead.
-    if 0 < fold_n < len(tail):
-        aligned_fold_n = fold_n
-        while aligned_fold_n > 0 and tail[aligned_fold_n].get("role") != "user":
-            aligned_fold_n -= 1
-        # Don't let alignment defeat the "meaningful fold" guardrails below: if
-        # pulling the tail back to a user turn would fold too little to be
-        # worth a model call, keep the token-budget result instead.
-        aligned_to_fold = tail[:aligned_fold_n]
-        if (aligned_fold_n >= 2
-                and sum(_est_tokens(m) for m in aligned_to_fold) >= _COMPACT_KEEP_TAIL_TOKENS):
-            fold_n = aligned_fold_n
-
-    # "Meaningful" fold: folding a single message, or folding a sliver that is
-    # smaller than one keep-budget's worth, buys almost nothing and just costs
-    # a model call every time the button is pressed. Requiring the folded
-    # content to clear roughly the same budget the tail is held to is what
-    # makes a short chat -- one that would never have threatened the window --
-    # correctly fold nothing instead of trimming a couple of messages off the
-    # front for no real gain.
-    if fold_n < 2:
-        return 0, "", 0, ""
-    to_fold = tail[:fold_n]
-    if sum(_est_tokens(m) for m in to_fold) < _COMPACT_KEEP_TAIL_TOKENS:
-        return 0, "", 0, ""
-    try:
-        summary = await asyncio.to_thread(
-            _summarize_sync, (t.get("summary") or "").strip(), to_fold)
-    except Exception as e:
-        log.warning("chat compaction failed for %s: %s", thread_id, e)
-        return 0, "", 0, f"the summarizer failed: {e}"
-    # STRIPPED HERE, not trusted from the call. A whitespace-only answer is a
-    # failed summary, and storing one would move the cut and leave the model
-    # with neither the messages nor anything standing in for them.
-    summary = (summary or "").strip()
-    if not summary:
-        return 0, "", 0, "the summarizer returned nothing"
-    # Meter the summarizer's own spend. Reported, never gated (same posture as
-    # the turn/voice metering in build_streaming._commit_turn) -- this is a real
-    # `call_cloud` invocation and was going entirely unrecorded, so a thread that
-    # compacted often looked cheaper than it was. `call_cloud` returns no token
-    # counts, so this is an ESTIMATE from the same chars/4 proxy `_est_tokens`
-    # and `_context_estimate` already use, not a billed figure.
-    try:
-        from services import usage_ledger
-        prompt_len = len(_summary_prompt((t.get("summary") or "").strip(), to_fold))
-        estimated_tokens = round((prompt_len + len(summary)) / 4)
-        usage_ledger.record(
-            build_streaming.usage_scope_for_thread(thread_id),
-            estimated_tokens,
-            role="compaction",
-            chat=thread_id,
-        )
-    except Exception as e:
-        log.debug("chat compaction usage record failed for %s: %s", thread_id, e)
-    return fold_n, summary, ct + fold_n, ""
-
-
-def _land_fold(thread_id: str, summary: str, folded_through: int) -> bool:
-    """The fold's writes: summary + cut + boundary, then the session detach.
-    A handful of synchronous calls; the caller guarantees the thread is quiet.
-
-    THE CANCEL CHECK LIVES HERE, at the write, not at the call sites. Both the
-    inline and the deferred path funnel through this function, and a stop that
-    is honoured on one path and not the other is worse than no stop at all."""
-    if thread_ops.cancelled(thread_id):
-        log.info("compact: fold called off before landing on %s", thread_id)
-        return False
-    chat_store.set_summary(thread_id, summary, folded_through=folded_through)
-    t = chat_store.get_thread(thread_id)
-    if t is None:
-        return False
-    provider = chat_context.get_provider(t.get("context_key"))
-    _write_working_state(thread_id, t, summary)
-    return _detach_live_session(thread_id, t, provider)
-
-
-def _write_working_state(thread_id: str, t: dict, summary: str) -> None:
-    """Save the fold's summary as this SCOPE's working state, so a chat that
-    does not exist yet can continue from it.
-
-    THIS IS THE HALF THAT MAKES COMPACTION WORTH ANYTHING TO ANYONE ELSE.
-    Everything above this line writes to the thread record: the summary, the
-    cut, the boundary. All of it is read only by the thread that produced it,
-    so a new chat in the same project inherits nothing at all and starts by
-    re-deriving what the last session already worked out. The two hand-written
-    `docs/platform-redesign/HANDOFF-*.md` files are what that looks like when
-    somebody remembers to do it manually.
+    It used to be handed the fold's summary, because Workshop's own fold had
+    just computed one. That fold is gone, so this makes its own summarizing call
+    (`_summarize_sync`, the same Haiku call, the same prompt) over the
+    transcript as it stands. That is not "deciding what compaction keeps" -- the
+    provider decides that, and this text never goes back into the compacted
+    chat. It is a handoff note for the NEXT chat.
 
     It goes into the note store (`knowledge.write_working_state`), NOT into a
     new table or file of its own: one note per scope at the reserved id
@@ -2295,15 +2080,35 @@ def _write_working_state(thread_id: str, t: dict, summary: str) -> None:
     working state rather than a pile of dated handoffs. That also buys the
     Memory page, search, backlinks and hand-editing for free.
 
-    BEST EFFORT, ALWAYS. Nothing here may fail a fold. The operator pressed
-    compact to reclaim context; that has already happened by the time this
-    runs (`set_summary` is above), and a handoff that could not be filed is a
-    log line, not a failed operation. Logged at WARNING rather than debug
-    because unlike the other best-effort blocks in this file, nothing retries
-    this: the next fold writes the NEXT state, so a state lost here is lost.
+    BEST EFFORT, ALWAYS, and it runs off the request path entirely (see
+    `_spawn_working_state`). The operator pressed compact to reclaim context; a
+    handoff that could not be filed is a log line, never a failed operation.
+    Logged at WARNING rather than debug because nothing retries this: the next
+    compaction writes the NEXT state, so a state lost here is lost.
     """
     try:
+        msgs = [m for m in (t.get("messages") or [])
+                if not (m.get("meta") or {}).get("streaming")]
+        ct = int(t.get("cleared_through", 0) or 0)
+        if 0 < ct <= len(msgs):
+            msgs = msgs[ct:]
+        # Two messages is not a session worth handing off, and it would cost a
+        # model call on every press in a chat that has barely started.
+        if len(msgs) < _WORKING_STATE_MIN_MESSAGES:
+            log.info("compact: no working state for %s, only %d messages",
+                     thread_id, len(msgs))
+            return
         scope = knowledge.scope_for_context(t.get("context_key") or "")
+        # MERGE, don't overwrite. The note is one per scope and every chat in
+        # the scope writes it, so starting from scratch each time would throw
+        # away what another chat recorded. The prompt already knows how to
+        # merge: move items from Not done to Done, drop what stopped being
+        # true, keep what still is.
+        prev, _ = knowledge.read_working_state(scope)
+        summary = _summarize_sync(prev, msgs)
+        if not summary:
+            log.warning("compact: the working-state summary came back empty for %s", thread_id)
+            return
         knowledge.write_working_state(
             scope, summary,
             # `derived:<model>`, the origin vocabulary for "a model wrote
@@ -2312,9 +2117,7 @@ def _write_working_state(thread_id: str, t: dict, summary: str) -> None:
             # model named is the one that actually produced the text.
             author=origin.derived(llm_router.TIER_HAIKU),
             # The originating chat, which `put_note` already records on every
-            # note. Read back by `chat_context.working_state_block` to avoid
-            # re-injecting this text into the very chat that is already
-            # carrying it verbatim as its own summary.
+            # note, so the Memory page can say where a working state came from.
             chat_id=thread_id,
         )
         log.info("compact: working state for scope %s written from %s (%d chars)",
@@ -2323,29 +2126,11 @@ def _write_working_state(thread_id: str, t: dict, summary: str) -> None:
         log.warning("compact: working-state note write failed for %s: %s", thread_id, e)
 
 
-# The provider-agnostic seam (see `services.compaction_adapter` and
-# docs/platform-redesign/compaction-both-paths-plan-2026-08-20.md). Workshop
-# runs one provider today, so this is the only adapter instance that exists;
-# it wraps the fold/detach functions above rather than reimplementing them, so
-# nothing about their behavior changes here. Built as a module-level singleton
-# (not per-request) because it is stateless -- three bound functions and a
-# static capabilities dict, nothing thread-specific.
-_cli_adapter = compaction_adapter.ClaudeCLIAdapter(
-    _fold_summary, _land_fold, _detach_live_session)
+# Below this, a chat has not had a session worth handing to the next one, and
+# summarizing it would spend a model call to say almost nothing.
+_WORKING_STATE_MIN_MESSAGES = 4
 
 
-async def _land_fold_when_quiet(thread_id: str, summary: str, folded_through: int) -> None:
-    """Background landing for a fold computed while a turn was live. Owns the
-    thread_ops registration it inherited; messages queued behind the operation
-    drain when `end` fires."""
-    try:
-        await thread_ops.wait_quiet(thread_id)
-        _land_fold(thread_id, summary, folded_through)
-        log.info("compact: deferred fold landed on %s", thread_id)
-    except Exception as e:
-        log.warning("compact: deferred fold failed for %s: %s", thread_id, e)
-    finally:
-        thread_ops.end(thread_id)
 
 
 @router.post("/threads/{thread_id}/clear", response_model=cm.ClearResult, response_model_exclude_unset=True)

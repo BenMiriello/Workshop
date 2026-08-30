@@ -1447,14 +1447,14 @@ def ambient_digest(provider: "ContextProvider") -> str:
     return "=== ONGOING WORK (ambient, across chats) ===\n" + body
 
 
-def working_state_block(provider: "ContextProvider", exclude_chat: str = "") -> str:
+def working_state_block(provider: "ContextProvider") -> str:
     """This SCOPE's working state: what the last session here was doing, the
     decisions it made and why, what it finished, what it owes.
 
-    Written by compaction (`routes/chat._write_working_state`) into the scope's
-    `working-state` note, and read back here so a chat that did not exist when
-    that work happened can continue from it. Without this half, a compaction
-    summary helps only the one thread that produced it.
+    Written by compaction (`routes/chat._write_working_state_now`) into the
+    scope's `working-state` note, and read back here so a chat that did not
+    exist when that work happened can continue from it. Without this half,
+    compacting a chat helps only the one session that did it.
 
     WHAT THIS OWNS, AND WHAT `ambient_digest` OWNS. The two are next to each
     other in the prompt and they must not say the same thing twice:
@@ -1467,17 +1467,19 @@ def working_state_block(provider: "ContextProvider", exclude_chat: str = "") -> 
         what was done the quick way and what that owes, what is genuinely
         undecided. None of that is in any registry, because no registry has a
         field for it. It is a snapshot from the last compaction, so it is as
-        current as the last fold and no more.
+        current as that and no more.
 
     So a ticket's existence and status comes from the digest; why the ticket
     was written the way it was comes from here. The block text says so, because
     the model is the one that has to not double-count them.
 
-    `exclude_chat` suppresses the block for the chat that last wrote the note.
-    That chat already carries the same text verbatim as its own compaction
-    summary (`=== EARLIER IN THIS CONVERSATION (summary) ===`), and paying the
-    budget twice for one body of text is the sort of thing that makes a context
-    window fill up for no reason.
+    EVERY CHAT IN THE SCOPE GETS IT, including the one that last wrote it.
+    There used to be an `exclude_chat` suppression on the grounds that the
+    writing chat already carried this exact text verbatim as its own Workshop
+    fold summary. Workshop no longer folds -- compaction is the provider's, and
+    what it leaves behind is its own summary, not this note -- so that chat is
+    now in the same position as any other and the suppression only took the
+    handoff away from the session most likely to need it.
 
     Best-effort and self-contained, same shape as `ambient_digest` and
     `learnings_context`: a missing or broken note store returns "" and never
@@ -1485,12 +1487,10 @@ def working_state_block(provider: "ContextProvider", exclude_chat: str = "") -> 
     """
     try:
         from services import knowledge
-        text, wrote_it = knowledge.read_working_state(provider.knowledge_scope())
+        text, _wrote_it = knowledge.read_working_state(provider.knowledge_scope())
     except Exception:
         return ""
     if not text:
-        return ""
-    if exclude_chat and wrote_it and wrote_it == exclude_chat:
         return ""
     return (
         "=== WORKING STATE (this scope, from the last compaction) ===\n"

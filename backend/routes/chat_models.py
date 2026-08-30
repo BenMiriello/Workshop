@@ -715,17 +715,21 @@ class OperationCancelled(BaseModel):
 
 
 class CompactResult(BaseModel):
-    """Five exit paths, so most fields are optional: cancelled mid-flight,
-    nothing to fold, deferred behind a live turn, landed, or refused as busy.
-    `folded` is how many messages went behind the boundary."""
+    """Compaction is the CLI's own `/compact`, run as a turn on this chat's
+    live session, so this reports what happened to that TURN and nothing else.
 
-    folded: int | None = None
-    session_reset: bool | None = None
+    `turn_id` is the turn now running; the boundary, the divider and the new
+    window reading all arrive on the change stream the same way any turn's
+    output does. `queued` means the chat was busy and the command joined the
+    waiting queue, which is a real acceptance, not a refusal.
+
+    The old shape reported a fold Workshop computed itself (`folded`,
+    `summary_chars`, `session_reset`, `deferred`). There is no such fold any
+    more."""
+
+    turn_id: str | None = None
+    queued: bool | None = None
     error: str | None = None
-    summary_chars: int | None = None
-    cancelled: bool | None = None
-    deferred: bool | None = None
-    busy: bool | None = None
 
 
 class ClearResult(BaseModel):

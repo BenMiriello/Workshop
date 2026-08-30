@@ -201,7 +201,7 @@ export default function ChatLog({
           reported 2026-08-17, the message and the note under it appeared with
           no visible cause, because the line naming that cause was further down
           the page. */}
-      {folding && <FoldingNote mode={folding} onStop={onStopFold} stopping={foldStopping} />}
+      {folding && <FoldingNote onStop={onStopFold} stopping={foldStopping} />}
 
       {/* WAITING ON THE SERVER, not in this browser. These have been accepted
           and are on the thread; they go out when the run in flight ends, sent

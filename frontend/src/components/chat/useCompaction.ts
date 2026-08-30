@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { chatApi } from "../../lib/chat";
 import type { ChatProblem } from "./chatProblem";
+import type { FoldMode } from "./foldControls";
 
 // /compact and /clear — the two ways to reclaim a chat's context.
 //
@@ -13,37 +14,24 @@ import type { ChatProblem } from "./chatProblem";
 // does: one POST each, and the hold that keeps a message typed during it from
 // jumping the boundary.
 //
-// THE LIVE HALF USED TO LIVE HERE, and it never worked. This hook sent the
-// CLI's own /compact as an ordinary turn, and carried a queue entry, an insert
-// position, a pending bubble and a status line to keep that turn ordered
-// against whatever else the operator typed. Every bit of that machinery was
-// sequencing a turn that did nothing: the CLI runs here headless (`-p
-// --input-format stream-json`), and in that mode a leading slash is parsed into
-// a local-command block that nothing executes. The 2026-08-12T05:10:18Z request
-// came back in two seconds having recorded the command and freed no window at
-// all, while the meter it was supposed to move sat where it was. The endpoint
-// in routes/chat.py carries the full evidence.
+// THE TWO ARE NO LONGER THE SAME SHAPE, and this file is where that shows.
 //
-// The server reclaims the live window by DETACHING the session instead — the
-// next turn mints a fresh one and re-sends the folded transcript. That is what
-// /clear always did, so the two commands now want the same shape, and this file
-// is them side by side. Do not reintroduce a turn for either one.
+// /compact is a TURN again. The server sends the CLI's own /compact on the
+// thread's live session and returns the turn it started; the boundary, the
+// reply and the new meter reading arrive on the change stream. A 2026-08-12
+// measurement said headless mode could not run a slash command at all, and
+// this hook was rewritten around that. It was a false negative (it read the
+// session transcript two seconds into an operation that takes 12 to 190
+// seconds) and it was corrected on 2026-08-27. Workshop's own summarizing
+// fold, which existed only to work around it, is deleted.
 //
-// NO REQUEST BUBBLE, for either. It earned its place when it was a real turn
-// with a reply streaming under it; without one it is an optimistic message that
-// nothing will ever reconcile, which is a bubble stuck on "sending" forever.
-// The fold divider MessageList draws from the boundary event says "N earlier
-// messages folded into a summary", is read rather than guessed, and survives a
-// reload. That is the report.
+// /clear is still a server-side edit: a handful of field writes and a session
+// drop, with no turn and nothing to wait for.
 //
-// BUT THE FOLD IS VISIBLE WHILE IT RUNS, and dropping the bubble is what took
-// that away. A compact is a ~30s model call, and between the operator hitting
-// it and the divider appearing there was nothing on screen at all: the typed
-// command vanished into a dialog and the transcript sat still. Reported
-// 2026-08-12 as "it just disappeared, it didn't run". `mode` is what this hook
-// publishes for that: which fold is in flight, held until the boundary lands, so
-// the log can draw FoldingNote at the foot in the divider's own language and
-// the real divider then takes its place.
+// SO ONLY /clear USES THE HOLD. `setFolding` publishes which operation is in
+// flight so the log can draw FoldingNote at the foot; a compact needs none of
+// it, because a running turn is already the most visible thing on the screen
+// and the ordinary working indicator draws it.
 //
 // IT IS ANNOUNCED IN ONE PLACE, IN THE LOG. This used to report itself in the
 // notice bar under the toolbar, which produced the sequence the operator
@@ -58,8 +46,11 @@ import type { ChatProblem } from "./chatProblem";
 // thread, independent of whatever turn is in flight, and refusing while a turn
 // ran meant /compact was rejected almost every time it was reached for — which
 // is exactly when context is under pressure.
-/** Which fold is in flight. Both hold the composer; only the wording differs. */
-export type FoldMode = "compact" | "clear";
+/** Which context operation is in flight and holding the composer. Only a clear
+ *  can be: compaction is the provider's own /compact, run as an ordinary turn,
+ *  and a turn holds nothing. Re-exported from `foldControls`, which owns it,
+ *  so the buttons and the hold cannot drift apart. */
+export type { FoldMode } from "./foldControls";
 
 // THE NOTE MUST BE ON SCREEN LONG ENOUGH TO READ. A compact whose tail is
 // already short is a ~150ms round trip (no summarizer call, no fold to land),
@@ -76,14 +67,14 @@ function _minFoldVisible(startedAt: number): Promise<void> {
 }
 
 export type Compaction = {
-  // Bumped after a fold so the context meter refetches: folding does not change
-  // the message count, which is what otherwise drives that read.
+  // Bumped after either operation so the context meter refetches: neither one
+  // changes the message count, which is what otherwise drives that read.
   ctxNonce: number;
   compact: () => Promise<void>;
   clear: () => Promise<void>;
-  /** Call off the fold in flight. Wired to the Stop control on FoldingNote. */
+  /** Call off the clear in flight. Wired to the Stop control on FoldingNote. */
   cancelFold: () => void;
-  /** The cancel request is out, or has succeeded and the fold is winding up. */
+  /** The cancel request is out, or has succeeded and the clear is winding up. */
   foldStopping: boolean;
 };
 
@@ -93,8 +84,7 @@ export function useCompaction({
   activeIdRef: React.MutableRefObject<string | null>;
   // Owned by the chat, not by this hook: the composer, the message queue and the
   // log's in-flight line all read it, and all are declared before it. Null means
-  // no fold is running; otherwise it is WHICH one, because the two say different
-  // things while they run.
+  // nothing is running.
   setFolding: (mode: FoldMode | null) => void;
   setErr: (problem: ChatProblem | null) => void;
   // Pull the log after a boundary lands, so the divider draws from the event
@@ -108,56 +98,35 @@ export function useCompaction({
     const id = activeIdRef.current;
     if (!id) { setErr({ text: "Nothing to compact. This chat has no messages yet.", endpoint: null }); return; }
     setErr(null);
-    // Held so a message typed right after this call does not become a turn
-    // against the session being dropped, and shown at the foot of the log for
-    // as long as the hold lasts.
-    setFolding("compact");
-    const startedAt = Date.now();
     try {
       const r = await chatApi.compactThread(id);
-      // The fold moved the cut and wrote the summary; the divider is drawn from
-      // the boundary event the server appended, so pull it rather than guessing.
-      void sync();
-      setCtxNonce((n) => n + 1);
-      // WHAT ACTUALLY HAPPENED, in the order it matters. A failed summarizer is
-      // the case this exists for: the fold is a model call, it can fail, and
-      // this endpoint used to answer 200 over a failure while the chat said
-      // "Compacted. Earlier messages are now a summary." On 2026-08-12 that was
-      // not a rare path — the call passed its whole prompt in argv, so it died
-      // with E2BIG on every thread long enough to be worth compacting.
       if (r.error) {
         setErr({
-          text: `Couldn't compact: ${r.error}. Nothing was folded and the chat is unchanged.`,
+          text: `Couldn't compact: ${r.error}. The chat is unchanged.`,
           endpoint: `/api/chat/threads/${id}/compact`,
         });
-      } else if (r.cancelled) {
-        // Stopped from the fold's own line. Say nothing: the operator asked for
-        // it to stop and it stopped, the note disappears, and the transcript is
-        // visibly unchanged. An error line here would report their own action
-        // back to them as a problem.
         return;
-      } else if (r.busy) {
-        // Refused, not deferred: an operation is already in flight and THIS
-        // press did nothing. Promising a landing here would be a lie.
-        setErr({ text: "A compact or clear is already in progress on this chat.", endpoint: null });
-      } else if (r.deferred) {
-        // The fold is computed; its writes wait for the reply in flight. The
-        // divider appears when it lands, via the change stream. Said in one
-        // line so pressing compact mid-turn does not read as a no-op.
-        setErr({ text: "Compact is waiting for the current reply to finish, then it lands.", endpoint: null });
-      } else if (!r.folded && !r.session_reset) {
-        setErr({ text: "Nothing to compact. This chat is already short.", endpoint: null });
       }
+      // QUEUED IS NOT A FAILURE. A slash command cannot be delivered into a
+      // turn that is already running, so it waits in the thread's own queue
+      // and the drain sends it the moment that turn ends. Saying nothing here
+      // would read as a dead button, so say the one true thing and no more.
+      if (r.queued) {
+        setErr({ text: "Compact is queued behind the reply in flight.", endpoint: null });
+        return;
+      }
+      // The turn is running. Pull the log so its first segment appears without
+      // waiting for the next poll, and bump the meter, which does not otherwise
+      // refetch on a compaction because the message count barely moves.
+      void sync();
+      setCtxNonce((n) => n + 1);
     } catch (e) {
       setErr({
-        text: `Couldn't compact: ${String(e)}. The transcript is unchanged.`,
+        text: `Couldn't compact: ${String(e)}. The chat is unchanged.`,
         endpoint: `/api/chat/threads/${id}/compact`,
       });
-    } finally {
-      await _minFoldVisible(startedAt);
-      setFolding(null);
     }
-  }, [activeIdRef, setFolding, setErr, sync]);
+  }, [activeIdRef, setErr, sync]);
 
   const clear = useCallback(async () => {
     const id = activeIdRef.current;
@@ -205,13 +174,12 @@ export function useCompaction({
   // NOT FIRE AND FORGET, which is what made this read as a dead button.
   //
   // It was: the press sent the POST, discarded the answer and swallowed any
-  // failure, on the reasoning that the compact request would report the outcome
-  // itself. It does, but not for up to forty seconds: the fold's own request is
-  // still inside the summarizer, and `folding` is only cleared in its `finally`.
-  // So the whole visible sequence was press, nothing, half a minute more of
-  // "Compacting", then the line vanishing with no explanation. Measured from the
-  // backend log on 2026-08-14: two cancels, both answered 200, and the operator's
-  // report was "it did nothing". The cancel had almost certainly worked.
+  // failure, on the reasoning that the clear's own request would report the
+  // outcome. It does, but not until it lands, and `folding` is only cleared in
+  // its `finally`. So the whole visible sequence was press, nothing, then the
+  // line vanishing with no explanation. Measured from the backend log on
+  // 2026-08-14: two cancels, both answered 200, and the operator's report was
+  // "it did nothing". The cancel had almost certainly worked.
   //
   // So the press owns the feedback. `stopping` lands immediately (the control
   // spins, the line says Stopping), and a CONFIRMED cancel retires the note at
@@ -228,7 +196,7 @@ export function useCompaction({
       })
       .catch((e) => {
         setErr({
-          text: `Could not stop the compact: ${String(e)}. It is still running.`,
+          text: `Could not stop the clear: ${String(e)}. It is still running.`,
           endpoint: `/api/chat/threads/${id}/operation/cancel`,
         });
       })

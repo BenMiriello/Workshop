@@ -82,9 +82,9 @@ def scoped(tmp_path, monkeypatch):
 
 
 def _chatty(context_key: str = "general") -> str:
-    """A thread with enough conversation in it to clear the fold's guardrails
-    (see `_fold_summary`: at least 2 messages and more than one keep-budget's
-    worth of tokens, or it correctly folds nothing)."""
+    """A thread with enough conversation in it to be worth handing off (see
+    `_WORKING_STATE_MIN_MESSAGES`: below that, a chat has barely started and
+    summarizing it would spend a model call to say almost nothing)."""
     tid = chat_store.create_thread(context_key)["id"]
     for i in range(10):
         chat_store.append_message(tid, "user", f"OLD-{i} " + ("filler " * 400))
@@ -99,14 +99,15 @@ def _stub_summarizer(monkeypatch, text: str = STRUCTURED):
     return chat_routes
 
 
-async def _fold_now(tid: str):
-    """Compute and land in one step, as the route does on a quiet thread."""
+def _compact_now(tid: str) -> None:
+    """What pressing Compact does to the NOTE, run inline.
+
+    The route fires this off the request path (`_spawn_working_state`) and does
+    not wait for it; nothing here is about that scheduling, so it runs straight
+    through. Compaction itself is the provider's `/compact` and touches nothing
+    this file asserts on."""
     from routes import chat as chat_routes
-    fold_n, summary, through, err = await chat_routes._fold_summary(
-        tid, chat_store.get_thread(tid))
-    if not err and fold_n > 0:
-        chat_routes._land_fold(tid, summary, through)
-    return fold_n, err
+    chat_routes._write_working_state_now(tid, chat_store.get_thread(tid))
 
 
 def _prompt(tid: str) -> str:
@@ -166,12 +167,11 @@ class TestTheSummarizerIsAskedForAShape:
         assert seen[0]["model"] == llm_router.TIER_HAIKU
 
 
-class TestAFoldWritesTheScopesWorkingState:
+class TestCompactingWritesTheScopesWorkingState:
     def test_the_sections_survive_the_round_trip_to_the_note(self, scoped, monkeypatch):
         _stub_summarizer(monkeypatch)
         tid = _chatty()
-        folded, err = asyncio.run(_fold_now(tid))
-        assert err == "" and folded > 0
+        _compact_now(tid)
         body = knowledge.get_note("workshop", knowledge.WORKING_STATE_NOTE_ID)
         assert body
         for heading in knowledge.WORKING_STATE_SECTIONS:
@@ -181,7 +181,7 @@ class TestAFoldWritesTheScopesWorkingState:
     def test_the_note_says_what_it_is_so_it_is_not_mistaken_for_an_ordinary_one(
             self, scoped, monkeypatch):
         _stub_summarizer(monkeypatch)
-        asyncio.run(_fold_now(_chatty()))
+        _compact_now(_chatty())
         body = knowledge.get_note("workshop", knowledge.WORKING_STATE_NOTE_ID)
         # No `# ` title line: the Memory page prints the note's own title
         # above the body, so an H1 here renders as a second, larger, duplicate
@@ -195,31 +195,31 @@ class TestAFoldWritesTheScopesWorkingState:
         a note; neither was being filled by anything on the compaction path."""
         _stub_summarizer(monkeypatch)
         tid = _chatty()
-        asyncio.run(_fold_now(tid))
+        _compact_now(tid)
         raw = (knowledge.scope_dir("workshop")
                / f"{knowledge.WORKING_STATE_NOTE_ID}.md").read_text()
         assert knowledge.note_chat(raw) == tid
         assert raw.startswith("<!-- author: derived:")
 
-    def test_a_second_fold_updates_the_note_instead_of_adding_a_second_one(
+    def test_a_second_compaction_updates_the_note_instead_of_adding_a_second_one(
             self, scoped, monkeypatch):
         """One note per scope. A pile of dated handoffs is a pile nobody reads,
         and the operator asked for the CURRENT working state."""
         _stub_summarizer(monkeypatch, STRUCTURED)
-        asyncio.run(_fold_now(_chatty()))
-        second = STRUCTURED.replace("- Nothing.", "- The second fold's leftovers.")
+        _compact_now(_chatty())
+        second = STRUCTURED.replace("- Nothing.", "- The second compaction's leftovers.")
         _stub_summarizer(monkeypatch, second)
-        asyncio.run(_fold_now(_chatty()))
+        _compact_now(_chatty())
         ids = [n["id"] for n in knowledge.list_notes("workshop")]
         assert ids.count(knowledge.WORKING_STATE_NOTE_ID) == 1
         body = knowledge.get_note("workshop", knowledge.WORKING_STATE_NOTE_ID)
-        assert "The second fold's leftovers." in body
+        assert "The second compaction's leftovers." in body
 
     def test_two_scopes_keep_two_separate_working_states(self, scoped, monkeypatch):
         _stub_summarizer(monkeypatch, STRUCTURED.replace("Objective\n-", "Objective\n- ALPHA"))
-        asyncio.run(_fold_now(_chatty("project:alpha")))
+        _compact_now(_chatty("project:alpha"))
         _stub_summarizer(monkeypatch, STRUCTURED.replace("Objective\n-", "Objective\n- BETA"))
-        asyncio.run(_fold_now(_chatty("project:beta")))
+        _compact_now(_chatty("project:beta"))
         assert "ALPHA" in (knowledge.get_note("project:alpha",
                                               knowledge.WORKING_STATE_NOTE_ID) or "")
         assert "BETA" in (knowledge.get_note("project:beta",
@@ -241,11 +241,11 @@ class TestAFoldWritesTheScopesWorkingState:
 
 
 class TestNothingHereMayFailAnythingElse:
-    def test_a_failing_note_write_does_not_fail_the_fold(self, scoped, monkeypatch):
-        """The operator pressed compact to reclaim context. That has already
-        happened by the time the handoff is written; a handoff that could not be
-        filed is a log line, not a failed operation."""
-        from routes import chat as chat_routes
+    def test_a_failing_note_write_does_not_fail_the_compaction(self, scoped, monkeypatch):
+        """The operator pressed compact to reclaim context. The provider's own
+        /compact is a turn that is already on its way by the time the handoff is
+        written; a handoff that could not be filed is a log line, not a failed
+        operation."""
         _stub_summarizer(monkeypatch)
 
         def boom(*a, **kw):
@@ -253,18 +253,15 @@ class TestNothingHereMayFailAnythingElse:
 
         monkeypatch.setattr(knowledge, "write_working_state", boom)
         tid = _chatty()
-        folded, err = asyncio.run(_fold_now(tid))
-        assert err == "" and folded > 0
-        # The fold itself landed: the summary is on the thread and the cut moved.
-        t = chat_store.get_thread(tid)
-        assert (t.get("summary") or "").startswith("## Objective")
-        assert int(t.get("cleared_through", 0)) > 0
+        _compact_now(tid)  # must not raise
         assert knowledge.get_note("workshop", knowledge.WORKING_STATE_NOTE_ID) is None
-        assert chat_routes is not None
+        # And the chat is untouched either way: compaction never edits the
+        # transcript, and a failed note write certainly does not.
+        assert "RECENT the latest thing" in _prompt(tid)
 
-    def test_a_failing_fold_does_not_fail_the_turn(self, scoped, monkeypatch):
-        """The summarizer is a model call and it can fail. It is REPORTED, the
-        thread is untouched, and the next prompt still assembles."""
+    def test_a_failing_summarizer_does_not_fail_the_turn(self, scoped, monkeypatch):
+        """The summarizer is a model call and it can fail. Nothing is written,
+        nothing raises, and the next prompt still assembles."""
         from routes import chat as chat_routes
 
         def boom(prev, msgs):
@@ -272,9 +269,8 @@ class TestNothingHereMayFailAnythingElse:
 
         monkeypatch.setattr(chat_routes, "_summarize_sync", boom)
         tid = _chatty()
-        folded, err = asyncio.run(_fold_now(tid))
-        assert folded == 0 and "the summarizer fell over" in err
-        assert not (chat_store.get_thread(tid).get("summary") or "")
+        _compact_now(tid)  # must not raise
+        assert knowledge.get_note("workshop", knowledge.WORKING_STATE_NOTE_ID) is None
         assert "RECENT the latest thing" in _prompt(tid)
 
     def test_an_unreadable_note_store_does_not_break_the_prompt(self, scoped, monkeypatch):
@@ -292,7 +288,7 @@ class TestANewChatInTheScopeContinuesFromIt:
     def test_a_different_chat_in_the_same_scope_is_handed_the_working_state(
             self, scoped, monkeypatch):
         _stub_summarizer(monkeypatch)
-        asyncio.run(_fold_now(_chatty()))
+        _compact_now(_chatty())
         fresh = chat_store.create_thread("general")["id"]
         chat_store.append_message(fresh, "user", "what were we doing?")
         prompt = _prompt(fresh)
@@ -301,35 +297,26 @@ class TestANewChatInTheScopeContinuesFromIt:
 
     def test_a_chat_in_a_different_scope_is_not(self, scoped, monkeypatch):
         _stub_summarizer(monkeypatch)
-        asyncio.run(_fold_now(_chatty("project:alpha")))
+        _compact_now(_chatty("project:alpha"))
         other = chat_store.create_thread("project:beta")["id"]
         chat_store.append_message(other, "user", "unrelated work")
         prompt = _prompt(other)
         assert "=== WORKING STATE" not in prompt
         assert "twelfth memory substrate" not in prompt
 
-    def test_the_chat_that_wrote_it_is_not_handed_it_twice(self, scoped, monkeypatch):
-        """It already carries the same text verbatim as its own compaction
-        summary. Paying the budget twice for one body of text is how a window
-        fills up for no reason."""
-        _stub_summarizer(monkeypatch)
-        tid = _chatty()
-        asyncio.run(_fold_now(tid))
-        prompt = _prompt(tid)
-        assert "=== EARLIER IN THIS CONVERSATION (summary) ===" in prompt
-        assert "=== WORKING STATE" not in prompt
-        assert prompt.count("twelfth memory substrate") == 1
+    def test_the_chat_that_wrote_it_gets_it_too(self, scoped, monkeypatch):
+        """There used to be a suppression here, on the grounds that this chat
+        already carried the same text verbatim as its own Workshop fold summary
+        (`=== EARLIER IN THIS CONVERSATION (summary) ===`), so injecting it
+        again spent the budget twice on one body of text.
 
-    def test_after_a_clear_wipes_the_summary_the_note_is_injected_again(
-            self, scoped, monkeypatch):
-        """/clear drops the summary, so the note becomes the only surviving
-        copy. Suppressing it there would delete the state outright."""
+        Workshop no longer folds. Compaction is the provider's, and what it
+        leaves behind is its own summary, not this note, so this chat is in
+        exactly the same position as any other and the suppression only took
+        the handoff away from the session most likely to need it."""
         _stub_summarizer(monkeypatch)
         tid = _chatty()
-        asyncio.run(_fold_now(tid))
-        chat_store.clear_thread_context(tid)
-        chat_store.append_message(tid, "user", "carry on")
-        assert not (chat_store.get_thread(tid).get("summary") or "")
+        _compact_now(tid)
         assert "=== WORKING STATE" in _prompt(tid)
 
     def test_the_injected_block_says_which_of_it_and_the_digest_owns_what(
@@ -337,7 +324,7 @@ class TestANewChatInTheScopeContinuesFromIt:
         """Two neighbouring blocks that both look like "ongoing work" will get
         double-counted unless one of them says who owns what."""
         _stub_summarizer(monkeypatch)
-        asyncio.run(_fold_now(_chatty()))
+        _compact_now(_chatty())
         fresh = chat_store.create_thread("general")["id"]
         chat_store.append_message(fresh, "user", "hello")
         prompt = _prompt(fresh)
@@ -355,7 +342,7 @@ class TestItIsBounded:
                                                for i in range(200)))
         assert len(fat) > knowledge.WORKING_STATE_MAX_CHARS * 5
         _stub_summarizer(monkeypatch, fat)
-        asyncio.run(_fold_now(_chatty()))
+        _compact_now(_chatty())
         text, _chat = knowledge.read_working_state("workshop")
         assert len(text) <= knowledge.WORKING_STATE_MAX_CHARS
 
@@ -398,12 +385,17 @@ class TestItIsBounded:
         assert (knowledge.WORKING_STATE_MAX_CHARS // 4
                 > knowledge.DEFAULT_LAYERED_INDEX_TOKEN_BUDGET)
 
-    def test_it_stays_well_under_the_verbatim_tail_compaction_keeps(self):
-        """A summary of old work that outweighs the live conversation is
-        inverted priorities, and it sits higher in the prompt."""
-        from routes import chat as chat_routes
+    def test_it_is_a_small_fraction_of_any_window(self):
+        """A handoff of old work that outweighs the live conversation is
+        inverted priorities, and it sits higher in the prompt. It used to be
+        checked against Workshop's own keep-the-tail budget; that fold is gone,
+        so it is checked against the smallest window the platform still serves.
+
+        `context_window.window_for(None)` is the fallback for a model nothing
+        has measured yet, which is the floor this has to stay under."""
+        from services import context_window
         assert (knowledge.WORKING_STATE_MAX_CHARS // 4
-                < chat_routes._COMPACT_KEEP_TAIL_TOKENS / 2)
+                < context_window.window_for(None) / 20)
 
 
 class TestTheOperatorCanSeeAndEditIt:
@@ -412,7 +404,7 @@ class TestTheOperatorCanSeeAndEditIt:
         """It is a note, so the Memory page lists it with no new page and no
         new route. The index line is what that page reads."""
         _stub_summarizer(monkeypatch)
-        asyncio.run(_fold_now(_chatty()))
+        _compact_now(_chatty())
         rows = {n["id"]: n for n in knowledge.list_notes("workshop")}
         row = rows[knowledge.WORKING_STATE_NOTE_ID]
         assert row["title"] == knowledge.WORKING_STATE_TITLE
@@ -420,7 +412,7 @@ class TestTheOperatorCanSeeAndEditIt:
 
     def test_an_operator_edit_is_what_the_next_chat_reads(self, scoped, monkeypatch):
         _stub_summarizer(monkeypatch)
-        asyncio.run(_fold_now(_chatty()))
+        _compact_now(_chatty())
         asyncio.run(knowledge.put_note(
             "workshop", knowledge.WORKING_STATE_NOTE_ID,
             knowledge.WORKING_STATE_TITLE,

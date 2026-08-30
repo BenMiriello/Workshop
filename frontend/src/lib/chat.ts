@@ -697,32 +697,23 @@ export const chatApi = {
       body: JSON.stringify({ title }),
     }).then(j<ThreadSummary>),
 
-  // /compact: drop the LIVE session so the next turn starts a fresh one from the
-  // stored transcript. Nothing is folded, summarized or forgotten, and the cut
-  // does not move; the CLI's private copy of the conversation is simply
-  // discarded, and it is re-derivable from the transcript by definition.
-  // `session_reset` says whether there was a live window to reclaim.
-  // Fold the conversation: summarize everything but the recent tail, move the
-  // cut, drop the live session. `folded` is how many messages it stood in for
-  // and `error` is why it did not, when it did not — a summarizer is a model
-  // call and it can fail, and this used to answer 200 over a fold that never
-  // happened while the chat said "Compacted."
+  // /compact: run the CLI's OWN compaction on this chat's live session.
+  //
+  // It is a TURN, not a server-side edit of the transcript. Workshop used to
+  // summarize the conversation itself and move a cut; that fold is gone, and
+  // the provider's compaction is what runs. So this starts the turn and
+  // returns it: the divider, the reply and the new context reading all arrive
+  // on the change stream like any other turn's output.
+  //
+  // `queued` is an acceptance, not a refusal — a command cannot be spoken
+  // into a running turn, so it waits in the thread's queue and is sent the
+  // moment that turn ends.
   compactThread: (id: string) =>
     fetch(`/api/chat/threads/${id}/compact`, { method: "POST" }).then(
       j<{
-        folded: number;
-        session_reset: boolean;
-        error: string;
-        summary_chars: number;
-        // The fold was computed but a reply is being written, so its writes
-        // land when the thread goes quiet.
-        deferred?: boolean;
-        // An operation is already in flight on this thread; nothing was
-        // computed and nothing from THIS request will land.
-        busy?: boolean;
-        // The operator pressed Stop on the fold line while the summarizer ran.
-        // Nothing was written; the transcript is exactly as it was.
-        cancelled?: boolean;
+        turn_id?: string;
+        queued?: boolean;
+        error?: string;
       }>,
     ),
 
