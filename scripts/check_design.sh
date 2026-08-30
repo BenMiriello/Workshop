@@ -390,7 +390,44 @@ except Exception:
     fi
   fi
 else
-  bash "$WORKSHOP/scripts/ui_sync.sh" --warn
+  # FULL MODE (no --added): there is no "this run's diff" to attribute the
+  # staleness to, and until 2026-08-29 that meant staleness was advisory here
+  # and fatal nowhere a person actually types. CLAUDE.md tells every agent to
+  # run `bash scripts/check_design.sh` before calling a UI task done, which is
+  # this branch, so the one command the rule names could never enforce it.
+  # Measured that day: the bundle and the backend were both stale, this printed
+  # `warn` and exited 0, and the operator reloaded and did not see his change.
+  #
+  # So the question is asked without attribution: is the bundle missing
+  # COMMITTED work? That is operator-visible whoever committed it, and the
+  # remedy is never forbidden (apply.sh builds committed work; the guard it
+  # refuses on is UNcommitted work). Uncommitted staleness stays a warning for
+  # the reasons above: apply.sh declines to publish it on purpose, so failing
+  # over one asserts a state the platform will not enter.
+  if ! bash "$WORKSHOP/scripts/ui_sync.sh" --strict; then
+    dist_commit="$(python3 -c '
+import json
+try:
+    print(json.load(open("frontend/dist/build-info.json")).get("commit") or "")
+except Exception:
+    print("")' 2>/dev/null)"
+    unbuilt_committed=""
+    if [ -n "$dist_commit" ] && git -C "$WORKSHOP" cat-file -e "$dist_commit^{commit}" 2>/dev/null; then
+      unbuilt_committed="$(git -C "$WORKSHOP" diff --name-only "$dist_commit" HEAD -- frontend packages/ui 2>/dev/null \
+                           | grep -E '^(frontend|packages/ui)/' || true)"
+    else
+      unbuilt_committed="(no usable build stamp on frontend/dist)"
+    fi
+    if [ -n "$unbuilt_committed" ] && [ "$IN_LINKED_WORKTREE" = 0 ]; then
+      echo "check_design: COMMITTED UI work is not in the built bundle."
+      echo "              the operator views the BUILT origin, so it does not have it."
+      printf '%s\n' "$unbuilt_committed" | sed 's/^/              /'
+      echo "              run: bash scripts/apply.sh"
+      design_status=1
+    else
+      bash "$WORKSHOP/scripts/ui_sync.sh" --warn
+    fi
+  fi
 fi
 
 # A className no stylesheet defines renders UNSTYLED, and nothing else here sees

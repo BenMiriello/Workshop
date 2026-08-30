@@ -1,21 +1,22 @@
-"""Stop on the fold line actually stops the fold.
+"""Stop on the in-flight line actually stops the operation.
 
 The Stop control moved out of the composer and onto the lines that represent work
 in flight (operator, 2026-08-14: "we want that stop button anywhere that the
-system is working"). One of those lines is the fold's: "Compacting. Folding
-earlier messages into a summary", which sits there for a ~30s model call while
-the thread's queue is held behind it.
+system is working"). There was no cancel path at any layer, so that control would
+have been decoration. This is the seam that makes it real.
 
-There was no cancel path at any layer, so that control would have been
-decoration. This is the seam that makes it real.
+ONLY /clear STILL USES IT. Compaction was a Workshop-side summarizing fold that
+held the thread the same way a clear does, and it had two paths to a landing
+(inline, and deferred behind a live run). It is now the provider's own /compact,
+run as an ordinary turn (`5be52599`), so there is no fold to call off: a turn is
+stopped with the turn's own Stop, and a second press queues. The tests that drove
+`_fold_summary` and `_land_fold_when_quiet` went with those functions.
 
 IT REFUSES THE LANDING RATHER THAN KILLING THE TASK, and that is what makes it
-safe. An operation computes for its whole life and writes ONCE, at the end
-(summary + cut + boundary + detach). So declining to write is a complete cancel:
-there is no partial state to unwind and no window in which half a fold is on
-disk. The check lives inside the landing functions, not at the call sites,
-because compact has two paths to a landing (inline, and deferred behind a live
-run) and a stop honoured on one but not the other is worse than no stop at all.
+safe. The operation computes for its whole life and writes ONCE, at the end. So
+declining to write is a complete cancel: there is no partial state to unwind and
+no window in which half a cut is on disk. The check lives inside the landing
+function, not at the call site.
 """
 import asyncio
 
@@ -81,100 +82,67 @@ def test_end_clears_the_flag(thread):
     assert thread_ops.cancelled(tid) is False
 
 
-def test_a_cancelled_fold_writes_nothing(chatty, monkeypatch):
-    """The whole point. The summarizer runs, the operator presses Stop, and the
-    transcript is exactly as it was: no summary, no cut, no boundary event."""
-    rc = _routes()
-
-    async def _summary_then_stop(thread_id, _t):
-        # Stands in for the ~30s model call, and for the operator pressing Stop
-        # part-way through it.
-        thread_ops.cancel(thread_id)
-        return 4, "a summary that must never land", 4, ""
-
-    monkeypatch.setattr(rc, "_fold_summary", _summary_then_stop)
-
-    out = asyncio.run(rc.compact_thread(chatty))
-
-    assert out["cancelled"] is True
-    assert out["folded"] == 0
-    t = chat_store.get_thread(chatty)
-    assert "summary" not in t
-    assert t.get("cleared_through", 0) == 0
-    assert _boundaries(chatty) == []
-
-
 def test_the_thread_is_released_so_queued_messages_go(chatty, monkeypatch):
     """A cancel must not leave the door held. The registration is released the
     same way it always is, so anything that queued behind the operation drains
     instead of waiting for a restart."""
     rc = _routes()
+    thread_ops.begin(chatty, "clear")
 
-    async def _summary_then_stop(thread_id, _t):
-        thread_ops.cancel(thread_id)
-        return 4, "dropped", 4, ""
+    async def _quiet(_tid):
+        return None
 
-    monkeypatch.setattr(rc, "_fold_summary", _summary_then_stop)
-    asyncio.run(rc.compact_thread(chatty))
+    monkeypatch.setattr(thread_ops, "wait_quiet", _quiet)
+    asyncio.run(rc.cancel_thread_operation(chatty))
+    asyncio.run(rc._land_clear_when_quiet(chatty))
 
     assert thread_ops.pending(chatty) is None
     assert thread_ops.cancelled(chatty) is False
 
 
-def test_a_cancelled_deferred_fold_also_writes_nothing(chatty, monkeypatch):
-    """The path that made the check belong in `_land_fold` rather than at the
-    call sites: a fold computed while a run was live lands later, from a
-    background task, and has to honour the same stop."""
+def test_a_cancelled_deferred_cut_also_writes_nothing(chatty, monkeypatch):
+    """The path that made the check belong in `_land_clear` rather than at the
+    call site: a cut held behind a live run lands later, from a background task,
+    and has to honour the same stop."""
     rc = _routes()
-    thread_ops.begin(chatty, "compact")
+    thread_ops.begin(chatty, "clear")
     thread_ops.cancel(chatty)
 
     async def _quiet(_tid):
         return None
 
     monkeypatch.setattr(thread_ops, "wait_quiet", _quiet)
-    asyncio.run(rc._land_fold_when_quiet(chatty, "must never land", 4))
+    asyncio.run(rc._land_clear_when_quiet(chatty))
 
     t = chat_store.get_thread(chatty)
-    assert "summary" not in t
+    assert t.get("cleared_through", 0) == 0
     assert _boundaries(chatty) == []
     assert thread_ops.pending(chatty) is None
 
 
-def test_a_cancel_arriving_as_a_separate_request_stops_a_live_fold(chatty, monkeypatch):
-    """THE REAL INTERLEAVING, not a stub that cancels itself.
-
-    Every other test here cancels from inside a stubbed _fold_summary, which
-    proves the check is read but fakes the concurrency. This drives what actually
-    happens: the compact runs as a task, the cancel goes in as its own call while
-    the summarizer is awaiting, and the fold must not land.
-
-    Written after the control was reported as doing nothing. It was not the
-    backend: the request arrived, answered 200, and cancelled the fold correctly.
-    The failure was that the UI said nothing about it for another forty seconds.
-    """
+def test_compaction_has_no_operation_to_cancel(chatty, monkeypatch):
+    """Compaction is a TURN now, so it never registers with thread_ops and the
+    fold's cancel protocol does not apply to it. Pinned because the protocol is
+    still live for /clear, and a future reader could reasonably assume compact
+    still rides on it."""
     rc = _routes()
-    started = asyncio.Event()
+    sent = {}
 
-    async def slow_summary(thread_id, _t):
-        started.set()
-        await asyncio.sleep(0.25)          # stands in for the model call
-        return 4, "must never land", 4, ""
+    async def fake_send(thread_id, content, **kw):
+        sent["content"] = content
+        # Whatever compaction does, it must not have taken the thread's door.
+        sent["pending_during"] = thread_ops.pending(thread_id)
+        return {"turn_id": "t-1"}
 
-    monkeypatch.setattr(rc, "_fold_summary", slow_summary)
+    monkeypatch.setattr(rc, "_send", fake_send)
+    monkeypatch.setattr(rc, "_spawn_working_state", lambda *a: None)
+    asyncio.run(rc.compact_thread(chatty))
 
-    async def drive():
-        task = asyncio.ensure_future(rc.compact_thread(chatty))
-        await started.wait()
-        out = await rc.cancel_thread_operation(chatty)
-        return out, await task
-
-    cancel_out, compact_out = asyncio.run(drive())
-
-    assert cancel_out == {"cancelled": True, "operation": "compact"}
-    assert compact_out.get("cancelled") is True
-    assert "summary" not in chat_store.get_thread(chatty)
-    assert _boundaries(chatty) == []
+    assert sent["content"] == "/compact"
+    assert sent["pending_during"] is None
+    assert thread_ops.pending(chatty) is None
+    assert asyncio.run(rc.cancel_thread_operation(chatty)) == {
+        "cancelled": False, "operation": ""}
 
 
 def test_a_cancelled_clear_writes_nothing(chatty, monkeypatch):
