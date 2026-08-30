@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  Archive, ArchiveRestore, ChevronLeft, GitBranch, MoreVertical, Plus, Trash2,
+  ArchiveRestore, ChevronLeft, MoreVertical, Plus, Trash2,
 } from "lucide-react";
 import {
   Button,
@@ -21,13 +21,10 @@ import {
   StateBlock,
 } from "@workshop/ui";
 import { chatApi, threadAgent, type ThreadSummary } from "../lib/chat";
+import ChatRow, { ChatScopeGlyph, shortModel } from "../components/chat/ChatRow";
 import { queryKeys } from "../lib/queryKeys";
 import { newChatHref } from "../lib/chatSelection";
-import { scopeKind, scopeLabel, scopeName } from "../components/chat/chatScope";
-import { pulseDelay } from "./chatPulse";
-import ScopeIcon from "../components/chat/ScopeIcon";
-import { appIcon } from "../apps/registry";
-import { AppGlyph } from "../lib/appIcon";
+import { scopeLabel, scopeName } from "../components/chat/chatScope";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
 // its own object with an optional context binding (general / project / app /
@@ -61,17 +58,6 @@ function bucketFor(iso?: string | null): { key: string; label: string } {
   return { key: "older", label: "Earlier" };
 }
 
-// The model that answered, shortened to family and version the way the mockup
-// shows it: "claude-opus-4-8" reads "opus 4.8".
-function shortModel(m?: string | null): string {
-  if (!m) return "";
-  const s = m.replace(/^claude-/, "").replace(/-\d{6,}$/, "");
-  const parts = s.split("-").filter(Boolean);
-  if (parts.length === 0) return s;
-  const ver = parts.slice(1).join(".");
-  return ver ? `${parts[0]} ${ver}` : parts[0];
-}
-
 // One page of rows. The list renders a page at a time and loads the next when
 // the foot scrolls into view (see the observer below), so a long history never
 // mounts unbounded and the reader never meets a wall of rows.
@@ -100,28 +86,6 @@ function archivedLabel(iso?: string | null): string {
     : `Archived ${d.toLocaleDateString([], { month: "short", day: "numeric" })}`;
 }
 
-// How long ago a chat was last active, at the resolution a chat list is scanned
-// at: recent conversations want minutes and hours, older ones settle to days and
-// weeks. It reads the same field the list is sorted by (updated_at), so the time
-// on a row and its position agree. This is the mockup's "when" column, carried in
-// the meta line rather than a column of its own.
-function relTime(iso?: string | null): string {
-  if (!iso) return "";
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return "";
-  const secs = Math.max(0, (Date.now() - t) / 1000);
-  if (secs < 60) return "now";
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d`;
-  if (days < 30) return `${Math.floor(days / 7)}w`;
-  if (days < 365) return `${Math.floor(days / 30)}mo`;
-  return `${Math.floor(days / 365)}y`;
-}
-
 /** What the archive is being asked to do to a chat, while the dialog is open. */
 type Pending = { id: string; title: string; action: "restore" | "delete" };
 
@@ -134,39 +98,6 @@ function matches(t: ThreadSummary, needle: string): boolean {
     (t.last_message || "").toLowerCase().includes(needle) ||
     scopeLabel(t.context_key).toLowerCase().includes(needle) ||
     (agent !== null && agent.toLowerCase().includes(needle))
-  );
-}
-
-// The glyph that leads a row. An app chat shows the app's OWN declared icon
-// (Budget's piggy bank, Birds' bird), resolved through the apps registry. Every
-// other scope, and any app that declared no icon, shows the kind icon, which is
-// the reliable backup.
-function ChatScopeGlyph({ contextKey }: { contextKey: string }) {
-  const kind = scopeKind(contextKey);
-  if (kind === "app") {
-    const declared = appIcon(scopeName(contextKey));
-    if (declared) return <AppGlyph icon={declared} name={scopeName(contextKey)} size={14} />;
-  }
-  return <ScopeIcon kind={kind} />;
-}
-
-// The live-state dot: a hollow ring at rest, filled and pulsing while a turn
-// runs, on the orchestrated, offset phase from chatPulse.
-function RunningDot({ running, ordinal }: { running: boolean; ordinal: number }) {
-  // Compute the delay once, on the transition into running, and hold it; clear
-  // it on the way out so a later restart gets a fresh phase. Every other render
-  // reuses the same string, so the inline style is stable and the running
-  // animation is never disturbed by a poll re-render or an ordinal shift.
-  const delay = useRef<string | undefined>(undefined);
-  if (running && delay.current === undefined) delay.current = pulseDelay(ordinal);
-  else if (!running && delay.current !== undefined) delay.current = undefined;
-  return (
-    <span
-      className="ws-chat-row__state"
-      data-live={running ? "" : undefined}
-      style={running ? { animationDelay: delay.current } : undefined}
-      aria-hidden
-    />
   );
 }
 
@@ -380,86 +311,14 @@ export default function Chats() {
                 </div>
               )}
               {g.items.map((t) => (
-                <Card
+                <ChatRow
                   key={t.id}
-                  interactive
-                  compact
-                  className="ws-chat-row"
-                  onClick={() => open(t)}
-                  // min-width:0 lets the two ellipsizing lines shrink instead of
-                  // setting the card's min-content width and overflowing the
-                  // viewport on mobile (the raw grid parent sets no min-width).
-                  style={{ cursor: "pointer", minWidth: 0 }}
-                >
-                  {/* Line one: the live-state dot, the scope's own icon (its
-                      name on hover), the chat name, then the meta right-
-                      justified. Line two: the last message. Two lines at every
-                      width. */}
-                  <div className="ws-chat-row__head">
-                    <RunningDot running={!!t.running} ordinal={runningOrdinals.get(t.id) ?? 0} />
-                    <span
-                      className="ws-chat-row__scope"
-                      title={scopeName(t.context_key)}
-                      aria-label={scopeLabel(t.context_key)}
-                    >
-                      <ChatScopeGlyph contextKey={t.context_key} />
-                    </span>
-                    <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
-                    <div className="ws-chat-row__meta">
-                      {t.model && (
-                        <>
-                          <span className="ws-card__meta ws-chat-row__model">{shortModel(t.model)}</span>
-                          <span className="ws-chat-row__sep ws-chat-row__sep--model" aria-hidden>·</span>
-                        </>
-                      )}
-                      <span className="ws-card__meta">{t.message_count} turns</span>
-                      <span className="ws-chat-row__sep" aria-hidden>·</span>
-                      <span className="ws-card__meta ws-chat-row__when">{relTime(t.updated_at)}</span>
-                      {t.branch_slug && (
-                        <>
-                          <span className="ws-chat-row__sep" aria-hidden>·</span>
-                          <span className="ws-card__meta" title={t.branch_slug} aria-label="In a worktree">
-                            <GitBranch size={12} aria-hidden />
-                          </span>
-                        </>
-                      )}
-                      <button
-                        type="button"
-                        className="ws-chat-row__act ws-chat-row__archive"
-                        title="Archive"
-                        aria-label="Archive chat"
-                        onClick={(e) => { e.stopPropagation(); void archiveOne(t); }}
-                      >
-                        <Archive size={14} aria-hidden />
-                      </button>
-                      {/* The menu opens on its own; the stop keeps its trigger
-                          from also opening the chat behind it. */}
-                      <span onClick={(e) => e.stopPropagation()}>
-                        <Menu
-                          label="Chat actions"
-                          trigger={
-                            <button type="button" className="ws-chat-row__act" title="More" aria-label="More chat actions">
-                              <MoreVertical size={14} aria-hidden />
-                            </button>
-                          }
-                        >
-                          <MenuItem icon={<Archive size={14} aria-hidden />} onSelect={() => void archiveOne(t)}>
-                            Archive
-                          </MenuItem>
-                          <MenuSeparator />
-                          <MenuItem
-                            danger
-                            icon={<Trash2 size={14} aria-hidden />}
-                            onSelect={() => setPending({ id: t.id, title: t.title || "this chat" })}
-                          >
-                            Delete
-                          </MenuItem>
-                        </Menu>
-                      </span>
-                    </div>
-                  </div>
-                  <p className="ws-muted ws-chat-row__snippet">{t.last_message || " "}</p>
-                </Card>
+                  thread={t}
+                  ordinal={runningOrdinals.get(t.id) ?? 0}
+                  onOpen={open}
+                  onArchive={(x) => { void archiveOne(x); }}
+                  onDelete={(x) => setPending({ id: x.id, title: x.title || "this chat" })}
+                />
               ))}
             </div>
           ))}

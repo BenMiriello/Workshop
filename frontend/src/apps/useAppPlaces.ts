@@ -52,7 +52,19 @@ export function useAppPlaces(): AppPlace[] {
     out.push({
       id: app.id,
       name: known?.name ?? app.title ?? app.id,
-      home: known?.home ?? app.route ?? `/apps/${app.id}`,
+      // AN APP'S HOME IS ITS BASE PATH, NOT THE LAUNCHER'S LANDING ROUTE.
+      //
+      // `places.ts` uses `home` for two things: the place's URL PREFIX, and the
+      // stem it builds every tab URL from (`home + t.suffix`). The launcher's
+      // `route` is a landing hint and for an app with no bundled UI it is a
+      // deep link (`/apps/x/chats`), so using it here made the prefix miss
+      // every other tab and built tab URLs like `/apps/x/chats/files`. The
+      // effect: opening such an app showed the WORKSHOP sidebar instead of the
+      // app's own, and none of its seven tabs was reachable.
+      //
+      // An app that ships UI keeps the registry's home, because that registry
+      // knows where its own screens live.
+      home: known?.home ?? `/apps/${app.id}`,
       icon: known?.icon ?? app.icon,
     });
   }

@@ -103,6 +103,14 @@ class AppDeleted(BaseModel):
 
 
 class AppChat(BaseModel):
+    """The SAME summary `GET /api/chat/threads` returns, narrowed to one app.
+
+    The four fields below the timestamps were missing, so this endpoint could
+    not describe a chat the way the global list does and the app's Chats tab
+    rendered bare titles. A response model that does not declare a field drops
+    it silently on the wire, which is how they went missing in the first
+    place."""
+
     id: str
     context_key: str | None = None
     scope: str | None = None
@@ -113,6 +121,13 @@ class AppChat(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     archived_at: str | None = None
+    # How many turns, the preview line, when the operator last spoke, the
+    # branch it is pinned to, and whether a turn is in flight right now.
+    message_count: int = 0
+    last_message: str = ""
+    last_user_at: str | None = None
+    branch_slug: str | None = None
+    running: bool = False
 
 
 class AppChatList(BaseModel):

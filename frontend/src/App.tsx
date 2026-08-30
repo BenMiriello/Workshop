@@ -75,6 +75,12 @@ const AppDeploysTab = lazyPage(() => import("./pages/apps/tabs/AppDeploysTab"));
 
 // Deep-link / mobile-shell compatibility: the builder work pane moved from
 // /agents/build/:slug to /agents/:slug/chat. Keep old links working.
+/** An app's base path lands on its first tab. */
+function AppHomeRedirect() {
+  const { appSlug = "" } = useParams();
+  return <Navigate to={`/apps/${encodeURIComponent(appSlug)}/chats`} replace />;
+}
+
 function AgentBuildRedirect() {
   const { slug = "" } = useParams();
   return <Navigate to={`/agents/${encodeURIComponent(slug)}/chat`} replace />;
@@ -168,6 +174,12 @@ export default function App() {
           {/* The seven per-app tabs, generic over :appSlug: the shell does not
               need to know which apps exist to route to them, only that every
               app gets the same eight rows (places.ts). */}
+          {/* An app with no bundled UI still has a base path, because that is
+              the URL the shell uses as its place prefix and as the stem for
+              every tab (places.ts). Its own screen is the first tab. A bundled
+              app's static route above wins on specificity, so this never
+              shadows one. */}
+          <Route path="/apps/:appSlug" element={<AppHomeRedirect />} />
           <Route path="/apps/:appSlug/chats" element={<AppChats />} />
           <Route path="/apps/:appSlug/agents" element={<AppAgentsTab />} />
           <Route path="/apps/:appSlug/memory" element={<AppMemoryTab />} />

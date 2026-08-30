@@ -23,10 +23,13 @@ this list.
 """
 from __future__ import annotations
 
+import logging
 from datetime import timezone
 from typing import Any
 
 from services import tenancy
+
+log = logging.getLogger("workshop.apps")
 
 __all__ = [
     "AppsUnavailable", "AppNotFound", "SlugTaken",
@@ -186,11 +189,35 @@ def chats_for_app(app_id: str, *, archived: bool = False) -> list[dict] | None:
             return None
         rows = app_repo.list_chats_for_app(s, org_id, app_id, archived=archived)
 
+    # THE SAME SUMMARY THE GLOBAL CHAT LIST SHOWS, not a thinner one.
+    #
+    # These rows used to carry title/model/timestamps and nothing else, so the
+    # per-app Chats tab could not show a preview, a turn count, or whether a
+    # turn was running. It rendered a grid of bare titles instead, which is how
+    # one conversation came to look like a different kind of object depending
+    # on which page you opened it from.
+    #
+    # WHICH chats belong to this app is the DATABASE's answer (chat_thread.
+    # app_id, resolved by the backfill from scope), and it is broader than any
+    # scope filter: an app's chats can sit under several context keys. WHAT
+    # each one looks like is the file fold's answer, and it is the same builder
+    # `GET /api/chat/threads` uses, so the two lists cannot describe the same
+    # chat differently. A row the fold does not have still comes back, thin,
+    # rather than vanishing from its app.
+    from services import chat_store
+
+    try:
+        fold = {t.get("id"): t for t in chat_store.list_threads(archived=archived)}
+    except Exception:  # pragma: no cover - a chat listing must not 500 an app
+        log.warning("could not read the chat fold for app %s", app_id, exc_info=True)
+        fold = {}
+
     out = []
     for r in rows:
+        tid = r.get("external_id") or str(r["id"])
         title = r.get("title") or r.get("seed_title") or "New chat"
-        out.append({
-            "id": r.get("external_id") or str(r["id"]),
+        row = {
+            "id": tid,
             "context_key": r.get("context_key"),
             "scope": r.get("scope"),
             "title": title,
@@ -200,8 +227,28 @@ def chats_for_app(app_id: str, *, archived: bool = False) -> list[dict] | None:
             "created_at": _iso(r.get("created_at")),
             "updated_at": _iso(r.get("updated_at")),
             "archived_at": _iso(r.get("archived_at")),
-        })
-    return out
+            "message_count": 0,
+            "last_message": "",
+            "last_user_at": None,
+            "branch_slug": None,
+        }
+        rich = fold.get(tid)
+        if rich is not None:
+            row.update({
+                "title": rich.get("title") or title,
+                "model": rich.get("model") or row["model"],
+                "updated_at": rich.get("updated_at") or row["updated_at"],
+                "message_count": rich.get("message_count") or 0,
+                "last_message": rich.get("last_message") or "",
+                "last_user_at": rich.get("last_user_at"),
+                "branch_slug": rich.get("branch_slug"),
+            })
+        out.append(row)
+    # Newest conversation first, by when the operator last spoke, which is the
+    # order the global list uses. Falls back to updated_at for a row the fold
+    # did not have.
+    out.sort(key=lambda t: t.get("last_user_at") or t.get("updated_at") or "", reverse=True)
+    return chat_store.stamp_running(out)
 
 
 def _app_or_404(app_id: str) -> dict:

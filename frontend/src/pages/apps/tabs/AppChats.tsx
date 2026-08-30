@@ -1,10 +1,22 @@
 // The Chats tab: every conversation bound to this app, real for every app
 // (services/apps.py chats_for_app -- Postgres, chat_thread.app_id, no
 // project link required). GET /api/apps/{id}/chats.
-import { useParams, Link, useNavigate } from "react-router-dom";
+//
+// IT RENDERS THE SAME ROW /chats RENDERS, and that is the whole of this file's
+// job. It used to render a three-column grid of cards holding a title and
+// nothing else: no preview, no turn count, no time, no live state, because the
+// endpoint did not return any of those. So the same conversation looked like a
+// different kind of object depending on which page you opened it from, and this
+// one could not answer "when" or "how much" at all. Reported 2026-08-29: "why
+// does it still take me to the wrong chats page? Some old chats page why does
+// it still exist even?" The endpoint now returns the global summary and the row
+// lives in components/chat/ChatRow.
+import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { MessagesSquare, Plus } from "lucide-react";
-import { Button, Card, CardGrid, Row, SectionLabel } from "@workshop/ui";
+import { Button, SectionLabel, Stack } from "@workshop/ui";
+import ChatRow from "../../../components/chat/ChatRow";
+import type { ThreadSummary } from "../../../lib/chat";
 import { newChatHref } from "../../../lib/chatSelection";
 import type { components } from "../../../api/schema.gen";
 import type { AppRecord } from "../../../lib/apps";
@@ -14,6 +26,7 @@ import { queryKeys } from "../../../lib/queryKeys";
 type AppChat = components["schemas"]["AppChat"];
 
 function ChatsBody({ app }: { app: AppRecord }) {
+  const nav = useNavigate();
   const endpoint = `/api/apps/${app.id}/chats`;
   const q = useQuery({
     queryKey: queryKeys.apps.chats(app.id),
@@ -37,28 +50,17 @@ function ChatsBody({ app }: { app: AppRecord }) {
         emptyHint={`Open a chat scoped to ${app.name} to see it here.`}
         overflowHint="Archive old chats from the chat toolbar to bring this list down."
         render={(rows) => (
-          <CardGrid>
+          <Stack gap="sm">
             {rows.map((c) => (
-              <li key={c.id}>
-                <Link
-                  to={`/chat/${encodeURIComponent(c.context_key || app.slug)}?thread=${encodeURIComponent(c.id)}`}
-                  style={{ textDecoration: "none", color: "inherit" }}
-                >
-                  <Card interactive>
-                    <Row between style={{ gap: "var(--space-2)" }}>
-                      <h3
-                        className="ws-card__title"
-                        style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                      >
-                        <MessagesSquare size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
-                        {c.title || "Untitled chat"}
-                      </h3>
-                    </Row>
-                  </Card>
-                </Link>
-              </li>
+              <ChatRow
+                key={c.id}
+                thread={c as unknown as ThreadSummary}
+                onOpen={() =>
+                  nav(`/chat/${encodeURIComponent(c.context_key || app.slug)}?thread=${encodeURIComponent(c.id)}`)
+                }
+              />
             ))}
-          </CardGrid>
+          </Stack>
         )}
       />
     </section>
@@ -72,7 +74,6 @@ export default function AppChats() {
     <AppTabPage
       slug={appSlug}
       title="Chats"
-      sub="Every conversation bound to this app."
       actions={(app) => (
         <Button variant="ghost" size="sm" onClick={() => nav(newChatHref(app.slug))}>
           <Plus aria-hidden /> New chat
