@@ -50,30 +50,35 @@ def _put(scope, note_id, title, body, **kw):
 
 # --- backward compatibility: the extended regex must not break old notes ----
 
+# THE MARKER IS (author, reach, chat), NOT (author, type, reach, pinned, chat).
+# `type` and `pinned` were dropped from the note marker; these three tests kept
+# unpacking six values and raised ValueError on every run since. A note whose
+# marker still CARRIES the retired fields must keep parsing, which is what the
+# third test below is now for: they are ignored, not an error.
+
 def test_a_note_with_no_marker_still_parses():
-    # `reach` joined the tuple on 2026-08-28; it sits after `type` in the marker
-    # and after it here, and is "" when the marker carries none.
-    author, ntype, reach, pinned, chat, body = knowledge._parse_meta_line("Just prose, no marker.")
-    assert (author, ntype, reach, pinned, chat) == ("", "", "", None, "")
+    author, reach, chat, body = knowledge._parse_meta_line("Just prose, no marker.")
+    assert (author, reach, chat) == ("", "", "")
     assert body == "Just prose, no marker."
     assert knowledge.note_chat("Just prose, no marker.") == ""
 
 
 def test_an_author_only_marker_still_parses():
     raw = "<!-- author: operator -->\nThe body.\n"
-    author, ntype, reach, pinned, chat, body = knowledge._parse_meta_line(raw)
+    author, reach, chat, body = knowledge._parse_meta_line(raw)
     assert author == "operator"
-    assert ntype == ""
     assert reach == ""
-    assert pinned is None
     assert chat == ""
     assert body == "The body.\n"
 
 
-def test_an_author_type_pinned_marker_still_parses_with_no_chat():
+def test_a_marker_carrying_the_retired_fields_still_parses():
+    """Notes written before `type` and `pinned` were dropped are still on disk.
+    The retired fields are ignored; the ones that remain still come through."""
     raw = "<!-- author: operator; type: decision; pinned: true -->\nThe body.\n"
-    author, ntype, reach, pinned, chat, body = knowledge._parse_meta_line(raw)
-    assert (author, ntype, reach, pinned, chat) == ("operator", "decision", "", True, "")
+    author, reach, chat, body = knowledge._parse_meta_line(raw)
+    assert author == "operator"
+    assert chat == ""
     assert body == "The body.\n"
 
 

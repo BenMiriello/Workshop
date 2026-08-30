@@ -32,11 +32,27 @@ def test_the_real_historical_loosening_is_caught():
         pytest.skip("971f7f3 not present in this checkout")
     flagged = {(f["file"].split("/")[-1], f["metric"]): (f["was"], f["now"])
                for f in json.loads(out.stdout)["loosened"]}
-    assert flagged[("module_layout_baseline.json", "function_local_imports")] == (452, 552)
-    assert flagged[("module_layout_baseline.json", "largest_scc_size")] == (58, 110)
-    assert flagged[("module_layout_baseline.json", "upward_violations")] == (42, 48)
-    assert flagged[("module_layout_baseline.json", "big_file_count")] == (21, 22)
-    assert flagged[("no_process_globals_baseline.json", "mutable_global_count")] == (60, 63)
+    # WAS is history and NOW is today, so only WAS may be asserted exactly.
+    #
+    # This pinned both, and `now` is the CURRENT baseline value: it moves every
+    # time anyone legitimately re-pins a metric, so the test failed on ordinary
+    # work rather than on the guard breaking. `function_local_imports` had
+    # reached 593 against the 552 written here and the file had been red for
+    # long enough that nobody knew which. What the test is actually about is
+    # that the guard flags these five metrics as loosened at that commit, and
+    # that the pre-commit value it reports is the real one.
+    was_at_971f7f3 = {
+        ("module_layout_baseline.json", "function_local_imports"): 452,
+        ("module_layout_baseline.json", "largest_scc_size"): 58,
+        ("module_layout_baseline.json", "upward_violations"): 42,
+        ("module_layout_baseline.json", "big_file_count"): 21,
+        ("no_process_globals_baseline.json", "mutable_global_count"): 60,
+    }
+    for key, was in was_at_971f7f3.items():
+        assert key in flagged, f"{key} was not flagged as loosened"
+        got_was, got_now = flagged[key]
+        assert got_was == was, f"{key} pre-commit value moved: {got_was} != {was}"
+        assert got_now > was, f"{key} is not a loosening: {got_now} <= {was}"
 
 
 def test_a_metric_that_went_DOWN_is_not_flagged():

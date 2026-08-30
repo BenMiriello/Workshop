@@ -28,6 +28,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from routes import tasks_all  # noqa: E402
 from services import task_decision, tasks  # noqa: E402
 
+# `apply()` LIVES IN `tasks`, NOT `task_decision`. It moved there on 2026-08-22
+# (`41119015`, "break SCC cycle by moving apply() into tasks.py") and these
+# tests were not moved with it, so all eight of them raised AttributeError and
+# stayed red for a week. `task_decision` still owns the VERBS and the status
+# mapping, which is what it is imported for here.
+
 
 @pytest.fixture
 def scope_root(tmp_path, monkeypatch):
@@ -66,7 +72,7 @@ def _blocked_task(root):
 
 def test_accepting_finished_work_marks_it_done(scope_root):
     t = _finished_task(scope_root)
-    out = task_decision.apply(scope_root, t["id"], task_decision.ACCEPT)
+    out = tasks.apply_decision(scope_root, t["id"], task_decision.ACCEPT)
     assert out["status"] == "done"
 
 
@@ -74,7 +80,7 @@ def test_accepting_writes_no_clarification_into_the_body(scope_root):
     """An acceptance is a fact about the past. The body is read by the NEXT
     attempt, so an answer with no question in it is pure noise there."""
     t = _finished_task(scope_root)
-    task_decision.apply(scope_root, t["id"], task_decision.ACCEPT, note="Approve")
+    tasks.apply_decision(scope_root, t["id"], task_decision.ACCEPT, note="Approve")
     body = tasks.get_task(scope_root, t["id"])["body"]
     assert "Clarifications" not in body
     assert "Approve" not in body
@@ -82,14 +88,14 @@ def test_accepting_writes_no_clarification_into_the_body(scope_root):
 
 def test_accepting_records_who_decided(scope_root):
     t = _finished_task(scope_root)
-    task_decision.apply(scope_root, t["id"], task_decision.ACCEPT)
+    tasks.apply_decision(scope_root, t["id"], task_decision.ACCEPT)
     refs = [e.get("ref") for e in tasks.get_task(scope_root, t["id"])["evidence"]]
     assert any("accepted by the operator" in str(r) for r in refs)
 
 
 def test_sending_back_returns_it_to_the_queue_with_the_note_in_the_body(scope_root):
     t = _finished_task(scope_root)
-    out = task_decision.apply(scope_root, t["id"], task_decision.SEND_BACK,
+    out = tasks.apply_decision(scope_root, t["id"], task_decision.SEND_BACK,
                               note="the test does not fail when the shape changes")
     assert out["status"] == "todo"
     assert "the test does not fail when the shape changes" in out["body"]
@@ -102,7 +108,7 @@ def test_sending_back_does_not_refund_the_attempt(scope_root):
     t = _finished_task(scope_root)
     tasks.update(scope_root, t["id"], bump_attempt=True)
     before = tasks.get_task(scope_root, t["id"])["attempts"]
-    task_decision.apply(scope_root, t["id"], task_decision.SEND_BACK,
+    tasks.apply_decision(scope_root, t["id"], task_decision.SEND_BACK,
                         note="try again", restore_attempt=True)
     assert tasks.get_task(scope_root, t["id"])["attempts"] == before
 
@@ -111,7 +117,7 @@ def test_answering_a_stuck_ticket_may_refund_the_attempt(scope_root):
     t = _blocked_task(scope_root)
     tasks.update(scope_root, t["id"], bump_attempt=True)
     before = tasks.get_task(scope_root, t["id"])["attempts"]
-    out = task_decision.apply(scope_root, t["id"], task_decision.ANSWER,
+    out = tasks.apply_decision(scope_root, t["id"], task_decision.ANSWER,
                               note="the binding record", restore_attempt=True)
     assert out["status"] == "todo"
     assert tasks.get_task(scope_root, t["id"])["attempts"] == before - 1
@@ -119,16 +125,16 @@ def test_answering_a_stuck_ticket_may_refund_the_attempt(scope_root):
 
 def test_accept_refuses_a_ticket_that_is_not_finished(scope_root):
     t = _blocked_task(scope_root)
-    with pytest.raises(task_decision.DecisionRefused):
-        task_decision.apply(scope_root, t["id"], task_decision.ACCEPT)
+    with pytest.raises(tasks.DecisionRefused):
+        tasks.apply_decision(scope_root, t["id"], task_decision.ACCEPT)
 
 
 def test_accepting_an_already_done_ticket_is_a_no_op_not_an_error(scope_root):
     """A stale surface must not get stuck: the operator's intent is already
     realized, so saying so beats refusing them."""
     t = _finished_task(scope_root)
-    task_decision.apply(scope_root, t["id"], task_decision.ACCEPT)
-    again = task_decision.apply(scope_root, t["id"], task_decision.ACCEPT)
+    tasks.apply_decision(scope_root, t["id"], task_decision.ACCEPT)
+    again = tasks.apply_decision(scope_root, t["id"], task_decision.ACCEPT)
     assert again["status"] == "done"
 
 
