@@ -936,6 +936,46 @@ def launcher_cards() -> list[dict[str, Any]]:
             "agent_button": ui.get("agent_button", True) is not False,
             **spec.card,
         })
+
+    # EVERY APP THE PLATFORM KNOWS ABOUT, not just the ones with a built-in
+    # catalog spec. An app row with no spec is an app all the same: it has
+    # chats, memory and tickets served by the generic per-app tabs, and leaving
+    # it off the launcher made it unreachable from anywhere in the UI while the
+    # database, the API and every collection endpoint agreed it existed.
+    #
+    # That is what "an app declares what it is and the platform reads the
+    # declaration" means here: the catalog is one SOURCE of apps, not the
+    # definition of which apps exist. Nothing below names an app; every field
+    # comes off the row.
+    #
+    # `list_apps` already hides a dev_only row when dev mode is off, so a
+    # production launcher does not need a second rule.
+    try:
+        from services import apps as apps_service
+
+        # An app whose spec declares `card=None` is HEADLESS BY DECLARATION and
+        # must stay off the launcher; it is already skipped by the loop above,
+        # and adding it back from its row would override the thing it declared.
+        # Only a row with no spec at all is new information here.
+        specced = {s.id for s in installed_specs()}
+        seen = {c.get("id") for c in cards} | specced
+        for row in apps_service.list_apps(archived=False):
+            slug = row.get("slug")
+            if not slug or slug in seen:
+                continue
+            cards.append({
+                "id": slug,
+                "agent_button": False,
+                "title": row.get("name") or slug,
+                "tagline": "",
+                "icon": row.get("icon"),
+                # The generic per-app tabs are the only surface an app without a
+                # spec has, and chats is the one every app has something in.
+                "route": f"/apps/{slug}/chats",
+            })
+    except Exception:  # pragma: no cover - the launcher must not die on this
+        log.warning("could not read app rows for the launcher", exc_info=True)
+
     return cards
 
 

@@ -64,11 +64,23 @@ def _display_name(slug: str, project_title: str | None) -> str:
     return slug.replace("-", " ").replace("_", " ").title()
 
 
-def _icon(slug: str) -> str | None:
+def _icon(slug: str, project_icon: str | None = None) -> str | None:
+    """The catalog card's icon if this app ships one, else the icon the linked
+    project DECLARES for itself.
+
+    The second branch is the whole point. `_icon` used to read the built-in
+    catalog and nothing else, so an app that does not ship UI in this bundle was
+    iconless BY CONSTRUCTION: no declaration could ever reach it, and the
+    frontend fell back to a two-letter monogram among a row of glyphs. That is
+    the platform refusing to read a declaration, which is the same failure as
+    the platform hardcoding one.
+
+    Still names no app. Both branches read a value FROM something."""
     spec = app_registry.BUILTIN_APPS.get(slug)
-    if spec is not None and spec.card:
-        return spec.card.get("icon")
-    return None
+    if spec is not None and spec.card and spec.card.get("icon"):
+        return str(spec.card["icon"])
+    icon = (project_icon or "").strip()
+    return icon or None
 
 
 def plan() -> dict:
@@ -96,8 +108,11 @@ def _backfill_apps(s) -> dict[str, str]:
     for slug in app_links.all_app_slugs():
         project_slug = app_links.linked_project_slug(slug)
         project_title = None
+        project_icon = None
         if project_slug:
-            project_title = (roster.projects.get(project_slug) or {}).get("title")
+            entry = roster.projects.get(project_slug) or {}
+            project_title = entry.get("title")
+            project_icon = entry.get("icon")
         # `dev_only` from the project's own `self: true` declaration. The
         # installation's own source gets a row like any other app, and the
         # catalog filter hides it on a production install; it does NOT get
@@ -110,7 +125,7 @@ def _backfill_apps(s) -> dict[str, str]:
         # declaration (CLAUDE.md: an app declares what it is).
         row = app_repo.upsert_app(
             s, org_id, slug=slug, name=_display_name(slug, project_title),
-            icon=_icon(slug), project_slug=project_slug,
+            icon=_icon(slug, project_icon), project_slug=project_slug,
             dev_only=app_links.is_self_slug(slug))
         ids[slug] = row["id"]
 
