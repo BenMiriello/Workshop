@@ -1144,3 +1144,97 @@ describe("backend-to-renderer contract: wire fields the renderer reads", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE OPERATOR'S MESSAGES HOLD STILL FOR THE WHOLE TURN.
+// ---------------------------------------------------------------------------
+//
+// Every rule above pins ONE state. This pins the SEQUENCE of them, because what
+// the operator reports is never a wrong frame, it is a frame that changes: "and
+// then something else happens, and the two messages flip order" (2026-08-19).
+// The measured version, on the built origin, 2026-09-01: three messages typed
+// into a turn that had emitted nothing sat under the working indicator for 27
+// seconds, and the indicator relocated below all three the instant the turn's
+// first segment arrived. The indicator moving is the rule (it is how "the turn
+// has reached you" is said, operator 2026-08-18: "should just be working above
+// still until it HAS read"). The MESSAGES moving would be the bug, and nothing
+// in this file said they may not.
+//
+// So: drive one live turn from start to commit and assert, at every single step,
+// that the operator's own messages are in the same order, with the same keys,
+// and that the committed transcript ends up saying exactly what the last live
+// frame said. A remount is what makes a bubble flash and jump, so the keys are
+// part of the invariant, not a detail.
+describe("the operator's messages never move while a turn runs", () => {
+  const userShape = (blocks: TranscriptBlock[]) =>
+    blocks.filter((b) => b.kind === "message" && b.msg.role === "user")
+      .map((b) => `${(b as { key: string }).key}:${(b as { msg: { content: string } }).msg.content}`);
+
+  /** Every state the turn passes through, in order, each labelled by what had
+   *  just happened. The labels are what a failure prints. */
+  function walk(): { at: string; state: ThreadState }[] {
+    let s = stateOf([
+      user("go"),
+      user("one", { during_turn: "r1", cut_id: "c1" }),
+      user("two", { during_turn: "r1", cut_id: "c2" }),
+      user("three", { during_turn: "r1", cut_id: "c3" }),
+    ]);
+    const steps: { at: string; state: ThreadState }[] = [];
+    const step = (at: string, next: ThreadState) => { s = next; steps.push({ at, state: s }); };
+    step("turn started", threadReducer(s, { type: "turnStarted", turnId: "r1" }));
+    for (const ref of ["c1", "c2", "c3"]) {
+      step(`cut ${ref} (nothing streamed yet)`,
+        threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "cut", ref } }));
+    }
+    step("first segment arrives",
+      threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "ok" } }));
+    step("a tool call after it",
+      threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "tool", name: "Read" } }));
+    step("more text",
+      threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: " done" } }));
+    return steps;
+  }
+
+  it("keeps them in order, with the same keys, at every step of the turn", () => {
+    const steps = walk();
+    // The first frame is the baseline, so the assertion is about MOVEMENT and
+    // is independent of whatever ids this file's shared counter handed out.
+    const baseline = userShape(selectTranscript(steps[0].state));
+    expect(baseline.map((k) => k.split(":")[1])).toEqual(["go", "one", "two", "three"]);
+    for (const { at, state } of steps) {
+      expect(userShape(selectTranscript(state)), at).toEqual(baseline);
+    }
+  });
+
+  it("moves only the working indicator when the turn's first segment lands", () => {
+    const steps = walk();
+    const before = shape(selectTranscript(steps[3].state));   // three cuts, no output
+    const after = shape(selectTranscript(steps[4].state));    // first segment
+    expect(before).toEqual(["user:go", "live:*", "user:one", "user:two", "user:three"]);
+    expect(after).toEqual(["user:go", "user:one", "user:two", "user:three", "live:ok*"]);
+  });
+
+  it("commits to exactly what the last live frame said, minus the indicator", () => {
+    const steps = walk();
+    const live = shape(selectTranscript(steps[steps.length - 1].state));
+    expect(live).toEqual([
+      "user:go", "user:one", "user:two", "user:three", "live:ok[tool] done*",
+    ]);
+    // The same turn, as the server commits it: cut_head names the three, and the
+    // whole reply sits below them. Nothing the operator typed changes place.
+    let s = stateOf([
+      user("go"),
+      user("one", { during_turn: "r1", cut_id: "c1" }),
+      user("two", { during_turn: "r1", cut_id: "c2" }),
+      user("three", { during_turn: "r1", cut_id: "c3" }),
+      reply("ok done", {
+        turn_id: "r1", cut_head: ["c1", "c2", "c3"],
+        segments: [text("ok"), tool("Read"), text(" done")],
+      }),
+    ]);
+    s = threadReducer(s, { type: "turnCommitted", turnId: "r1" });
+    expect(shape(selectTranscript(s))).toEqual([
+      "user:go", "user:one", "user:two", "user:three", "assistant:ok[tool] done",
+    ]);
+  });
+});
