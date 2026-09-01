@@ -167,8 +167,8 @@ def test_the_abandoned_line_is_still_reachable(chat):
         branches = chat_repo.list_branches(s, t)
         assert len(branches) == 2
         by_name = {b["name"]: b for b in branches}
-        assert set(by_name) == {"Main", "Branch 2"}
-        assert by_name["Branch 2"]["is_current"] is True
+        assert set(by_name) == {"Main", "Line 2"}
+        assert by_name["Line 2"]["is_current"] is True
 
         # The original line renders untouched from its own ref.
         old = chat_repo.transcript(s, t, branch_id=by_name["Main"]["id"])
@@ -277,7 +277,7 @@ def test_the_picker_puts_the_most_recently_active_first(chat):
         _say(s, t, "user", "on the branch")
 
         names = [b["name"] for b in chat_repo.list_branches(s, t)]
-        assert names[0] == "Branch 2"
+        assert names[0] == "Line 2"
 
 
 # --- the invariants ----------------------------------------------------------
@@ -562,7 +562,7 @@ def test_an_anchor_resolves_from_a_file_event_id(chat):
         _say(s, t, "user", "three", external_id="EVC")
 
     out = chat_branches._sync_fork(chat["org"], chat["thread"], "EVB")
-    assert out["branch"]["name"] == "Branch 2"
+    assert out["branch"]["name"] == "Line 2"
     with tenant_session(chat["org"]) as s:
         assert _texts(chat_repo_transcript(s, chat["thread"])) == ["one", "two"]
 

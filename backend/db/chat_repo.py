@@ -381,7 +381,17 @@ def branch_from(s: Session, thread_id: str | UUID, message_id: str | UUID,
         {"id": new_id, "org": org_id, "t": str(thread_id),
          "parent": cur["id"] if cur else None,
          "fork": str(anchor["id"]), "ord": ordinal,
-         "name": name or f"Branch {ordinal}"})
+         # "LINE", NOT "BRANCH". This string is displayed: it is what the
+         # chat toolbar's line picker shows, beside the pill that names the
+         # BRANCH OF THE CODE this chat writes to. Two adjacent controls both
+         # reading "Branch" is the collision
+         # `threads-branches-and-pages-2026-08-29.md` section 3 settles, and it
+         # settles it in the code branch's favour ("the interface says
+         # branch"). The table is still `chat_branch` and the route is still
+         # /branches, because that is the storage and the wire; only what a
+         # person reads changes. A name the operator typed (`name`) always
+         # wins over this default.
+         "name": name or f"Line {ordinal}"})
     s.execute(text("UPDATE chat_thread SET current_branch_id = :b WHERE id = :t"),
               {"b": new_id, "t": str(thread_id)})
     return current_branch(s, thread_id) or {}
