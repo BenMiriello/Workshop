@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { GitBranch } from "lucide-react";
+import { Split } from "lucide-react";
 import { ConfirmDialog } from "@workshop/ui";
 import { chatApi } from "../../lib/chat";
 import type { BranchMode } from "./branchable";
@@ -27,6 +27,14 @@ import type { BranchMode } from "./branchable";
 //
 // TWO SENSES, DECIDED BY WHOSE MESSAGE IT IS. See branchable.ts, which is also
 // where the rule for WHICH bubbles get this at all lives.
+//
+// AND IT IS NOT THE BRANCH GLYPH. This used to be a `<GitBranch/>`, the same
+// icon the toolbar's code-branch pill wears, on a control that has nothing to
+// do with the code. `threads-branches-and-pages-2026-08-29.md` §3 gives the
+// word and the glyph to the branch of the CODE, so the transcript's own lines
+// take a different mark here and in `BranchPicker`. The copy never said branch
+// and does not start now: it says what happens ("Go back to before this",
+// "Continue from here"), which is what the operator has to know.
 
 export default function BranchAction({
   threadId,
@@ -74,7 +82,7 @@ export default function BranchAction({
         disabled={turnActive}
         onClick={() => setConfirming(true)}
       >
-        <GitBranch size={13} strokeWidth={1.8} aria-hidden />
+        <Split size={13} strokeWidth={1.8} aria-hidden />
       </button>
 
       <ConfirmDialog

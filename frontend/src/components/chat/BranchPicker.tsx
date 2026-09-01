@@ -1,11 +1,21 @@
 import { useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { GitBranch } from "lucide-react";
+import { Split } from "lucide-react";
 import { Menu, MenuItem, MenuLabel } from "@workshop/ui";
 import { chatApi, type Branch } from "../../lib/chat";
 import { queryKeys } from "../../lib/queryKeys";
 
 // WHICH LINE OF THE CONVERSATION AM I ON, and switch to another (ADR 0020).
+//
+// IT DOES NOT SAY "BRANCH" AND DOES NOT WEAR THE BRANCH GLYPH, and that is a
+// change. `threads-branches-and-pages-2026-08-29.md` §3 spends the word branch
+// on the branch of the CODE ("the interface says branch"), and that control --
+// `BranchPill` -- sits immediately to the right of this one. Two adjacent
+// controls sharing a word and a `<GitBranch/>` while meaning different things
+// is the collision the toolbar had been mitigating from the wrong side: it used
+// to keep the bare word off the code pill instead. §3 settles which one gets
+// the word, so this one takes the other half of the fix. Here it is a LINE of
+// the conversation, throughout, with its own glyph.
 //
 // This is THREAD state, so it lives on the toolbar beside the other thread
 // state (which scope, which model, which mode) and not under a message. It used
@@ -27,8 +37,8 @@ import { queryKeys } from "../../lib/queryKeys";
 /** Rows before the list starts scrolling. The CSS cap (.chat-branch-list) is
  *  what enforces it; this only keeps the "N more" line honest about the same
  *  number. The operator asked for exactly this: a picker that stays a small
- *  target no matter how many times a conversation has been branched. */
-const VISIBLE_BRANCHES = 3;
+ *  target no matter how many times a conversation has been split. */
+const VISIBLE_LINES = 3;
 
 function subtitle(b: Branch): string {
   if (b.is_root) return b.preview || "the original line";
@@ -92,8 +102,8 @@ export default function BranchPicker({
   const cold = branches === undefined && !isError;
   // Slice in code so the menu grows to its content and never needs an inner
   // scroll zone (see .chat-branch-list, which dropped its max-height cap).
-  const rows = allRows.slice(0, VISIBLE_BRANCHES);
-  const overflow = Math.max(0, allRows.length - VISIBLE_BRANCHES);
+  const rows = allRows.slice(0, VISIBLE_LINES);
+  const overflow = Math.max(0, allRows.length - VISIBLE_LINES);
 
   return (
     <Menu
@@ -102,9 +112,10 @@ export default function BranchPicker({
         <button
           className="chat-tb__picker"
           title="Which line of this conversation you are on"
+          aria-label={`Line of this conversation: ${name || "Main"}`}
           onClick={load}
         >
-          <GitBranch size={14} strokeWidth={1.8} aria-hidden />
+          <Split size={14} strokeWidth={1.8} aria-hidden />
           <span className="chat-tb__picker-val chat-tb__picker-val--wide">{name || "Main"}</span>
         </button>
       }
@@ -126,7 +137,7 @@ export default function BranchPicker({
         ))}
         {cold && <MenuItem disabled onSelect={() => {}}>Loading</MenuItem>}
       </div>
-      {overflow > 0 && <MenuLabel>{overflow} more branches</MenuLabel>}
+      {overflow > 0 && <MenuLabel>{overflow} more lines</MenuLabel>}
     </Menu>
   );
 }

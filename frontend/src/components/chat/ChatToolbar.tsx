@@ -70,7 +70,7 @@ import { workTitle } from "./work/workRows";
 
 export default function ChatToolbar({
   variant, mode, slug, hideExpand,
-  activeId, activeThreadTitle, branchPicker, treePill,
+  activeId, activeThreadTitle, branchPicker, branchPill,
   showProviderPicker, providers, activeProvider, onChooseProvider, turnActive,
   drawer, workCount, needsYouCount, onWorkClick,
   onBack, onOpenWorkbench, onEditTitle, onOpenThread,
@@ -126,17 +126,17 @@ export default function ChatToolbar({
   onNewChat: () => void;
   /** Close this chat: it goes to the archive, from where it can be restored
    *  or deleted. Nothing here destroys a conversation. */
-  /** Which line of the conversation this is, and the way to the others (ADR
+  /** Which LINE OF THE CONVERSATION this is, and the way to the others (ADR
    *  0020). A node rather than three props: the toolbar does not need to know
-   *  what a branch is, only where the control goes. Null until the thread has
+   *  what a line is, only where the control goes. Null until the thread has
    *  more than one line, which is most threads. */
   branchPicker?: ReactNode;
-  /** WHICH WORKING TREE the next turn runs in, and the way to move it
-   *  (workspace-ownership-and-leases-2026-08-22.md section 14). A node for the
-   *  same reason `branchPicker` is: the toolbar's business is where the control
-   *  goes, not what a worktree lease is. Null for every chat with no project
-   *  tree of its own, which the pill decides for itself. */
-  treePill?: ReactNode;
+  /** Which BRANCH the next turn runs on, and the way to move it
+   *  (threads-branches-and-pages-2026-08-29.md section 3). A node for the same
+   *  reason `branchPicker` is: the toolbar's business is where the control
+   *  goes, not what a lease is. Null for every chat with no project tree of its
+   *  own, which the pill decides for itself. */
+  branchPill?: ReactNode;
   onArchive: (id: string) => void;
   onPopOut: () => void;
   onNavigate: (to: string) => void;
@@ -262,10 +262,13 @@ export default function ChatToolbar({
           conversation you are in, then which line of it. Absent entirely until
           there is a second line to be on. */}
       {branchPicker}
-      {/* Which WORKING TREE, next to which line of the conversation. Two
-          different things English calls a branch, which is why the pill says
-          "Shared tree" or a slug and never the bare word. */}
-      {treePill}
+      {/* Which BRANCH OF THE CODE, next to which line of the conversation.
+          English calls both a branch, and threads-branches-and-pages-2026-08-29
+          section 3 spends the word HERE: "the interface says branch". So this
+          pill says branch and wears the branch glyph, and its neighbour above
+          says "line" and wears a different one. The two used to be the same
+          word and the same icon, six pixels apart. */}
+      {branchPill}
       {/* Pushes the actions right on desktop; on a narrow viewport the title
           just left of it has already given up the room instead. */}
       <span className="chat-tb__spacer" />

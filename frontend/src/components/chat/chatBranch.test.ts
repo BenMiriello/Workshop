@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { showsHolder, treeLabel, treeStatus, type ChatWorktree } from "./chatTree";
+import { branchLabel, branchName, branchStatus, showsHolder, type ChatWorktree } from "./chatBranch";
 import type { DirectoryEntry } from "../../lib/holders";
 
 const THREAD = "thread-1";
@@ -44,29 +44,63 @@ function entry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
   } as DirectoryEntry;
 }
 
-describe("treeLabel", () => {
+describe("branchLabel", () => {
   it("names the trunk by its branch ref, falling back to Main", () => {
     // worktree-as-the-place-2026-08-28 §3: one name, not two. "Shared tree ·
     // main" was replaced by the branch name itself ("main"). The trunk is
     // called what its branch is called.
-    expect(treeLabel(tree({ default_ref: "master" }))).toBe("master");
-    expect(treeLabel(tree({ default_ref: "main" }))).toBe("main");
-    expect(treeLabel(tree({ default_ref: "" }))).toBe("Main");
+    expect(branchLabel(tree({ default_ref: "master" }))).toBe("master");
+    expect(branchLabel(tree({ default_ref: "main" }))).toBe("main");
+    expect(branchLabel(tree({ default_ref: "" }))).toBe("Main");
   });
 
   it("names the pin when there is one", () => {
-    expect(treeLabel(tree({ branch_slug: "fix-42", pinned: true }))).toBe("fix-42");
+    expect(branchLabel(tree({ branch_slug: "fix-42", pinned: true }))).toBe("fix-42");
   });
 
   it("shortens a machine hex slug, because a toolbar has no room for 32 characters", () => {
-    expect(treeLabel(tree({ branch_slug: "t-537437c1d3de4feb98801c3f1416c383" })))
+    expect(branchLabel(tree({ branch_slug: "t-537437c1d3de4feb98801c3f1416c383" })))
       .toBe("t-537437c1…");
-    expect(treeLabel(tree({ branch_slug: "bc81b563abe14333be4e8626dc8182bd" })))
+    expect(branchLabel(tree({ branch_slug: "bc81b563abe14333be4e8626dc8182bd" })))
       .toBe("bc81b563…");
   });
 
   it("says nothing it does not know while cold", () => {
-    expect(treeLabel(null)).toBe("Tree");
+    expect(branchLabel(null)).toBe("Branch");
+  });
+
+  it("prefers the declared name over the slug", () => {
+    // threads-branches-and-pages-2026-08-29 §3: a branch is named after its
+    // work. `display_name` is that name; the slug is how git spells it.
+    expect(branchLabel(tree({ branch_slug: "t-9f1c", display_name: "chat toolbar fixes" })))
+      .toBe("chat toolbar fixes");
+  });
+});
+
+describe("branchName", () => {
+  // THE MOVE LIST AND THE PILL ANSWER THE SAME QUESTION. The list used to
+  // render `branch_slug` raw, which drew three 32-character hex rows inside the
+  // control whose whole point is that a branch has a readable name. Measured on
+  // this install 2026-09-01: six branches on the wire, `display_name` null on
+  // all six, three of them bare hex.
+  it("shortens a machine id the same way the pill does", () => {
+    expect(branchName({ branch_slug: "bc81b563abe14333be4e8626dc8182bd" })).toBe("bc81b563…");
+    expect(branchName({ branch_slug: "t-537437c1d3de4feb98801c3f1416c383" })).toBe("t-537437c1…");
+  });
+
+  it("leaves a name that is a name alone", () => {
+    expect(branchName({ branch_slug: "give-the-operator-real-search" }))
+      .toBe("give-the-operator-real-search");
+  });
+
+  it("takes the declared name when there is one", () => {
+    expect(branchName({ branch_slug: "t-537437c1d3de4feb98801c3f1416c383", display_name: "search" }))
+      .toBe("search");
+  });
+
+  it("has nothing to say about nothing", () => {
+    expect(branchName(null)).toBe("");
+    expect(branchName({ branch_slug: null })).toBe("");
   });
 });
 
@@ -74,30 +108,30 @@ describe("showsHolder", () => {
   // A CONSTANT IS NOT A SIGNAL. Every idle chat is `stopped` here, so a dot on
   // that state would sit on every toolbar in the app saying nothing.
   it("says nothing on a tree nobody is in", () => {
-    expect(showsHolder(treeStatus(tree(), null, THREAD))).toBe(false);
-    expect(showsHolder(treeStatus(tree({ branch_slug: "b", pinned: true }), null, THREAD)))
+    expect(showsHolder(branchStatus(tree(), null, THREAD))).toBe(false);
+    expect(showsHolder(branchStatus(tree({ branch_slug: "b", pinned: true }), null, THREAD)))
       .toBe(false);
   });
 
   it("shows the dot exactly when somebody is in the tree", () => {
-    const yours = treeStatus(
+    const yours = branchStatus(
       tree({ branch_slug: "b", pinned: true, held: true, lease: lease(THREAD) }),
       null, THREAD);
-    const theirs = treeStatus(
+    const theirs = branchStatus(
       tree({ branch_slug: "b", pinned: true, blocked_by: lease("other") }), null, THREAD);
     expect(showsHolder(yours)).toBe(true);
     expect(showsHolder(theirs)).toBe(true);
   });
 });
 
-describe("treeStatus", () => {
+describe("branchStatus", () => {
   it("the shared tree is neutral: nothing is held there by design", () => {
-    const s = treeStatus(tree(), null, THREAD);
+    const s = branchStatus(tree(), null, THREAD);
     expect(s).toEqual({ kind: "stopped", label: "Shared" });
   });
 
   it("a pinned tree this chat holds is yours", () => {
-    const s = treeStatus(
+    const s = branchStatus(
       tree({ branch_slug: "fix-42", pinned: true, held: true, lease: lease(THREAD) }),
       null, THREAD);
     expect(s).toEqual({ kind: "ok", label: "Yours" });
@@ -106,12 +140,12 @@ describe("treeStatus", () => {
   it("a pinned tree nobody holds is free, which is the state between turns", () => {
     // THIS IS THE COMMON CASE AND IT IS NOT A PROBLEM. A chat holds its tree for
     // the length of a TURN, so an idle pinned chat holds nothing.
-    const s = treeStatus(tree({ branch_slug: "fix-42", pinned: true }), null, THREAD);
+    const s = branchStatus(tree({ branch_slug: "fix-42", pinned: true }), null, THREAD);
     expect(s).toEqual({ kind: "stopped", label: "Free" });
   });
 
   it("somebody else's tree is running, even with no directory entry to join", () => {
-    const s = treeStatus(
+    const s = branchStatus(
       tree({ branch_slug: "fix-42", pinned: true, blocked_by: lease("other-thread") }),
       null, THREAD);
     expect(s).toEqual({ kind: "running", label: "Held" });
@@ -121,7 +155,7 @@ describe("treeStatus", () => {
     // Idle is a TIMESTAMP rendered as a warn, never a third state word
     // (workspace-ownership-and-leases section 6).
     const idle = entry({ lease: lease("other-thread", { idle_since: "2026-08-28T00:00:00Z" }) });
-    const s = treeStatus(
+    const s = branchStatus(
       tree({ branch_slug: "fix-42", pinned: true, blocked_by: lease("other-thread") }),
       idle, THREAD);
     expect(s).toEqual({ kind: "warn", label: "Held" });
@@ -136,7 +170,7 @@ describe("treeStatus", () => {
       tree({ branch_slug: "b", pinned: true }),
       tree({ branch_slug: "b", pinned: true, held: true, lease: lease(THREAD) }),
       tree({ branch_slug: "b", pinned: true, blocked_by: lease("x") }),
-    ].map((t) => treeStatus(t, entry(), THREAD).kind);
+    ].map((t) => branchStatus(t, entry(), THREAD).kind);
     expect(kinds).not.toContain("danger");
   });
 });

@@ -309,13 +309,13 @@ input[type="range"].grad::-moz-range-thumb {
 @media (max-width: 640px) {
   .chat-tb__picker-val--wide { display: none; }
 }
-/* THE WORKING-TREE PILL NAMES THE EXCEPTION, NOT THE DEFAULT, which is why it
+/* THE BRANCH PILL NAMES THE EXCEPTION, NOT THE DEFAULT, which is why it
    does not simply take `--wide` and why it does not simply ignore it either.
    Measured at 390px: the toolbar has room for about 46px of chat title once
    this pill has its word, and the chat's name rendered "Re…". So one of the two
    has to give, and which one depends on what the pill is saying.
 
-   A chat on the SHARED tree is the ordinary state of almost every conversation
+   A chat on the TRUNK is the ordinary state of almost every conversation
    (leases doc section 10.2: "most sessions never leave this state"). Spending
    the chat's name on a word that is the same on every toolbar is the constant
    this system's own colour rule forbids, so on a phone that case is the icon
@@ -325,29 +325,30 @@ input[type="range"].grad::-moz-range-thumb {
    writes, and it is exactly what the operator asked to be able to see at a
    glance. That one keeps its label at every width and takes the room from the
    title, capped so a hand-named slug cannot take all of it. */
-.chat-tb__tree .chat-tb__picker-val { max-width: 22ch; }
+.chat-tb__branch .chat-tb__picker-val { max-width: 22ch; }
 @media (max-width: 640px) {
   /* THE WORD STAYS AND THE GLYPH GOES, which is the opposite of every other
      picker on this bar and is the right way round here. Measured at 390: the
      icon costs 18px and the word costs 45, and of the two only the word
      actually answers the question. A branch glyph reads as "something about
-     branches" beside a conversation picker that is also about branches, so
-     dropping the word and keeping the glyph left the control saying nothing at
-     the width it is read at. A PINNED chat keeps both: there the glyph is what
-     distinguishes it from the shared state at a glance. */
-  .chat-tb__tree--shared > svg { display: none; }
-  .chat-tb__tree .chat-tb__picker-val { max-width: 11ch; }
+     branches", not WHICH branch, so dropping the word and keeping the glyph
+     left the control saying nothing at the width it is read at. A chat on a
+     branch keeps both: there the glyph is what distinguishes it from the trunk
+     at a glance. (The conversation-line picker beside it no longer wears a
+     branch glyph at all -- see ChatToolbar and BranchPicker.) */
+  .chat-tb__branch--shared > svg { display: none; }
+  .chat-tb__branch .chat-tb__picker-val { max-width: 11ch; }
 }
 /* The dot is a mark, not a chip: no label beside it (the pill's own word is the
    label) and no shrinking, so it is the last thing on the bar to give up room. */
-.chat-tb__tree .ws-dot { flex: 0 0 auto; }
-/* PILL SHAPE: the tree picker reads as a pill, not a plain label trigger. Fully
+.chat-tb__branch .ws-dot { flex: 0 0 auto; }
+/* PILL SHAPE: the branch pill reads as a pill, not a plain label trigger. Fully
    rounded ends, 1px border, inset fill one shade darker than the bar. Mono 12px
    so it reads as a code-like ref rather than body text. Translates the mockup
    measurements (h:22-26px, p:0 7-8px, border-radius:999px, inset bg, muted
    border) into kit tokens — never inline hex. Height stays 2rem to match every
    other button on the bar. */
-.chat-tb__tree {
+.chat-tb__branch {
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--bg-inset);
@@ -356,12 +357,12 @@ input[type="range"].grad::-moz-range-thumb {
   color: var(--muted);
   padding: 0 var(--space-2);
 }
-.chat-tb__tree:hover {
+.chat-tb__branch:hover {
   background: var(--card-hover);
   border-color: var(--border-strong);
   color: var(--fg);
 }
-.chat-tb__tree[aria-expanded="true"] {
+.chat-tb__branch[aria-expanded="true"] {
   background: var(--card-hover);
   border-color: var(--border-strong);
 }
