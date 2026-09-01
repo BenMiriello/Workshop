@@ -146,6 +146,29 @@ def _clean(value, limit: int = 400) -> str:
     return " ".join(_EM_DASH.sub(", ", str(value or "")).split())[:limit]
 
 
+def parse_failure(raw: str) -> str:
+    """Why `_parse` gave up, in a sentence the pass can record and a person can act on.
+
+    `_parse` returns an empty dict from four different places and the caller used
+    to collapse all four into "the scope review did not return a usable answer".
+    That sentence cannot be acted on: it does not say whether the model returned
+    nothing, returned prose, or returned JSON that would not decode, and those
+    have three different fixes. It hid a live defect for the whole time the queue
+    pass existed -- the pass ran, recorded errors, left the tickets unmarked, and
+    reported `decided 3` as though the other four had simply not been due.
+
+    The raw reply head goes in the message because it is the one thing that
+    identifies which of the three happened at a glance.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return "the scope review returned no text at all"
+    head = " ".join(text.split())[:200]
+    if "{" not in text:
+        return f"the scope review answered in prose, not JSON: {head}"
+    return f"the scope review returned JSON that would not decode: {head}"
+
+
 def _parse(raw: str) -> dict:
     """Pull the review out of a model reply. Tolerant of a fence or stray prose
     around the JSON, which is a formatting slip and not a reason to lose the
@@ -207,11 +230,30 @@ async def review(task: dict) -> dict:
     import asyncio
 
     prompt = PROMPT.replace("{ticket}", _ticket_text(task))
+    # SINGLE-SHOT TEXT, NO TOOLS, and this is the fix for a measured failure
+    # rather than a precaution. The call used to be a bare `call_cloud(prompt,
+    # model=...)`, which is `llm_router`'s third mode: agentic, full tool and MCP
+    # inheritance, no turn cap. Measured 2026-09-01 on the real development
+    # queue, that mode answered in prose about what it had just done instead of
+    # in JSON, so `_parse` returned nothing and the pass recorded an error:
+    # 4 of the first 7 tickets, and 3 of 4 on a second scope. A direct probe on
+    # two tickets, both modes, same prompt: agentic took 85s and 115s and parsed
+    # 0 of 2; this call took 4.5s and 7.0s and parsed 2 of 2. The agentic reply
+    # also described making tool calls, in a module whose own docstring says it
+    # writes nothing and reads no store -- so the flags below are what make that
+    # sentence true, not the sentence.
+    #
+    # `max_turns=1` returns exit 1 with `stop_reason=max_turns` once the model
+    # has spoken; `call_cloud` recovers the text and that is the answer. The note
+    # pass one module over has passed exactly these three flags since it was
+    # written (`triager._decide_llm`), which is why it is the pass that works.
     res = await asyncio.to_thread(
-        llm_router.call_cloud, prompt, model=llm_router.TIER_SONNET_5)
-    out = _parse(res.get("text") or "")
+        llm_router.call_cloud, prompt, model=llm_router.TIER_SONNET_5,
+        tools_disabled=True, max_turns=1, timeout_s=180)
+    raw = res.get("text") or ""
+    out = _parse(raw)
     if not out:
-        raise ValueError("the scope review did not return a usable answer")
+        raise ValueError(parse_failure(raw))
     # Depth is capped at two levels, so a ticket that is already a sub-ticket
     # cannot be split again. Said here rather than swallowed, so the operator
     # learns why the button is not offered.

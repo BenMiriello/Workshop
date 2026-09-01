@@ -943,6 +943,14 @@ def run_queue_triage(scope_key: str, *, dry_run: bool = True,
         summary["decisions"].append(rec)
         note(rec)
 
+    # A FAILED REVIEW IS NOT A CLEAN PASS, and the summary used to let it read as
+    # one. `decided` counts what got a verdict and `errors` collected the rest,
+    # but nothing stated the second number, so a pass that lost 4 of 7 tickets to
+    # a broken model call printed `"decided": 3` and looked like a short queue.
+    # That is how the agentic-mode defect in `ticket_scope_review.review`
+    # survived unnoticed for the whole life of this pass. Stated as its own
+    # count, beside the one it is easily mistaken for.
+    summary["failed"] = len(summary["errors"])
     return summary
 
 

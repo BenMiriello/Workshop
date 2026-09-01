@@ -25,6 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services import tasks, ticket_scope_review as sr  # noqa: E402
 
+OK_REPLY = ('{"verdict":"ok","reason":"One deliverable.",'
+            '"subtickets":[],"blockers":[],"stages":[]}')
+
 SPLIT_REPLY = (
     '{"verdict":"split","reason":"This names three independent deliverables.",'
     '"subtickets":['
@@ -138,3 +141,52 @@ def test_the_review_writes_nothing(monkeypatch):
     src = Path(sr.__file__).read_text()
     for forbidden in ("tasks.add", "tasks.update", "write_text", "open("):
         assert forbidden not in src, forbidden
+
+
+# ---- the model call is single-shot text, and a failure says which failure ----
+#
+# Both of these pin a measured defect rather than a hypothetical. `review` used
+# to call `llm_router.call_cloud` with no flags at all, which is its AGENTIC
+# mode: full tool and MCP inheritance, no turn cap. On the real development
+# queue on 2026-09-01 that mode answered in prose about the tool calls it had
+# just made, `_parse` returned nothing, and the pass recorded 4 errors in its
+# first 7 tickets. A direct probe over the same two tickets in both modes:
+# agentic 85s and 115s, 0 of 2 parsed; single-shot 4.5s and 7.0s, 2 of 2 parsed.
+# The prose reply also described making tool calls, in a module whose docstring
+# says it writes nothing.
+
+
+def test_the_review_asks_for_text_only_and_caps_the_turn(monkeypatch):
+    seen: dict = {}
+
+    def _spy(prompt, **kw):
+        seen.update(kw)
+        return {"text": OK_REPLY}
+
+    from services import llm_router
+    monkeypatch.setattr(llm_router, "call_cloud", _spy)
+    asyncio.run(sr.review({"title": "A ticket"}))
+    assert seen.get("tools_disabled") is True
+    assert seen.get("max_turns") == 1
+    assert seen.get("timeout_s")
+
+
+def test_a_failure_names_its_stage_and_shows_what_came_back(monkeypatch):
+    # Three different failures, three different sentences. They used to be one.
+    _stub(monkeypatch, "")
+    with pytest.raises(ValueError, match="no text at all"):
+        asyncio.run(sr.review({"title": "A ticket"}))
+
+    _stub(monkeypatch, "This turn made no file changes, I only ran grep.")
+    with pytest.raises(ValueError, match="answered in prose"):
+        asyncio.run(sr.review({"title": "A ticket"}))
+
+    _stub(monkeypatch, '{"verdict": "ok", "reason": ')
+    with pytest.raises(ValueError, match="would not decode"):
+        asyncio.run(sr.review({"title": "A ticket"}))
+
+
+def test_a_failure_carries_the_reply_head_so_it_can_be_diagnosed(monkeypatch):
+    _stub(monkeypatch, "I ran read-only grep and sed commands to ground this.")
+    with pytest.raises(ValueError, match="read-only grep"):
+        asyncio.run(sr.review({"title": "A ticket"}))
