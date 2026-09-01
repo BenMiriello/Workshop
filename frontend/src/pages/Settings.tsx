@@ -32,6 +32,7 @@ import {
 import AutonomyControls from "../components/AutonomyControls";
 import InstalledApps from "./settings/InstalledApps";
 import Trackers from "./settings/Trackers";
+import CustomInstructions from "./settings/CustomInstructions";
 
 import type { PermissionState } from "@shared/native-bridge";
 
@@ -91,7 +92,17 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
         </>
       )}
       {tab === "appearance" && <AppearanceSection />}
-      {tab === "chat" && <ChatSection />}
+      {/* INSTRUCTIONS FOLD IN HERE (threads-branches-and-pages-2026-08-29
+          section 6, "Settings: 12 rows to 9"). Custom instructions are how the
+          assistant behaves in a chat, which is the question this row already
+          answers; they had a row of their own because they arrived on their
+          own. /settings/instructions still resolves, as a redirect. */}
+      {tab === "chat" && (
+        <>
+          <ChatSection />
+          <CustomInstructions embedded />
+        </>
+      )}
       {tab === "memory" && <MemorySection />}
       {/* Panels contributed by installed apps. Settings does not know which
           apps exist or what they need configured.

@@ -20,7 +20,22 @@ async function j<T>(r: Response): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-export default function CustomInstructions() {
+/**
+ * `embedded` drops this component's own PageHeader so it can render as a
+ * SECTION of Settings > Chat rather than as a row of its own.
+ *
+ * Section 6 of threads-branches-and-pages-2026-08-29.md collapses Settings to
+ * nine rows and its list omits Instructions without saying where it goes. It
+ * goes here: custom instructions are how the assistant behaves in a chat, which
+ * is the question the Chat row already answers, and it had a row of its own
+ * because it arrived on its own. Same move, same reasoning, as Trackers folding
+ * into Apps and MCP folding into Tools.
+ *
+ * `/settings/instructions` still resolves, as a redirect. It is named in this
+ * repo's own agent rules as the home of the L3 prompt layer, so the path stays
+ * true even though the row is gone.
+ */
+export default function CustomInstructions({ embedded = false }: { embedded?: boolean } = {}) {
   const [providers, setProviders] = useState<Provider[] | null>(null);
   const [existing, setExisting] = useState<Record<string, string>>({});
   const [scope, setScope] = useState<string>("general");
@@ -113,7 +128,7 @@ export default function CustomInstructions() {
   if (loadErr && !providers) {
     return (
       <div>
-        <PageHeader title="Custom instructions" />
+        {!embedded && <PageHeader title="Custom instructions" />}
         <StateBlock
           variant="error"
           title="Couldn't load"
@@ -126,7 +141,7 @@ export default function CustomInstructions() {
   if (!providers) {
     return (
       <div>
-        <PageHeader title="Custom instructions" />
+        {!embedded && <PageHeader title="Custom instructions" />}
         <Card>
           <Skeleton width="40%" />
           <Skeleton width="70%" style={{ marginTop: "var(--space-3)" }} />
@@ -140,10 +155,18 @@ export default function CustomInstructions() {
 
   return (
     <div>
-      <PageHeader
-        title="Custom instructions"
-        sub="Your own instructions for a scope's chats. They sit below the platform's own instructions and never override them."
-      />
+      {embedded ? (
+        <div style={{ marginTop: "var(--space-6)" }}>
+          <SectionLabel icon={<FileText size={14} strokeWidth={1.8} aria-hidden />}>
+            Custom instructions
+          </SectionLabel>
+        </div>
+      ) : (
+        <PageHeader
+          title="Custom instructions"
+          sub="Your own instructions for a scope's chats. They sit below the platform's own instructions and never override them."
+        />
+      )}
 
       <Card flat style={{ marginBottom: "var(--space-6)" }}>
         <Row style={{ alignItems: "flex-start", gap: "var(--space-3)" }}>

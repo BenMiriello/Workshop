@@ -6,7 +6,6 @@ import Chats, { ChatsArchived } from "./pages/Chats";
 import Apps from "./pages/Apps";
 import Home from "./pages/Home";
 import Tickets from "./pages/Tickets";
-import Deploys from "./pages/Deploys";
 import TicketDetail from "./pages/TicketDetail";
 import FocusedChat from "./pages/FocusedChat";
 import { BreadcrumbProvider } from "@workshop/ui";
@@ -42,17 +41,21 @@ const Grants = lazyPage(() => import("./pages/settings/Grants"));
 // imported by the page it is a section of. Their old routes redirect.
 const ModelProviders = lazyPage(() => import("./pages/settings/ModelProviders"));
 const ToolsSettings = lazyPage(() => import("./pages/settings/Tools"));
-const CustomInstructions = lazyPage(() => import("./pages/settings/CustomInstructions"));
+// CustomInstructions is a SECTION of Settings > Chat now, imported by the page
+// it is a section of. Its old route redirects there.
 const Marketplace = lazyPage(() => import("./pages/Marketplace"));
 const DeployDetail = lazyPage(() => import("./pages/DeployDetail"));
 const StoreDetail = lazyPage(() => import("./pages/StoreDetail"));
 const Stores = lazyPage(() => import("./pages/Stores"));
 const MemoryPage = lazyPage(() => import("./pages/Memory"));
-const Runs = lazyPage(() => import("./pages/Runs"));
-// The review surface (changes-and-review-2026-08-22.md step C4). Lazy: a
-// change page drags a whole patch renderer, and neither screen is on the way
-// into the app.
-const Changes = lazyPage(() => import("./pages/Changes"));
+// THE THREE TOP-LEVEL LISTS ARE GONE (2026-09-01). pages/Runs.tsx,
+// pages/Changes.tsx and pages/Deploys.tsx were deleted, along with the
+// components/JobsFeed.tsx that only Runs mounted, per section 6 of
+// threads-branches-and-pages-2026-08-29.md: each of the three is a view of one
+// app now -- /apps/<slug>/work?lens=runs, ?lens=branches, and the app's
+// Overview -- so a cross-app page of each was a fifth design generation left
+// routed. Their DETAIL pages below stay: a run, a change and a deploy are
+// records, and a record outlives the list it was found in.
 // The Branches page is retired and its component is deleted. /branches
 // redirects to /chats, which is a FLAT list of chats: the grouping-by-worktree
 // version shipped and was reverted the same day (ticket 65cb8c6f), because
@@ -167,9 +170,7 @@ export default function App() {
           <Route path="/roles" element={<Roles />} />
           <Route path="/agents" element={<Navigate to="/roles" replace />} />
           <Route path="/tickets" element={<Tickets />} />
-          <Route path="/deploys" element={<Deploys />} />
           <Route path="/tickets/:scope/:id" element={<TicketDetail />} />
-          <Route path="/deploys/:id" element={<DeployDetail />} />
           <Route path="/stores" element={<Stores />} />
           <Route path="/stores/:app/:name" element={<StoreDetail />} />
           {/* The scoped knowledge store — agent memory, not the Notes app at
@@ -177,13 +178,21 @@ export default function App() {
               findable. This one is Memory (it is what agents read and write
               and what promotion in the memory design operates on). */}
           <Route path="/memory" element={<MemoryPage />} />
+          {/* THE THREE RETIRED LISTS, kept as redirects because a bookmark is
+              still a bookmark. Each goes to HOME and not to some app: a
+              cross-app URL carries no app, so the only honest destination is
+              the one surface that is genuinely global. Their records keep
+              their own routes below, and each record page now points back at
+              the app it belongs to. */}
+          <Route path="/changes" element={<Navigate to="/" replace />} />
+          <Route path="/deploys" element={<Navigate to="/" replace />} />
+          <Route path="/runs" element={<Navigate to="/" replace />} />
+          <Route path="/branches" element={<Navigate to="/chats" replace />} />
           {/* A change is the reviewable artifact a branch produces: the diff
               behind a finished ticket, before it reaches the trunk. Accepting
               the ticket is what merges it, so there is no merge route here. */}
-          <Route path="/changes" element={<Changes />} />
-          <Route path="/branches" element={<Navigate to="/chats" replace />} />
           <Route path="/changes/:id" element={<ChangeReview />} />
-          <Route path="/runs" element={<Runs />} />
+          <Route path="/deploys/:id" element={<DeployDetail />} />
           <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/usage" element={<Usage />} />
           <Route path="/agents/new" element={<AgentDetail />} />
@@ -212,7 +221,7 @@ export default function App() {
           <Route path="/settings/mcp" element={<Navigate to="/settings/tools" replace />} />
           <Route path="/settings/models" element={<ModelProviders />} />
           <Route path="/settings/tools" element={<ToolsSettings />} />
-          <Route path="/settings/instructions" element={<CustomInstructions />} />
+          <Route path="/settings/instructions" element={<Navigate to="/settings/chat" replace />} />
           <Route path="/apps" element={<Apps />} />
           <Route path="/marketplace" element={<Marketplace />} />
           {/* Every app's routes come from src/apps/registry.tsx — the shell
@@ -259,18 +268,15 @@ export default function App() {
               daemons, absent from any production deploy); the redirect keeps old
               /settings/host and /settings/base-apps links landing somewhere.
               Events was deleted on 2026-08-20 (its endpoints were edge-blocked
-              and had never rendered on this origin); its redirect stays too.
-              "Jobs" is the legacy noun for
-              a Run (entity model section 5). The Runs feed was a tab on the
-              ticket list until 2026-08-12; it is /runs now, because a run
-              belongs to the ticket that produced it and the standalone feed
-              is the leftovers, not a peer of the ticket list. */}
+              and had never rendered on this origin); its redirect stays too. */}
           <Route path="/activity" element={<Navigate to="/" replace />} />
           <Route path="/settings/host" element={<Navigate to="/settings/agents" replace />} />
           <Route path="/settings/base-apps" element={<Navigate to="/settings/agents" replace />} />
           <Route path="/services" element={<Navigate to="/settings" replace />} />
           <Route path="/events" element={<Navigate to="/settings" replace />} />
-          <Route path="/jobs" element={<Navigate to="/runs" replace />} />
+          {/* "Jobs" is the legacy noun for a Run. The feed it named is gone,
+              so this lands where /runs does. */}
+          <Route path="/jobs" element={<Navigate to="/" replace />} />
           <Route path="/jobs/:id" element={<JobIdRedirect />} />
           {/* /work was the ticket list until 2026-08-20. ADR 0023 finished
               the rename ADR 0016 stopped halfway through: the page said

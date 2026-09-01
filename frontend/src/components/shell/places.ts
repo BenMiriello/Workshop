@@ -209,12 +209,14 @@ export function buildPlaces(
       // (threads-branches-and-pages-2026-08-29.md sections 1, 2 and 6).
       { id: "roles", label: "Roles", to: "/roles", Icon: icons.roles },
       { id: "tickets", label: "Tickets", to: "/tickets", Icon: icons.tickets },
-      // The review surface. A row of its own rather than a tab under Tickets:
-      // a change is a different record with a different lifecycle (design doc
-      // sec 2), and one that nobody thought to open its ticket is exactly the
-      // one that sits unreviewed.
-      { id: "changes", label: "Changes", to: "/changes", Icon: icons.changes },
-      { id: "deploys", label: "Deploys", to: "/deploys", Icon: icons.deploys },
+      // No Changes row and no Deploys row, since 2026-09-01. Section 6 of
+      // threads-branches-and-pages-2026-08-29.md retires both top-level pages
+      // and keeps on Home only the rows that are genuinely global: Tickets,
+      // Memory, Usage, Roles. A change belongs to an app's branch (its Work
+      // view, `?lens=branches`) and a deploy belongs to an app's Overview, so
+      // neither has a cross-app list to point at any more. Both routes still
+      // resolve, as redirects (App.tsx), because a bookmark is still a
+      // bookmark -- but a redirect is not a place, so it gets no row.
       { id: "memory", label: "Memory", to: "/memory", Icon: icons.memory },
       { id: "usage", label: "Usage", to: "/usage", Icon: icons.usage },
     ],
@@ -256,7 +258,13 @@ export function buildPlaces(
       { id: "account", label: "Account", to: "/settings", Icon: icons.account, end: true },
       { id: "appearance", label: "Appearance", to: "/settings/appearance", Icon: icons.appearance },
       { id: "chat", label: "Chat", to: "/settings/chat", Icon: icons.chats },
-      { id: "instructions", label: "Instructions", to: "/settings/instructions", Icon: icons.instructions },
+      // Instructions folds into Chat, which is the ninth row and the last of
+      // the twelve to go (section 6, "Settings: 12 rows to 9"). Custom
+      // instructions are how the assistant behaves in a chat, which is the
+      // question the Chat row already answers; they had a row of their own
+      // because they arrived on their own. /settings/instructions still
+      // resolves, as a redirect: this repo's agent rules name that path as the
+      // home of the L3 prompt layer, so the path stays true.
       { id: "memory", label: "Memory", to: "/settings/memory", Icon: icons.memory },
       { id: "apps", label: "Apps", to: "/settings/apps", Icon: icons.apps },
       // Trackers folds into Apps, same section, same reason: a tracker is a

@@ -1,18 +1,5 @@
 {
   "_comment": "Steps of the plan that have NOT landed. An entry here means the step is known not to be done. It is never a pass and it never makes the absolute run green: `python3 scripts/check_plan_landed.py` with no arguments still exits 1 while any pin remains. A pin buys exactly one thing, which is that a reviewer does not reject a worker for debt the worker inherited (`--quiet`). A pinned step that starts passing is a failure (PIN STALE). A pinned step whose `blocked_on_check` command SUCCEEDS is a failure (UNBLOCKED AND UNSTARTED) even under --quiet, because that is the exact condition that cost 2026-08-29 to 2026-09-01: the plan named a blocker, the blocker cleared, nobody re-ran it, and three sessions treated a stale sentence as a live constraint. Adding an entry grows this file, which check_ratchets_not_loosened.py reads as a loosened ratchet and rejects inside a review.",
-  "_measured": "2026-09-01, by running the checker against the tree.",
-  "not_yet": {
-    "5-settings-nine-rows": {
-      "pinned": "2026-09-01",
-      "because": "Twelve rows down to TEN, on 2026-09-01. The two real merges are done and are page changes, not nav changes: settings/McpServers.tsx takes `embedded` and renders as a section of settings/Tools.tsx ('Tools and MCP'), and settings/Trackers.tsx renders under InstalledApps in the Apps tab. Both old routes redirect. The last row is Instructions, and section 6's list of nine simply OMITS it without saying where it goes, while CLAUDE.md names /settings/instructions as the authority for the L3 prompt layer. Guessing a host for it would be inventing a decision the plan did not make, which is the failure this whole gate exists to stop.",
-      "blocked_on": "A decision, not code: where the operator's custom instructions live once Settings has nine rows. Chat is the obvious host and is not the same thing as a stated answer.",
-      "blocked_on_check": "! grep -q 'to: \"/settings/instructions\"' frontend/src/components/shell/places.ts"
-    },
-    "3-work-view-absorbs-the-top-level-pages": {
-      "pinned": "2026-09-01",
-      "because": "The REPLACEMENT landed: /apps/<slug>/work is ticket-first with Branches and Runs as lenses beside it, and the per-app tab list no longer offers Tickets, Runs, Deploys or Agents. What is NOT done is the deletion half. Measured 2026-09-01: 17 links to /runs, /changes and /deploys across 12 files, including MakerPanel, TicketDetail, RunDetail, ChangeReview, DeployDetail, RunningCard, appNav and the Home nav rows. Deleting the pages without retargeting those leaves dead links, and the retarget is a real design question the plan does not answer: 'All runs' on a global surface has no app in context, so where it goes has to be decided rather than guessed.",
-      "blocked_on": "Retargeting the 17 referrers. They are the work; the pages are one line each after that.",
-      "blocked_on_check": "! grep -rqE '\"/runs\"|\"/changes\"|\"/deploys\"|to=\"/runs|to=\"/changes|to=\"/deploys' frontend/src --include=*.tsx --include=*.ts"
-    }
-  }
+  "_measured": "2026-09-01. Every step of section 7 has landed; this file is empty and must stay that way. A new entry here is a NEW admission of debt and check_ratchets_not_loosened.py reads it as a loosened ratchet.",
+  "not_yet": {}
 }
