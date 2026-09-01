@@ -36,13 +36,14 @@ import { parseList, unresolvedIds } from "../lib/ticketEdit";
 import { decisionRefusal, isOpenChange, type Change } from "../lib/changeReview";
 import {
   jobIsLive, jobRefusal, nextAdmissibleText, runHref, runOutcome,
-  type JobEvidence,
+  type Job,
 } from "../lib/jobs";
 import { nextWorkParams } from "../lib/workParams";
 import {
   EditableBody, EditableTitle, PickEditor, PropRow, TextEditor,
 } from "../components/tickets/fields";
 import { queryKeys } from "../lib/queryKeys";
+import type { components } from "../api/schema.gen";
 
 // A ticket can only be launched from `todo`.
 const RUNNABLE_STATUSES = new Set(["todo"]);
@@ -51,25 +52,15 @@ const RUNNABLE_STATUSES = new Set(["todo"]);
 // flight. A settled ticket is not polled at all.
 const POLL_MS = 5000;
 
-type JobRec = {
-  id: string;
-  status: string;
-  started_at?: string;
-  ended_at?: string;
-  trigger?: string;
-  kind?: string;
-  // Who ran it. `/api/tasks/{scope}/{id}/jobs` runs the same `_enrich` the runs
-  // feed does, so these two arrive on every run and nothing here read them: the
-  // page linked to the run and to the chat, and left the agent as the one party
-  // you could not reach. This used to be declared as `agent`, a field the jobs
-  // store has never written.
-  agent_id?: string;
-  agent_name?: string;
-  // The whole evidence record, straight off the backend's own model, so the
-  // refusal a guard attached to a run is readable here rather than being
-  // narrowed away by a hand-written shape. See routes/api_models.JobEvidence.
-  evidence?: JobEvidence | null;
-};
+// A run on this ticket is the SAME record the runs feed draws, so it is the
+// same type: `Job`, which lib/jobs.ts takes straight from the generated client.
+//
+// This was a narrow hand-written copy naming eight of the record's thirty
+// fields, and it disagreed with the server on the one that matters most:
+// `status: string`, required and non-null, where the route serialises
+// `string | null`. It also could not see `title`, `task_text` or `summary`,
+// which `_enrich` has always sent.
+type JobRec = Job;
 
 // The two reads the page draws from, as one value. See the query for why they
 // are fetched together rather than as two queries.
@@ -172,7 +163,11 @@ export default function TicketDetail() {
       if (!tr.ok) throw new Error(`ticket: ${shortHttpError(tr.status, tr.statusText, await tr.text().catch(() => ""))}`);
       if (!jr.ok) throw new Error(`runs: ${shortHttpError(jr.status, jr.statusText, await jr.text().catch(() => ""))}`);
       const task = (await tr.json()) as Task;
-      const runs = (((await jr.json()).jobs || []) as JobRec[]);
+      // TaskJobsOut, named from the generated client. Reading `.jobs` off an
+      // untyped body was a claim nothing checked: the identical claim on
+      // GET /api/jobs went stale in 7e4aacbf and emptied four surfaces.
+      const runsBody: components["schemas"]["TaskJobsOut"] = await jr.json();
+      const runs = runsBody.jobs ?? [];
       return { task, runs };
     },
     refetchInterval: (query) => (liveRun(query.state.data?.runs) ? POLL_MS : false),

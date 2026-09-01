@@ -10,6 +10,7 @@ import {
 } from "../lib/jobs";
 import { ticketHref, runTicketScope } from "../lib/tasks";
 import { queryKeys } from "../lib/queryKeys";
+import type { components } from "../api/schema.gen";
 
 // One RUN's detail: its binding, trigger, timing, outcome, and freeform
 // evidence. Linked from Work's Runs tab, Home attention cards, and an agent's
@@ -264,9 +265,13 @@ export default function JobDetail() {
       // page's error region. Unchanged.
       try {
         const cr = await fetch(`/api/jobs?parent_id=${encodeURIComponent(id)}&limit=100`);
-        // `items`, not `jobs`: Page[Job] since 7e4aacbf. The old key meant a
-        // run's child runs never appeared.
-        return cr.ok ? (((await cr.json()).items ?? []) as Job[]) : [];
+        // Page[Job], named from the generated client. Reading an untyped body
+        // for `.items` is the same claim the pre-rename `.jobs` made, just
+        // currently right: nothing checks it either way, and the last time it
+        // went stale a run's child runs stopped appearing.
+        if (!cr.ok) return [];
+        const page: components["schemas"]["Page_Job_"] = await cr.json();
+        return page.items ?? [];
       } catch {
         return [];
       }

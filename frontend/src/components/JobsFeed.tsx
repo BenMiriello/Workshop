@@ -7,6 +7,7 @@ import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronRight, ChevronDown } 
 import { type Job, jobStatusKind as statusKind, runHref } from "../lib/jobs";
 import { runTicketScope, ticketHref } from "../lib/tasks";
 import { queryKeys } from "../lib/queryKeys";
+import type { components } from "../api/schema.gen";
 
 // The Jobs feed: one list for every bounded execution (cron task, drained
 // event, project sweep, supervisor heartbeat, manual run). Reads /api/jobs
@@ -17,10 +18,13 @@ import { queryKeys } from "../lib/queryKeys";
 // PageHeader (the Work tab supplies its own) and moves Refresh inline with the
 // filter.
 
-// GET /api/jobs answers Page[Job]: `items`, plus a `page` whose `total` is null
-// on this endpoint by design (ADR 0023 clause 1). Reading the pre-rename `jobs`
-// key left the Runs feed permanently empty; see pages/Tickets.tsx `TasksResp`.
-type JobsResp = { items: Job[]; page?: { total: number | null } };
+// GET /api/jobs answers Page[Job], NAMED from the generated client rather than
+// re-described here. The hand-written copy this replaces was already the second
+// one: the first said `{ jobs, count }`, survived the 2026-08-17 rename to
+// `items`, typechecked, and left this feed permanently empty. A copy that is
+// currently correct is still a copy, and it is correct only until the next
+// rename. See pages/Tickets.tsx `TasksResp` and scripts/check_response_types.py.
+type JobsResp = components["schemas"]["Page_Job_"];
 
 type StatusFilter = "all" | "running" | "awaiting_input" | "done" | "failed";
 

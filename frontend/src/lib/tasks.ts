@@ -713,7 +713,7 @@ export function ticketHref(scope: string, id: string): string {
 // slug has to keep resolving or a year of run history loses its ticket link.
 // A job with no project binding is a platform-repo run too, which is what it
 // always meant.
-export function runTicketScope(job: { project_slug?: string }): string {
+export function runTicketScope(job: { project_slug?: string | null }): string {
   if (!job.project_slug || job.project_slug === "workshop") return DEVELOPMENT_SCOPE;
   if (job.project_slug === DEVELOPMENT_SCOPE) return DEVELOPMENT_SCOPE;
   return `project:${job.project_slug}`;

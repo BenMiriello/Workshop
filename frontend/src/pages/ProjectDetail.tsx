@@ -38,6 +38,7 @@ import AppServicesPanel from "../components/AppServicesPanel";
 import DeploysPanel from "../components/DeploysPanel";
 import AutonomyPanel from "../components/AutonomyPanel";
 import EnvironmentPanel from "../components/EnvironmentPanel";
+import type { components } from "../api/schema.gen";
 
 // Project detail = the project's hub (the "workbench"). NOT the coding UI — that
 // lives under Agents (AgentBuild). Phase 2 (docs/workshop-v1/02 §1-4) retires the
@@ -546,9 +547,10 @@ export default function ProjectDetail() {
     try {
       const r = await fetch(`/api/tasks?scope=${encodeURIComponent(taskScope)}&include_done=true`);
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      const d = await r.json();
-      // `items`, not `tasks`: GET /api/tasks answers Page[Task] since 7e4aacbf.
-      // The old key read `undefined`, so this panel showed no tasks at all.
+      // Page[Task], named from the generated client. The `tasks` key this read
+      // before 7e4aacbf showed no tasks at all here, and typechecked while
+      // doing it, because the shape was written out locally.
+      const d: components["schemas"]["Page_Task_"] = await r.json();
       setTasks((d.items ?? []) as Task[]);
     } catch (e) {
       setTasksErr(String(e));

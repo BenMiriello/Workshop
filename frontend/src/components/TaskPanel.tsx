@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PRIORITY_BANDS, bandOf, floorOf, priorityLabel } from "../lib/priority";
 import { shortHttpError, Button, Card, ConfirmDialog, Field, Input, Select, SectionLabel, Skeleton, StateBlock, StatusPill, Stack, Row, Textarea, Toggle } from "@workshop/ui";
 import { RefreshCw, Plus, Pencil, Trash2, Check, X, CornerDownLeft, Compass } from "lucide-react";
+import type { components } from "../api/schema.gen";
 
 import {
   type Task,
@@ -166,9 +167,11 @@ export default function TaskPanel({
     queryFn: async (): Promise<Task[]> => {
       const r = await fetch(endpoint);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      // `items`: GET /api/tasks answers Page[Task] since 7e4aacbf. The old
-      // `tasks` key read `undefined`, so this panel listed nothing.
-      return ((await r.json()) as { items?: Task[] }).items ?? [];
+      // Page[Task], named from the generated client. Spelling the envelope out
+      // here is what let the 7e4aacbf rename past: the old `{ tasks?: Task[] }`
+      // typechecked and this panel listed nothing.
+      const page: components["schemas"]["Page_Task_"] = await r.json();
+      return (page.items ?? []) as Task[];
     },
     refetchInterval: (query) => (open && anyDoing(query.state.data) ? POLL_MS : false),
     // `usePoll` runs a catch-up read on the way back from hidden, but only

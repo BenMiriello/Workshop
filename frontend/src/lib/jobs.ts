@@ -13,43 +13,25 @@ export type JobEvidence = components["schemas"]["JobEvidence"];
 export type JobAwaitingQuestion = components["schemas"]["JobAwaitingQuestion"];
 export type JobRefusal = components["schemas"]["JobRefusal"];
 
-export type Job = {
-  id: string;
-  agent_id?: string;
-  project_slug?: string;
-  chat_id?: string;
-  trigger?: string;
-  status?: string;
-  started_at?: string;
-  ended_at?: string;
-  exit_code?: number;
-  tasks_done?: number;
-  tasks_failed?: number;
-  // What the run cost, from the usage ledger rather than from the worker's own
-  // receipt. `tokens` includes the child runs, because a coordinator sweep
-  // spends almost nothing itself; `tokens_own` is this record alone. Both are
-  // null when nothing was billed against the job id.
-  tokens?: number | null;
-  tokens_own?: number | null;
-  parent_id?: string;
-  task_id?: string;
-  evidence?: JobEvidence | JobAwaitingQuestion[] | null;
-  budget?: Record<string, unknown>;
-  // Display fields computed by the API (routes/jobs._enrich); absent on raw
-  // records but always present from GET /api/jobs and /api/jobs/{id}.
-  title?: string;
-  agent_name?: string;
-  trigger_label?: string;
-  error?: string;
-  summary?: string;
-  // Joined from the task store at read time (routes/jobs._enrich): what the job
-  // was actually for, and which chat spawned it.
-  task_text?: string;
-  task_status?: string;
-  chat_title?: string;
-  chat_context_key?: string;
-  context_label?: string;
-};
+// THE SERVER'S OWN STATEMENT OF THIS RECORD, not a second copy of it.
+//
+// This was 25 fields written out by hand, and it was wrong in a way nothing
+// could see: every one of them said `?: string`, while the backend serialises
+// `string | null`. So `job.title` was `string | undefined` to the compiler and
+// `null` on the wire, and every `if (job.title)` guard in the app was checking
+// for a value the server never sends. Same defect the four Location fields had
+// (frontend/CLAUDE.md), one layer up. It also missed `kind`, `pid` and
+// `binding` entirely, which the route has returned all along.
+//
+// `schema.gen.ts` is generated from routes/api_models.Job and gated by
+// scripts/check_generated_client.py, so a field moving there is a red typecheck
+// here rather than a run row that silently renders nothing.
+//
+// `budget` arrives as `Record<string, never>` because the backend still types it
+// `dict[str, Any]` (api_models.py: "`limits` and `budget` remain open"). That is
+// an opaque field, counted by scripts/check_opaque_fields.py, and it is fixed in
+// the model rather than by widening it back here.
+export type Job = components["schemas"]["Job"];
 
 // Job status -> one of the five design status kinds.
 const JOB_STATUS_KIND: Record<string, StatusKind> = {
@@ -61,7 +43,7 @@ const JOB_STATUS_KIND: Record<string, StatusKind> = {
   failed: "danger",
 };
 
-export const jobStatusKind = (status?: string): StatusKind =>
+export const jobStatusKind = (status?: string | null): StatusKind =>
   JOB_STATUS_KIND[status ?? ""] ?? "stopped";
 
 // A REFUSED RUN IS ITS OWN OUTCOME, and this is the one place that says so.
@@ -103,7 +85,7 @@ export function jobRefusal(evidence?: Job["evidence"]): JobRefusal | null {
  *  surface that prints a run's outcome calls this rather than pairing
  *  `job.status` with `jobStatusKind` and forgetting the refusal case. */
 export function runOutcome(
-  status?: string,
+  status?: string | null,
   refusal?: JobRefusal | null,
 ): { label: string; kind: StatusKind } {
   if (refusal) return { label: REFUSED_LABEL, kind: REFUSED_KIND };
@@ -137,7 +119,7 @@ export function nextAdmissibleText(
 // done; the fix is only correct if "when do I stop" is answered in one place.
 const JOB_LIVE_STATES = new Set(["running", "queued"]);
 
-export const jobIsLive = (status?: string): boolean => JOB_LIVE_STATES.has(status ?? "");
+export const jobIsLive = (status?: string | null): boolean => JOB_LIVE_STATES.has(status ?? "");
 
 // The route to a run. `/jobs/:id` still redirects here, so both spellings work
 // and that is exactly the problem: the path was hand-written in nine places in

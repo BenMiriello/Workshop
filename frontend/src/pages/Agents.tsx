@@ -10,11 +10,12 @@ import DelegatesSection from "../components/DelegatesSection";
 import { triggerSummary, nextScheduled, agentAgency, type UnifiedAgent } from "../lib/agentTriggers";
 import { latitudeDesc, type Latitude } from "../lib/tasks";
 import { type AutonomyMode } from "../lib/autonomy";
-import { runHref } from "../lib/jobs";
+import { runHref, type Job } from "../lib/jobs";
 import { ticketHref } from "../lib/tasks";
 import { scopeLabel } from "../lib/scope";
 import { armLevelName, makerPrimary, makerStatus, peerNote, type MakerSummary } from "../lib/makers";
 import { queryKeys } from "../lib/queryKeys";
+import type { components } from "../api/schema.gen";
 
 // Roster item enriched with the O6/O7 autonomy fields the backend now returns on
 // GET /api/agents/ (autonomy preset + role + latitude). Kept local so the shared
@@ -49,11 +50,14 @@ type SupervisorStatus = {
   cron_autonomy: { disabled: boolean };
 };
 
-type Job = { id: string; agent_id?: string; status?: string; started_at?: string };
+// A run is `Job` from lib/jobs.ts, which takes it from the generated client.
+// This page had re-declared four of the record's thirty fields, which is the
+// fourth local copy lib/jobs.ts's own header says it exists to stop, and it
+// disagreed with the wire on all four: the server sends `string | null`.
 
 // Recency label for a card: within the last 24h ("Today 3:42 PM"), else a plain
 // date ("Jun 18"). Empty when there's no usable timestamp.
-function activityLabel(iso?: string): string {
+function activityLabel(iso?: string | null): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -319,9 +323,12 @@ export default function Agents() {
         fetch("/api/jobs?limit=200"),
       ]);
       setProjects(pR.ok ? await pR.json() : []);
-      // `items`: Page[Job] since 7e4aacbf. The old `jobs` key meant every
-      // agent row showed no last run.
-      setJobs(jR.ok ? (await jR.json()).items || [] : []);
+      // Page[Job], named from the generated client. The `jobs` key this read
+      // before 7e4aacbf is why every agent row showed no last run for two
+      // weeks, and reading `.items` off an untyped body is the same unchecked
+      // claim wearing the current field name.
+      const feed: components["schemas"]["Page_Job_"] | null = jR.ok ? await jR.json() : null;
+      setJobs(feed?.items ?? []);
     } catch (e) {
       setErr(String(e));
     }
