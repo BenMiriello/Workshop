@@ -13,6 +13,12 @@
       "because": "Twelve rows today. The collapse needs Roles to exist as a page (it is one of the nine), and Roles comes from step 1's retirement of the agent roster, so this is ordered behind it. Trackers folding into Apps and Tools merging with MCP are each a real page edit, not a nav-list edit.",
       "blocked_on": "step 1: a Roles page, which is one of the nine rows.",
       "blocked_on_check": "ls frontend/src/pages/Roles.tsx >/dev/null 2>&1"
+    },
+    "3-work-view-absorbs-the-top-level-pages": {
+      "pinned": "2026-09-01",
+      "because": "The REPLACEMENT landed: /apps/<slug>/work is ticket-first with Branches and Runs as lenses beside it, and the per-app tab list no longer offers Tickets, Runs, Deploys or Agents. What is NOT done is the deletion half. Measured 2026-09-01: 17 links to /runs, /changes and /deploys across 12 files, including MakerPanel, TicketDetail, RunDetail, ChangeReview, DeployDetail, RunningCard, appNav and the Home nav rows. Deleting the pages without retargeting those leaves dead links, and the retarget is a real design question the plan does not answer: 'All runs' on a global surface has no app in context, so where it goes has to be decided rather than guessed.",
+      "blocked_on": "Retargeting the 17 referrers. They are the work; the pages are one line each after that.",
+      "blocked_on_check": "! grep -rqE '\"/runs\"|\"/changes\"|\"/deploys\"|to=\"/runs|to=\"/changes|to=\"/deploys' frontend/src --include=*.tsx --include=*.ts"
     }
   }
 }
