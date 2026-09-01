@@ -336,7 +336,24 @@ ranks it fourth, behind chatter, because **authority is not a ranking signal and
 staleness is not a penalty.** In a tree with 153 design docs, many explicitly
 superseded, that is how a retired model gets rediscovered as if it were current.
 
-Being fixed: authority and recency become ranking signals, superseded and
+**Fixed and re-measured the same day** (`d347e528`, `dcbc8ca1`):
+
+    "how do I restart the backend"        1. doc | docs/applying-changes.md
+    "why is the backend restart deferred" 1. doc | docs/applying-changes.md
+
+Both queries now put the authoritative procedure first. The second commit is the
+interesting one: an index built by the older code had to RE-COLLECT rather than
+rank on a field it never stored, so the first attempt fixed one query and left
+the other at rank 4 — caught by re-running the measurement rather than by reading
+the diff.
+
+Also shipped, and it is the cheaper half because retrieval only helps an agent
+that thinks to search: `apply.sh` and `restart_backend.sh` now name the doc at
+the moment they decline, and say the refusal is expected —
+*"This is expected, not a failure: an agent's own turn is usually the live one."*
+That sentence is what had to be derived from first principles today.
+
+The original plan: authority and recency become ranking signals, superseded and
 HISTORICAL docs get demoted or labelled rather than returned as current, and —
 the cheaper half, because retrieval only helps an agent that thinks to search —
 the tooling names the relevant doc at the moment it refuses, so
