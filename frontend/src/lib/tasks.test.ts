@@ -7,8 +7,9 @@
 // would prove nothing.
 import { describe, expect, it } from "vitest";
 import {
-  executionLabel, proposalGaps, readinessBlockers, readinessLine,
-  readinessTone, triageLabel,
+  TICKET_ROW_FACTS, executionLabel, proposalGaps, readinessBlockers,
+  readinessLine, readinessTone, sourceShort, spansScopes, ticketRowFacts,
+  triageLabel,
 } from "./tasks";
 
 const WHY = {
@@ -255,5 +256,101 @@ describe("triageLabel", () => {
     expect(triageLabel("something-new")).toBe("reviewed");
     expect(triageLabel(null)).toBe("reviewed");
     expect(triageLabel(undefined)).toBe("reviewed");
+  });
+});
+
+describe("sourceShort", () => {
+  // `sourceLabel` is a sentence, which is right in a filter menu and wrong in a
+  // row: `.ws-listrow__meta` neither wraps nor scrolls, so a long fact does not
+  // render small, it pushes the facts after it off the edge.
+  it("says the same thing in one word", () => {
+    expect(sourceShort("operator")).toBe("operator");
+    expect(sourceShort("chat")).toBe("chat");
+    expect(sourceShort("agent")).toBe("agent");
+    expect(sourceShort("autogen")).toBe("program");
+  });
+
+  it("says nothing at all when nothing was recorded", () => {
+    // The same rule `sourceOf` follows: a ticket nobody recorded a source for
+    // must never read as having come from somewhere. Empty DROPS the fact.
+    expect(sourceShort("unknown")).toBe("");
+    expect(sourceShort(null)).toBe("");
+    expect(sourceShort(undefined)).toBe("");
+    expect(sourceShort("a-kind-from-a-future-build")).toBe("");
+  });
+});
+
+describe("ticketRowFacts", () => {
+  const task = {
+    status: "in_review",
+    scope: "project:birds",
+    source: { kind: "agent" },
+  };
+
+  it("leads with the status WORD, because the dot alone does not say it", () => {
+    // frontend/CLAUDE.md: a colour answers "is this blocked or just queued"
+    // only for a reader who has already learned the five hues.
+    expect(ticketRowFacts(task, { showScope: true })[0]).toBe("in review");
+    expect(ticketRowFacts({ status: "blocked" })).toEqual(["blocked"]);
+  });
+
+  it("reads status, scope, who filed it, in that order", () => {
+    expect(ticketRowFacts(task, { showScope: true }))
+      .toEqual(["in review", "Project: birds", "agent"]);
+  });
+
+  it("drops the scope on a list that is already one scope", () => {
+    // An app's own Tickets tab, or a scope filter: the same word on every row
+    // is the filter repeated, not a fact about the ticket.
+    expect(ticketRowFacts(task)).toEqual(["in review", "agent"]);
+    expect(ticketRowFacts(task, { showScope: false })).toEqual(["in review", "agent"]);
+  });
+
+  it("drops who filed it when nobody recorded one", () => {
+    expect(ticketRowFacts({ ...task, source: { kind: "unknown" } }, { showScope: true }))
+      .toEqual(["in review", "Project: birds"]);
+    expect(ticketRowFacts({ ...task, source: null }, { showScope: true }))
+      .toEqual(["in review", "Project: birds"]);
+  });
+
+  it("never returns more facts than the meta line can show", () => {
+    // A fourth fact is not rendered small, it is clipped, so the cap is here
+    // rather than in CSS where it would be invisible.
+    expect(ticketRowFacts(task, { showScope: true }).length)
+      .toBeLessThanOrEqual(TICKET_ROW_FACTS);
+    expect(TICKET_ROW_FACTS).toBe(3);
+  });
+
+  it("still names a status this build has never heard of", () => {
+    // `_normalize` coerces on the way out, so this should be unreachable; a row
+    // that printed nothing where the status goes would be worse than one that
+    // prints the raw value.
+    expect(ticketRowFacts({ status: "invented-later" })).toEqual(["invented-later"]);
+  });
+});
+
+describe("spansScopes", () => {
+  // A constant is not a signal. The old rule asked the FILTER whether to print
+  // the scope, which said yes for the unfiltered list even when every row on it
+  // was the same scope.
+  it("is false when every row is the same scope", () => {
+    expect(spansScopes([{ scope: "development" }, { scope: "development" }]))
+      .toBe(false);
+  });
+
+  it("is true as soon as two rows differ", () => {
+    expect(spansScopes([{ scope: "development" }, { scope: "project:birds" }]))
+      .toBe(true);
+  });
+
+  it("treats a missing scope as the root, the same as every link does", () => {
+    // `ticketHref` defaults a null scope to `workshop`, so a null row and a
+    // `workshop` row are one scope and must not read as two.
+    expect(spansScopes([{ scope: null }, { scope: "workshop" }])).toBe(false);
+    expect(spansScopes([{}, { scope: "project:birds" }])).toBe(true);
+  });
+
+  it("is false for no rows, because nothing varies in nothing", () => {
+    expect(spansScopes([])).toBe(false);
   });
 });

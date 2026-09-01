@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   ACTIVE_STATUSES, BOARD_STATUSES, DEFAULT_SORT, DEFAULT_VIEW, PAGE_SIZE,
-  apiQuery, boardLanes, chipsFor, clampPage, clearField, defaultFilters,
-  defaultStatuses, isDefaultStatus, isNarrowed, laneQuery, listGroups, pageCount,
-  pageItems, parseFilters, parsePage, parseSort, parseView, toggleValue, writeParams,
+  STATUS_PRESETS, apiQuery, chipsFor, clampPage, clearField, defaultFilters,
+  defaultStatuses, isDefaultStatus, isNarrowed, laneQuery, pageCount,
+  pageItems, parseFilters, parsePage, parseSort, parseView, statusPresetOf,
+  statusesForPreset, toggleValue, writeParams,
 } from "./ticketFilters";
 import type { TaskStatus } from "./tasks";
 
@@ -15,31 +16,67 @@ const fmt = {
 const q = (s: string) => new URLSearchParams(s);
 
 describe("the default status set follows the view", () => {
-  // Not a shortcut: a table opening on 108 done tickets and a board with two
+  // Not a shortcut: a list opening on 108 done tickets and a board with two
   // permanently empty lanes are the same mistake from opposite ends.
-  it("opens a table on active work only", () => {
-    expect(defaultStatuses("table")).toEqual(ACTIVE_STATUSES);
-    expect(defaultStatuses("table")).not.toContain("done");
+  it("opens a list on active work only", () => {
+    expect(defaultStatuses("list")).toEqual(ACTIVE_STATUSES);
+    expect(defaultStatuses("list")).not.toContain("done");
   });
 
-  it("opens a board on every lane it draws", () => {
-    expect(defaultStatuses("board")).toEqual(BOARD_STATUSES);
-    expect(defaultStatuses("board")).toContain("done");
-    expect(defaultStatuses("board")).toContain("draft");
+  it("leaves the board's lanes to the board", () => {
+    // The empty set is "every status". The board narrows to its own six lanes
+    // itself, so restating them here would be a second place they are decided,
+    // and it made the board's default match no preset on the status bar.
+    expect(defaultStatuses("board")).toEqual([]);
+    expect(statusPresetOf(defaultStatuses("board"))).toBe("all");
   });
 
-  it("keeps work that has stopped out of both defaults", () => {
-    for (const view of ["table", "board"] as const) {
-      expect(defaultStatuses(view)).not.toContain("parked");
-      expect(defaultStatuses(view)).not.toContain("cancelled");
-    }
+  it("keeps work that has stopped out of the list default", () => {
+    expect(defaultStatuses("list")).not.toContain("parked");
+    expect(defaultStatuses("list")).not.toContain("cancelled");
   });
 
   it("honours an explicit filter identically in both views", () => {
-    const a = parseFilters(q("status=done"), "table");
+    const a = parseFilters(q("status=done"), "list");
     const b = parseFilters(q("status=done"), "board");
     expect(a.status).toEqual(["done"]);
     expect(b.status).toEqual(["done"]);
+  });
+
+  it("resolves the retired table view to the list rather than blanking", () => {
+    // Same fallback that retired `?view=timeline`. Old links and bookmarks
+    // must not land on a page with no body.
+    expect(parseView(q("view=table"))).toBe("list");
+    expect(parseView(q("view=timeline"))).toBe("list");
+    expect(DEFAULT_VIEW).toBe("list");
+  });
+});
+
+describe("the status bar is the status control", () => {
+  it("offers the five presets and no sixth vocabulary", () => {
+    expect(STATUS_PRESETS.map((p) => p.value))
+      .toEqual(["active", "blocked", "backlog", "completed", "all"]);
+  });
+
+  it("recognises each preset from the status set it produces", () => {
+    for (const p of STATUS_PRESETS) {
+      expect(statusPresetOf(statusesForPreset(p.value))).toBe(p.value);
+    }
+  });
+
+  it("spells All as every status, which is the empty set", () => {
+    expect(statusesForPreset("all")).toEqual([]);
+    expect(statusPresetOf([])).toBe("all");
+  });
+
+  it("matches a preset whatever order the statuses arrive in", () => {
+    // A `?status=` param is whatever someone typed or a chip left behind.
+    const shuffled = [...ACTIVE_STATUSES].reverse();
+    expect(statusPresetOf(shuffled)).toBe("active");
+  });
+
+  it("says a hand-picked set is no preset, so nothing on the bar lights", () => {
+    expect(statusPresetOf(["doing", "in_review"])).toBe(null);
   });
 });
 
@@ -47,11 +84,11 @@ describe("the URL is the filter state", () => {
   it("reads a plain URL as the view default", () => {
     expect(parseView(q(""))).toBe(DEFAULT_VIEW);
     expect(parseSort(q(""))).toEqual(DEFAULT_SORT);
-    expect(parseFilters(q(""), "table")).toEqual(defaultFilters("table"));
+    expect(parseFilters(q(""), "list")).toEqual(defaultFilters("list"));
   });
 
   it("spells every default by leaving the param off", () => {
-    const p = writeParams(defaultFilters("table"), DEFAULT_SORT, "table");
+    const p = writeParams(defaultFilters("list"), DEFAULT_SORT, "list");
     expect(p.toString()).toBe("");
   });
 
@@ -69,26 +106,26 @@ describe("the URL is the filter state", () => {
   });
 
   it("writes 'all' for every status, so it is not read back as the default", () => {
-    const cleared = clearField(defaultFilters("table"), "status");
-    const p = writeParams(cleared, DEFAULT_SORT, "table");
+    const cleared = clearField(defaultFilters("list"), "status");
+    const p = writeParams(cleared, DEFAULT_SORT, "list");
     expect(p.get("status")).toBe("all");
-    expect(parseFilters(p, "table").status).toEqual([]);
+    expect(parseFilters(p, "list").status).toEqual([]);
   });
 
   it("keeps params it does not own", () => {
-    const p = writeParams(defaultFilters("table"), DEFAULT_SORT, "table", q("from=chat"));
+    const p = writeParams(defaultFilters("list"), DEFAULT_SORT, "list", q("from=chat"));
     expect(p.get("from")).toBe("chat");
   });
 
   it("falls back rather than showing a list nothing can match", () => {
     // A typo and an empty backlog must not look the same.
-    expect(parseFilters(q("status=nonsense"), "table").status).toEqual(ACTIVE_STATUSES);
+    expect(parseFilters(q("status=nonsense"), "list").status).toEqual(ACTIVE_STATUSES);
     expect(parseView(q("view=timeline"))).toBe(DEFAULT_VIEW);
     expect(parseSort(q("sort=nonsense")).key).toBe(DEFAULT_SORT.key);
   });
 
   it("drops only the unknown members of a mixed status list", () => {
-    expect(parseFilters(q("status=todo,nonsense"), "table").status).toEqual(["todo"]);
+    expect(parseFilters(q("status=todo,nonsense"), "list").status).toEqual(["todo"]);
   });
 });
 
@@ -126,23 +163,29 @@ describe("every filter reaches the server", () => {
 });
 
 describe("chips say what is narrowing the list", () => {
-  it("shows the default as a chip, because that is the question it answers", () => {
-    // "Where are the done tickets" is what a filtered list gets asked, and a
-    // control that appears only after you change it cannot answer that.
-    const chips = chipsFor(defaultFilters("table"), "table", fmt);
-    expect(chips).toEqual([{ field: "status", label: "Status", value: "Active" }]);
-    expect(chipsFor(defaultFilters("board"), "board", fmt)[0].value).toBe("On the board");
+  it("spends no chip on a status the bar is already showing", () => {
+    // The bar is on screen at both widths with the preset pressed. A chip
+    // repeating it is the same fact twice, which is what stops either being
+    // scannable.
+    expect(chipsFor(defaultFilters("list"), fmt)).toEqual([]);
+    expect(chipsFor(defaultFilters("board"), fmt)).toEqual([]);
+    for (const p of STATUS_PRESETS) {
+      const f = { ...defaultFilters("list"), status: statusesForPreset(p.value) };
+      expect(chipsFor(f, fmt).some((c) => c.field === "status")).toBe(false);
+    }
   });
 
-  it("names a single value and counts several", () => {
-    const one = chipsFor({ ...defaultFilters("table"), status: ["blocked"] }, "table", fmt);
-    expect(one[0].value).toBe("blocked");
-    const two = chipsFor({ ...defaultFilters("table"), status: ["blocked", "done"] }, "table", fmt);
-    expect(two[0].value).toBe("· 2");
+  it("gives a hand-picked set a chip, because nothing else can clear it", () => {
+    // `?status=doing,in_review` matches no preset, so the bar shows nothing
+    // pressed and the chip is the only way back.
+    const one = chipsFor({ ...defaultFilters("list"), status: ["blocked", "done"] }, fmt);
+    expect(one[0]).toEqual({ field: "status", label: "Status", value: "· 2" });
+    const solo = chipsFor({ ...defaultFilters("list"), status: ["doing"] }, fmt);
+    expect(solo[0]).toEqual({ field: "status", label: "Status", value: "doing" });
   });
 
   it("renders a scope through the caller's vocabulary", () => {
-    const chips = chipsFor({ ...defaultFilters("table"), scope: "project:birds" }, "table", fmt);
+    const chips = chipsFor({ ...defaultFilters("list"), scope: "project:birds" }, fmt);
     expect(chips.find((c) => c.field === "scope")?.value).toBe("Project: birds");
   });
 
@@ -150,7 +193,7 @@ describe("chips say what is narrowing the list", () => {
     const chips = chipsFor({
       q: "", status: ["todo"], scope: "workshop", labels: ["design"],
       effort: ["quick"], assignee: ["operator"], source: ["agent"],
-    }, "table", fmt);
+    }, fmt);
     expect(chips.map((c) => c.field))
       .toEqual(["status", "source", "scope", "tag", "effort", "assignee"]);
   });
@@ -159,52 +202,54 @@ describe("chips say what is narrowing the list", () => {
     // The app Tickets tab mounts this list pinned to the app. A chip there
     // carries a clear button, and clearing it would ask for a list the surface
     // cannot show.
-    const f = { ...defaultFilters("table"), scope: "project:birds" };
-    expect(chipsFor(f, "table", fmt, { lockedScope: true })
+    const f = { ...defaultFilters("list"), scope: "project:birds" };
+    expect(chipsFor(f, fmt, { lockedScope: true })
       .some((c) => c.field === "scope")).toBe(false);
     // Every other chip is unaffected.
-    expect(chipsFor({ ...f, source: ["agent"] }, "table", fmt, { lockedScope: true })
-      .map((c) => c.field)).toEqual(["status", "source"]);
+    expect(chipsFor({ ...f, source: ["agent"] }, fmt, { lockedScope: true })
+      .map((c) => c.field)).toEqual(["source"]);
   });
 
   it("drops the chip whose filter is cleared", () => {
-    const f = clearField({ ...defaultFilters("table"), scope: "workshop" }, "scope");
-    expect(chipsFor(f, "table", fmt).some((c) => c.field === "scope")).toBe(false);
+    const f = clearField({ ...defaultFilters("list"), scope: "workshop" }, "scope");
+    expect(chipsFor(f, fmt).some((c) => c.field === "scope")).toBe(false);
   });
 
   it("clears status to EVERY status, not back to the default", () => {
-    // Clearing to the default would look like the control did nothing.
-    const f = clearField(defaultFilters("table"), "status");
+    // Clearing to the default would look like the control did nothing, and the
+    // set it lands on is the All preset, so the bar lights up on it.
+    const f = clearField(defaultFilters("list"), "status");
     expect(f.status).toEqual([]);
-    expect(isDefaultStatus(f, "table")).toBe(false);
+    expect(isDefaultStatus(f, "list")).toBe(false);
+    expect(statusPresetOf(f.status)).toBe("all");
   });
 });
 
 describe("narrowing is what the empty state has to explain", () => {
   it("is false for a view sitting at its own default", () => {
-    expect(isNarrowed(defaultFilters("table"), "table")).toBe(false);
+    expect(isNarrowed(defaultFilters("list"), "list")).toBe(false);
     expect(isNarrowed(defaultFilters("board"), "board")).toBe(false);
   });
 
   it("is true for any filter the operator chose", () => {
-    const base = defaultFilters("table");
-    expect(isNarrowed({ ...base, q: "x" }, "table")).toBe(true);
-    expect(isNarrowed({ ...base, scope: "workshop" }, "table")).toBe(true);
-    expect(isNarrowed({ ...base, labels: ["design"] }, "table")).toBe(true);
-    expect(isNarrowed({ ...base, effort: ["quick"] }, "table")).toBe(true);
-    expect(isNarrowed({ ...base, assignee: ["operator"] }, "table")).toBe(true);
-    expect(isNarrowed({ ...base, status: ["done"] }, "table")).toBe(true);
+    const base = defaultFilters("list");
+    expect(isNarrowed({ ...base, q: "x" }, "list")).toBe(true);
+    expect(isNarrowed({ ...base, scope: "workshop" }, "list")).toBe(true);
+    expect(isNarrowed({ ...base, labels: ["design"] }, "list")).toBe(true);
+    expect(isNarrowed({ ...base, effort: ["quick"] }, "list")).toBe(true);
+    expect(isNarrowed({ ...base, assignee: ["operator"] }, "list")).toBe(true);
+    expect(isNarrowed({ ...base, status: ["done"] }, "list")).toBe(true);
   });
 
-  it("reads a table default as narrowed when the view is a board", () => {
+  it("reads a list default as narrowed when the view is a board", () => {
     // The same set is the default for one view and a real choice in the other.
-    expect(isNarrowed(defaultFilters("table"), "board")).toBe(true);
+    expect(isNarrowed(defaultFilters("list"), "board")).toBe(true);
   });
 });
 
 describe("toggling a multi-value filter", () => {
   it("adds then removes", () => {
-    let f = defaultFilters("table");
+    let f = defaultFilters("list");
     f = toggleValue(f, "tag", "design");
     expect(f.labels).toEqual(["design"]);
     f = toggleValue(f, "tag", "infra");
@@ -214,42 +259,10 @@ describe("toggling a multi-value filter", () => {
   });
 
   it("touches only the field it names", () => {
-    const f = toggleValue(defaultFilters("table"), "effort", "quick");
+    const f = toggleValue(defaultFilters("list"), "effort", "quick");
     expect(f.effort).toEqual(["quick"]);
     expect(f.status).toEqual(ACTIVE_STATUSES);
     expect(f.labels).toEqual([]);
-  });
-});
-
-describe("the board never loses a ticket", () => {
-  const rows = [
-    { id: "a", status: "todo" }, { id: "b", status: "done" },
-    { id: "c", status: "todo" }, { id: "d", status: "parked" },
-    { id: "e", status: "invented-by-a-future-build" },
-  ];
-
-  it("puts every lane in pipeline order, empty ones included", () => {
-    const lanes = boardLanes(rows);
-    expect(lanes.slice(0, 6).map((l) => l.status)).toEqual(BOARD_STATUSES);
-    expect(lanes.find((l) => l.status === "todo")?.items.map((t) => t.id)).toEqual(["a", "c"]);
-    expect(lanes.find((l) => l.status === "doing")?.items).toEqual([]);
-  });
-
-  it("gives a row with no lane its own column rather than dropping it", () => {
-    const extra = boardLanes(rows).slice(6).map((l) => l.status);
-    expect(extra).toContain("parked");
-    expect(extra).toContain("invented-by-a-future-build");
-  });
-
-  it("conserves every row", () => {
-    const total = boardLanes(rows).reduce((n, l) => n + l.items.length, 0);
-    expect(total).toBe(rows.length);
-  });
-
-  it("drops the empty groups on the phone list, and only those", () => {
-    const groups = listGroups(rows);
-    expect(groups.every((g) => g.items.length > 0)).toBe(true);
-    expect(groups.reduce((n, g) => n + g.items.length, 0)).toBe(rows.length);
   });
 });
 
@@ -263,13 +276,13 @@ describe("paging asks for one page", () => {
   });
 
   it("leaves page 1 out of the URL and writes any other", () => {
-    const f = defaultFilters("table");
-    expect(writeParams(f, DEFAULT_SORT, "table", undefined, 1).toString()).toBe("");
-    expect(writeParams(f, DEFAULT_SORT, "table", undefined, 3).get("page")).toBe("3");
+    const f = defaultFilters("list");
+    expect(writeParams(f, DEFAULT_SORT, "list", undefined, 1).toString()).toBe("");
+    expect(writeParams(f, DEFAULT_SORT, "list", undefined, 3).get("page")).toBe("3");
   });
 
   it("sends an offset for later pages and none for the first", () => {
-    const f = defaultFilters("table");
+    const f = defaultFilters("list");
     expect(apiQuery(f, DEFAULT_SORT, PAGE_SIZE, 0).has("offset")).toBe(false);
     expect(apiQuery(f, DEFAULT_SORT, PAGE_SIZE, 100).get("offset")).toBe("100");
     expect(apiQuery(f, DEFAULT_SORT, PAGE_SIZE).get("limit")).toBe(String(PAGE_SIZE));

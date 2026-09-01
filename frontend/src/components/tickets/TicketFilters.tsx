@@ -5,28 +5,79 @@
 // The "+ Filter" menu is ONE popover grouped by field rather than a field list
 // that opens a second popover per field. Two levels of popover is a fragile
 // shape (two placements to flip, two dismiss rules, a submenu that has to
-// survive the pointer leaving it) and it costs an extra interaction on the most
-// common action there is here, which is ticking two statuses.
+// survive the pointer leaving it) and it costs an extra interaction on every
+// filter reached through it.
+//
+// STATUS IS NOT IN THAT MENU, and not in the sheet either. It is
+// `TicketStatusBar`, on screen above the list at every width, because it is the
+// axis a queue of ~200 tickets is read along and the only one whose answer is a
+// number worth showing.
 import { Plus, Search, SlidersHorizontal, ArrowDown, ArrowUp } from "lucide-react";
 import {
   Button, FilterBar, FilterChip, Menu, MenuCheckItem, MenuItem, MenuLabel, Modal,
-  Segmented, StatusDot,
+  Segmented,
 } from "@workshop/ui";
 import {
-  TASK_STATUSES, TASK_SORTS, TASK_EFFORTS, TASK_SOURCES, scopeLabel, sourceLabel,
-  taskStatusKind, taskStatusLabel, taskStatusTitle, type TaskSort,
+  TASK_SORTS, TASK_EFFORTS, TASK_SOURCES, scopeLabel, sourceLabel,
+  taskStatusLabel, type TaskSort,
 } from "../../lib/tasks";
 import {
-  chipsFor, clearField, toggleValue,
+  STATUS_PRESETS, chipsFor, clearField, statusPresetOf, statusesForPreset,
+  toggleValue,
   type TicketFilters as Filters, type TicketSort, type TicketView,
 } from "../../lib/ticketFilters";
 
 export type LabelCount = { label: string; count: number };
 
+/** The count behind each status preset, keyed by preset value. `undefined`
+ *  while it is still being counted, which is most of the first second. */
+export type StatusCounts = Record<string, number | undefined>;
+
+/** The status control, on screen at every width and above the list.
+ *
+ *  IT IS THE ONE CONTROL A 200-TICKET QUEUE IS ACTUALLY USED THROUGH. Status
+ *  was previously reachable only by opening the "+ Filter" menu or the phone's
+ *  sheet and ticking boxes, so "how much is blocked" could not be read without
+ *  three interactions and could not be read at all without running the filter.
+ *  Five presets, the server's own count beside each, one tap.
+ *
+ *  No `StatusDot` on the pills: three of the five presets are SETS of statuses
+ *  ("Active" is four), so a dot there would have to pick one of them and would
+ *  be picking wrong. The rows below carry the dots, where each one is about a
+ *  single ticket. */
+export function TicketStatusBar({ filters, counts, onFilters }: {
+  filters: Filters;
+  counts: StatusCounts;
+  onFilters: (next: Filters) => void;
+}) {
+  const current = statusPresetOf(filters.status);
+  return (
+    <div className="ws-pillset" role="group" aria-label="Filter by status">
+      {STATUS_PRESETS.map((p) => {
+        const n = counts[String(p.value)];
+        return (
+          <button
+            key={String(p.value)}
+            type="button"
+            className="ws-selectpill"
+            aria-pressed={current === p.value}
+            onClick={() => onFilters({ ...filters, status: statusesForPreset(p.value) })}
+          >
+            {p.label}
+            {/* A count only once there is one. A 0 printed while the request is
+                in flight is a claim, and it is wrong on every preset that has
+                rows. */}
+            {n !== undefined && <span className="ws-selectpill__count">{n}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 type Props = {
   filters: Filters;
   sort: TicketSort;
-  view: TicketView;
   scopes: string[];
   labels: LabelCount[];
   assignees: LabelCount[];
@@ -49,18 +100,15 @@ function FieldMenuBody({ filters, scopes, labels, assignees, lockedScope, onFilt
 }) {
   return (
     <>
-      <MenuLabel>Status</MenuLabel>
-      {TASK_STATUSES.map((s) => (
-        <MenuCheckItem
-          key={s}
-          checked={filters.status.includes(s)}
-          onToggle={() => onFilters(toggleValue(filters, "status", s))}
-        >
-          {taskStatusLabel(s)}
-        </MenuCheckItem>
-      ))}
-      {/* WHERE IT CAME FROM. Second, under Status, because on this queue it is
-          the strongest narrowing there is: 132 of 208 open tickets were filed by
+      {/* NO STATUS GROUP. Status is `TicketStatusBar`, which is on screen above
+          the list at every width with a count on every preset. Listing the
+          eight statuses here as well would be the same control twice, and the
+          menu's version is the weaker one: it is closed by default, it takes
+          three interactions, and it can show no counts. Removed at both widths
+          rather than kept on the wide one, because a filter the phone and the
+          desktop disagree about is two surfaces to keep in sync. */}
+      {/* WHERE IT CAME FROM. First, because on this queue it is the strongest
+          narrowing there is after status: 132 of 208 open tickets were filed by
           an agent noticing something while it worked. */}
       <MenuLabel>Source</MenuLabel>
       {TASK_SOURCES.map((k) => (
@@ -185,10 +233,10 @@ function SortMenu({ sort, onSort }: { sort: TicketSort; onSort: (s: TicketSort) 
 
 /** The desktop filter row. */
 export function TicketFilterBar({
-  filters, sort, view, scopes, labels, assignees, count, lockedScope,
+  filters, sort, scopes, labels, assignees, count, lockedScope,
   onFilters, onSort, onNew,
 }: Props) {
-  const chips = chipsFor(filters, view, {
+  const chips = chipsFor(filters, {
     scope: scopeLabel,
     status: taskStatusLabel,
     source: sourceLabel,
@@ -253,14 +301,14 @@ export function TicketFilterBar({
 
 /** The phone bar: search, one button into the sheet, and what is currently on. */
 export function TicketFilterCompact({
-  filters, sort, view, lockedScope, onOpen, onFilters,
+  filters, sort, lockedScope, onOpen, onFilters,
 }: {
-  filters: Filters; sort: TicketSort; view: TicketView;
+  filters: Filters; sort: TicketSort;
   /** See `Props.lockedScope`. */
   lockedScope?: boolean;
   onOpen: () => void; onFilters: (next: Filters) => void;
 }) {
-  const chips = chipsFor(filters, view, {
+  const chips = chipsFor(filters, {
     scope: scopeLabel, status: taskStatusLabel, source: sourceLabel,
   }, { lockedScope });
   const sortLabel = TASK_SORTS.find((s) => s.value === sort.key)?.label ?? sort.key;
@@ -334,27 +382,9 @@ export function TicketFilterSheet({
       }
     >
       <div className="ws-filtersheet">
-        <section>
-          <div className="ws-section-label">Status</div>
-          <div className="ws-pillset">
-            {TASK_STATUSES.map((s) => {
-              const on = filters.status.includes(s);
-              return (
-                <button
-                  key={s}
-                  type="button"
-                  className="ws-selectpill"
-                  aria-pressed={on}
-                  onClick={() => onFilters(toggleValue(filters, "status", s))}
-                >
-                  <StatusDot status={taskStatusKind(s)}>{null}</StatusDot>
-                  {taskStatusTitle(s)}
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
+        {/* No Status section: `TicketStatusBar` is on the screen behind this
+            sheet, so putting the same control in here would ask the reader to
+            open a sheet to reach a thing already under their thumb. */}
         <section>
           <div className="ws-section-label">Source</div>
           <div className="ws-pillset">
@@ -498,7 +528,13 @@ export function TicketFilterSheet({
   );
 }
 
-/** The Table / Board switcher.
+/** The List / Board switcher, wide viewports only.
+ *
+ *  "Table" was the other option until the table was deleted; the list is what
+ *  replaced it, and it is now the same rows the phone gets. The board stays,
+ *  because it is a genuinely different read: six lanes answering "what is
+ *  stuck, what is waiting, what is in flight" at a glance, which one sorted
+ *  column cannot do at any length.
  *
  *  A THIRD, PERMANENTLY-DISABLED "Timeline" slot used to sit here, on the
  *  reasoning that holding the space saved redesigning the control when the view
@@ -515,7 +551,7 @@ export function ViewSwitcher({ view, onView }: {
       value={view}
       onChange={(v) => onView(v as TicketView)}
       options={[
-        { value: "table", label: "Table" },
+        { value: "list", label: "List" },
         { value: "board", label: "Board" },
       ]}
       hint={undefined}

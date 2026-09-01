@@ -1,4 +1,4 @@
-// The Tickets surface. ONE filtered set of tickets, drawn three ways.
+// The Tickets surface. ONE filtered set of tickets, and one row shape for it.
 //
 // IT IS A COMPONENT, NOT A PAGE, because there are two places a filtered ticket
 // list is asked for and only one of them was getting this one. `/tickets` is a
@@ -9,45 +9,62 @@
 // prop. Reported by the operator: "the app Tickets tab is a worse copy of
 // /tickets".
 //
-// What this page was before, and why (operator direction 2026-08-12): four tabs
-// and nine controls collapsed to one list and four. That collapse was right and
-// is not being undone. What the 2026-08-14 redesign adds on top of it is SHAPE:
-// the same one list, as a board when you are asking "what is where", as a table
-// when you are comparing rows, and as a grouped list on a phone. The controls
-// stay four in substance (search, filter, sort, new) and become chips, so what
-// is narrowing the list is visible rather than hidden inside three selects.
+// WHAT WAS WRONG WITH IT, reported 2026-09-01: "when I go to the tickets page,
+// I'm still seeing some old tickets fucking page." It was not stale code and it
+// was not a stale bundle. It was that the default shape above 900px was a table
+// -- eight columns of which four (tags, priority, effort, assignee) are unset on
+// most of the live store -- which is precisely the grid this system threw out on
+// 2026-08-12, when `.ws-listrow` became "the one row shape for every list in the
+// app: tickets and runs today". The runs feed kept that row; tickets got a table
+// back two days later. So the page looked like the tracker it had already
+// stopped being, and the operator was right that he was looking at an old one.
 //
-// The board came back deliberately. It was deleted in August as "a surface you
-// drag work across, which nothing here does" — and the cards still do not drag,
-// because status is changed on the ticket where the consequences are. What a
-// board is FOR here is the read: six lanes answering "what is stuck, what is
-// waiting, what is in flight" in one glance, which a single-column list sorted
-// by date cannot do at any length.
+// THREE THINGS CHANGED, and nothing else:
 //
-// A ticket IS a task; every identifier stays `task` (ADR 0001). The route stays
-// /work so existing links keep resolving.
+//   1. The table is deleted. There is one list, the `.ws-listrow` one, at every
+//      width, and the row states its own status in words (frontend/CLAUDE.md:
+//      "the word goes in the meta line as plain text").
+//   2. Status became a bar of five presets with the server's own counts, above
+//      the list, at every width -- rather than eight checkboxes inside a menu.
+//      A queue of ~200 is navigated by status first, and a control you have to
+//      open cannot say how much is behind it.
+//   3. The phone list's status GROUPING is gone. Its headings counted the
+//      current page of 50, so the same heading returned page after page with a
+//      different number, none of which was the count of anything.
+//
+// The 2026-08-12 collapse (four tabs and nine controls down to one list and
+// four controls, on operator direction) is intact and is not being undone.
+//
+// The board stays. It was deleted in August as "a surface you drag work across,
+// which nothing here does" -- and the cards still do not drag, because status is
+// changed on the ticket where the consequences are. What a board is FOR here is
+// the read: six lanes answering "what is stuck, what is waiting, what is in
+// flight" in one glance, which a single sorted column cannot do at any length.
+//
+// A ticket IS a task; every identifier stays `task` (ADR 0001).
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button, Card, Field, Input, Modal, Notice, PageActionBar, Row, Select, Skeleton, Stack, StateBlock, Textarea, shortHttpError } from "@workshop/ui";
-import { type Task, cleanTitle, scopeLabel, ticketHref } from "../../lib/tasks";
+import { type Task, cleanTitle, scopeLabel, spansScopes, ticketHref } from "../../lib/tasks";
 import type { components } from "../../api/schema.gen";
 import { rowTotal } from "../../lib/pageTotal";
 import { queryKeys } from "../../lib/queryKeys";
 import {
-  PAGE_SIZE, apiQuery, clampPage, defaultFilters, isNarrowed, pageCount,
-  pageItems, parseFilters, parsePage, parseSort, parseView, writeParams,
+  DEFAULT_SORT, PAGE_SIZE, STATUS_PRESETS, apiQuery, clampPage, defaultFilters, isNarrowed,
+  pageCount, pageItems, parseFilters, parsePage, parseSort, parseView,
+  writeParams,
   type TicketFilters, type TicketSort, type TicketView,
 } from "../../lib/ticketFilters";
 import { orderScopes } from "../../lib/devMode";
 import { useIsWide } from "../../lib/useMediaQuery";
 import { TicketBoard } from "./TicketBoard";
-import { TicketTable } from "./TicketTable";
 import { TicketList } from "./TicketList";
 import {
-  TicketFilterBar, TicketFilterCompact, TicketFilterSheet, ViewSwitcher,
-  type LabelCount,
+  TicketFilterBar, TicketFilterCompact, TicketFilterSheet, TicketStatusBar,
+  ViewSwitcher,
+  type LabelCount, type StatusCounts,
 } from "./TicketFilters";
 
 // THE SERVER'S OWN STATEMENT OF THIS SHAPE, not a second copy of it.
@@ -212,6 +229,51 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
     staleTime: 30_000,
   });
 
+  // THE COUNT BEHIND EACH STATUS PRESET, one request each, `limit=1`.
+  //
+  // The whole point of the status bar is a number you can read without running
+  // the filter, and this route has no counts endpoint: the only thing that
+  // knows how many tickets are blocked is the list route answering a query
+  // whose status is `blocked`. So each preset asks for one row and reads
+  // `page.total` off the envelope, which is the same trick the board already
+  // uses per lane, at a fifth of the payload.
+  //
+  // EVERY OTHER FILTER IS CARRIED. A count has to be the count of what the
+  // reader would get by pressing the pill, so on an app's Tickets tab, or under
+  // a search, "Blocked 2" means two blocked tickets in THAT set. A count over
+  // the whole store beside a narrowed list is a number that contradicts the
+  // rows under it.
+  //
+  // A failed count renders as no count rather than as 0: see `StatusCounts`.
+  const countQueries = useQueries({
+    queries: STATUS_PRESETS.map((preset) => {
+      const params = apiQuery(
+        { ...urlFilters, status: preset.statuses }, DEFAULT_SORT, 1);
+      return {
+        queryKey: queryKeys.tasks.filteredList(`count:${params.toString()}`),
+        queryFn: async (): Promise<number> => {
+          const r = await fetch(`/api/tasks?${params.toString()}`);
+          if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, ""));
+          const j: TasksResp = await r.json();
+          return rowTotal(j.page?.total, j.items?.length ?? 0);
+        },
+        staleTime: 30_000,
+      };
+    }),
+  });
+
+  const statusCounts = useMemo<StatusCounts>(() => {
+    const out: StatusCounts = {};
+    STATUS_PRESETS.forEach((preset, i) => {
+      const q = countQueries[i];
+      out[String(preset.value)] = q?.isSuccess ? q.data : undefined;
+    });
+    return out;
+    // The query results are new objects every render; their DATA is the real
+    // dependency, and it is a short array of numbers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countQueries.map((q) => (q.isSuccess ? q.data : "")).join(",")]);
+
   const assigneesQuery = useQuery({
     queryKey: queryKeys.tasks.assignees(labelScope),
     queryFn: async (): Promise<LabelCount[]> => {
@@ -259,9 +321,14 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
   // cannot clear anything. An app with an empty queue says it is empty.
   const narrowed = isNarrowed(
     lockedScope ? { ...urlFilters, scope: null } : urlFilters, view);
-  // The board draws its own scope-spanning rows; the table only shows the scope
-  // column when the list actually spans more than one.
-  const showScope = !urlFilters.scope;
+  // Nothing here, and nothing was asked for: the store is empty rather than the
+  // filters being tight. Read by the empty state and by the status bar.
+  const emptyStore = !!data && rows.length === 0 && !narrowed;
+  // The scope goes on a row only when the rows in hand actually differ in it.
+  // See `spansScopes`: on this installation the unfiltered list is one scope for
+  // page after page, so the old rule (print it unless a scope filter is set)
+  // put one identical word on fifty rows.
+  const showScope = spansScopes(rows);
   // The scope label for the header's eyebrow and for the create dialog's one
   // option. `scopeLabel` is the same formatter the global filter chip uses.
   const scopeName = urlFilters.scope ? scopeLabel(urlFilters.scope) : "Workshop";
@@ -308,10 +375,13 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
           )}
       />
     );
-  } else if (!wide) {
-    body = <TicketList tasks={rows} />;
   } else {
-    body = <TicketTable tasks={rows} showScope={showScope} />;
+    // ONE LIST, at every width. There used to be a table above 900px and this
+    // list below it, which is the same rows drawn twice with two sets of rules
+    // to keep in agreement. `.ws-listrow` is already a phone row that becomes a
+    // wide row at 720px with no second markup path, so the breakpoint belongs
+    // to the row and not to this branch.
+    body = <TicketList tasks={rows} showScope={showScope} />;
   }
 
   return (
@@ -344,11 +414,29 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
           </div>
         )}
 
+        {/* The status control, above the search and the chips, at every width.
+            It is the first question this list is asked and the only one whose
+            answer is a number, so it reads before the controls that narrow it
+            further. See TicketStatusBar.
+
+            NOT DRAWN OVER AN EMPTY STORE. On a scope with no tickets at all
+            (a newly linked app's own tab) all five presets are 0 and all five
+            lead to the same empty list, which is five controls that can do
+            nothing. Gated on the same condition as the "No tickets yet" state
+            below, so the two cannot disagree, and not on the counts, so it does
+            not appear and then vanish while they land. */}
+        {!emptyStore && (
+          <TicketStatusBar
+            filters={filters}
+            counts={statusCounts}
+            onFilters={applyFilters}
+          />
+        )}
+
         {wide ? (
           <TicketFilterBar
             filters={filters}
             sort={sort}
-            view={view}
             scopes={scopes}
             labels={labels}
             assignees={assignees}
@@ -362,7 +450,6 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
           <TicketFilterCompact
             filters={filters}
             sort={sort}
-            view={view}
             lockedScope={!!lockedScope}
             onOpen={() => setSheet(true)}
             onFilters={applyFilters}

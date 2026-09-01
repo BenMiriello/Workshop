@@ -369,6 +369,28 @@ const SOURCE_LABEL: Record<TaskSource, string> = {
 export const sourceLabel = (kind?: string | null): string =>
   SOURCE_LABEL[(kind ?? "") as TaskSource] ?? String(kind ?? "");
 
+// The same fact as ONE WORD, for a list row's meta line.
+//
+// `sourceLabel` is a sentence because a filter menu has the width for one and a
+// row does not: `.ws-listrow__meta` neither wraps nor scrolls, so "Filed by an
+// agent" is not shown small there, it pushes the facts after it off the edge.
+//
+// `unknown` returns "", which DROPS the fact rather than printing a word. The
+// same rule as `sourceOf`: a ticket nobody recorded a source for must not read
+// as having come from somewhere, and "unknown" on two rows out of three is a
+// column of noise. The ticket page still says "Provenance not recorded" in
+// full, where there is room to say it properly.
+const SOURCE_SHORT: Record<TaskSource, string> = {
+  operator: "operator",
+  chat: "chat",
+  agent: "agent",
+  autogen: "program",
+  unknown: "",
+};
+
+export const sourceShort = (kind?: string | null): string =>
+  SOURCE_SHORT[(kind ?? "") as TaskSource] ?? "";
+
 // ---- ordering ---------------------------------------------------------------
 // Mirrors backend tasks.SORT_KEYS. The list endpoint sorts; the client only
 // names the key, so the two cannot drift into two different ideas of "priority".
@@ -747,6 +769,69 @@ export const scopeLabel = _scopeLabel;
 // failing where the mistake is.
 export function ticketHref(scope: string, id: string): string {
   return `/tickets/${encodeURIComponent(scope || "workshop")}/${encodeURIComponent(id)}`;
+}
+
+// ---- what a list row says beside the title ----------------------------------
+// The small facts on a ticket row, in reading order, as plain words.
+//
+// This is the rule frontend/CLAUDE.md states for every list in this app: the
+// status DOT is not enough on its own, so the WORD goes in the meta line as
+// plain text ("to do · workshop · 2h"), because "is this blocked or just
+// queued" is what a ticket list is read for and a colour answers that only for
+// a reader who has already learned the five hues. It is a function rather than
+// four conditionals inside the row so the ordering and the dropping rules are
+// executed in tasks.test.ts.
+//
+// CAPPED AT THREE, for the same reason `lib/workView.rowFacts` is:
+// `.ws-listrow__meta` neither wraps nor scrolls, so a fourth fact is not shown
+// small, it is silently clipped. Time is NOT one of the three — it has its own
+// slot at the end of the row (`.ws-listrow__time`) and is drawn separately.
+//
+// The order is what survives clipping first, most useful first:
+//   1. the status word      — always; it is the question the list is asked
+//   2. the scope            — only when the list actually spans more than one,
+//                             because on a list already filtered to one scope
+//                             it is the filter repeated on every row
+//   3. who filed it         — dropped when nothing was recorded (`sourceShort`)
+//
+// Priority, effort and tags are deliberately absent. Measured on the live
+// store, priority is unset on 45% of tickets, effort on 70% and labels on 95%,
+// so they are three mostly-empty facts competing with the three above for a
+// line that clips. All three remain filterable, and the ticket page shows them.
+export const TICKET_ROW_FACTS = 3;
+
+// Whether the scope is worth printing on these rows at all.
+//
+// IT IS A QUESTION ABOUT THE DATA, NOT ABOUT THE FILTER. The rule used to be
+// "show the scope unless a scope filter is set", which is true but not enough:
+// the unfiltered list on this installation is ~210 active tickets of which
+// almost every one is in the same scope, so the column printed one identical
+// word on fifty rows. frontend/CLAUDE.md's second test for spending anything on
+// a row is "does the thing it marks actually vary on this screen?" -- and a
+// constant is not a signal, whether it is constant because of a filter or
+// because of what is in the store.
+//
+// So the caller asks about the rows it is holding. A page whose rows are all
+// one scope drops it; the next page picks it back up if that page spans two,
+// which is the honest answer to "does this tell me anything here".
+export function spansScopes(tasks: { scope?: string | null }[]): boolean {
+  const seen = new Set<string>();
+  for (const t of tasks) {
+    seen.add(t.scope ?? "workshop");
+    if (seen.size > 1) return true;
+  }
+  return false;
+}
+
+export function ticketRowFacts(
+  task: { status?: string; scope?: string | null; source?: { kind?: string | null } | null },
+  opts?: { showScope?: boolean },
+): string[] {
+  const facts = [taskStatusLabel(task.status)];
+  if (opts?.showScope) facts.push(_scopeLabel(task.scope ?? undefined));
+  const filedBy = sourceShort(sourceOf(task));
+  if (filedBy) facts.push(filedBy);
+  return facts.slice(0, TICKET_ROW_FACTS);
 }
 
 // The scope a Run's ticket lives in. A Run is bound to a project or it is not,

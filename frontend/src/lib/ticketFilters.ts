@@ -14,18 +14,29 @@ import {
   type TaskSort,
   type TaskStatus,
 } from "./tasks";
-import { ACTIVE_STATE_TYPES } from "./ticketGroups";
+import {
+  ACTIVE_STATE_TYPES, STATUS_FILTERS, statusFilterStatuses, type StatusFilter,
+} from "./ticketGroups";
 
 // ---- views -------------------------------------------------------------------
 // Two views, and they are the two that exist. A `?view=timeline` URL still
 // falls back to the default rather than rendering a blank page, which is what
 // this parse has always done for any unknown value; the difference is that the
 // switcher no longer offers a Timeline nobody can open.
-export type TicketView = "table" | "board";
+//
+// `list`, NOT `table`. The table was the third shape of a ticket row on this
+// one surface (a board card, a table row, a phone row), and it was the one
+// shape the design system had already ruled out: `.ws-listrow` is "the one row
+// shape for every list in the app: tickets and runs today", settled on operator
+// direction 2026-08-12, and the table put tickets back on the grid it replaced
+// -- eight columns of which four (tags, priority, effort, assignee) are empty
+// on most rows. `?view=table` still resolves, to this, by the same fallback
+// that retired `?view=timeline`.
+export type TicketView = "list" | "board";
 
-export const TICKET_VIEWS: TicketView[] = ["table", "board"];
+export const TICKET_VIEWS: TicketView[] = ["list", "board"];
 
-export const DEFAULT_VIEW: TicketView = "table";
+export const DEFAULT_VIEW: TicketView = "list";
 
 export const isTicketView = (v: string | null | undefined): v is TicketView =>
   !!v && (TICKET_VIEWS as string[]).includes(v);
@@ -39,18 +50,24 @@ export const BOARD_STATUSES: TaskStatus[] = [
 ];
 
 // ---- the default status set --------------------------------------------------
-// It depends on the view, and that is not a shortcut. A TABLE answering "what
-// is in flight" must not open with 108 done tickets (measured on the live
-// store: 108 of 177). A BOARD whose lanes are the statuses must not open with
-// two permanently empty ones, which is what the table's default would do to it.
+// It depends on the view, and that is not a shortcut. A LIST answering "what is
+// in flight" must not open with 108 done tickets (measured on the live store:
+// 108 of 177). A BOARD whose lanes are the statuses must not open with two
+// permanently empty ones, which is what the list's default would do to it.
 //
 // So each view opens on the set it can actually draw, and an EXPLICIT status
 // filter is honoured by both. The difference is only ever the default.
+//
+// The board's default is the EMPTY set, which is how this module spells "every
+// status" -- the board narrows to its own six lanes itself (see `BOARD_STATUSES`
+// and `TicketBoard`), so restating them as a filter would be a second place the
+// lane list is decided, and it made the board's default match no preset on the
+// status bar. Every lane the board draws is still exactly the six.
 export const ACTIVE_STATUSES: TaskStatus[] =
   ACTIVE_STATE_TYPES.flatMap((t) => STATUSES_BY_STATE_TYPE[t]);
 
 export function defaultStatuses(view: TicketView): TaskStatus[] {
-  return view === "board" ? BOARD_STATUSES : ACTIVE_STATUSES;
+  return view === "board" ? [] : ACTIVE_STATUSES;
 }
 
 // ---- the filter set ----------------------------------------------------------
@@ -98,6 +115,45 @@ const sameSet = (a: readonly string[], b: readonly string[]): boolean =>
 
 export const isDefaultStatus = (f: TicketFilters, view: TicketView): boolean =>
   sameSet(f.status, defaultStatuses(view));
+
+// ---- status presets: the one control that is always on screen ---------------
+// WHY THIS IS NOT A CHIP. Status was reachable only by opening a "+ Filter"
+// menu (wide) or a filter sheet (phone) and ticking boxes, which is the right
+// shape for tag and effort and the wrong one for the question a queue of ~200
+// tickets is actually asked: what is blocked, what is left, what is done. A
+// control you have to open cannot answer that, and its counts cannot be read at
+// all. These five presets sit above the list at every width, each with the
+// server's own count beside it, so "2 blocked" is one glance and one tap.
+//
+// The vocabulary is NOT new. `lib/ticketGroups.STATUS_FILTERS` already owns
+// these five and the measurement behind them (five statuses are in use on the
+// live store; ten of the fifteen options the old select offered could only ever
+// return nothing). This maps them onto the multi-value `status` this module
+// carries, so there is one status vocabulary and not a sixth.
+export type TicketStatusPreset = {
+  value: StatusFilter;
+  label: string;
+  /** Empty means every status, the same spelling the filter set uses. */
+  statuses: TaskStatus[];
+};
+
+export const STATUS_PRESETS: TicketStatusPreset[] = STATUS_FILTERS.map((f) => ({
+  value: f.value,
+  label: f.label,
+  statuses: statusFilterStatuses(f.value) ?? [],
+}));
+
+/** Which preset a status set IS, or null when it is a hand-picked combination.
+ *  Null is a real state and not a fallback: a `?status=doing,in_review` link
+ *  still resolves, the bar shows nothing pressed, and the status chip comes
+ *  back so the reader has something to clear. */
+export function statusPresetOf(status: TaskStatus[]): StatusFilter | null {
+  return STATUS_PRESETS.find((p) => sameSet(p.statuses, status))?.value ?? null;
+}
+
+export function statusesForPreset(value: StatusFilter): TaskStatus[] {
+  return STATUS_PRESETS.find((p) => p.value === value)?.statuses ?? [];
+}
 
 /** Is anything narrowing the list beyond the view's own default? */
 export function isNarrowed(f: TicketFilters, view: TicketView): boolean {
@@ -275,10 +331,14 @@ export type FilterChipSpec = {
  * `opts.lockedScope` says the surface IS one scope, so the scope is not a
  * filter on it: no chip, because a chip carries a clear button and clearing
  * this one would ask for a list the surface cannot show.
+ *
+ * It no longer takes the VIEW. It took one only to decide what the always-on
+ * status chip should read at each view's default ("Active" or "On the board"),
+ * and there is no always-on status chip now: the status bar is the control, and
+ * a chip appears only for a hand-picked set, which reads the same in both.
  */
 export function chipsFor(
   filters: TicketFilters,
-  view: TicketView,
   fmt: {
     scope: (key: string) => string;
     status: (s: string) => string;
@@ -289,16 +349,23 @@ export function chipsFor(
   const chips: FilterChipSpec[] = [];
   const many = (n: number) => `· ${n}`;
 
-  // The status chip is present even at its default, and says which default it
-  // is. "Where are the done tickets" is the most common question a filtered
-  // list gets asked, and a control that only appears once you have already
-  // changed it cannot answer that.
-  if (isDefaultStatus(filters, view)) {
-    chips.push({ field: "status", label: "Status", value: view === "board" ? "On the board" : "Active" });
-  } else if (filters.status.length === 1) {
-    chips.push({ field: "status", label: "Status", value: fmt.status(filters.status[0]) });
-  } else if (filters.status.length > 1) {
-    chips.push({ field: "status", label: "Status", value: many(filters.status.length) });
+  // STATUS TAKES A CHIP ONLY WHEN THE BAR CANNOT SAY IT. The status bar is on
+  // screen at both widths with the five presets and their counts, so a chip
+  // repeating "Status · Active" beside a pressed Active pill is the same fact
+  // twice -- two chip-shaped objects per control is what stops any of them
+  // being scannable (operator, 2026-08-12).
+  //
+  // A hand-picked set matches no preset, so nothing on the bar is pressed and
+  // there would be no way back: that case keeps its chip, and the chip is how
+  // it is cleared.
+  if (statusPresetOf(filters.status) === null) {
+    chips.push({
+      field: "status",
+      label: "Status",
+      value: filters.status.length === 1
+        ? fmt.status(filters.status[0])
+        : many(filters.status.length),
+    });
   }
 
   // Directly after Status, and before Scope: on a queue that is two thirds
@@ -360,38 +427,16 @@ export function toggleValue(
   return { ...f, [key]: next } as TicketFilters;
 }
 
-// ---- board grouping ----------------------------------------------------------
-// Every fetched row lands in exactly one lane, and a row whose status is not a
-// lane (parked, cancelled, or a status this build has not heard of) is NOT
-// dropped: it goes to the end under its own heading. A board that silently
-// loses work is worse than one with an extra column.
-export type BoardLane = { status: string; items: { status?: string }[] };
-
-export function boardLanes<T extends { status?: string }>(
-  tasks: T[], lanes: string[] = BOARD_STATUSES,
-): { status: string; items: T[] }[] {
-  const byStatus = new Map<string, T[]>();
-  for (const t of tasks) {
-    const k = t.status ?? "";
-    const arr = byStatus.get(k);
-    if (arr) arr.push(t);
-    else byStatus.set(k, [t]);
-  }
-  const out = lanes.map((status) => ({ status, items: byStatus.get(status) ?? [] }));
-  for (const [status, items] of byStatus) {
-    if (!lanes.includes(status)) out.push({ status, items });
-  }
-  return out;
-}
-
-// The mobile list groups by the same rule, minus the empty lanes: a phone
-// scrolls, so an empty heading is pure cost there, while on a board an empty
-// column is the drop target that says the lane exists.
-export function listGroups<T extends { status?: string }>(
-  tasks: T[], lanes: string[] = BOARD_STATUSES,
-): { status: string; items: T[] }[] {
-  return boardLanes(tasks, lanes).filter((g) => g.items.length > 0);
-}
+// ---- grouping -----------------------------------------------------------
+// `boardLanes` and `listGroups` used to live here, and both are gone.
+//
+// The board never called `boardLanes`: it fetches one paged query PER LANE, so
+// it never has a mixed array to divide. `listGroups` grouped the phone list by
+// status -- honestly-looking headings ("Blocked 2") computed over the CURRENT
+// PAGE of 50, so on ~200 tickets sorted by date the same heading reappeared on
+// page after page carrying a different number each time, and none of them was
+// the count of anything. The status bar answers that question with the
+// server's own totals instead, at every width.
 
 // ---- the numbered pager ------------------------------------------------------
 // Which page numbers to draw. A pager for 2 pages and a pager for 400 are the
