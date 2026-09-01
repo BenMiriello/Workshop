@@ -128,6 +128,15 @@ class AppChat(BaseModel):
     last_user_at: str | None = None
     branch_slug: str | None = None
     running: bool = False
+    # ARMED AND ROLE, declared here for the reason the docstring above already
+    # gives. `chats_for_app` builds its rows with the same builder the global
+    # list uses, so both fields are in the dict; a response model that does not
+    # declare a field drops it silently on the wire, which is exactly how the
+    # five above went missing. The app's Chats tab and the Work tab's thread
+    # list both read them (threads-branches-and-pages-2026-08-29.md section 1:
+    # an "agent" is a thread that is armed).
+    armed: str = "off"
+    role: str | None = None
 
 
 class AppChatList(BaseModel):
