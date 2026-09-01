@@ -473,7 +473,11 @@ def stale_surfaces(apply_stdout):
         if not s.startswith("STALE"):
             continue
         rest = s[len("STALE"):].strip()
-        for name in ("ui bundle", "backend", "vite env", "public edge code"):
+        for name in ("ui bundle", "backend", "vite env", "public edge code",
+                     # The schema is the surface apply.sh REPORTS and never
+                     # fixes. It has to be readable here, because it is what
+                     # tells a stale backend apart from a blocked one.
+                     "schema"):
             if rest.startswith(name):
                 stale.add(name)
                 break
@@ -558,11 +562,39 @@ def check_delivery(files, evidence):
             if worst == "pass":
                 worst = "foreign"
         else:
-            result[surface] = {
-                "state": "fail", "files": my_files,
-                "why": "stale with a clean tree -- run: bash scripts/apply.sh",
-            }
-            worst = "fail"
+            # AN UNAPPLIED MIGRATION IS NOT "RUN APPLY.SH AGAIN".
+            #
+            # apply.sh DECLINES the backend restart when the tree's migrations
+            # are ahead of the live database, and it declines deliberately and
+            # forever: starting code whose migration has not landed is an
+            # outage, not a risk, and nothing in this repo's deploy path runs
+            # alembic. So telling an agent to run apply.sh here sends it round
+            # a loop that cannot terminate, and the honest answer is that this
+            # surface is blocked on an act that is not the agent's to perform.
+            #
+            # Measured 2026-09-01: this gate said "run: bash scripts/apply.sh"
+            # for a backend held back by exactly that, having just watched
+            # apply.sh refuse.
+            if surface == "backend" and "schema" in stale:
+                result[surface] = {
+                    "state": "blocked", "files": my_files,
+                    "why": "the tree's migrations are not applied to the live "
+                           "database, so apply.sh declines the restart by "
+                           "design. Running it again changes nothing. The "
+                           "migration is the operator's own act, in the "
+                           "operator's own terminal:\n"
+                           "  set -a; . ~/.config/workshop/db-admin.env; set +a\n"
+                           "  cd backend && .venv/bin/alembic upgrade head\n"
+                           "  bash scripts/apply.sh",
+                }
+                if worst == "pass":
+                    worst = "blocked"
+            else:
+                result[surface] = {
+                    "state": "fail", "files": my_files,
+                    "why": "stale with a clean tree -- run: bash scripts/apply.sh",
+                }
+                worst = "fail"
     return {"state": worst, "surfaces": result}
 
 
@@ -727,6 +759,12 @@ def render(evidence, quiet=False):
                     f"{'...' if len(s['blocked_by']) > 3 else ''}). "
                     f"Your files are committed; the build publishes when theirs are."
                 )
+            elif s.get("state") == "blocked":
+                # Same class as foreign: real, named, and not the agent's to
+                # perform. It must be SAID, loudly, every time -- an agent that
+                # reports done over this has told the operator his backend is
+                # live when it is not.
+                notes.append(f"NOT LIVE: {surface}. " + s.get("why", ""))
         c = evidence["checks"].get("correctness", {})
         if c.get("not_attributable"):
             notes.append("reviewer.sh was NOT run: " + c["not_attributable"]
