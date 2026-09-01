@@ -1854,6 +1854,82 @@ def _drop_text_segments(segments: list[dict],
     return kept
 
 
+# THE PROVIDER'S CONTEXT-USAGE REPORT, RECOGNISED BY ITS SHAPE.
+#
+# `_drop_text_segments` above removes the dump from ONE turn, the one whose whole
+# prompt is the literal string "/compact". That hinge is too narrow and it is why
+# the table came back: a compaction is not only that turn. The CLI compacts
+# mid-turn on its own when the window fills (29 `trigger:auto` boundaries on
+# record), a queued or carried `/compact` does not always arrive with a prompt
+# that compares equal to "/compact", and a local command can answer on a turn
+# whose boundary event never reached us. On every one of those the prompt test
+# fails, nothing is dropped, and the CLI's own text is committed as the reply.
+#
+# So the second guard hinges on the TEXT instead: this is never something a model
+# wrote, it is the CLI answering locally, and it is recognisable. Same knowledge
+# `services/context_report` parses the panel out of, used here to refuse it.
+_LOCAL_STDOUT_OPEN = "<local-command-stdout>"
+_LOCAL_STDOUT_CLOSE = "</local-command-stdout>"
+# The heading the CLI prints the table under, and the older one-sentence form it
+# printed before the table existed. Both were reported by the operator.
+_CONTEXT_REPORT_HEAD = "## context usage"
+_COMPACT_SENTENCE = "conversation compacted"
+
+
+def _unwrap_local_stdout(text: str) -> str:
+    """A local command's output with the CLI's own wrapper taken off.
+
+    The CLI hands local-command output back inside `<local-command-stdout>`,
+    both in the session file and (as a bare-string `user` event) on the stream.
+    Recognising the payload means looking past the wrapper first."""
+    s = (text or "").strip()
+    if s.startswith(_LOCAL_STDOUT_OPEN):
+        s = s[len(_LOCAL_STDOUT_OPEN):]
+        if s.rstrip().endswith(_LOCAL_STDOUT_CLOSE):
+            s = s.rstrip()[: -len(_LOCAL_STDOUT_CLOSE)]
+    return s.strip()
+
+
+def _is_context_report(text: str) -> bool:
+    """Is this text the CLI's context-usage dump rather than something said?
+
+    DELIBERATELY TIGHT, because the alternative failure is worse. A turn that
+    merely MENTIONS the report — this project has whole replies about this bug —
+    must not lose its text. So the report has to BE the message: it starts with
+    the heading (or the older sentence) and, for the table, carries the token
+    line that makes it a reading rather than prose under a borrowed heading."""
+    s = _unwrap_local_stdout(text).lower()
+    if not s:
+        return False
+    if s.startswith(_COMPACT_SENTENCE):
+        return True
+    if not s.startswith(_CONTEXT_REPORT_HEAD):
+        return False
+    # A reading, not a heading someone reused: the CLI always prints the totals
+    # line, and a category table under it.
+    return "**tokens:**" in s or "| category |" in s
+
+
+def _drop_context_report(segments: list[dict],
+                         cut_head: list[str] | None = None) -> list[dict]:
+    """The same turn with the CLI's context-usage dump removed and everything
+    else — prose, tools, subagents — left exactly where it was.
+
+    Narrower than `_drop_text_segments` on purpose. That one runs on a turn whose
+    reply is replaced wholesale and can afford to take every text segment; this
+    one runs on turns that may be REAL WORK which happened to compact along the
+    way, so it removes only the segments that are the dump itself."""
+    kept = [s for s in segments or []
+            if not (isinstance(s, dict) and s.get("t") == "text"
+                    and _is_context_report(s.get("text", "")))]
+    dropped = [s for s in segments or []
+               if isinstance(s, dict) and s.get("t") == "text"
+               and _is_context_report(s.get("text", ""))]
+    if dropped:
+        carry_cuts(dropped, kept, cut_head if cut_head is not None else [])
+    return kept
+
+
 def _clean_exit_text(segments: list[dict], *, unread: bool = False) -> str:
     """What to say for a turn that exited 0 and wrote no closing message.
 
@@ -3368,6 +3444,29 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     # re-derived right here when a compact clears the stale reading. Printing a
     # table as well is the third telling of the same thing.
     #
+    # FIRST, AND WHATEVER BRANCH BELOW ENDS UP RUNNING: the dump is not a reply
+    # and is never committed as one.
+    #
+    # The branch below replaces the reply of ONE turn, the one whose prompt is
+    # exactly "/compact". That is the right rule for the SENTENCE it writes, and
+    # the wrong rule for throwing the dump away, and the difference is why the
+    # operator reported the table again on 2026-09-01. `/compact` stopped being a
+    # Workshop-side fold and became a provider turn again on 2026-08-29
+    # (`5be52599`), which put the CLI's own output back on the wire after eleven
+    # weeks in which no dump could reach the transcript and nothing exercised the
+    # narrow guard. Every compaction that is not that exact prompt — the CLI's
+    # own mid-turn auto-compaction, a `/compact` whose prompt was carried or
+    # queued, one whose boundary event never arrived — walked straight past it
+    # into `elif turn.final_text`, and the dump was committed verbatim.
+    #
+    # So it is removed HERE, by what it is rather than by which prompt asked for
+    # it, from the segments the transcript draws AND from the text it falls back
+    # to. Scoped to turns where the CLI answered locally (a compaction happened,
+    # or the prompt was a slash command) so an ordinary reply is never touched.
+    if compacted or is_command:
+        turn.segments = _drop_context_report(turn.segments, turn.cut_head)
+        if _is_context_report(turn.final_text):
+            turn.final_text = ""
     # ONLY the explicit command turn. `compacted` alone is not enough: the CLI
     # also auto-compacts mid-turn when the window fills, and that turn is real
     # work whose reply must never be replaced by this line.
