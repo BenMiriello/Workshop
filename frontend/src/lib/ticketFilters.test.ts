@@ -155,6 +155,18 @@ describe("chips say what is narrowing the list", () => {
       .toEqual(["status", "source", "scope", "tag", "effort", "assignee"]);
   });
 
+  it("shows no scope chip on a surface that IS one scope", () => {
+    // The app Tickets tab mounts this list pinned to the app. A chip there
+    // carries a clear button, and clearing it would ask for a list the surface
+    // cannot show.
+    const f = { ...defaultFilters("table"), scope: "project:birds" };
+    expect(chipsFor(f, "table", fmt, { lockedScope: true })
+      .some((c) => c.field === "scope")).toBe(false);
+    // Every other chip is unaffected.
+    expect(chipsFor({ ...f, source: ["agent"] }, "table", fmt, { lockedScope: true })
+      .map((c) => c.field)).toEqual(["status", "source"]);
+  });
+
   it("drops the chip whose filter is cleared", () => {
     const f = clearField({ ...defaultFilters("table"), scope: "workshop" }, "scope");
     expect(chipsFor(f, "table", fmt).some((c) => c.field === "scope")).toBe(false);

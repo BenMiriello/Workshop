@@ -271,6 +271,10 @@ export type FilterChipSpec = {
  * The chips to render, in a fixed order so they do not reshuffle as filters
  * change. `labelFor` renders a scope key (the page has the scope vocabulary,
  * this module does not) and `statusLabel` a status.
+ *
+ * `opts.lockedScope` says the surface IS one scope, so the scope is not a
+ * filter on it: no chip, because a chip carries a clear button and clearing
+ * this one would ask for a list the surface cannot show.
  */
 export function chipsFor(
   filters: TicketFilters,
@@ -280,6 +284,7 @@ export function chipsFor(
     status: (s: string) => string;
     source: (s: string) => string;
   },
+  opts?: { lockedScope?: boolean },
 ): FilterChipSpec[] {
   const chips: FilterChipSpec[] = [];
   const many = (n: number) => `· ${n}`;
@@ -305,7 +310,7 @@ export function chipsFor(
     chips.push({ field: "source", label: "Source", value: many(filters.source.length) });
   }
 
-  if (filters.scope) {
+  if (filters.scope && !opts?.lockedScope) {
     chips.push({ field: "scope", label: "Scope", value: fmt.scope(filters.scope) });
   }
   if (filters.labels.length === 1) {

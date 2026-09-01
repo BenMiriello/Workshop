@@ -1,5 +1,14 @@
 // The Tickets surface. ONE filtered set of tickets, drawn three ways.
 //
+// IT IS A COMPONENT, NOT A PAGE, because there are two places a filtered ticket
+// list is asked for and only one of them was getting this one. `/tickets` is a
+// four-line wrapper over it (pages/Tickets.tsx); an app's Tickets tab mounts it
+// with `scope` pinned to that app. The tab used to render its own list -- no
+// search, no filter chips, no sort, no pagination, no view switcher -- over the
+// same rows, and that bespoke list is deleted in the commit that added this
+// prop. Reported by the operator: "the app Tickets tab is a worse copy of
+// /tickets".
+//
 // What this page was before, and why (operator direction 2026-08-12): four tabs
 // and nine controls collapsed to one list and four. That collapse was right and
 // is not being undone. What the 2026-08-14 redesign adds on top of it is SHAPE:
@@ -22,24 +31,24 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button, Card, Field, Input, Modal, Notice, PageActionBar, Row, Select, Skeleton, Stack, StateBlock, Textarea, shortHttpError } from "@workshop/ui";
-import { type Task, cleanTitle, scopeLabel, ticketHref } from "../lib/tasks";
-import type { components } from "../api/schema.gen";
-import { rowTotal } from "../lib/pageTotal";
-import { queryKeys } from "../lib/queryKeys";
+import { type Task, cleanTitle, scopeLabel, ticketHref } from "../../lib/tasks";
+import type { components } from "../../api/schema.gen";
+import { rowTotal } from "../../lib/pageTotal";
+import { queryKeys } from "../../lib/queryKeys";
 import {
   PAGE_SIZE, apiQuery, clampPage, defaultFilters, isNarrowed, pageCount,
   pageItems, parseFilters, parsePage, parseSort, parseView, writeParams,
   type TicketFilters, type TicketSort, type TicketView,
-} from "../lib/ticketFilters";
-import { orderScopes } from "../lib/devMode";
-import { useIsWide } from "../lib/useMediaQuery";
-import { TicketBoard } from "../components/tickets/TicketBoard";
-import { TicketTable } from "../components/tickets/TicketTable";
-import { TicketList } from "../components/tickets/TicketList";
+} from "../../lib/ticketFilters";
+import { orderScopes } from "../../lib/devMode";
+import { useIsWide } from "../../lib/useMediaQuery";
+import { TicketBoard } from "./TicketBoard";
+import { TicketTable } from "./TicketTable";
+import { TicketList } from "./TicketList";
 import {
   TicketFilterBar, TicketFilterCompact, TicketFilterSheet, ViewSwitcher,
   type LabelCount,
-} from "../components/tickets/TicketFilters";
+} from "./TicketFilters";
 
 // THE SERVER'S OWN STATEMENT OF THIS SHAPE, not a second copy of it.
 //
@@ -56,7 +65,26 @@ import {
 // the next rename a red typecheck here instead of a silently empty page.
 type TasksResp = components["schemas"]["Page_Task_"];
 
-export default function Tickets() {
+export type TicketsViewProps = {
+  /** Pin the list to one scope. The scope stops being a filter: it is not
+   *  offered in the filter menu, it takes no chip, the table drops its scope
+   *  column, and a new ticket is filed there. Absent, this is the global list
+   *  and the scope is one filter among the others.
+   *
+   *  A LOCK, NOT A DEFAULT. It is not written to the URL either, because on a
+   *  surface that IS the scope (an app's own tab) the URL already says which
+   *  one, and a `?scope=` there would be a second copy that a Clear could
+   *  disagree with. */
+  scope?: string | null;
+  /** Draw the surface's own header band (eyebrow, title, count, view
+   *  switcher). Off where a page header is already above it, which is every
+   *  embedded use: two headers stacked is the "290px of duplicated chrome"
+   *  failure frontend/CLAUDE.md records. The filter bar and the pager still
+   *  state the count, so nothing is lost with it. */
+  header?: boolean;
+};
+
+export default function TicketsView({ scope: lockedScope = null, header = true }: TicketsViewProps = {}) {
   const nav = useNavigate();
   const [search, setSearch] = useSearchParams();
   const wide = useIsWide();
@@ -70,7 +98,17 @@ export default function Tickets() {
   // what a wide window would show while the phone shows the list either way.
   const view: TicketView = urlView;
   const sort = parseSort(search);
-  const urlFilters = parseFilters(search, view);
+  // The lock wins over the URL, and the URL never carries it back out (see
+  // `writeUrl`). Everything downstream -- the API query, the chips, the create
+  // dialog -- reads this one value, so there is no second place the scope
+  // could be decided.
+  const parsed = parseFilters(search, view);
+  const urlFilters = useMemo<TicketFilters>(
+    () => (lockedScope ? { ...parsed, scope: lockedScope } : parsed),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `parsed` is a new
+    // object every render; its VALUES are the real dependency.
+    [lockedScope, search.toString(), view],
+  );
   const page = parsePage(search);
 
   // The one piece of filter state that is NOT read straight from the URL.
@@ -106,8 +144,11 @@ export default function Tickets() {
   // results". `writeUrl` therefore takes the page explicitly and defaults to 1.
   const writeUrl = useCallback(
     (f: TicketFilters, s: TicketSort, v: TicketView, nextPage = 1) =>
-      setSearch((prev) => writeParams(f, s, v, prev, nextPage), { replace: true }),
-    [setSearch]);
+      setSearch(
+        (prev) => writeParams(
+          lockedScope ? { ...f, scope: null } : f, s, v, prev, nextPage),
+        { replace: true }),
+    [setSearch, lockedScope]);
 
   const goToPage = useCallback((nextPage: number) =>
     writeUrl(urlFilters, sort, view, nextPage),
@@ -213,10 +254,17 @@ export default function Tickets() {
   // disabled there, so the page-level total is not merely 0, it is unknown --
   // and it read "Search 0 tickets" above a board holding 176.
   const searchCount = view === "board" ? null : total;
-  const narrowed = isNarrowed(urlFilters, view);
+  // A PINNED SCOPE IS NOT A FILTER THE READER APPLIED, so it must not make the
+  // empty state read "No tickets match these filters" with a Clear button that
+  // cannot clear anything. An app with an empty queue says it is empty.
+  const narrowed = isNarrowed(
+    lockedScope ? { ...urlFilters, scope: null } : urlFilters, view);
   // The board draws its own scope-spanning rows; the table only shows the scope
   // column when the list actually spans more than one.
   const showScope = !urlFilters.scope;
+  // The scope label for the header's eyebrow and for the create dialog's one
+  // option. `scopeLabel` is the same formatter the global filter chip uses.
+  const scopeName = urlFilters.scope ? scopeLabel(urlFilters.scope) : "Workshop";
 
   const clearAll = useCallback(
     () => writeUrl(defaultFilters(view), sort, view), [view, sort, writeUrl]);
@@ -274,20 +322,27 @@ export default function Tickets() {
           One band, not a PageHeader plus a separate control row: the count and
           the switcher are about the list below them, so they belong to it. */}
       <header className="ws-tickets__head">
-        <div className="ws-tickets__headrow">
-          <div className="ws-tickets__ident">
-            <div className="ws-tickets__eyebrow">
-              {urlFilters.scope ? scopeLabel(urlFilters.scope) : "Workshop"}
+        {header && (
+          <div className="ws-tickets__headrow">
+            <div className="ws-tickets__ident">
+              <div className="ws-tickets__eyebrow">{scopeName}</div>
+              <div className="ws-tickets__titlerow">
+                <h1 className="ws-tickets__title">Tickets</h1>
+                {data && <span className="ws-tickets__count">{total}</span>}
+              </div>
             </div>
-            <div className="ws-tickets__titlerow">
-              <h1 className="ws-tickets__title">Tickets</h1>
-              {data && <span className="ws-tickets__count">{total}</span>}
-            </div>
+            {/* Below 900px there is one body whatever the switcher says, so
+                showing it there would be a control with no effect. */}
+            {wide && <ViewSwitcher view={view} onView={applyView} />}
           </div>
-          {/* Below 900px there is one body whatever the switcher says, so
-              showing it there would be a control with no effect. */}
-          {wide && <ViewSwitcher view={view} onView={applyView} />}
-        </div>
+        )}
+        {/* Embedded, the switcher has nowhere else to go: it belongs to the
+            list, and the page header above this is the app's, not the list's. */}
+        {!header && wide && (
+          <div className="ws-tickets__headrow">
+            <ViewSwitcher view={view} onView={applyView} />
+          </div>
+        )}
 
         {wide ? (
           <TicketFilterBar
@@ -298,6 +353,7 @@ export default function Tickets() {
             labels={labels}
             assignees={assignees}
             count={searchCount}
+            lockedScope={!!lockedScope}
             onFilters={applyFilters}
             onSort={applySort}
             onNew={() => setCreating(true)}
@@ -307,6 +363,7 @@ export default function Tickets() {
             filters={filters}
             sort={sort}
             view={view}
+            lockedScope={!!lockedScope}
             onOpen={() => setSheet(true)}
             onFilters={applyFilters}
           />
@@ -384,6 +441,7 @@ export default function Tickets() {
         labels={labels}
         assignees={assignees}
         count={searchCount}
+        lockedScope={!!lockedScope}
         onFilters={applyFilters}
         onSort={applySort}
         onReset={clearAll}
@@ -391,7 +449,7 @@ export default function Tickets() {
 
       {creating && (
         <CreateTicket
-          scopes={scopes}
+          scopes={lockedScope ? [lockedScope] : scopes}
           initialScope={urlFilters.scope ?? "workshop"}
           onClose={() => setCreating(false)}
           onCreated={(t) => {

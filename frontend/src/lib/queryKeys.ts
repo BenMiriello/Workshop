@@ -155,7 +155,6 @@ export const queryKeys = {
     launcher: () => ["apps", "launcher"] as const,
     chats: (appId: string) => ["apps", appId, "chats"] as const,
     agents: (appId: string) => ["apps", appId, "agents"] as const,
-    tickets: (appId: string) => ["apps", appId, "tickets"] as const,
     runs: (appId: string) => ["apps", appId, "runs"] as const,
     deploys: (appId: string) => ["apps", appId, "deploys"] as const,
     notes: (appId: string) => ["apps", appId, "notes"] as const,

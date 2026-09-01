@@ -32,14 +32,19 @@ type Props = {
   assignees: LabelCount[];
   /** null when the surface does not know its total (see the board). */
   count: number | null;
+  /** The surface IS one scope (an app's own Tickets tab), so scope is not a
+   *  filter here: no menu group, no chip, nothing to clear. Offering "All
+   *  scopes" on a list that cannot leave its scope is a control that lies. */
+  lockedScope?: boolean;
   onFilters: (next: Filters) => void;
   onSort: (next: TicketSort) => void;
   onNew: () => void;
 };
 
 // The field menu, shared by the desktop bar and (as a flat body) by the sheet.
-function FieldMenuBody({ filters, scopes, labels, assignees, onFilters }: {
+function FieldMenuBody({ filters, scopes, labels, assignees, lockedScope, onFilters }: {
   filters: Filters; scopes: string[]; labels: LabelCount[]; assignees: LabelCount[];
+  lockedScope?: boolean;
   onFilters: (next: Filters) => void;
 }) {
   return (
@@ -107,26 +112,30 @@ function FieldMenuBody({ filters, scopes, labels, assignees, onFilters }: {
           ))}
         </>
       )}
-      <MenuLabel>Scope</MenuLabel>
-      {/* Single-select: a ticket lives in exactly one scope, so picking a
-          second would mean "either", which no other control here offers and
-          the endpoint does not take. It closes the menu, unlike the rows
-          above, because choosing it is the end of the interaction. */}
-      <MenuItem
-        checked={!filters.scope}
-        onSelect={() => onFilters({ ...filters, scope: null })}
-      >
-        All scopes
-      </MenuItem>
-      {scopes.map((s) => (
-        <MenuItem
-          key={s}
-          checked={filters.scope === s}
-          onSelect={() => onFilters({ ...filters, scope: s })}
-        >
-          {scopeLabel(s)}
-        </MenuItem>
-      ))}
+      {!lockedScope && (
+        <>
+          <MenuLabel>Scope</MenuLabel>
+          {/* Single-select: a ticket lives in exactly one scope, so picking a
+              second would mean "either", which no other control here offers and
+              the endpoint does not take. It closes the menu, unlike the rows
+              above, because choosing it is the end of the interaction. */}
+          <MenuItem
+            checked={!filters.scope}
+            onSelect={() => onFilters({ ...filters, scope: null })}
+          >
+            All scopes
+          </MenuItem>
+          {scopes.map((s) => (
+            <MenuItem
+              key={s}
+              checked={filters.scope === s}
+              onSelect={() => onFilters({ ...filters, scope: s })}
+            >
+              {scopeLabel(s)}
+            </MenuItem>
+          ))}
+        </>
+      )}
     </>
   );
 }
@@ -176,13 +185,14 @@ function SortMenu({ sort, onSort }: { sort: TicketSort; onSort: (s: TicketSort) 
 
 /** The desktop filter row. */
 export function TicketFilterBar({
-  filters, sort, view, scopes, labels, assignees, count, onFilters, onSort, onNew,
+  filters, sort, view, scopes, labels, assignees, count, lockedScope,
+  onFilters, onSort, onNew,
 }: Props) {
   const chips = chipsFor(filters, view, {
     scope: scopeLabel,
     status: taskStatusLabel,
     source: sourceLabel,
-  });
+  }, { lockedScope });
 
   return (
     <FilterBar
@@ -224,6 +234,7 @@ export function TicketFilterBar({
             scopes={scopes}
             labels={labels}
             assignees={assignees}
+            lockedScope={lockedScope}
             onFilters={onFilters}
           />
         </Menu>
@@ -242,14 +253,16 @@ export function TicketFilterBar({
 
 /** The phone bar: search, one button into the sheet, and what is currently on. */
 export function TicketFilterCompact({
-  filters, sort, view, onOpen, onFilters,
+  filters, sort, view, lockedScope, onOpen, onFilters,
 }: {
   filters: Filters; sort: TicketSort; view: TicketView;
+  /** See `Props.lockedScope`. */
+  lockedScope?: boolean;
   onOpen: () => void; onFilters: (next: Filters) => void;
 }) {
   const chips = chipsFor(filters, view, {
     scope: scopeLabel, status: taskStatusLabel, source: sourceLabel,
-  });
+  }, { lockedScope });
   const sortLabel = TASK_SORTS.find((s) => s.value === sort.key)?.label ?? sort.key;
   return (
     <div className="ws-ticketbar-compact">
@@ -291,7 +304,7 @@ export function TicketFilterCompact({
 
 /** The phone's filter and sort sheet. */
 export function TicketFilterSheet({
-  open, onClose, filters, sort, scopes, labels, assignees, count,
+  open, onClose, filters, sort, scopes, labels, assignees, count, lockedScope,
   onFilters, onSort, onReset,
 }: {
   open: boolean; onClose: () => void;
@@ -299,6 +312,8 @@ export function TicketFilterSheet({
   assignees: LabelCount[];
   /** null when the surface does not know its total (see the board). */
   count: number | null;
+  /** See `Props.lockedScope`. */
+  lockedScope?: boolean;
   onFilters: (next: Filters) => void;
   onSort: (next: TicketSort) => void;
   onReset: () => void;
@@ -414,30 +429,32 @@ export function TicketFilterSheet({
           </section>
         )}
 
-        <section>
-          <div className="ws-section-label">Scope</div>
-          <div className="ws-sheetrows">
-            <button
-              type="button"
-              className="ws-sheetrow"
-              aria-pressed={!filters.scope}
-              onClick={() => onFilters({ ...filters, scope: null })}
-            >
-              All scopes
-            </button>
-            {scopes.map((s) => (
+        {!lockedScope && (
+          <section>
+            <div className="ws-section-label">Scope</div>
+            <div className="ws-sheetrows">
               <button
-                key={s}
                 type="button"
                 className="ws-sheetrow"
-                aria-pressed={filters.scope === s}
-                onClick={() => onFilters({ ...filters, scope: s })}
+                aria-pressed={!filters.scope}
+                onClick={() => onFilters({ ...filters, scope: null })}
               >
-                {scopeLabel(s)}
+                All scopes
               </button>
-            ))}
-          </div>
-        </section>
+              {scopes.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  className="ws-sheetrow"
+                  aria-pressed={filters.scope === s}
+                  onClick={() => onFilters({ ...filters, scope: s })}
+                >
+                  {scopeLabel(s)}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Pills, not a Segmented. There are six sort keys and a segmented
             control divides its width equally between them, which is ~60px each
