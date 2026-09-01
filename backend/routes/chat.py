@@ -168,6 +168,21 @@ class SetChatMode(BaseModel):
     mode: str  # direct | auto (chat_context.CHAT_MODES)
 
 
+class SetThreadArming(BaseModel):
+    """Either field, or both. An omitted field is LEFT ALONE; a field sent as
+    null is CLEARED, and for `role` those are genuinely different requests --
+    null is a value a thread can hold. `model_fields_set` is what tells them
+    apart, which is why neither field is read off a `None` default.
+
+    ARMED AND ROLE ARE INDEPENDENT. This route never derives one from the
+    other: arming a thread gives it no role, and naming a role does not arm it.
+    """
+
+    # off | on-message | schedule | on-ready-ticket (chat_store.THREAD_ARMED).
+    armed: str | None = None
+    role: str | None = None
+
+
 class ForkThread(BaseModel):
     """`anchor` is the id of the message to carry on FROM.
 
@@ -1428,6 +1443,37 @@ async def set_chat_mode(thread_id: str, body: SetChatMode):
     if t is None:
         raise HTTPException(404, "thread not found")
     return {"id": thread_id, "mode": t.get("mode")}
+
+
+@router.post("/threads/{thread_id}/arming", response_model=cm.ThreadArming, response_model_exclude_unset=True)
+async def set_thread_arming(thread_id: str, body: SetThreadArming):
+    """Set what advances this thread without a person, and the role it answers
+    as. There is no conversion gesture here and no second entity being made:
+    every thread is chattable always, and an "agent" is a description of a
+    thread whose `armed` is not `off`
+    (threads-branches-and-pages-2026-08-29 section 1).
+
+    Cheap and reversible, so it commits on change rather than behind a Save --
+    the same terms as the mode switch above.
+
+    An unknown `armed` is REJECTED rather than clamped. `chat_store` clamps on
+    the way OUT, because a value already on disk has to resolve to something
+    safe; a request is a different matter, and silently storing `off` for a
+    caller who asked for `schedule` is how a thread ends up not running with
+    nothing on screen to say why.
+    """
+    sent = body.model_fields_set
+    if "armed" in sent and body.armed not in chat_store.THREAD_ARMED:
+        raise HTTPException(
+            400, f"armed must be one of {', '.join(chat_store.THREAD_ARMED)}")
+    t = chat_store.set_thread_arming(
+        thread_id,
+        armed=body.armed if "armed" in sent else chat_store.UNSET,
+        role=body.role if "role" in sent else chat_store.UNSET,
+    )
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    return {"id": thread_id, "armed": t.get("armed", "off"), "role": t.get("role")}
 
 
 @router.post("/threads/{thread_id}/rescope", response_model=cm.Rescoped, response_model_exclude_unset=True)

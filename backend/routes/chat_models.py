@@ -150,6 +150,14 @@ class ThreadSummary(BaseModel):
     # WHICH WORKTREE THIS CHAT IS PINNED TO. None for trunk (Main). Added so
     # the Chats page can group threads by worktree without a per-thread call.
     branch_slug: str | None = None
+    # WHAT ADVANCES THIS THREAD WITHOUT A PERSON, and which definition it
+    # answers as (threads-branches-and-pages-2026-08-29 sec 1). Two independent
+    # settings: neither implies the other, so an "agent" on the wire is simply a
+    # thread whose `armed` is not `off`. `role` names a role definition and is
+    # nullable -- null is a chosen value, not a missing one, and is never
+    # coerced to a default.
+    armed: str = "off"
+    role: str | None = None
 
 
 class StoredCardState(BaseModel):
@@ -275,6 +283,14 @@ class ThreadSettings(BaseModel):
     # Derived, and present only when a cut resolved.
     cleared_through: int | None = None
     cut_mode: str | None = None
+    # WHAT ADVANCES THIS THREAD WITHOUT A PERSON, and which definition it
+    # answers as (threads-branches-and-pages-2026-08-29 sec 1). Two independent
+    # settings: neither implies the other, so an "agent" on the wire is simply a
+    # thread whose `armed` is not `off`. `role` names a role definition and is
+    # nullable -- null is a chosen value, not a missing one, and is never
+    # coerced to a default.
+    armed: str = "off"
+    role: str | None = None
     seed_title: str | None = Field(default=None, alias="_seed_title")
     name_attempts: int | None = Field(default=None, alias="_name_attempts")
 
@@ -395,6 +411,20 @@ class Rescoped(BaseModel):
 class ChatModeSet(BaseModel):
     id: str
     mode: str | None = None
+
+
+class ThreadArming(BaseModel):
+    """What advances this thread without a person, and which definition it
+    answers as. The response to `POST /threads/{id}/arming` and the shape the
+    Roles surface reads back.
+
+    Both are always present here even though the request may carry one: the
+    caller asked to change the thread's arming and the honest answer is what
+    the thread now holds, not an echo of the half it sent."""
+
+    id: str
+    armed: str
+    role: str | None = None
 
 
 class CardStates(BaseModel):

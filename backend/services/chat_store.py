@@ -88,6 +88,27 @@ DEFAULT_CHAT_MODE = "direct"
 _LEGACY_CHAT_MODES = {"orchestrated": "auto"}
 
 
+# WHAT ADVANCES A THREAD WITHOUT A PERSON. A thread is the one entity and every
+# thread is chattable; `armed` is the ONLY field that decides whether one works
+# unasked, and it is independent of `role` -- neither implies the other. A
+# thread armed with no role continues with its own context, which is what
+# "nudge it along" means. See docs/platform-redesign/threads-branches-and-pages.
+#
+# Adding or removing a value here means a migration for `ck_chat_thread_armed`
+# as well, for exactly the reason spelled out on CHAT_MODES above: the
+# constraint is not derived at runtime, and narrowing it under rows that still
+# hold the retired value fails against the live database.
+THREAD_ARMED = ("off", "on-message", "schedule", "on-ready-ticket")
+DEFAULT_ARMED = "off"
+
+
+def _clamp_armed(armed: str | None) -> str:
+    """An unreadable or absent value is `off`. A thread whose stored arming
+    cannot be understood must not run unasked -- the failure direction here is
+    not symmetric, so it is chosen rather than left to a dict lookup."""
+    return armed if armed in THREAD_ARMED else DEFAULT_ARMED
+
+
 def _clamp_mode(mode: str | None) -> str:
     if mode in CHAT_MODES:
         return mode                       # type: ignore[return-value]
@@ -523,6 +544,11 @@ def _document(meta: dict, messages: list[dict], seqs: list[int], cut_seq: int = 
     # `orchestrated` into `auto` on the way out, so no thread log has to be
     # rewritten for the enum to have collapsed.
     t["mode"] = _clamp_mode(t.get("mode"))
+    # CLAMPED for the same reason `mode` is: a thread whose stored arming is
+    # absent or unreadable reads as `off`. `role` is deliberately NOT touched --
+    # it is nullable, null is a valid value, and back-filling it with a default
+    # would put a definition on a thread that never chose one.
+    t["armed"] = _clamp_armed(t.get("armed"))
     # THE SUMMARY IS THE RESOLVED BOUNDARY'S, OR THERE IS NONE. `meta.summary`
     # is thread-global and reaches here through the copy above; on its own that
     # made going back past a compaction incoherent, because the cut correctly
@@ -773,6 +799,14 @@ def _summary_row(thread_id: str) -> dict | None:
         "context_window": (context_window.window_for(meta.get("model"), ctx_tokens)
                            if ctx_tokens else None),
         "branch_slug": meta.get("branch_slug"),
+        # WHAT ADVANCES THIS THREAD WITHOUT A PERSON, and which definition it
+        # answers as. Two independent fields: an armed thread with no role
+        # continues with its own context, and a thread carrying a role may
+        # never be armed at all. `armed` is clamped because "unreadable" must
+        # resolve to `off`; `role` is NOT defaulted, because null is a real
+        # value here and a coerced one would invent a definition nobody picked.
+        "armed": _clamp_armed(meta.get("armed")),
+        "role": meta.get("role"),
     }
 
 
@@ -1084,6 +1118,54 @@ def get_thread_mcp_servers(thread_id: str) -> list[str] | None:
     meta = chat_log.read_meta(thread_id) or {}
     value = meta.get("mcp_servers_enabled")
     return list(value) if isinstance(value, list) else None
+
+
+class _Unset:
+    """Sentinel for "this field was not in the request".
+
+    `set_thread_arming` needs to tell "leave the role alone" apart from "clear
+    the role", and `None` cannot mean both: null is a real, chosen value for
+    `role`, so it has to reach `_patch` when it is sent and never when it is
+    not.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "UNSET"
+
+
+UNSET = _Unset()
+
+
+def set_thread_arming(thread_id: str,
+                      armed: str | _Unset = UNSET,
+                      role: str | None | _Unset = UNSET) -> dict | None:
+    """Set what advances this thread without a person, and which definition it
+    answers as. Either field alone, or both.
+
+    ARMED AND ROLE ARE INDEPENDENT and neither implies the other: arming a
+    thread does not give it a role, and giving it a role does not arm it. That
+    is the whole point of them being two fields, so this function never derives
+    one from the other.
+
+    `armed` is clamped to THREAD_ARMED (an unreadable value is `off`). `role`
+    is free text naming a definition and is stored verbatim after trimming;
+    `None` CLEARS it, which `_patch` does by removing the key, so the thread
+    reads back with no role rather than with an empty string. A blank string is
+    treated as a clear for the same reason -- "" is not a definition anybody
+    picked.
+    """
+    fields: dict[str, object] = {}
+    if not isinstance(armed, _Unset):
+        fields["armed"] = _clamp_armed(armed)
+    if not isinstance(role, _Unset):
+        fields["role"] = (role.strip() or None) if isinstance(role, str) else None
+    if not fields:
+        # Nothing asked for. Hand back the thread unchanged rather than writing
+        # meta (and bumping `updated_at`) for a request that said nothing.
+        return get_thread(thread_id)
+    return _patch(thread_id, **fields)
 
 
 def set_thread_branch(thread_id: str, branch_slug: str | None) -> dict | None:

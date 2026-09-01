@@ -59,7 +59,7 @@ from services.latitude import LATITUDES
 # `services.latitude` at module scope, so importing it here does not drag the
 # service layer into the schema. This was two identical tuples until 2026-08-17;
 # `services/tasks.py` asked for exactly this pointing-one-at-the-other.
-from services.chat_store import CHAT_MODES
+from services.chat_store import CHAT_MODES, THREAD_ARMED
 from services.tasks import EFFORTS, STATE_TYPES as STATE_CATEGORIES
 
 # --- controlled vocabularies -------------------------------------------------
@@ -1491,6 +1491,31 @@ class ChatThread(Base, Timestamps, SoftDelete):
     permission_mode: Mapped[str | None] = mapped_column(String(32))
     agent_slug: Mapped[str | None] = mapped_column(String(64))
 
+    # WHAT ADVANCES THIS THREAD WITHOUT A PERSON, and which definition it
+    # answers as (threads-branches-and-pages-2026-08-29 sec 1). A thread is the
+    # one entity and every thread is chattable; "agent" is not a kind of object,
+    # it is a description of a thread whose `armed` is not `off`.
+    #
+    # THE TWO ARE INDEPENDENT AND NEITHER IMPLIES THE OTHER. A thread can be
+    # armed with no role (it continues with its own context) or carry a role and
+    # never be armed. A scheduled job's trigger and its job definition are two
+    # fields everywhere else, and nobody makes them one checkbox -- collapsing
+    # them here is precisely the mistake that produced a second entity.
+    #
+    # `armed` is NOT NULL with a server default, because "unknown arming" is not
+    # a state anything may act on: the safe answer is `off` and the column says
+    # so. `role` is nullable and NULL IS A VALID VALUE, never a missing one, so
+    # it carries no default and nothing back-fills it. THREAD_ARMED is imported
+    # from `services.chat_store` for the same reason CHAT_MODES is: one source
+    # for the enum, and a change to it needs a migration for the check
+    # constraint below.
+    armed: Mapped[str] = mapped_column(String(16), nullable=False,
+                                       server_default="off")
+    # Free text naming a role definition (`{name, prompt, tools, writes}`),
+    # NOT the closed write-authority enum -- that stays where it is, in
+    # `agent_authority._ROLE_WRITES`, as a permission the definition points at.
+    role: Mapped[str | None] = mapped_column(String(64))
+
     # chat_thread and chat_branch reference each other, so this FK is added
     # after both tables exist (`use_alter`). Composite on (id, org_id) like
     # every other FK here: see `_org_target`.
@@ -1520,6 +1545,7 @@ class ChatThread(Base, Timestamps, SoftDelete):
 
     __table_args__ = (
         CheckConstraint(_one_of("mode", CHAT_MODES), name="ck_chat_thread_mode"),
+        CheckConstraint(_one_of("armed", THREAD_ARMED), name="ck_chat_thread_armed"),
         _org_target("chat_thread"),
         # The current branch must be a branch OF THIS THREAD. `id` on the left
         # is the thread's own id, matched against chat_branch.thread_id.
