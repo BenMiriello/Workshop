@@ -142,6 +142,34 @@ The UI it adds has never been seen running; that verification is owed on re-land
 the deploy path at all.** Any schema change in this repo is a loaded gun. That
 deserves its own ticket and is not closed by this revert.
 
+## What running ~12 agents in one tree actually cost
+
+Worth knowing before doing it again. The parallelism was worth it — 51 commits —
+but it is not free and the costs were all of one kind: **a shared working tree
+has no isolation, so agents overwrite each other.**
+
+- One agent's `git stash push` took every other agent's uncommitted work with it.
+  It popped it back and verified all 30 files returned, but for a minute the tree
+  was empty of everyone's WIP.
+- A second agent's `chat_store.py` edits were silently reverted by a concurrent
+  agent and had to be re-applied.
+- A third agent's staged files were swept into an unrelated agent's commit,
+  because `git add <paths>` does not stop `git commit` committing the whole
+  index. The fix is `git commit -- <paths>`, which two agents found independently.
+- `tests/test_scoped_exec.py` fails while this many agents run: they all rewrite
+  `~/.claude.json`, whose link count sits at 0, and bwrap cannot bind an inode
+  that is unlinked mid-mount. Verified with a bare `bwrap` command containing no
+  Workshop code. Not a regression; it will pass again when the tree is quiet.
+- Five deferred backend restarters are armed at once, one per agent that ran
+  `apply.sh`. `restart_backend.sh` has no `flock`, so they will fire in sequence
+  after this turn. Worst case is a few extra seconds of pause, not data loss.
+
+**If this is done again:** tell every agent to `git commit -- <explicit paths>`,
+never `git add -A`, never `git stash`/`reset --hard`/`checkout -- .`, and to
+commit early rather than holding a large working set. Better still, give agents
+that touch overlapping files their own worktrees — the machinery exists
+(`services/worktrees.py`, `run_worktree.py`) and this is exactly what it is for.
+
 ## Open questions for the operator
 
 - Autonomy is off by his own choice. Once the runner env is fixed and proven,
