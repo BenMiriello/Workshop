@@ -350,12 +350,39 @@ def _atomic_write(path: Path, content: str) -> None:
                 pass
 
 
+def _require_store_root(root: Path) -> Path:
+    """A task store lives at an ABSOLUTE path, and saying so is what keeps the
+    tree clean.
+
+    `_locked` creates its root, so a caller that passes a relative path creates
+    a directory under whatever the process happened to `cwd` into -- which for
+    the backend is the repo root. That is not hypothetical: eleven directories
+    named after TICKET IDS (`0346adcc66784569bd9051ed12e3617b/`, `3f4adbb9/`,
+    ...) had accumulated there by 2026-08-31, each holding an empty store, and
+    one of them was committed (379d82fa) before .gitignore was widened to catch
+    the contents. Widening the ignore hid them from `git status`; it did not
+    stop them being made, and the count went from four to eleven in four days.
+
+    A ticket id is not a scope, so no correct caller can reach here with one.
+    Refusing is therefore always right, and it names the bad root instead of
+    silently materialising it."""
+    p = Path(root)
+    if not p.is_absolute():
+        raise ValueError(
+            f"a task store root must be an absolute path, got {str(p)!r}. "
+            "Resolve it through services.task_scope.root_for_context (or the "
+            "project/agent registry) rather than passing a bare id or a path "
+            "relative to the current directory.")
+    return p
+
+
 @contextmanager
 def _locked(root: Path):
     """flock around a load-modify-persist so the backend API and the shell CLI
     (project_tasks.py) can genuinely interleave writes to the same store during
     a sweep without clobbering each other. One lock file, one module, every
     writer goes through here."""
+    root = _require_store_root(root)
     root.mkdir(parents=True, exist_ok=True)
     lp = _lock_path(root)
     f = open(lp, "w")
