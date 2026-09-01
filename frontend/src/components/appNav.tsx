@@ -53,8 +53,9 @@ const NODES: Record<string, RouteNode> = {
   "/runs": { label: "Runs" },
   "/usage": { label: "Usage" },
   "/chats": { label: "Chats" },
-  "/projects": { label: "Projects" },
-  "/projects/new": { label: "New project", parent: "/projects" },
+  // /projects is a redirect to /apps now; a crumb to it would name a page
+  // nobody can reach. Creating one is still real, under Apps.
+  "/projects/new": { label: "New app", parent: "/apps" },
   "/settings": { label: "Settings" },
   "/settings/base-apps": { label: "Base Apps", parent: "/settings" },
   "/settings/grants": { label: "Grants", parent: "/settings" },
@@ -98,14 +99,9 @@ export function resolveCrumbs(pathname: string): Crumb[] {
       { label: decodeURIComponent(pathname.slice("/agents/".length)) },
     ];
   }
-  // Project detail: /projects/<slug>. The page calls useCrumbLabel to swap the
-  // leaf for the project title once loaded; until then we show the slug.
-  if (pathname.startsWith("/projects/") && pathname !== "/projects/new") {
-    return [
-      { label: "Projects", to: "/projects" },
-      { label: decodeURIComponent(pathname.slice("/projects/".length)) },
-    ];
-  }
+  // No /projects/<slug> trail. That route is a redirect to the app's Overview
+  // now (App.tsx), and the app's own crumbs take over the moment it lands, so a
+  // trail here would flash a heading for a page that no longer exists.
   const key =
     NODES[pathname] != null
       ? pathname

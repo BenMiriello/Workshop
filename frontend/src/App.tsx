@@ -3,7 +3,6 @@ import { runHref } from "./lib/jobs";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import Roles from "./pages/Roles";
 import Chats, { ChatsArchived } from "./pages/Chats";
-import Projects from "./pages/Projects";
 import Apps from "./pages/Apps";
 import Home from "./pages/Home";
 import Tickets from "./pages/Tickets";
@@ -29,7 +28,13 @@ import { useAppPlacesState } from "./apps/useAppPlaces";
 const AgentDetail = lazyPage(() => import("./pages/AgentDetail"));
 const AgentBuild = lazyPage(() => import("./pages/AgentBuild"));
 const ProjectNew = lazyPage(() => import("./pages/ProjectNew"));
-const ProjectDetail = lazyPage(() => import("./pages/ProjectDetail"));
+
+// A project's own page is now its app's Overview. The slug is the same in both
+// registries, so an old /projects/<slug> link resolves rather than 404ing.
+function ProjectSlugRedirect() {
+  const { slug = "" } = useParams();
+  return <Navigate to={`/apps/${encodeURIComponent(slug)}/overview`} replace />;
+}
 const AppPreview = lazyPage(() => import("./pages/AppPreview"));
 const Grants = lazyPage(() => import("./pages/settings/Grants"));
 // Trackers and McpServers are no longer routed: they are SECTIONS now, of
@@ -71,6 +76,9 @@ const AppFilesTab = lazyPage(() => import("./pages/apps/tabs/AppFilesTab"));
 // FIRST tab (pages/apps/tabs/appTabState.ts) and therefore what an app with a
 // working tree opens on, which is the 2026-08-29 / 08-31 / 09-01 report.
 const AppWorkTab = lazyPage(() => import("./pages/apps/tabs/AppWorkTab"));
+// Overview absorbed what ProjectDetail had: the autonomy brake, the services,
+// the deploys and the environment. See section 7 step 4.
+const AppOverviewTab = lazyPage(() => import("./pages/apps/tabs/AppOverviewTab"));
 const AppTicketsTab = lazyPage(() => import("./pages/apps/tabs/AppTicketsTab"));
 const AppRunsTab = lazyPage(() => import("./pages/apps/tabs/AppRunsTab"));
 const AppDeploysTab = lazyPage(() => import("./pages/apps/tabs/AppDeploysTab"));
@@ -186,9 +194,16 @@ export default function App() {
           {/* The archive is its own list, not a filter over /chats. Eager like
               Chats itself: it is one small component in the same module. */}
           <Route path="/chats/archived" element={<ChatsArchived />} />
-          <Route path="/projects" element={<Projects />} />
+          {/* PROJECT IS NOT AN ENTITY. Settled 2026-08-20 (app-is-the-entity),
+              executed 2026-09-01 on the operator's word: "I don't know if there
+              is a projects page anymore... that is sort of being phased out and
+              has no place anymore." The list is the app list; a project's own
+              page is that app's Overview, which absorbed the four panels that
+              lived nowhere else. Both routes stay as redirects, because a
+              bookmark is still a bookmark. */}
+          <Route path="/projects" element={<Navigate to="/apps" replace />} />
           <Route path="/projects/new" element={<ProjectNew />} />
-          <Route path="/projects/:slug" element={<ProjectDetail />} />
+          <Route path="/projects/:slug" element={<ProjectSlugRedirect />} />
           <Route path="/projects/:slug/run" element={<AppPreview />} />
           <Route path="/settings/grants" element={<Grants />} />
           <Route path="/settings/trackers" element={<Navigate to="/settings/apps" replace />} />
@@ -213,6 +228,7 @@ export default function App() {
               shadows one. */}
           <Route path="/apps/:appSlug" element={<AppHomeRedirect />} />
           <Route path="/apps/:appSlug/work" element={<AppWorkTab />} />
+          <Route path="/apps/:appSlug/overview" element={<AppOverviewTab />} />
           <Route path="/apps/:appSlug/chats" element={<AppChats />} />
           <Route path="/apps/:appSlug/agents" element={<AppAgentsTab />} />
           <Route path="/apps/:appSlug/memory" element={<AppMemoryTab />} />

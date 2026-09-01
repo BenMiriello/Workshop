@@ -534,7 +534,7 @@ export default function Apps() {
           hint={
             <>
               Install an app to see it here, or build one from{" "}
-              <Link to="/projects/new">Projects</Link>.
+              <Link to="/projects/new">New app</Link>.
             </>
           }
         />

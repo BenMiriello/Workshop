@@ -16,7 +16,7 @@
 // list with seven tabs" including "a Memory tab nobody asked for". Three
 // previous rounds improved how those tabs RENDER, which was never the
 // complaint.
-export type AppTabId = "app" | "work" | "chats" | "agents" | "memory" | "files" | "tickets" | "runs" | "deploys";
+export type AppTabId = "app" | "work" | "overview" | "chats" | "agents" | "memory" | "files" | "tickets" | "runs" | "deploys";
 
 export type AppTabDef = { id: Exclude<AppTabId, "app">; label: string; suffix: string };
 
@@ -39,6 +39,13 @@ export type AppTabDef = { id: Exclude<AppTabId, "app">; label: string; suffix: s
 // deep link are still real. What changed is which tabs are OFFERED.
 export const APP_TABS: AppTabDef[] = [
   { id: "work", label: "Work", suffix: "/work" },
+  // SECOND, not first, though section 6 lists Overview first. An app opens on
+  // its FIRST tab, and what the operator wants an app to open on is the work
+  // (reported 2026-08-29, 08-31 and twice on 09-01). Overview is where the
+  // autonomy brake, the services, the deploys and the environment live now
+  // that /projects is gone, and none of those is a thing you open an app to
+  // look at.
+  { id: "overview", label: "Overview", suffix: "/overview" },
   { id: "chats", label: "Chats", suffix: "/chats" },
   { id: "memory", label: "Memory", suffix: "/memory" },
   { id: "files", label: "Files", suffix: "/files" },
@@ -50,7 +57,7 @@ export const APP_TABS: AppTabDef[] = [
 // deep link that lands on one must still say why it is empty rather than look
 // broken.
 export type CollectionTabId =
-  | "work" | "chats" | "memory" | "tickets" | "runs" | "deploys" | "agents";
+  | "work" | "overview" | "chats" | "memory" | "tickets" | "runs" | "deploys" | "agents";
 
 // Mirrors services/apps.py collection by collection: tickets/runs/deploys/
 // agents resolve through `app_links.linked_project_slug`; chats and notes
@@ -62,6 +69,9 @@ const REQUIRES_LINKED_PROJECT: Record<CollectionTabId, boolean> = {
   // Work is branches, tickets, runs and changes. Every one of those resolves
   // through the linked tree, so an app without one can never fill it.
   work: true,
+  // Every panel on Overview reads /api/projects/<slug>/..., so an app with no
+  // linked tree can have none of them.
+  overview: true,
   chats: false,
   memory: false,
   tickets: true,
@@ -72,6 +82,7 @@ const REQUIRES_LINKED_PROJECT: Record<CollectionTabId, boolean> = {
 
 const COLLECTION_NOUN: Record<CollectionTabId, string> = {
   work: "branches",
+  overview: "settings",
   chats: "chats",
   memory: "notes",
   tickets: "tickets",

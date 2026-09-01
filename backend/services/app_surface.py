@@ -69,7 +69,7 @@ __all__ = ["TAB_IDS", "RETIRED_TAB_IDS", "REQUIRES_LINKED_PROJECT", "declared_su
 # "the old chats page" on 2026-08-29, 2026-08-31 and 2026-09-01; the first two
 # rounds changed how that chat list renders, which was never the complaint.
 TAB_IDS: tuple[str, ...] = (
-    "work", "chats", "memory", "files",
+    "work", "overview", "chats", "memory", "files",
 )
 
 # Tabs the platform used to offer and no longer draws. Kept as a NAMED set,
@@ -89,6 +89,9 @@ RETIRED_TAB_IDS: frozenset[str] = frozenset({
 # rather than by this map.
 REQUIRES_LINKED_PROJECT: dict[str, bool] = {
     "work": True,
+    # Overview is the autonomy brake, the services, the deploys and the
+    # environment, and every one of those reads the linked tree.
+    "overview": True,
     "chats": False,
     "memory": False,
 }

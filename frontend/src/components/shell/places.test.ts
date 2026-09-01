@@ -84,7 +84,10 @@ describe("pageFor", () => {
     // 2026-09-01, /agents redirects to /roles, and an agent DETAIL page is a
     // record under a row that no longer exists. Asserting it stayed lit would
     // be asserting the old nav.
-    expect(pageFor(home, "/projects/workshop")?.id).toBe("projects");
+    // /projects/<slug> is NOT here any more, and that is the change rather than
+    // an omission: Project stopped being an entity, the row is gone from Home,
+    // and the route redirects to the app's Overview, whose own crumbs take
+    // over. Asserting it stayed lit would be asserting the old nav.
     // A ticket record now does the same. It did not until ADR 0023: the list
     // was at /work while a record was at /tickets/:scope/:id, so reading a
     // ticket darkened the whole column. One noun fixed that as a side effect,

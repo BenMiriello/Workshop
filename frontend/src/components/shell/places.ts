@@ -198,7 +198,9 @@ export function buildPlaces(
     pages: [
       { id: "dashboard", label: "Dashboard", to: "/", Icon: icons.dashboard, end: true },
       { id: "chats", label: "Chats", to: "/chats", Icon: icons.chats },
-      { id: "projects", label: "Projects", to: "/projects", Icon: icons.projects },
+      // No Projects row. Project is not an entity (settled 2026-08-20), the
+      // list of things you open is Apps, and section 6 keeps only the rows
+      // that are genuinely global: Tickets, Memory, Usage, Roles.
       { id: "apps", label: "Apps", to: "/apps", Icon: icons.apps },
       // ROLES, NOT AGENTS. The roster listed markdown files as if they were
       // live entities; four of them had run once between them in six weeks.

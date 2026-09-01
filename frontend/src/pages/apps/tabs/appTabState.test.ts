@@ -5,8 +5,9 @@ const LINKED = { projectSlug: "sample-app", hasFiles: true };
 const BARE = { projectSlug: null, hasFiles: false };
 
 describe("APP_TABS", () => {
-  it("is Work, Chats, Memory, Files", () => {
-    expect(APP_TABS.map((t) => t.id)).toEqual(["work", "chats", "memory", "files"]);
+  it("is Work, Overview, Chats, Memory, Files", () => {
+    expect(APP_TABS.map((t) => t.id)).toEqual(
+      ["work", "overview", "chats", "memory", "files"]);
   });
 
   it("opens an app on Work, not on a chat list", () => {
