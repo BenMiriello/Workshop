@@ -254,6 +254,29 @@ theatre: a tool that reports success into a void.
 the void. Either point them at the live channel or delete them; leaving them is a
 third instance of a mechanism that exists, runs, and reaches nothing.
 
+## Defect in the completion gate itself
+
+`scripts/done.sh` (shipped today, `92faf070`) cannot pass a turn whose work is
+**fully committed**. With a clean tree it reports:
+
+    done: NOT DONE  (6 files this turn)
+      reviewer.sh: no_diff
+
+It composes `reviewer.sh`, which judges the WORKING TREE, so once everything is
+committed there is no diff left to judge and `no_diff` is treated as a failure.
+Earlier in the same session, with uncommitted work present, it returned PASS.
+
+**So the gate rewards leaving work uncommitted and fails the tidiest possible
+end state**, which is the opposite of what it is for. The fix is to judge the
+turn's COMMITS (`--since <base>`), not the dirty tree — `reviewer.sh` already
+accepts a base ref, and `done.sh` already computes the turn's file set and knows
+its base. Everything else about the gate is right: it blocked this session's own
+stop, its evidence file is real, and the `foreign` outcome for another agent's
+WIP is exactly the correct third state.
+
+Not fixed here — editing the completion gate at the end of a long session is how
+you take every agent in the tree down with you.
+
 ## Open questions for the operator
 
 - Autonomy is off by his own choice. Once the runner env is fixed and proven,
