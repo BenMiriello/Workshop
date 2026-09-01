@@ -717,20 +717,11 @@ a.ws-btn { text-decoration: none; }
   .ws-chat-row__meta .ws-chat-row__sep--model,
   .ws-chat-row__meta .ws-chat-row__archive { display: none; }
 }
-/* A date-group heading (label + count). It owns the group's vertical rhythm:
-   room above to separate from the previous group, the grid gap below carrying
-   the space to its first row. The first group sits directly under the page
-   header, so it takes no top margin. */
-.ws-chatgroup__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-4);
-}
-/* The heading owns the group's vertical rhythm, so the label inside it drops its
-   own margins; the grid gap below carries the space to the first row. */
-.ws-chatgroup__head .ws-section-label { margin: 0; }
-.ws-chatgroup:first-of-type .ws-chatgroup__head { margin-top: 0; }
+/* The chat list's date-group heading was here. It is deleted, not orphaned:
+   the chat list stopped grouping by date on 2026-09-01 (one flat list, newest
+   first -- threads-branches-and-pages-2026-08-29.md section 6), so the rule had
+   no caller left. A change deletes the surface it replaces, and that includes
+   the style the surface was wearing. */
 
 /* ---- LIST ROW ------------------------------------------------------------ */
 /* The one row shape for every list in the app: tickets and runs today. It is a
@@ -905,74 +896,24 @@ a.ws-btn { text-decoration: none; }
 .ws-board__card-foot .ws-tagstrip { flex: 1 1 auto; }
 .ws-board__card-foot .ws-ticket-meta { margin-left: auto; }
 
-/* ---- the table ----------------------------------------------------------- */
-/* Fixed layout: the title column takes the slack and every other column is the
-   width of what it holds, so a long title cannot push Updated off the edge. */
-.ws-ticket-table { table-layout: fixed; width: 100%; }
-.ws-tt__c-ticket { width: 38%; }
-.ws-tt__c-status { width: 120px; }
-.ws-tt__c-tags   { width: 180px; }
-.ws-tt__c-scope  { width: 150px; }
-.ws-tt__c-prio   { width: 76px; }
-.ws-tt__c-effort { width: 84px; }
-.ws-tt__c-time   { width: 96px; }
-.ws-ticket-table th { white-space: nowrap; }
-.ws-ticket-table .ws-tt__num { text-align: right; }
-.ws-ticket-table td { vertical-align: middle; }
-.ws-tt__muted { color: var(--muted); }
-.ws-tt__time { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
-.ws-ticket-table td.ws-tt__num { font-family: var(--font-mono); }
-/* The link is the whole ROW, not just the title: a table whose rows navigate
-   only from one cell is a target you have to aim at. Stretching a link over
-   the row keeps it a real link (middle click, keyboard, long press) without an
-   onClick on the <tr>. */
-.ws-ticket-table tbody tr { position: relative; }
-.ws-tt__ticket {
-  display: flex; align-items: baseline; gap: var(--space-2);
-  min-width: 0; color: inherit; text-decoration: none;
-}
-.ws-tt__ticket::after { content: ""; position: absolute; inset: 0; }
-.ws-tt__title {
-  min-width: 0; font-weight: var(--fw-medium);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* Anything the row link stretches over must sit above it to stay clickable. */
-.ws-ticket-table td > .ws-tagstrip { position: relative; }
+/* The TABLE and the GROUPED PHONE LIST that used to sit here are both gone
+   (2026-09-01), and their rules with them.
 
-/* ---- the grouped list (narrow viewports) --------------------------------- */
-.ws-ticketlist { display: flex; flex-direction: column; }
-.ws-ticketlist__group { display: flex; flex-direction: column; }
-.ws-ticketlist__head {
-  display: flex; align-items: center; gap: var(--space-2);
-  padding: var(--space-4) var(--space-1) var(--space-2);
-}
-.ws-ticketlist__label {
-  font-size: var(--fs-xs); font-weight: var(--fw-semi);
-  letter-spacing: var(--label-spacing); text-transform: uppercase; color: var(--muted);
-}
-.ws-ticketlist__count { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--faint); }
-.ws-ticketrow {
-  display: flex; flex-direction: column; gap: var(--space-2);
-  min-height: 44px; padding: var(--space-3) var(--space-1);
-  border-top: 1px solid var(--border);
-  color: inherit; text-decoration: none;
-}
-.ws-ticketrow:hover { background: var(--card-hover); }
-/* Same rule as the board card, same reason: one line, ellipsis. A phone list
-   of three-line rows is a list you scroll past rather than scan. */
-.ws-ticketrow__title {
-  font-size: var(--fs-md); font-weight: var(--fw-medium);
-  line-height: var(--lh-snug);
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.ws-ticketrow__meta {
-  display: flex; align-items: center; gap: var(--space-2); min-width: 0;
-}
-.ws-ticketrow__meta .ws-tagstrip { flex: 1 1 auto; }
-.ws-ticketrow__time {
-  margin-left: auto; flex: none;
-  font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted);
-}
+   The table was `.ws-ticket-table` + `.ws-tt__*`: eight fixed columns, of which
+   four (tags, priority, effort, assignee) are unset on most of the live store,
+   with the title capped at 38% so the one thing a reader scans got the least
+   room. It also reintroduced, on the tickets page only, exactly the grid this
+   file's LIST ROW block was written to replace on 2026-08-12.
+
+   `.ws-ticketrow` / `.ws-ticketlist` were the phone's own row and its status
+   group headings. The row is now `.ws-listrow`, the same one the runs feed
+   uses, at every width; the headings are gone because they counted the current
+   page of 50 rather than the status, so on ~200 tickets the same heading came
+   back page after page with a different number. The status bar above the list
+   carries the server's totals instead.
+
+   Tickets keep `.ws-ticket-key`, `.ws-ticket-meta` and the board card rules
+   above, which the board still draws. */
 
 /* ---- the phone's bar ------------------------------------------------------ */
 .ws-ticketbar-compact { display: flex; flex-direction: column; gap: var(--space-2); }
@@ -2419,12 +2360,21 @@ span.ws-filterchip__open { cursor: default; }
 .ws-pagecol.is-animating { transition: width var(--dur-slow) var(--ease-out); }
 .ws-pagecol.is-animating .ws-pagecol__inner { transition: transform var(--dur-slow) var(--ease-out); }
 @media (min-width: 900px) { .ws-pagecol { display: block; } }
+/* THE TITLE LINE CARRIES THE BRANCH CONTROL, right-aligned, wherever the place
+   has one (navigation-shell-2026-08-20.md section 3.2). It is a flex row now
+   rather than a single text node; the name ellipsizes so the column never
+   widens and the control is never pushed out. Where the place has no repo,
+   nothing is rendered and this reads exactly as it did before. */
 .ws-pagecol__title {
   flex: 0 0 auto;
-  padding: var(--space-3) var(--space-4) var(--space-2);
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
+  color: var(--fg);
+}
+.ws-pagecol__titletext {
+  flex: 1 1 auto; min-width: 0;
   font-size: var(--fs-lg); font-weight: var(--fw-semi);
   letter-spacing: -0.01em;
-  color: var(--fg);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ws-pagecol__list {
@@ -2496,6 +2446,64 @@ span.ws-filterchip__open { cursor: default; }
 }
 .ws-bar1__caret.is-open { transform: rotate(180deg); }
 .ws-bar1__avatar { margin-left: auto; }
+/* The right end of bar one as ONE group (branch control, then avatar), so the
+   free space is a single gap after the title instead of being split between two
+   auto margins. It may shrink; the avatar inside it may not. */
+.ws-bar1__end {
+  flex: 0 1 auto; min-width: 0;
+  margin-left: auto;
+  display: flex; align-items: center; gap: var(--space-2);
+}
+
+/* ---- The branch control in the shell's chrome ----------------------------
+   Added 2026-09-01. It was drawn inside the body of every app tab page, in that
+   page's own header actions; the operator moved it into the chrome, beside the
+   title, on the desktop title line and in the phone's bar one. It renders only
+   where the place has a branch, so there is no empty or disabled state here to
+   style.
+
+   NEITHER BAR GROWS AND NEITHER WRAPS. The name is what gives: it is truncated
+   in the middle by branchChipLabel (shell/pageChrome.ts) and then ellipsized by
+   the cap below, so a 60-character branch name and a 4-character one occupy the
+   same room. */
+.ws-refpill { flex: 0 1 auto; min-width: 0; }
+.ws-refpill .ws-btn {
+  min-width: 0; max-width: 100%;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.ws-refpill__name {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A control, not content: neutral at rest (frontend/CLAUDE.md, "a control is
+   not content"). The kit's button hover already takes it to --fg. */
+.ws-refpill__caret { flex: 0 0 auto; color: var(--faint); }
+
+/* A pixel cap, not a percentage: the column is a fixed 252px, so a share of it
+   is the same number written less plainly. Sized so ten characters of branch
+   name fit without the CSS ellipsis cutting the middle-truncated string a
+   second time. The place NAME is what gives here when both cannot fit, and
+   that is the right way round: the dock tile is lit, the page carries the app
+   as its eyebrow, and the branch is the thing that was not on screen at all. */
+/* It does not SHRINK here, it only caps. Shrinking it took seven pixels off
+   the name and the CSS ellipsis then cut the middle-truncated string a second
+   time, which is two ellipses saying one thing. The title gives instead. */
+.ws-refpill--column { flex: 0 0 auto; max-width: 130px; }
+/* THE MENU OPENS INSIDE A CLIPPING BOX. `.ws-pagecol` is `overflow: hidden`
+   (that is what lets the column slide itself out from under the dock), so a
+   list wider than the column is sliced off at its edge -- the same defect
+   menuPlacement.ts was written for, in a different container. placeMenu already
+   measures the clip box; capping the width here is what gives it a size that
+   fits inside one. */
+.ws-refpill--column .ws-menu__list { max-width: calc(var(--pagecol-w) - var(--space-5)); }
+
+/* Measured on a 390px frame: tile 38 + title 129 + this + avatar 32 + the gaps
+   comes to 355 of 390, so the title is never pushed and the bar never wraps.
+   Past this cap the name ellipsizes; the bar does not grow. */
+.ws-refpill--bar { max-width: 132px; }
 
 /* ---- Phone: page toolbar -------------------------------------------------
    NOTHING IS RAISED on selection: weight plus a 2px underline on the bar's own
@@ -4282,9 +4290,6 @@ span.ws-filterchip__open { cursor: default; }
   .ws-tickets__end { flex-wrap: wrap; }
   .ws-pager { margin-left: 0; width: 100%; }
 }
-.ws-tt__c-assignee { width: 130px; }
-.ws-tt__ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 /* ---- FileTree -------------------------------------------------------------
    The kit's tree navigator (src/FileTree.tsx), drawn to
    docs/platform-redesign/shell-mockup-spec-2026-08-22.md section 5: a 27px row,
