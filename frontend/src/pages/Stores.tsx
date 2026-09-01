@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Database, RefreshCw } from "lucide-react";
 import { Button, Card, Row, Stack, PageHeader, StateBlock, StatusDot, Badge, Tag, Skeleton, Field, Input, Select, catFor, TableScroll, Table, shortHttpError } from "@workshop/ui";
 
-import { tierKind } from "../lib/stores";
+import { anyPresent, tierKind } from "../lib/stores";
 import type { components } from "../api/schema.gen";
 
 // The row and the whole catalog, both named from the generated client. The
@@ -56,6 +56,11 @@ export default function Stores() {
     });
   }, [stores, type, tier, q]);
 
+  // A column nothing fills is not a column. `host_project` is null for every
+  // store on an installation with no project-hosted ones, and it drew 22 rows
+  // of dashes. It returns by itself when a store has one.
+  const showHost = anyPresent(filtered, (s) => s.host_project);
+
   return (
     <div>
       <PageHeader
@@ -104,15 +109,20 @@ export default function Stores() {
                 <th>Store</th>
                 <th>Owner app</th>
                 <th>Type</th>
-                <th>Host project</th>
+                {showHost && <th>Host project</th>}
                 <th>Tier</th>
-                <th>URI</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((s) => (
                 <tr key={s.uri}>
                   <td>
+                    {/* THE URI HAD ITS OWN COLUMN AND SAID NOTHING NEW: it is
+                        `workshop://store/<owner app>/<name>`, which is the two
+                        columns beside it spelled out. The store's own page
+                        carries it in full, which is where an address to be
+                        copied belongs, and the search box below still matches
+                        on it. */}
                     <Link to={`/stores/${encodeURIComponent(s.owner_app)}/${encodeURIComponent(s.name)}`}
                           style={{ fontWeight: "var(--fw-semi)" }}>
                       {s.name}
@@ -120,13 +130,14 @@ export default function Stores() {
                   </td>
                   <td><Badge>{s.owner_app}</Badge></td>
                   <td>{s.type ? <Tag hue={catFor(s.type)}>{s.type}</Tag> : <span className="ws-muted">–</span>}</td>
-                  <td>
-                    {s.host_project ? (
-                      <Link to={`/projects/${encodeURIComponent(s.host_project)}`}>{s.host_project}</Link>
-                    ) : <span className="ws-muted">–</span>}
-                  </td>
+                  {showHost && (
+                    <td>
+                      {s.host_project ? (
+                        <Link to={`/projects/${encodeURIComponent(s.host_project)}`}>{s.host_project}</Link>
+                      ) : <span className="ws-muted">–</span>}
+                    </td>
+                  )}
                   <td><StatusDot status={tierKind(s.tier)}>{s.tier}</StatusDot></td>
-                  <td><code style={{ fontSize: "var(--fs-xs)" }}>{s.uri}</code></td>
                 </tr>
               ))}
             </tbody>

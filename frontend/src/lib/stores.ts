@@ -27,3 +27,22 @@ export function tierKind(tier?: string | null): StatusKind {
   if (tier === "gated" || tier === "mediated") return "warn";
   return "stopped";
 }
+
+/**
+ * Whether any row in a list has a value for a field.
+ *
+ * A COLUMN THAT IS EMPTY ON EVERY ROW IS NOT A COLUMN. `/stores` gave a full
+ * column to `host_project`, which is null for every store this installation
+ * has, so a sixth of the table's width drew a column of dashes and pushed the
+ * columns that do say something off a narrow screen. The same rule the design
+ * system applies to hue applies to a column: a constant is not a signal.
+ *
+ * It is a question about the DATA, not a rule about one field, so a list with
+ * one host project in it gets the column back with no code change.
+ */
+export function anyPresent<T>(rows: T[], read: (row: T) => unknown): boolean {
+  return rows.some((row) => {
+    const v = read(row);
+    return v !== null && v !== undefined && v !== "";
+  });
+}

@@ -220,3 +220,51 @@ export function canSave(draft: ToolDraft, isCreate: boolean, dirty: boolean): bo
   if (isCreate) return draft.id.trim().length > 0;
   return dirty;
 }
+
+// ---------------------------------------------------------------------------
+// The catalog filter
+//
+// A catalog that only grows needs the same two facets and the same search box
+// /stores already has: the axes the rows differ on, plus free text over the
+// words a person remembers. Pure, so the rule is executable; the page holds
+// only the controls.
+// ---------------------------------------------------------------------------
+
+export type ToolFilter = {
+  /** "all", or one `kind` value. */
+  kind: string;
+  /** "all", or one `provenance` value. */
+  provenance: string;
+  /** Free text over id, title and description. */
+  q: string;
+};
+
+export const NO_TOOL_FILTER: ToolFilter = { kind: "all", provenance: "all", q: "" };
+
+/** The distinct values of one field, in first-seen order.
+ *  Built from the rows rather than from a constant, because provenance is the
+ *  API's vocabulary and a new one must appear in the menu without an edit
+ *  here. */
+export function toolFacet(tools: ToolRecord[], field: "kind" | "provenance"): string[] {
+  const out: string[] = [];
+  for (const t of tools) {
+    const v = t[field];
+    if (v && !out.includes(v)) out.push(v);
+  }
+  return out;
+}
+
+/** The rows that match. Case-insensitive; an empty or whitespace query matches
+ *  everything, so the field is inert until it is typed in. */
+export function filterTools(tools: ToolRecord[], f: ToolFilter): ToolRecord[] {
+  const needle = f.q.trim().toLowerCase();
+  return tools.filter((t) => {
+    if (f.kind !== "all" && t.kind !== f.kind) return false;
+    if (f.provenance !== "all" && t.provenance !== f.provenance) return false;
+    if (!needle) return true;
+    return [t.id, t.title ?? "", t.description ?? ""]
+      .join(" ")
+      .toLowerCase()
+      .includes(needle);
+  });
+}

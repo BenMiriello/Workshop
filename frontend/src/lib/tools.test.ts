@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   BLANK_TOOL,
+  NO_TOOL_FILTER,
   canSave,
   capRows,
   catalogSummary,
   countByProvenance,
   createBody,
   draftFromTool,
+  filterTools,
   formatArgv,
   parseArgv,
   provenanceLabel,
+  toolFacet,
   updateBody,
   type ToolRecord,
 } from "./tools";
@@ -238,5 +241,36 @@ describe("canSave", () => {
   it("needs an actual change to save an edit", () => {
     expect(canSave({ ...BLANK_TOOL, id: "preview" }, false, false)).toBe(false);
     expect(canSave({ ...BLANK_TOOL, id: "preview" }, false, true)).toBe(true);
+  });
+});
+
+describe("the catalog filter", () => {
+  const rows: ToolRecord[] = [
+    tool({ id: "WebSearch", title: "Web search", description: "Search the public web.", kind: "builtin", provenance: "platform" }),
+    tool({ id: "tallywidget", title: "Tally", description: "Counts widgets in a hopper.", kind: "command", provenance: "app" }),
+    tool({ id: "mine", title: "Mine", description: "A tool I declared.", kind: "command", provenance: "user" }),
+  ];
+
+  it("reads its menus off the rows, in first-seen order", () => {
+    expect(toolFacet(rows, "kind")).toEqual(["builtin", "command"]);
+    expect(toolFacet(rows, "provenance")).toEqual(["platform", "app", "user"]);
+    expect(toolFacet([], "kind")).toEqual([]);
+  });
+
+  it("is inert until something is chosen or typed", () => {
+    expect(filterTools(rows, NO_TOOL_FILTER)).toHaveLength(3);
+    expect(filterTools(rows, { ...NO_TOOL_FILTER, q: "   " })).toHaveLength(3);
+  });
+
+  it("narrows by facet, by text, and by both together", () => {
+    expect(filterTools(rows, { ...NO_TOOL_FILTER, kind: "command" }).map((t) => t.id))
+      .toEqual(["tallywidget", "mine"]);
+    expect(filterTools(rows, { ...NO_TOOL_FILTER, provenance: "user" }).map((t) => t.id))
+      .toEqual(["mine"]);
+    expect(filterTools(rows, { ...NO_TOOL_FILTER, q: "HOPPER" }).map((t) => t.id))
+      .toEqual(["tallywidget"]);
+    expect(filterTools(rows, { ...NO_TOOL_FILTER, kind: "command", q: "declared" }).map((t) => t.id))
+      .toEqual(["mine"]);
+    expect(filterTools(rows, { ...NO_TOOL_FILTER, q: "nothing here" })).toEqual([]);
   });
 });

@@ -4,7 +4,9 @@ import {
   ActionBar,
   Button,
   Card,
+  Clamp,
   ConfirmDialog,
+  Field,
   Input,
   Notice,
   PageHeader,
@@ -25,15 +27,19 @@ import {
 } from "@workshop/ui";
 import {
   BLANK_TOOL,
+  NO_TOOL_FILTER,
   TOOL_KINDS,
   canSave,
   capRows,
   catalogSummary,
   createBody,
   draftFromTool,
+  filterTools,
   provenanceLabel,
+  toolFacet,
   updateBody,
   type ToolDraft,
+  type ToolFilter,
   type ToolRecord,
 } from "../../lib/tools";
 
@@ -196,6 +202,7 @@ export default function Tools() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [filter, setFilter] = useState<ToolFilter>(NO_TOOL_FILTER);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -254,8 +261,14 @@ export default function Tools() {
   );
 
   const all = tools ?? [];
-  const shown = capRows(all, expanded);
+  // The facets come off the rows, so a provenance or kind the API grows shows
+  // up in the menus without an edit here.
+  const kinds = toolFacet(all, "kind");
+  const provenances = toolFacet(all, "provenance");
+  const matched = filterTools(all, filter);
+  const shown = capRows(matched, expanded);
   const summary = catalogSummary(all);
+  const filtering = filter.kind !== "all" || filter.provenance !== "all" || filter.q.trim() !== "";
 
   return (
     <div>
@@ -291,9 +304,48 @@ export default function Tools() {
           <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
             <SectionLabel icon={<Wrench size={14} strokeWidth={1.8} aria-hidden />}>Catalog</SectionLabel>
             {summary && (
-              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{summary}</span>
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                {filtering ? `${matched.length} of ${all.length} \u00b7 ${summary}` : summary}
+              </span>
             )}
           </Row>
+
+          {/* The two axes the rows differ on, plus free text: the same filter
+              /stores already carries, on the page that most needs one. The
+              catalog only grows, and 21 rows with no way to narrow them is a
+              list you read once and then scroll past. A VIEW PREFERENCE, so
+              every control commits on change (design system rule 7). */}
+          {!loadErr && all.length > 0 && (
+            <Row wrap between style={{ marginBottom: "var(--space-3)", gap: "var(--space-2)" }}>
+              <Row wrap style={{ gap: "var(--space-2)" }}>
+                <Field label="Kind">
+                  <Select
+                    value={filter.kind}
+                    onChange={(e) => setFilter((f) => ({ ...f, kind: e.target.value }))}
+                  >
+                    <option value="all">All kinds</option>
+                    {kinds.map((k) => <option key={k} value={k}>{k}</option>)}
+                  </Select>
+                </Field>
+                <Field label="Owner">
+                  <Select
+                    value={filter.provenance}
+                    onChange={(e) => setFilter((f) => ({ ...f, provenance: e.target.value }))}
+                  >
+                    <option value="all">All owners</option>
+                    {provenances.map((p) => <option key={p} value={p}>{provenanceLabel(p)}</option>)}
+                  </Select>
+                </Field>
+              </Row>
+              <Field>
+                <Input
+                  placeholder="Filter by name, id or description"
+                  value={filter.q}
+                  onChange={(e) => setFilter((f) => ({ ...f, q: e.target.value }))}
+                />
+              </Field>
+            </Row>
+          )}
 
           <Card>
             {/* loading */}
@@ -321,8 +373,20 @@ export default function Tools() {
               />
             )}
 
+            {/* empty, but only because of the filter. A different sentence
+                from "no tools declared": one is a catalog with nothing in it,
+                the other is a query with nothing behind it, and the action
+                that fixes them is not the same. */}
+            {!loadErr && all.length > 0 && matched.length === 0 && (
+              <StateBlock
+                title="No tools match"
+                hint="Clear the filter to see the whole catalog."
+                action={<Button size="sm" variant="ghost" onClick={() => setFilter(NO_TOOL_FILTER)}>Clear filter</Button>}
+              />
+            )}
+
             {/* content */}
-            {!loadErr && all.length > 0 && (
+            {!loadErr && matched.length > 0 && (
               <Stack gap="sm">
                 <TableScroll>
                   {/* The kit's 520px floor is a sensible default for a six
@@ -418,12 +482,20 @@ export default function Tools() {
                                   loses its place in. Narrower than the cell on
                                   a wide screen, wider than it on a phone, so
                                   the phone is unaffected. */}
-                              <span
-                                className="ws-muted"
-                                style={{ display: "block", maxWidth: "80ch", fontSize: "var(--fs-sm)" }}
-                              >
-                                {t.description}
-                              </span>
+                              {/* CLAMPED. A tool description is written for a
+                                  model as well as a person, so several of them
+                                  are full paragraphs, and 21 paragraphs is a
+                                  wall rather than a catalog. Two lines, with
+                                  the rest one click away and the button
+                                  present only when there IS a rest. */}
+                              <Clamp max={40} moreLabel="More" lessLabel="Less">
+                                <span
+                                  className="ws-muted"
+                                  style={{ display: "block", maxWidth: "80ch", fontSize: "var(--fs-sm)" }}
+                                >
+                                  {t.description}
+                                </span>
+                              </Clamp>
                             </td>
                           </tr>
                         ) : null,
@@ -436,7 +508,10 @@ export default function Tools() {
                 {shown.hidden > 0 && (
                   <Row style={{ gap: "var(--space-2)", alignItems: "center" }}>
                     <Button size="sm" variant="ghost" onClick={() => setExpanded(true)}>
-                      Show all {all.length}
+                      {/* The count of what the filter MATCHED, not of the
+                          catalog: "Show all 21" under a filtered list of six
+                          would name a number the button does not produce. */}
+                      Show all {matched.length}
                     </Button>
                     <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                       {shown.hidden} more not shown

@@ -15,8 +15,14 @@ import {
   StatusDot,
 } from "@workshop/ui";
 
-// Settings -> Models. Which model providers exist, which have a key stored,
+// Settings -> Providers. Which model providers exist, which have a key stored,
 // and the actions to add or remove a key.
+//
+// IT IS NOT A MODEL LIST AND THE TITLE NO LONGER SAYS IT IS. Called "Models" it
+// promised a catalog, a default and a per-role choice, and delivered one
+// subscription row and two empty key fields; the operator read the page as
+// empty because the title had told him what to expect. Model choice is made per
+// chat, in the chat. This page is the credentials behind it.
 //
 // The list is driven entirely by the API -- the UI renders only what
 // available_providers() returns. A provider whose authentication is
@@ -208,7 +214,8 @@ export default function ModelProviders() {
   return (
     <div>
       <PageHeader
-        title="Models"
+        title="Providers"
+        sub="Where this installation gets its models. Which model a chat uses is picked in that chat."
         actions={
           <Button variant="ghost" size="sm" onClick={() => void load()} disabled={loading}>
             <RefreshCw aria-hidden /> {loading ? "Checking" : "Refresh"}

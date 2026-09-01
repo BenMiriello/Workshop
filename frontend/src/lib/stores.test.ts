@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { tierKind } from "./stores";
+import { anyPresent, tierKind } from "./stores";
 
 describe("tierKind", () => {
   it("draws an unrestricted store as ok", () => {
@@ -35,5 +35,23 @@ describe("tierKind", () => {
     for (const t of ["open", "gated", "mediated", "closed", undefined]) {
       expect(tierKind(t)).not.toBe("danger");
     }
+  });
+});
+
+describe("a column that is empty on every row", () => {
+  const rows = [{ host: null }, { host: undefined }, { host: "" }];
+
+  it("is not a column", () => {
+    expect(anyPresent(rows, (r) => r.host)).toBe(false);
+    expect(anyPresent([], (r: { host?: string }) => r.host)).toBe(false);
+  });
+
+  it("comes back the moment one row has a value", () => {
+    expect(anyPresent([...rows, { host: "somewhere" }], (r) => r.host)).toBe(true);
+  });
+
+  it("keeps a column whose value is falsy but real", () => {
+    expect(anyPresent([{ n: 0 }], (r) => r.n)).toBe(true);
+    expect(anyPresent([{ n: false }], (r) => r.n)).toBe(true);
   });
 });

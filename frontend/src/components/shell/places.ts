@@ -253,7 +253,12 @@ export function buildPlaces(
       { id: "memory", label: "Memory", to: "/settings/memory", Icon: icons.memory },
       { id: "apps", label: "Apps", to: "/settings/apps", Icon: icons.apps },
       { id: "trackers", label: "Trackers", to: "/settings/trackers", Icon: icons.trackers },
-      { id: "models", label: "Models", to: "/settings/models", Icon: icons.models },
+      // PROVIDERS, not Models. The page behind it is a credentials screen: a
+      // subscription row and the API keys this installation holds. There is no
+      // model list on it and no default to set, because which model a chat uses
+      // is picked in that chat. A nav entry promising a selection the page does
+      // not have is the label lying about the page.
+      { id: "models", label: "Providers", to: "/settings/models", Icon: icons.models },
       { id: "mcp", label: "MCP", to: "/settings/mcp", Icon: icons.mcp },
       { id: "tools", label: "Tools", to: "/settings/tools", Icon: icons.tools },
       { id: "access", label: "Access", to: "/settings/grants", Icon: icons.access },
