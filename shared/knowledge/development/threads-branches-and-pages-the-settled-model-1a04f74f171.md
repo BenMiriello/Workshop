@@ -1,0 +1,10 @@
+<!-- author: self; chat: 50cf71c1e6564676b908b6f33ddf9fe1 -->
+Settled 2026-08-29 after five audits of the live tree. Full doc: docs/platform-redesign/threads-branches-and-pages-2026-08-29.md.
+
+- **One entity: the Thread.** Every thread is chattable, always. Two independent fields: `armed` (off | on-message | schedule | on-ready-ticket) decides whether it works unasked; `role` (nullable) names a definition. Neither implies the other. "Agent" describes a thread that is armed, not a second kind of object. The four file-defined agents are retired; memory-keeper was a cron script wearing an agent costume and becomes a scheduled job.
+- **A role is {name, prompt, tools, writes}.** `writes` stays the closed maker/reviewer/triager/keeper/broker enum because it is a write-authority set. The human-facing name is free text (Planner, Builder, Researcher). Assignment replaces the never-once-used template forking.
+- **The word is branch.** A branch has exactly one worktree and always did; the worktree is a directory, never a name in the UI.
+- **Ticket is intent, branch is change, thread happens on a branch.** A thread's ticket is its branch's ticket, so there is no per-thread assignment to keep in sync. `source_kind`/`source_ref` stays as provenance, not ownership.
+- **The lease is a queue, not a negotiation.** Holder releases at turn end; waiters queue; the operator's message always takes it; preempt stays human-only. No "primary thread" setting: the branch row shows who holds the lease, which is a fact needing no config.
+- **Pages: global Chats stays flat and newest-first** (grouping it by branch was built and reverted 2026-08-29 and is settled). The branch-centred view is the app's Work tab, which absorbs Tickets, Runs, Changes, Deploys. ProjectDetail and /projects are deleted. Settings goes 12 rows to 9.
+- **The governing rule:** a change deletes the surface it replaces in the same commit that adds the new one. Five design generations left their pages in the tree; that is the actual disease.

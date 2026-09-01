@@ -1,5 +1,8 @@
 # Knowledge index
 
+- [Compaction is the provider's /compact; Workshop's fold is deleted](compaction-is-the-provider-s-compact-workshop-s-1a05016e44d.md)
+- [Compaction is the provider's own /compact, not something Workshop designs or implements](compaction-is-the-provider-s-own-compact-not-som-1a05016e44a.md)
+- [Demoted memory archive](memory-archive.md) - notes demoted from the index (progressive disclosure)
 - [A backend capability is not delivered until it is a visible, manageable feature in the...](system/a-backend-capability-is-not-delivered-until-it-i-1a04c6f4e30.md)
 - [A background shorthand resets the caret it paints](system/a-background-shorthand-resets-the-caret-it-paint-1a002fb6e3a.md)
 - [A card that files a duplicate ticket looks like nothing happened](system/a-card-that-files-a-duplicate-ticket-looks-like-1a008879724.md)
@@ -120,11 +123,8 @@
 - [No step/turn limits, no repeated continue prompts](system/no-step-turn-limits-no-repeated-continue-prompts-1a0028fb2b4.md)
 - [Note capture defaults to verbose with importance classification](system/note-capture-defaults-to-verbose-with-importance-1a0028fb2a1.md)
 - [Note/learning capture should be VERBOSE by default](system/note-learning-capture-should-be-verbose-by-defau-1a04c6f4e1b.md)
-- [Where notes go: three tiers (scratch, scoped Notes, docs)](system/notes-and-docs-policy.md) - commit-or-not policy; never a flat per-project NOTES.md
 - [NUL bytes in a source file make it invisible to every grep](system/nul-bytes-in-a-source-file-make-it-invisible-to-1a007155a4e.md)
 - [Operator removed automatic compaction and folding](system/operator-removed-automatic-compaction-and-foldin-1a0028fb2d4.md)
-- [Orchestration-surface requirements (addendum): re-scope warning + main-thread scoping](system/orchestration-surface-requirements-addendum-re-s-19f74360f21.md)
-- [Orchestration-surface requirements addendum (re: shared scope + resilience + card links)](system/orchestration-surface-requirements-addendum-re-s-19f743cb2c2.md)
 - [Paths and machine identity must derive from config](system/paths-and-machine-identity-must-derive-from-conf-1a0028fb2f2.md)
 - [Personal data files should be gitignored](system/personal-data-files-should-be-gitignored-1a0028fb2f4.md)
 - [Prefer rework and integration over feature layering](system/prefer-rework-and-integration-over-feature-layer-1a0028fb2bd.md)
@@ -145,7 +145,6 @@
 - [Scope is a location: Workshop and Projects only](system/scope-is-a-location-workshop-and-projects-only-1a0028fb2d1.md)
 - [Scoping and decomposition happen in the main thread](system/scoping-and-decomposition-happen-in-the-main-thr-1a0028fb296.md)
 - [Silence-threshold tuning cannot fix voice fragmentation](system/silence-threshold-tuning-cannot-fix-voice-fragme-1a0028fb2d7.md)
-- [Skill proposal: proposed-failure-pattern-liveness-watchdog-launching](system/skill-proposal-cc2e61fcd30f.md) - proposed skill (recurred 3x), operator-confirmed
 - [Status colors stay byte-identical across all palettes](system/status-colors-stay-byte-identical-across-all-pal-1a0028fb2e7.md)
 - [System design must prioritize usability over technical purity](system/system-design-must-prioritize-usability-over-tec-1a0028fb2a3.md)
 - [TanStack Query in Workshop: the two gotchas that are not in its docs](system/tanstack-query-in-workshop-the-two-gotchas-that-1a03d04b385.md)
@@ -165,7 +164,6 @@
 - [The @workshop/ui kit is the shared styling package and is intended to become a public...](system/the-workshop-ui-kit-is-the-shared-styling-packag-1a04c6f4e31.md)
 - [The worktree is the place, and nobody picks one](system/the-worktree-is-the-place-and-nobody-picks-one-1a04943d305.md)
 - [This is a single-operator LIVE development instance (working scope 'development'), NOT...](system/this-is-a-single-operator-live-development-insta-1a04c6f4e33.md)
-- [Ticket dependencies: first-class edge model (addendum to T0)](system/ticket-dependencies-first-class-edge-model-adden-19f7440aaf0.md)
 - [Ticket drafts persist on threads](system/ticket-drafts-persist-on-threads-1a0028fb2c0.md)
 - [Ticket implementation had leftover junk needing cleanup](system/ticket-implementation-had-leftover-junk-needing-1a0028fb2cc.md)
 - [Ticket/task dependency tracking is required](system/ticket-task-dependency-tracking-is-required-1a0028fb297.md)
@@ -195,4 +193,6 @@
 - [Workshop terminology needs clear distinct roles](system/workshop-terminology-needs-clear-distinct-roles-1a0028fb28f.md)
 - [@workshop/ui is a real package at packages/ui (0.2.0)](system/workshop-ui-is-a-real-package-at-packages-ui-2-0-19feea2363f.md)
 - [Your apps are NOT committed; the tracked violation is 102 source files](system/your-apps-are-not-committed-the-tracked-violatio-1a03493734e.md)
+- [Threads, branches and pages: the settled model](threads-branches-and-pages-the-settled-model-1a04f74f171.md)
 - [Aug 28 User Note](user/aug-28-user-note-mtdq4q5f.md)
+- [Working state (auto-written at compaction)](working-state.md) - the last session's handoff for this scope: objective, decisions and why, done, not done, shortcuts owed, open questions

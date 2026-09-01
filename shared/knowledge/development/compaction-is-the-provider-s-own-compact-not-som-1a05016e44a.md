@@ -1,0 +1,2 @@
+<!-- author: operator; reach: always -->
+Compaction is the provider's own /compact, not something Workshop designs or implements. Do not build a summarising fold, do not write a doc about what a compaction should keep, and do not reopen the question.
