@@ -57,10 +57,13 @@ export function RunningCard({ read }: { read: ThreadsRead }) {
   const usage = usageQuery.isError ? null : usageQuery.data ?? null;
 
   // Every run in flight, plus every chat mid-turn, and the card scrolls if that
-  // is more than fits. No overflow number on the link: this endpoint returns a
-  // null total by design (ADR 0023), so beyond its fifty-row limit there is
-  // nothing truthful to count -- and fifty concurrent runs is not a state this
-  // instance reaches.
+  // is more than fits. There is no head link at all: the card used to carry
+  // "runs →" to the global /runs feed, which was deleted on 2026-09-01
+  // (threads-branches-and-pages-2026-08-29.md section 6). Its replacement is
+  // the Runs lens of ONE app's Work view, and this card is cross-app by
+  // definition -- the rows come from every app at once, so there is no app in
+  // context to send a reader to. A link to nowhere is worse than no link, and
+  // each row below already links to its own run.
   const shown = runningRows(jobs, read.threads);
   const spend = spendLine(usage);
 
@@ -68,7 +71,6 @@ export function RunningCard({ read }: { read: ThreadsRead }) {
     <DashboardCard
       label="Running now"
       count={shown.length > 0 ? shown.length : undefined}
-      link={{ to: "/runs", label: "runs →" }}
     >
       <DashboardState
         loading={!jobs && !err}

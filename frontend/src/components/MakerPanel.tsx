@@ -10,7 +10,8 @@ import {
 
 import { jobStatusKind, runHref } from "../lib/jobs";
 import { ticketHref, ticketKey } from "../lib/tasks";
-import { scopeLabel } from "../lib/scope";
+import { appWorkHref } from "../lib/apps";
+import { appSlugForScope, scopeLabel } from "../lib/scope";
 import { AUTONOMY_MODES } from "../lib/autonomy";
 import {
   armLevelGloss, armLevelName, ceilingLine, makerPrimary, makerStatus,
@@ -170,12 +171,20 @@ export default function MakerPanel({
   // Every maker declaring this tree, this one included. One is the ordinary
   // case and says nothing; two is a fact the operator has to be able to see.
   const peers = state.scope_makers || [];
+  // ALL RUNS, on the app this maker works. The global /runs feed was deleted on
+  // 2026-09-01 (threads-branches-and-pages-2026-08-29.md section 6); its
+  // replacement is the Runs lens of that app's Work view, which is the same
+  // rows narrowed to the app this panel is already about. A maker on a scope
+  // that is not an app (the workshop root, an agent) gets NO LINK: a link to
+  // nowhere is worse than none, and every run below already links to itself.
+  const makerApp = appSlugForScope(state.scope);
+  const runsHref = makerApp ? appWorkHref(makerApp, "runs") : null;
 
   return (
     <section>
       <Row between wrap style={{ alignItems: "baseline" }}>
         <SectionLabel icon={<Activity aria-hidden />}>Ticket work</SectionLabel>
-        <Link to="/runs" className="ws-bc__link">All runs</Link>
+        {runsHref && <Link to={runsHref} className="ws-bc__link">All runs</Link>}
       </Row>
 
       <Stack>
@@ -462,7 +471,8 @@ export default function MakerPanel({
               ))}
               {runs.length >= RUNS_LIMIT && (
                 <p className="ws-muted" style={{ margin: 0, fontSize: "var(--fs-xs)" }}>
-                  Showing the {RUNS_LIMIT} most recent. <Link className="ws-muted" to="/runs">See all runs</Link>.
+                  Showing the {RUNS_LIMIT} most recent.
+                  {runsHref && <> <Link className="ws-muted" to={runsHref}>See all runs</Link>.</>}
                 </p>
               )}
             </Stack>

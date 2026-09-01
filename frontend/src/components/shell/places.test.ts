@@ -94,12 +94,6 @@ describe("pageFor", () => {
     // which is the clearest evidence the split spellings were costing
     // something real rather than only reading badly.
     expect(pageFor(home, "/tickets/workshop/abc123")?.id).toBe("tickets");
-    // Same for a change: reading one is still being in Changes. Without the
-    // row the review page would be an orphan -- routed, reachable only by a
-    // link somebody remembered to add, and dark in the column while you read
-    // it.
-    expect(pageFor(home, "/changes")?.id).toBe("changes");
-    expect(pageFor(home, "/changes/9f2a")?.id).toBe("changes");
   });
 
   it("returns null where no row owns the path at all", () => {
@@ -107,6 +101,32 @@ describe("pageFor", () => {
     // it. Null, not a wrong row lit.
     expect(pageFor(home, "/runs/xyz")).toBeNull();
     expect(pageFor(home, "/stores")).toBeNull();
+    // CHANGED 2026-09-01, and this is the change rather than an omission. This
+    // file used to assert that a change record lit a "changes" row on Home
+    // ("reading one is still being in Changes"), and that a Changes row and a
+    // Deploys row existed to be lit. Both rows are gone: section 6 of
+    // threads-branches-and-pages-2026-08-29.md keeps on Home only the rows
+    // that are genuinely global -- Tickets, Memory, Usage, Roles -- and a
+    // change belongs to one app's branch, a deploy to one app's Overview.
+    // /changes and /deploys are redirects to Home now, so nothing is orphaned
+    // by the row going; what is asserted here is the NEW truth, that Home
+    // claims neither path, rather than the old one deleted.
+    expect(pageFor(home, "/changes")).toBeNull();
+    expect(pageFor(home, "/changes/9f2a")).toBeNull();
+    expect(pageFor(home, "/deploys")).toBeNull();
+    expect(pageFor(home, "/deploys/9f2a")).toBeNull();
+  });
+
+  it("has no Changes or Deploys row on Home", () => {
+    // The rows themselves, asserted directly rather than only through the
+    // matcher above: a row could come back with a different `to` and the
+    // pageFor assertions would still pass while Home grew a page nobody
+    // decided to add back.
+    const ids = home.pages.map((p) => p.id);
+    expect(ids).not.toContain("changes");
+    expect(ids).not.toContain("deploys");
+    // The four that section 6 does keep, plus the surfaces Home is.
+    expect(ids).toEqual(["dashboard", "chats", "apps", "roles", "tickets", "memory", "usage"]);
   });
 });
 

@@ -61,3 +61,31 @@ export function useApp(slug: string): { app: AppRecord | null; err: string | nul
 export function linkedAppSlugs(): Promise<Set<string>> {
   return fetchAppList().then((apps) => new Set(apps.filter((a) => a.project_slug).map((a) => a.slug)));
 }
+
+// ---- the app's own addresses ------------------------------------------------
+// The three top-level lists (/runs, /changes, /deploys) were deleted on
+// 2026-09-01 (threads-branches-and-pages-2026-08-29.md section 6, "Retired,
+// each in the commit that replaces it"). What replaced each of them is a view
+// of ONE app, so every surface that used to send a reader to a global list now
+// has to spell an app-scoped route instead. Spelled here once, for the reason
+// `ticketHref` exists: a route written out by hand in nine places is a route
+// that will be written wrong in one of them.
+
+/** The lens the app's Work view opens on. `tickets` is the default and the
+ *  addendum's primary axis, so it is spelled by LEAVING THE PARAM OFF -- the
+ *  same rule `AppWorkTab` writes it back with, which is what keeps a plain
+ *  `/apps/<slug>/work` the canonical address of the default view rather than
+ *  one of two spellings of it. */
+export type WorkLens = "tickets" | "branches" | "runs";
+
+/** The app's Work view, optionally on one of its lenses. */
+export function appWorkHref(slug: string, lens: WorkLens = "tickets"): string {
+  const base = `/apps/${encodeURIComponent(slug)}/work`;
+  return lens === "tickets" ? base : `${base}?lens=${lens}`;
+}
+
+/** The app's Overview, which absorbed the autonomy brake, the services, the
+ *  deploys and the environment (section 7 step 4). */
+export function appOverviewHref(slug: string): string {
+  return `/apps/${encodeURIComponent(slug)}/overview`;
+}

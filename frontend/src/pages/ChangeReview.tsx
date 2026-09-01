@@ -11,6 +11,7 @@ import {
 } from "@workshop/ui";
 
 import { Ref } from "../components/Ref";
+import { appWorkHref } from "../lib/apps";
 import DiffFile from "../components/changes/DiffFile";
 import { useResolvedRefs } from "../lib/useResolvedRefs";
 import { shortSha } from "../lib/sha";
@@ -456,10 +457,14 @@ export default function ChangeReview() {
   if (err || !change) {
     return (
       <div>
+        {/* No back link. The global /changes list was deleted on 2026-09-01
+            (threads-branches-and-pages-2026-08-29.md section 6) and what
+            replaced it is the Branches lens of ONE app's Work view -- which
+            needs the record, and the record is exactly what failed to load
+            here. Home is one tap away in the dock; a guessed app is not. */}
         <PageHeader
           variant="entity"
           title="Change"
-          back={<Link to="/changes"><ChevronLeft aria-hidden /> Changes</Link>}
         />
         <StateBlock
           variant="error"
@@ -471,11 +476,22 @@ export default function ChangeReview() {
     );
   }
 
+  // Back goes to the branches of the app this change is on. A change is what a
+  // branch produced, and a branch is a place inside one app, so the list that
+  // holds this record's siblings is that app's Work view on its Branches lens.
+  // The cross-app /changes page it used to point at was deleted on 2026-09-01
+  // (threads-branches-and-pages-2026-08-29.md section 6).
+  const back = (
+    <Link to={appWorkHref(change.project_slug, "branches")}>
+      <ChevronLeft aria-hidden /> {change.project_slug}
+    </Link>
+  );
+
   return (
     <div>
       <PageHeader
         variant="entity"
-        back={<Link to="/changes"><ChevronLeft aria-hidden /> Changes</Link>}
+        back={back}
         title={change.title || change.branch_slug}
         meta={
           <Row wrap>

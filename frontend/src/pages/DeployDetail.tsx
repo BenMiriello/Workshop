@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice, StatusDot, Badge, Skeleton, Field, Input, Select, ConfirmDialog, Modal, Menu, MenuItem, type StatusKind, timeAgo, shortHttpError } from "@workshop/ui";
 import { jobStatusKind, runHref, type JobEvidence } from "../lib/jobs";
+import { appOverviewHref } from "../lib/apps";
 
 import { shortSha } from "../lib/sha";
 import type { components } from "../api/schema.gen";
@@ -175,7 +176,12 @@ export default function DeployDetail() {
     try {
       const r = await fetch(`/api/projects/${encodeURIComponent(deploy.project_slug)}/deploys/${encodeURIComponent(deploy.id)}`, { method: "DELETE" });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      nav("/deploys", { replace: true });
+      // Back to the app this deploy belonged to, not to a cross-app list: the
+      // top-level /deploys page was deleted on 2026-09-01 and its panel now
+      // lives on the app's Overview (threads-branches-and-pages-2026-08-29.md
+      // section 6, section 7 step 4). The record is gone, so the place to land
+      // is the one list that still holds its siblings.
+      nav(appOverviewHref(deploy.project_slug), { replace: true });
     } catch (e) {
       setBanner(e instanceof Error ? e.message : String(e));
     }
@@ -199,11 +205,21 @@ export default function DeployDetail() {
     ? jobStatusKind(runs[0].status)
     : deploy?.current ? "ok" : "stopped";
 
+  // Back goes to the app's Overview, which absorbed the deploys panel. Not to a
+  // global deploy list: there is not one any more (section 6, 2026-09-01).
+  // Until the record loads there is no app to name, and a back link that
+  // guesses one is worse than a header with none while the skeleton is up.
+  const back = deploy ? (
+    <Link to={appOverviewHref(deploy.project_slug)}>
+      <ChevronLeft aria-hidden /> {deploy.project_slug}
+    </Link>
+  ) : undefined;
+
   return (
     <div>
       <PageHeader
         variant="entity"
-        back={<Link to="/deploys"><ChevronLeft aria-hidden /> Deploys</Link>}
+        back={back}
         title={deploy ? deploy.name : "Deploy"}
         meta={
           deploy && (

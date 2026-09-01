@@ -137,8 +137,15 @@ export function CollectionBody<T>({
   emptyAction?: ReactNode;
   /** ReactNode, not string: these lines name a destination ("Browse the full
    *  queue from Tickets") and every one of them was plain text, so the page
-   *  told you where to go and made you get there yourself. */
-  overflowHint: ReactNode;
+   *  told you where to go and made you get there yourself.
+   *
+   *  OPTIONAL since 2026-09-01, for the same reason `emptyAction` is: the
+   *  global /runs, /changes and /deploys lists were deleted (threads-branches-
+   *  and-pages-2026-08-29.md section 6) and the tabs that pointed at them are
+   *  now the widest list of those records there is. A hint whose whole job is
+   *  to name a destination has nothing to say when there is no wider list, and
+   *  inventing one would be the dead link this deletion removed. */
+  overflowHint?: ReactNode;
   render: (items: T[]) => ReactNode;
 }) {
   if (err) {

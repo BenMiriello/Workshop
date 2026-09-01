@@ -9,6 +9,7 @@ import {
   runOutcome,
 } from "../lib/jobs";
 import { ticketHref, runTicketScope } from "../lib/tasks";
+import { appWorkHref } from "../lib/apps";
 import { queryKeys } from "../lib/queryKeys";
 import type { components } from "../api/schema.gen";
 
@@ -326,26 +327,41 @@ export default function JobDetail() {
     [id, refresh],
   );
 
+  // WHERE "AWAY FROM THIS RUN" IS. The global /runs feed was deleted on
+  // 2026-09-01 (threads-branches-and-pages-2026-08-29.md section 6); the list
+  // that holds this run's siblings is the Runs lens of its app's Work view,
+  // and the run record is what names the app. A run with no project (a bare
+  // agent turn, or a record that failed to load) has no such list, so it goes
+  // to Home rather than to an invented address.
+  const runsList = job?.project_slug ? appWorkHref(job.project_slug, "runs") : "/";
+
   const dismiss = useCallback(async () => {
     setActing("__dismiss__");
     setActErr(null);
     try {
       const r = await fetch(`/api/jobs/${encodeURIComponent(id)}/dismiss`, { method: "POST" });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      nav("/runs");
+      nav(runsList);
     } catch (e) {
       setActErr(e instanceof Error ? e.message : String(e));
       setActing(null);
     }
-  }, [id, nav]);
+  }, [id, nav, runsList]);
 
   // Back is navigation, so it sits above the title as a named link, not as a
-  // button in the action row where it competed with Refresh. "Runs", not
-  // "Jobs": the route is /runs and `job` is the code noun only (ADR 0001).
+  // button in the action row where it competed with Refresh. It names the APP
+  // it returns to when the run has one, because that is what the destination
+  // is now -- the app's Runs lens, not a global feed. A run with no app says
+  // "Home", which is where it goes: a back link that says "Runs" and lands
+  // somewhere else is the lie this deletion was supposed to remove.
   const header = (
     <PageHeader
       variant="entity"
-      back={<Link to="/runs"><ChevronLeft aria-hidden /> Runs</Link>}
+      back={
+        <Link to={runsList}>
+          <ChevronLeft aria-hidden /> {job?.project_slug || "Home"}
+        </Link>
+      }
       title={job?.title || "Run"}
       meta={job && (
         <>
@@ -379,11 +395,13 @@ export default function JobDetail() {
       />
     );
   } else if (notFound) {
+    // No run means no app, so there is no run list to offer: the global one was
+    // deleted on 2026-09-01. Home is the honest destination.
     body = (
       <StateBlock
         title="Run not found"
         hint={<>No job with id <code>{id}</code>. It may have been pruned from the log.</>}
-        action={<Button size="sm" onClick={() => nav("/runs")}>Back to runs</Button>}
+        action={<Button size="sm" onClick={() => nav("/")}>Back to Home</Button>}
       />
     );
   } else if (!job) {

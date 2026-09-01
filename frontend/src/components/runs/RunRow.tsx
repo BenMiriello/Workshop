@@ -1,7 +1,8 @@
 // ONE ROW SHAPE FOR A RUN, wherever a run is listed.
 //
 // There were two, and only one of them read the payload. The global feed
-// (components/JobsFeed.tsx) rendered the trigger LABEL, the binding, a duration
+// (components/JobsFeed.tsx, deleted 2026-09-01 with the /runs page that was
+// its only mount) rendered the trigger LABEL, the binding, a duration
 // and the cross-links; the per-app Runs tab rendered a card with the raw
 // trigger enum, an absolute timestamp and nothing else, off the same enriched
 // record. Measured 2026-09-01 on the app with 50 runs: every row read "done

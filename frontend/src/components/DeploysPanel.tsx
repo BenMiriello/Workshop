@@ -5,7 +5,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPill, Badge, Tag, Skeleton, Field, Input, Select, Modal, ConfirmDialog, type StatusKind, Notice, timeAgo, shortHttpError } from "@workshop/ui";
-import { jobStatusKind, type JobEvidence } from "../lib/jobs";
+import { jobStatusKind, runHref, type JobEvidence } from "../lib/jobs";
 
 import { shortSha } from "../lib/sha";
 import type { components } from "../api/schema.gen";
@@ -403,7 +403,15 @@ function DeployRow({
                       {r.evidence.summary}
                     </span>
                   )}
-                  <Link to={`/runs?job=${encodeURIComponent(r.id)}`} style={{ textDecoration: "none" }}>
+                  {/* THE RUN, not a filtered feed. This was
+                      `/runs?job=<id>`, and no page ever read that param: the
+                      global feed had one status filter and no query parsing at
+                      all, so "View run" landed on an unfiltered list of every
+                      run in the workshop. The feed itself is deleted now
+                      (2026-09-01), which turns the same link into a redirect to
+                      Home. `runHref` is the run's own page, which is what the
+                      button says. */}
+                  <Link to={runHref(r.id)} style={{ textDecoration: "none" }}>
                     <Button size="sm" variant="ghost">View run</Button>
                   </Link>
                   {r.status === "done" && r.kind === "deploy" && (

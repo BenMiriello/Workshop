@@ -43,7 +43,10 @@ function DeploysBody({ app }: { app: AppRecord }) {
         endpoint={endpoint}
         emptyTitle="No deploy targets"
         emptyHint={unlinkedReason("deploys", app.project_slug, 0) ?? "This app has no deploy target configured yet."}
-        overflowHint={<>Browse them all on <Link className="ws-link" to="/deploys">Deploys</Link>.</>}
+        /* No overflow hint. It used to point at the global /deploys page,
+           which was deleted on 2026-09-01 (section 6); this app's targets are
+           the widest list of them there is now, and its Overview holds the
+           same set. There is nowhere wider to send a reader. */
         render={(rows) => (
           <Stack>
             {rows.map((d) => (

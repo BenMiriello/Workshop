@@ -28,8 +28,8 @@
  *
  * `suffix: false` drops the trailing " ago" for a caller that already reads
  * as relative from its position (a meta line's own "· 3h", the way
- * `bits.tsx` and `JobsFeed.tsx` used it). Suffixed is the default because
- * most call sites render the string standalone. */
+ * `bits.tsx` and the since-deleted `JobsFeed.tsx` used it). Suffixed is the
+ * default because most call sites render the string standalone. */
 export function timeAgo(iso?: string | null, opts?: { suffix?: boolean }): string {
   if (!iso) return "";
   const t = new Date(iso).getTime();

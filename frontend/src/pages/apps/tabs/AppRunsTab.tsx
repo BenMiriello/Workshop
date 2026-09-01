@@ -11,7 +11,7 @@
 // same objects. The global feed had read them all along, from its own copy of
 // the row. There is one copy now (components/runs/RunRow.tsx) and both surfaces
 // draw it.
-import { useParams, Link } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PlayCircle } from "lucide-react";
 import { Card, SectionLabel } from "@workshop/ui";
@@ -47,7 +47,11 @@ export function RunsBody({ app }: { app: AppRecord }) {
         endpoint={endpoint}
         emptyTitle="No runs yet"
         emptyHint={unlinkedReason("runs", app.project_slug, 0) ?? "Bounded executions for this app (cron ticks, event reactions, loops) appear here."}
-        overflowHint={<>Browse the full history on <Link className="ws-link" to="/runs">Runs</Link>.</>}
+        /* No overflow hint. It used to read "Browse the full history on Runs"
+           and point at the global /runs feed, which was deleted on 2026-09-01
+           (threads-branches-and-pages-2026-08-29.md section 6). This body IS
+           what replaced it -- the Work view's Runs lens mounts this same
+           component -- so any link here would lead back to itself. */
         render={(rows) => (
           <Card pad0>
             <ul className="ws-list">

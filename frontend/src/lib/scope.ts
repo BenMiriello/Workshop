@@ -126,3 +126,18 @@ export function scopeHref(scope?: string): string | null {
   if (kind === "agent" && slug) return `/agents/${encodeURIComponent(slug)}`;
   return null;
 }
+
+// The app a scope belongs to, or null when it belongs to none.
+//
+// `project:<slug>` and `app:<slug>` name the SAME slug in the two registries --
+// App.tsx's /projects/<slug> redirect to /apps/<slug>/overview rests on it --
+// so both kinds resolve here. `workshop`, `development`, `agent:` and `role:`
+// have no app, and NULL IS THE ANSWER THAT MATTERS: the surfaces that lost
+// their global run/change/deploy list (2026-09-01) use it to drop a link
+// rather than invent a destination for a record that belongs to no app.
+export function appSlugForScope(scope?: string): string | null {
+  if (!scope || scope === DEVELOPMENT_SCOPE || scope === WORKSHOP_SCOPE) return null;
+  const [kind, slug] = scope.split(":", 2);
+  if (!slug) return null;
+  return kind === "app" || kind === "project" ? slug : null;
+}

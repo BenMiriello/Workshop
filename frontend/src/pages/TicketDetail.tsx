@@ -32,6 +32,8 @@ import {
   scopeLabel, scopeHref, ticketHref, ticketKey, executionLabel, latitudeDesc,
   latitudeSourceLabel, readinessLine, readinessTone, triageLabel,
 } from "../lib/tasks";
+import { appWorkHref } from "../lib/apps";
+import { appSlugForScope } from "../lib/scope";
 import { parseList, unresolvedIds } from "../lib/ticketEdit";
 import { decisionRefusal, isOpenChange, type Change } from "../lib/changeReview";
 import {
@@ -395,6 +397,14 @@ export default function TicketDetail() {
   const finished = task?.status === "in_review";
   const originKey = task?.origin?.context_key ?? null;
   const scopeLink = scopeHref(scope);
+  // ALL RUNS, on the app this ticket belongs to. The global /runs feed was
+  // deleted on 2026-09-01 (threads-branches-and-pages-2026-08-29.md section 6)
+  // and the runs worth reaching from here are this app's, which is the Runs
+  // lens of its Work view. A ticket on a scope that is not an app (the
+  // workshop root, development) gets no link rather than one to nowhere; the
+  // runs it owns are already listed below.
+  const ticketApp = appSlugForScope(scope);
+  const allRunsHref = ticketApp ? appWorkHref(ticketApp, "runs") : null;
   const workHref = `/work?${nextWorkParams(new URLSearchParams(), { scope })}`;
 
   // A run this ticket started is a background process. The ticket record does
@@ -522,7 +532,7 @@ export default function TicketDetail() {
             {lastRun?.started_at ? ` · last one ${timeAgo(lastRun.started_at)}` : ""}
           </span>
         )}
-        <Link className="ws-sectionhead__link" to="/runs">All runs</Link>
+        {allRunsHref && <Link className="ws-sectionhead__link" to={allRunsHref}>All runs</Link>}
       </div>
       {/* WHY THE LAST RUN DID NOT HAPPEN, on the page the operator opens after
           pressing Run and seeing nothing move. A LINE and not a region: the runs

@@ -1,7 +1,7 @@
 // Git object ids, abbreviated. Three deploy surfaces (`components/
-// DeploysPanel.tsx`, `pages/Deploys.tsx`, `pages/DeployDetail.tsx`) each
-// declared the same one-line `short(sha)`, byte for byte, and a fourth screen
-// that wanted one would have written a fifth.
+// DeploysPanel.tsx`, the top-level `pages/Deploys.tsx` since deleted, and
+// `pages/DeployDetail.tsx`) each declared the same one-line `short(sha)`, byte
+// for byte, and a fourth screen that wanted one would have written a fifth.
 //
 // It lives in `lib/` rather than beside the deploy pages because a commit id
 // is not a deploy concept: runs, projects and the dev-mode bundle probe all

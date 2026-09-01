@@ -50,7 +50,12 @@ const NODES: Record<string, RouteNode> = {
   // that keeps its query, so old links and bookmarks are unaffected.
   "/tickets": { label: "Tickets" },
   "/memory": { label: "Memory" },
-  "/runs": { label: "Runs" },
+  // No node for the global run feed. It was deleted on 2026-09-01
+  // (threads-branches-and-pages-2026-08-29.md section 6) and /runs is a
+  // redirect to Home now; a run's own page keeps its trail from the app it
+  // belongs to. A crumb naming a page nobody can reach would be the trail
+  // lying about where you are, which is the same rule the /agents and
+  // /projects nodes above were removed under.
   "/usage": { label: "Usage" },
   "/chats": { label: "Chats" },
   // /projects is a redirect to /apps now; a crumb to it would name a page
