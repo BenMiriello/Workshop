@@ -289,6 +289,40 @@ CANCEL_WAKEUP_TOOL_SCHEMA = {
 }
 
 
+# The fourth chat-bound WRITE tool. Chat-scope for a different reason than the
+# alarm: the notification carries a link back to the conversation that sent it,
+# so the operator can act on it where it happened rather than hunting for it.
+NOTIFY_TOOL_NAME = "notify_operator"
+NOTIFY_TOOL_DESC = (
+    "Reach the operator when they are not looking at the app. Sends a message "
+    "to them directly, wherever they are, and returns whether it was actually "
+    "delivered. Use it for exactly two things: something they asked for is now "
+    "DONE, or something they asked for is now BLOCKED and cannot go further "
+    "without them. Say which of the two it is, say what the result or the "
+    "obstacle is, and if it is blocked say what you need from them. This is an "
+    "interruption, not a log: it is not for progress updates, not for narrating "
+    "what you are about to do, not for acknowledging a request, and not for "
+    "anything they will see anyway the moment they open this chat. One per "
+    "finished or stuck request, not one per step. The chat is linked "
+    "automatically, so do not write out where you are; write what happened."
+)
+NOTIFY_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "message": {
+            "type": "string",
+            "description": (
+                "What the operator needs to know, in a sentence or two they can "
+                "read on a phone without opening anything. Lead with the result "
+                "or the obstacle, not with context they already have."
+            ),
+        },
+    },
+    "required": ["message"],
+    "additionalProperties": False,
+}
+
+
 def _pin_owner() -> None:
     """Pin the data owner so owner-scoped stores (jobs, knowledge) resolve.
 
@@ -555,6 +589,7 @@ def _run_where_is() -> str:
         scope,
         background=SPAWN_TOOL_NAME in offered,
         wakeup=WAKE_TOOL_NAME in offered,
+        notify=NOTIFY_TOOL_NAME in offered,
     )
 
 
@@ -659,6 +694,7 @@ _BUILTIN_TOOL_NAMES = (
     TOOL_NAME, SEARCH_TOOL_NAME, SPAWN_TOOL_NAME, WHERE_IS_TOOL_NAME,
     LIST_ATTACHMENTS_TOOL_NAME, GET_FILE_TOOL_NAME,
     WAKE_TOOL_NAME, LIST_WAKEUPS_TOOL_NAME, CANCEL_WAKEUP_TOOL_NAME,
+    NOTIFY_TOOL_NAME,
 )
 
 # The tools that only mean anything with a chat behind them, listed once so
@@ -669,6 +705,23 @@ _CHAT_BOUND_TOOLS = (
     (LIST_WAKEUPS_TOOL_NAME, LIST_WAKEUPS_TOOL_DESC, LIST_WAKEUPS_TOOL_SCHEMA),
     (CANCEL_WAKEUP_TOOL_NAME, CANCEL_WAKEUP_TOOL_DESC, CANCEL_WAKEUP_TOOL_SCHEMA),
 )
+
+
+def _can_notify() -> bool:
+    """Is there actually somewhere to send an operator notification?
+
+    Offered only where it can be delivered. A tool that is listed and always
+    fails is worse than an absent one: the model spends a call on it and then
+    has to tell the operator that telling the operator did not work. An
+    installation that has declared no messaging channel simply does not have
+    this tool, and the prompt layers say so rather than hedging.
+    """
+    try:
+        from services import operator_notify
+        return operator_notify.configured()
+    except Exception as e:  # noqa: BLE001
+        print(f"workshop mcp: notify availability unknown: {e}", file=sys.stderr)
+        return False
 
 
 def _command_tools() -> list:
@@ -712,6 +765,12 @@ def _tool_list() -> list:
     if _bound_thread():
         for name, desc, schema in _CHAT_BOUND_TOOLS:
             tools.append({"name": name, "description": desc, "inputSchema": schema})
+        # Reaching the operator needs a chat AND somewhere to send: the message
+        # links back to this conversation, and an installation that has declared
+        # no messaging channel has nobody to send to.
+        if _can_notify():
+            tools.append({"name": NOTIFY_TOOL_NAME, "description": NOTIFY_TOOL_DESC,
+                          "inputSchema": NOTIFY_TOOL_SCHEMA})
     try:
         from services import command_tools
         for tool in _command_tools():
@@ -822,6 +881,32 @@ def _run_cancel_wakeup(args: dict) -> str:
     return f"Cancelled {wake_id}. It will not fire."
 
 
+def _run_notify(args: dict) -> str:
+    """Send one operator notification and report what the transport answered.
+
+    The return is deliberately not "sent" on anything less than a delivery. This
+    tool exists because the operator is somewhere else; an assistant that says
+    "I let you know" over a failed send has produced the exact silence the tool
+    was added to end, and has told the operator it did not happen.
+    """
+    thread = _bound_thread()
+    if not thread:
+        return "Cannot notify the operator: this tool is not bound to a chat."
+    _pin_owner()
+    from services import operator_notify
+
+    message = (args.get("message") or "").strip()
+    if not message:
+        return "Nothing was sent: a notification needs a message."
+    result = operator_notify.send(message, link=operator_notify.chat_link(thread))
+    if result.get("ok"):
+        return ("Delivered to the operator, with a link back to this chat. They "
+                "may not read it immediately; do not wait on a reply unless you "
+                "were going to wait anyway.")
+    return (f"NOT delivered: {result.get('error', 'unknown error')}. The operator "
+            "has not been told. Say so plainly rather than implying word was sent.")
+
+
 def _handle(msg: dict) -> dict | None:
     """Return a JSON-RPC response dict, or None for a notification (no reply)."""
     method = msg.get("method")
@@ -872,6 +957,8 @@ def _handle(msg: dict) -> dict | None:
                 text = _run_wake(params.get("arguments") or {})
             elif name == LIST_WAKEUPS_TOOL_NAME:
                 text = _run_list_wakeups()
+            elif name == NOTIFY_TOOL_NAME:
+                text = _run_notify(params.get("arguments") or {})
             elif name == CANCEL_WAKEUP_TOOL_NAME:
                 text = _run_cancel_wakeup(params.get("arguments") or {})
             else:

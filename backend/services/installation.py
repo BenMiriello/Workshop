@@ -63,6 +63,22 @@ def git_forge() -> str:
     return os.environ.get("WORKSHOP_GIT_FORGE", "").strip()
 
 
+def operator_dm_target() -> str:
+    """The account the platform sends the operator a notification at.
+
+    Declared with WORKSHOP_OPERATOR_DISCORD_USER: the operator's own id on the
+    messaging surface this installation uses, which is a fact about one
+    deployment and belongs here rather than in any prompt or any tracked module.
+
+    Empty when undeclared, and that is a real answer rather than a gap to paper
+    over: `services/operator_notify.configured()` reads it, the notify tool's
+    grant is computed from that, and an installation with nowhere to send is one
+    whose chats are never told they can reach anyone. A destination guessed from
+    whoever happens to be around would deliver someone's work to a stranger.
+    """
+    return os.environ.get("WORKSHOP_OPERATOR_DISCORD_USER", "").strip()
+
+
 def timezone_name() -> str:
     """The IANA timezone this installation keeps its wall clock in.
 

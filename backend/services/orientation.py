@@ -39,12 +39,13 @@ def _scope_line(scope_key: str | None) -> str:
 
 
 def manifest_text(scope_key: str | None = None, *, background: bool = True,
-                  wakeup: bool = False) -> str:
+                  wakeup: bool = False, notify: bool = False) -> str:
     """The orientation block. `scope_key` is the chat's knowledge scope
     ("workshop", "development", "project:<slug>", "app:<name>", "agent:<id>").
 
     `background` says whether this chat is actually granted `spawn_background`,
-    and `wakeup` whether it is granted `wake_me`. Naming a tool the chat cannot
+    `wakeup` whether it is granted `wake_me`, and `notify` whether it can
+    actually reach the operator away from the app. Naming a tool the chat cannot
     call is the told-but-absent error this manifest exists to prevent, not
     commit, so each line is present exactly where its grant is real. Neither is
     ever hedged: a map that says a road "may exist" is not a map."""
@@ -101,6 +102,15 @@ def manifest_text(scope_key: str | None = None, *, background: bool = True,
            "arms a durable alarm on this chat and a new turn starts here when "
            "it comes due, carrying the reason you gave. `list_wakeups` and "
            "`cancel_wakeup` manage what is armed.\n" if wakeup else "")
+        # REACHING A PERSON WHO IS NOT HERE. Everything else on this map is a
+        # way to find something; this is the only way to be found. Added
+        # 2026-09-01, when jobs and scripts could reach the operator and a chat
+        # could not, so the answer to "they asked for this and left" was to
+        # write into a thread nobody was looking at.
+        + ("- Telling the operator something when they are NOT in the app: "
+           "`notify_operator` reaches them directly and reports whether it "
+           "arrived. For a request that is finished or stuck, not for progress.\n"
+           if notify else "")
         +
         "- `where_is` restates this map any time you need it."
     )

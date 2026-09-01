@@ -308,6 +308,19 @@ PLATFORM_TOOLS: tuple[Tool, ...] = (
         scopes=("chat",),
         ceiling=(_mcp_id(_wqs.CANCEL_WAKEUP_TOOL_NAME),),
     ),
+    # Reaching the operator away from the app. Chat-scope like the three above,
+    # for its own reason: the notification carries a link back to the chat that
+    # sent it, so the operator lands on the thing rather than on a search for it.
+    Tool(
+        id=_mcp_id(_wqs.NOTIFY_TOOL_NAME),
+        title="Notify the operator",
+        description=_wqs.NOTIFY_TOOL_DESC,
+        kind="mcp",
+        provenance="platform",
+        spec={"server": _WORKSHOP_SERVER, "tool": _wqs.NOTIFY_TOOL_NAME},
+        scopes=("chat",),
+        ceiling=(_mcp_id(_wqs.NOTIFY_TOOL_NAME),),
+    ),
     # ---- CLI builtins -------------------------------------------------------
     # These add description and eligibility to tools the harness already has.
     # Names are the CLI's own allowlist vocabulary (verified against the four
@@ -433,6 +446,7 @@ PLATFORM_TOOL_IDS: frozenset[str] = frozenset(t.id for t in PLATFORM_TOOLS)
 #   WEB_TOOL_IDS, SUBAGENT_TOOL_ID   → chat_context.WEB_TOOLS / SUBAGENT_TOOL
 #   WORKSHOP_TOOLKIT_IDS              → chat_context.WORKSHOP_TOOLKIT
 #   WAKEUP_TOOL_IDS                   → chat_context.WAKEUP_TOOLS
+#   NOTIFY_TOOL_ID                    → chat_context.NOTIFY_TOOL
 #   GENERAL_ALLOWLIST_IDS             → chat_context._general.allowed_tools
 #   READ_TOOL_IDS                     → agent_authority._READ_TOOLS
 #   TREE_WRITE_IDS                    → agent_authority._TARGET_TOOLS["tree"]
@@ -461,12 +475,24 @@ WAKEUP_TOOL_IDS: tuple[str, ...] = (
     _mcp_id(_wqs.CANCEL_WAKEUP_TOOL_NAME),
 )
 
+# Reaching the operator away from the app. Named as its own group for the same
+# two readers as the alarm above: the allowlists, and the prompt layers, which
+# state the capability only where the grant is real (chat_context._grants_notify
+# -- which additionally requires that the installation have somewhere to send).
+#
+# EVERY CHAT GETS IT, including the narrow ones, and for the same reason the
+# alarm does. A build chat could at least leave its answer where the operator
+# would eventually look; a data chat could do nothing but wait to be read. Being
+# able to say "the thing you asked for is done" is not a builder's capability.
+NOTIFY_TOOL_ID: str = _mcp_id(_wqs.NOTIFY_TOOL_NAME)
+
 # Workshop tools offered to every chat (not spawn, which is chat-scope only).
 WORKSHOP_TOOLKIT_IDS: tuple[str, ...] = (
     _mcp_id(_wqs.WHERE_IS_TOOL_NAME),
     _mcp_id(_wqs.LIST_ATTACHMENTS_TOOL_NAME),
     _mcp_id(_wqs.GET_FILE_TOOL_NAME),
     *WAKEUP_TOOL_IDS,
+    NOTIFY_TOOL_ID,
 )
 
 # Full allowlist for the general/assistant chat provider.

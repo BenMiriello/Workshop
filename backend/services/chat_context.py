@@ -636,8 +636,43 @@ _NO_WAKEUP_RULE = (
 )
 
 
+# REACHING THE OPERATOR, stated only where there is a channel to reach them on.
+# Same rule as the two paragraphs above, applied to the third chat-scope write
+# tool -- and the one where over-use is the likelier failure, so the paragraph
+# spends most of its length on what NOT to send.
+_NOTIFY_RULE = (
+    "REACHING THE OPERATOR WHEN THEY ARE ELSEWHERE. Everything you write here "
+    "waits to be read. `notify_operator` does not: it reaches the operator away "
+    "from the app and tells you whether it actually arrived. Send one when "
+    "something they asked for is DONE, or when it is BLOCKED and cannot move "
+    "without them -- and say which, then the result or the obstacle, then what "
+    "you need if you need something.\n\n"
+    "IT IS AN INTERRUPTION, AND THAT IS ITS ONLY VALUE. Do not send progress, "
+    "do not send an acknowledgement, do not narrate what you are starting, and "
+    "do not send anything the operator will read anyway the next time they open "
+    "this chat. If they are waiting on this turn right now, answer in the chat "
+    "instead; a notification about a reply they are already reading is noise "
+    "that teaches them to ignore the next one. One per finished or stuck "
+    "request, not one per step.\n\n"
+    "Only say you have told them once the tool has reported the message "
+    "delivered. If it reports a failure, say plainly that word did not go out."
+)
+
+
+# ...and the other way where no channel exists, so nothing promises to reach a
+# person it has no way of reaching.
+_NO_NOTIFY_RULE = (
+    "YOU CANNOT REACH THE OPERATOR OUTSIDE THIS CHAT. Anything you write waits "
+    "here until they open it, and nothing you can call will get their attention "
+    "sooner. So do not say you will let them know, or that you have notified "
+    "them: finish what you can, and leave the result here where it will be "
+    "found. Work that must reach someone later leaves as a Ticket."
+)
+
+
 def delegation_block(tools_active: bool, is_build: bool = False,
-                     background: bool = False, wakeup: bool = False) -> str:
+                     background: bool = False, wakeup: bool = False,
+                     notify: bool = False) -> str:
     """The subagent rule plus the named delegates this instance can call.
 
     Named subagents come from the same registry the Agents page reads
@@ -673,6 +708,7 @@ def delegation_block(tools_active: bool, is_build: bool = False,
     tail = ("\n\n" + _BACKGROUND_RULE) if background else ""
     tail += ("\n\n" + _WAITING_RULE) if is_build else ""
     tail += "\n\n" + (_WAKEUP_RULE if wakeup else _NO_WAKEUP_RULE)
+    tail += "\n\n" + (_NOTIFY_RULE if notify else _NO_NOTIFY_RULE)
     return DELEGATION_RULE + named + tail
 
 
@@ -770,6 +806,34 @@ def _grants_wakeup(provider: "ContextProvider") -> bool:
     return _grants_workshop_tool(provider, WAKEUP_TOOL)
 
 
+def _can_reach_operator() -> bool:
+    """Has this installation declared anywhere to send a notification?
+
+    Its own function because three surfaces have to agree on the answer: the
+    allowlist the CLI is launched with, the tool list the MCP server offers, and
+    the prompt paragraph. Any failure answers False -- an unknown channel is not
+    a channel.
+    """
+    try:
+        from services import operator_notify
+        return operator_notify.configured()
+    except Exception:
+        return False
+
+
+def _grants_notify(provider: "ContextProvider") -> bool:
+    """Does this chat actually have `notify_operator` AND somewhere to send?
+
+    Two conditions, not one, and this is the only grant in this module that
+    needs the second. The other tools act on the platform's own state, so having
+    the tool is the whole of having the capability. This one acts on a channel
+    the installation may simply not have configured -- and the difference between
+    "you can reach the operator" and "you can call a tool that will tell you it
+    could not reach the operator" is the entire value of the sentence.
+    """
+    return _grants_workshop_tool(provider, NOTIFY_TOOL) and _can_reach_operator()
+
+
 # ---------------------------------------------------------------- role preamble
 
 
@@ -781,6 +845,7 @@ def role_preamble(
     is_build: bool = False,
     background: bool = False,
     wakeup: bool = False,
+    notify: bool = False,
 ) -> str:
     """Platform-owned layer-1 system facts, generated from the ACTUAL run config
     (tools_active is computed in routes/chat.py from the same branch that decides
@@ -791,8 +856,9 @@ def role_preamble(
     is_build=True       -> use the accurate BUILD-context egress facts (clone /
     install from dev hosts is allowed; only push/publish goes through the
     platform), instead of the strict data-context "egress blocked" text.
-    background / wakeup -> this chat's REAL grant of the two chat-scope write
-    tools, so each paragraph is present exactly where its tool is.
+    background / wakeup / notify -> this chat's REAL grant of the three
+    chat-scope write tools, so each paragraph is present exactly where its tool
+    is.
     """
     if not tools_active:
         return (
@@ -853,7 +919,7 @@ def role_preamble(
         # Stated here, with the rest of what this session can actually do, so the
         # rule and the granted tool are computed from the same tools_active flag
         # and cannot disagree.
-        + "\n\n" + delegation_block(True, is_build, background, wakeup)
+        + "\n\n" + delegation_block(True, is_build, background, wakeup, notify)
         + "\n\n" + UI_CARD_PROTOCOL
         + "\n\n" + _STYLE_RULE
     )
@@ -1583,6 +1649,7 @@ def orientation_manifest(provider: "ContextProvider") -> str:
             provider.knowledge_scope(),
             background=_grants_background(provider),
             wakeup=_grants_wakeup(provider),
+            notify=_grants_notify(provider),
         )
     except Exception:
         return ""
@@ -2487,13 +2554,27 @@ BACKGROUND_TOOL = _tool_registry.SPAWN_TOOL_ID
 WAKEUP_TOOL = _tool_registry.WAKEUP_TOOL_IDS[0]
 WAKEUP_TOOLS = list(_tool_registry.WAKEUP_TOOL_IDS)
 
+# ...and the third: reaching the operator when they are not looking at the app.
+NOTIFY_TOOL = _tool_registry.NOTIFY_TOOL_ID
+
 
 def effective_allowed_tools(provider: ContextProvider) -> list[str]:
     """A data provider's declared MCP tools + the shared web tools + the subagent
     tool, de-duped and order-stable. This is the SINGLE place that grants the
     shared surface, so the route and capability_for can't drift. Not used for
-    build providers (full toolset)."""
-    return list(dict.fromkeys([*provider.allowed_tools, *WEB_TOOLS, SUBAGENT_TOOL]))
+    build providers (full toolset).
+
+    `notify_operator` is dropped where the installation has declared nowhere to
+    send. It is the one platform tool whose capability lives outside the
+    platform, and this list is not only what the CLI is launched with -- it is
+    also what the preamble ENUMERATES to the model. Leaving it in named a tool
+    that could only ever answer that it had failed, in the same paragraph that
+    tells the model what it can do.
+    """
+    tools = [*provider.allowed_tools, *WEB_TOOLS, SUBAGENT_TOOL]
+    if not _can_reach_operator():
+        tools = [t for t in tools if t != NOTIFY_TOOL]
+    return list(dict.fromkeys(tools))
 
 
 def capability_for(
@@ -2753,6 +2834,10 @@ def instruction_contract(provider: ContextProvider, *, enable_chat_tools: bool) 
             # later where that is true, and told plainly that nothing wakes it
             # where it is not. Never "if it is available".
             wakeup=_grants_wakeup(provider),
+            # And the same for reaching the operator away from the app, which
+            # additionally requires that this installation have a channel to
+            # reach them on -- see `_grants_notify`.
+            notify=_grants_notify(provider),
         )
         + "\n\n"
         + provider.persona()
