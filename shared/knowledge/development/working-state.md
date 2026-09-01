@@ -204,6 +204,35 @@ because every linked app here has `slug == project_slug`; an app where they
 differed would diverge, and `owned_scope` is not on the wire so the client cannot
 just read it.
 
+## Owed: the retrieval ranking is not stable until the backend restarts
+
+The authority/kind ranking (`d347e528`, `dcbc8ca1`) is correct in code and was
+verified by its author against a healed index — both target queries returned
+`docs/applying-changes.md` first, and a superseded doc was demoted and labelled
+without disturbing unrelated queries (birdnet, Plaid, design-system top 3
+byte-identical before and after).
+
+Measured again from the main thread a few minutes later: "is an app the same
+thing as a project" still ranks the authoritative doc **first**, but "how do I
+restart the backend" had reverted to three chats. **This is the running backend
+fighting the new code.** It is on the old source, and only the long-lived process
+rebuilds the index, so its maintenance pass strips the statuses the new ranker
+reads. `_RANK_SCHEMA` in the fingerprint heals it on the next rebuild under new
+code.
+
+So: **re-run both queries after the restart before believing either result.**
+Neither the good reading nor the bad one is stable while the backend is stale.
+This is the same in-turn verification limit as every other backend change today
+and is not evidence of a defect.
+
+    cd backend && set -a && . ~/.config/workshop/secrets.env && set +a
+    .venv/bin/python -c "
+    import sys; sys.path.insert(0,'.')
+    from services import ownership, semantic_index as si
+    ownership.pin_operator()
+    for q in ['how do I restart the backend','why is the backend restart deferred']:
+        print(q, [(h['kind'], h['ref']) for h in si.search(q, limit=3)['hits']])"
+
 ## Open questions for the operator
 
 - Autonomy is off by his own choice. Once the runner env is fixed and proven,
