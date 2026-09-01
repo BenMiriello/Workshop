@@ -1,0 +1,36 @@
+{
+  "_because": "Initial pin, 2026-09-01: the measured state of the tree on the day the gate landed. Nothing here is approved; it is the debt the ratchet now stops growing.",
+  "top_level_routes_absent_from_nav": {
+    "/marketplace": {},
+    "/stores": {}
+  },
+  "uncalled_api_areas": {
+    "leases": {},
+    "push": {}
+  },
+  "unimported_backend_modules": {
+    "db.app_backfill": {},
+    "db.backfill": {},
+    "db.bootstrap": {},
+    "db.chat_list_parity": {},
+    "db.chat_verify": {},
+    "db.prune_synthetic_users": {},
+    "db.prune_test_threads": {},
+    "db.repair_branch_heads": {},
+    "db.repair_chain_order": {},
+    "scripts.atlas_backfill_embeddings": {},
+    "scripts.migrate_plaid_per_user": {},
+    "scripts.migrate_to_owned": {},
+    "services.dispatch_grants": {},
+    "services.memory_keeper": {},
+    "services.reader_staleness": {},
+    "services.run_worktree": {},
+    "services.token_usage": {},
+    "services.triager": {},
+    "workshop_public_app": {}
+  },
+  "unreferenced_frontend_modules": {
+    "frontend/src/lib/devMode.bundleProbe.ts": {},
+    "frontend/src/pages/apps/birds/specLocalize.verify.ts": {}
+  }
+}

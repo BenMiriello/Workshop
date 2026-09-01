@@ -1,0 +1,15 @@
+{
+  "_": [
+    "Declared exceptions for scripts/check_dead_surface.py. An entry here says",
+    "'this is unreachable ON PURPOSE and here is why', and it removes the item",
+    "from the count entirely rather than pinning it in the baseline. Use it only",
+    "for something that is unreachable BY DESIGN. Anything that is merely not",
+    "deleted yet belongs in dead_surface_baseline.json, where it stays visible.",
+    "check_ratchets_not_loosened.py blocks edits to this file inside a review."
+  ],
+  "routes_allowed_off_nav": {},
+  "backend_modules_allowed": {},
+  "api_areas_not_called_from_the_repo": {
+    "plaid": "Inbound webhook. Plaid calls it; nothing in this repo does, and nothing should."
+  }
+}
