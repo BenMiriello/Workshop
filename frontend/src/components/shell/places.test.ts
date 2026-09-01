@@ -144,15 +144,16 @@ describe("buildPlaces", () => {
 
   it("takes an app's DECLARED tabs, in its order, and no others", () => {
     // The declaration narrows and orders; it cannot conjure a tab the app
-    // cannot hold (`deploys` here), because that would put the apology back.
+    // cannot hold (`deploys` here, retired as a tab on 2026-09-01), because
+    // that would put the apology back.
     const [app] = buildPlaces(
       [{
         id: "ops", name: "Ops", home: "/apps/ops", projectSlug: "ops",
-        tabs: ["tickets", "chats", "deploys"], hasFiles: false,
+        tabs: ["memory", "chats", "deploys"], hasFiles: false,
       }],
       icons,
     ).filter((p) => p.kind === "app");
-    expect(app.pages.map((p) => p.id)).toEqual(["tickets", "chats", "deploys"]);
+    expect(app.pages.map((p) => p.id)).toEqual(["memory", "chats"]);
   });
 
   it("gives no app-screen row to an app that ships no screens", () => {
@@ -163,7 +164,9 @@ describe("buildPlaces", () => {
       icons,
     ).filter((p) => p.kind === "app");
     expect(app.pages.map((p) => p.id)).not.toContain("app");
-    expect(app.pages[0].id).toBe("chats");
+    // Work, not Chats: an app with a working tree opens on what is being built
+    // in it. See pages/apps/tabs/appTabState.ts and the 2026-08-29 report.
+    expect(app.pages[0].id).toBe("work");
   });
 
   it("still lists no Activity entry (design doc section 8.3, not built yet)", () => {
@@ -199,7 +202,7 @@ describe("buildPlaces", () => {
       }],
       icons,
     ).filter((p) => p.kind === "app");
-    expect(app.pages[0].id).toBe("chats");
+    expect(app.pages[0].id).toBe("work");
     expect(landingFor(app)).toBe("/apps/ops/tickets");
   });
 });

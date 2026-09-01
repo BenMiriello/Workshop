@@ -66,6 +66,10 @@ const AppChats = lazyPage(() => import("./pages/apps/tabs/AppChats"));
 const AppAgentsTab = lazyPage(() => import("./pages/apps/tabs/AppAgentsTab"));
 const AppMemoryTab = lazyPage(() => import("./pages/apps/tabs/AppMemoryTab"));
 const AppFilesTab = lazyPage(() => import("./pages/apps/tabs/AppFilesTab"));
+// The app-level Work view: branches, and what is on them. It is the app's
+// FIRST tab (pages/apps/tabs/appTabState.ts) and therefore what an app with a
+// working tree opens on, which is the 2026-08-29 / 08-31 / 09-01 report.
+const AppWorkTab = lazyPage(() => import("./pages/apps/tabs/AppWorkTab"));
 const AppTicketsTab = lazyPage(() => import("./pages/apps/tabs/AppTicketsTab"));
 const AppRunsTab = lazyPage(() => import("./pages/apps/tabs/AppRunsTab"));
 const AppDeploysTab = lazyPage(() => import("./pages/apps/tabs/AppDeploysTab"));
@@ -197,6 +201,7 @@ export default function App() {
               app's static route above wins on specificity, so this never
               shadows one. */}
           <Route path="/apps/:appSlug" element={<AppHomeRedirect />} />
+          <Route path="/apps/:appSlug/work" element={<AppWorkTab />} />
           <Route path="/apps/:appSlug/chats" element={<AppChats />} />
           <Route path="/apps/:appSlug/agents" element={<AppAgentsTab />} />
           <Route path="/apps/:appSlug/memory" element={<AppMemoryTab />} />
