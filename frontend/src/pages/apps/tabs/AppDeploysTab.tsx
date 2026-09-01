@@ -43,7 +43,7 @@ function DeploysBody({ app }: { app: AppRecord }) {
         endpoint={endpoint}
         emptyTitle="No deploy targets"
         emptyHint={unlinkedReason("deploys", app.project_slug, 0) ?? "This app has no deploy target configured yet."}
-        overflowHint="Browse them all from Deploys."
+        overflowHint={<>Browse them all on <Link className="ws-link" to="/deploys">Deploys</Link>.</>}
         render={(rows) => (
           <Stack>
             {rows.map((d) => (

@@ -25,9 +25,9 @@ import { useCallback, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../../../lib/queryKeys";
-import { ChevronLeft, Plus, StickyNote } from "lucide-react";
+import { ChevronLeft, Plus, Search, StickyNote } from "lucide-react";
 import {
-  Button, Card, CardGrid, Field, Input, Modal, Notice, Row, Stack, Textarea, timeAbsoluteShort,
+  Button, Card, Field, Input, Modal, Notice, Row, Stack, StateBlock, Textarea, timeAbsoluteShort,
 } from "@workshop/ui";
 import type { AppRecord } from "../../../lib/apps";
 import { NoteDocument } from "../../memory/MemoryDocument";
@@ -128,13 +128,22 @@ function MemoryBody({ app }: { app: AppRecord }) {
   const [params, setParams] = useSearchParams();
   const openId = params.get("note");
 
+  const [filter, setFilter] = useState("");
+
   const q = useQuery({
     queryKey: queryKeys.apps.notes(app.id),
     queryFn: async (): Promise<AppNote[]> => {
       const r = await fetch(endpoint);
       if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => "")}`);
       const d = await r.json();
-      return (d.notes ?? []) as AppNote[];
+      // NEWEST FIRST. The store returns notes in its own order, which read as
+      // alphabetical on screen: 196 notes meant the first two screenfuls were
+      // everything beginning with "A". Nobody looks for a note by its initial.
+      // What this tab answers is "what has this app learned lately", so it is
+      // ordered the way every other list here is, by when it last changed.
+      return ((d.notes ?? []) as AppNote[])
+        .slice()
+        .sort((a, b) => (b.updated || "").localeCompare(a.updated || ""));
     },
   });
 
@@ -205,51 +214,92 @@ function MemoryBody({ app }: { app: AppRecord }) {
         emptyTitle="No notes yet"
         emptyHint={`Notes here are shared with ${app.name}'s agents and go into its chat context.`}
         emptyAction={newNote}
-        overflowHint="Browse them all from the Memory page."
-        render={(rows) => (
+        overflowHint={<>Browse them all on <Link className="ws-link" to="/memory">Memory</Link>.</>}
+        render={(rows) => {
+          // A NOTE IS FOUND BY ITS TITLE, so the title gets the room.
+          //
+          // These were cards in a four-column grid, with the title and the
+          // timestamp sharing one line and the timestamp set `nowrap`. So the
+          // date never yielded a pixel and the title absorbed every bit of the
+          // loss: at 1440 the titles rendered at about twelve characters, and
+          // two different notes both read "Compaction...". A list you cannot
+          // tell the rows of is not a list.
+          //
+          // One row per note, full width, title first with the whole line, the
+          // hook under it, the date last and secondary. Same shape as the chat
+          // row, for the same reason.
+          const needle = filter.trim().toLowerCase();
+          const shown = needle
+            ? rows.filter((n) =>
+                `${n.title || n.id} ${n.hook || ""}`.toLowerCase().includes(needle))
+            : rows;
+          return (
           <Stack gap="sm">
-            <Row between wrap style={{ alignItems: "baseline" }}>
-              <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
-                {rows.length} {rows.length === 1 ? "note" : "notes"}
-              </span>
+            <Row between wrap style={{ alignItems: "center" }}>
+              {/* 196 notes is past the size where scrolling is a search. */}
+              <label className="ws-searchfield" style={{ flex: "1 1 260px", minWidth: 0 }}>
+                <Search aria-hidden />
+                <input
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder={`Search ${rows.length} note${rows.length === 1 ? "" : "s"}`}
+                  aria-label="Search notes"
+                />
+              </label>
               {newNote}
             </Row>
-            <CardGrid>
-              {rows.map((n) => (
-                <li key={n.id}>
-                  <Link
-                    to={`/apps/${app.slug}/memory?note=${encodeURIComponent(n.id)}`}
-                    style={{ textDecoration: "none", color: "inherit" }}
-                  >
-                    <Card interactive>
-                      <Row between style={{ gap: "var(--space-2)" }}>
-                        <span
-                          className="ws-card__title"
-                          style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                        >
-                          <StickyNote size={14} aria-hidden /> {n.title || n.id}
+            {needle && (
+              <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+                {shown.length} of {rows.length} {rows.length === 1 ? "note" : "notes"}
+              </span>
+            )}
+            {needle && shown.length === 0 ? (
+              <StateBlock
+                title="No notes match"
+                hint="Try fewer words, or clear the search."
+                action={<Button size="sm" onClick={() => setFilter("")}>Clear search</Button>}
+              />
+            ) : (
+            <Stack gap="sm">
+              {shown.map((n) => (
+                <Link
+                  key={n.id}
+                  to={`/apps/${app.slug}/memory?note=${encodeURIComponent(n.id)}`}
+                  style={{ textDecoration: "none", color: "inherit" }}
+                >
+                  <Card interactive compact style={{ minWidth: 0 }}>
+                    <Row between style={{ gap: "var(--space-3)", alignItems: "baseline" }}>
+                      <span
+                        className="ws-card__title"
+                        style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                      >
+                        <StickyNote size={14} aria-hidden /> {n.title || n.id}
+                      </span>
+                      {n.updated && (
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", whiteSpace: "nowrap" }}>
+                          {timeAbsoluteShort(n.updated)}
                         </span>
-                        {n.updated && (
-                          <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)", whiteSpace: "nowrap" }}>
-                            {timeAbsoluteShort(n.updated)}
-                          </span>
-                        )}
-                      </Row>
-                      {n.hook && (
-                        <p
-                          className="ws-muted"
-                          style={{ margin: "var(--space-1) 0 0", fontSize: "var(--fs-sm)", wordBreak: "break-word" }}
-                        >
-                          {n.hook}
-                        </p>
                       )}
-                    </Card>
-                  </Link>
-                </li>
+                    </Row>
+                    {n.hook && (
+                      <p
+                        className="ws-muted"
+                        style={{
+                          margin: "var(--space-1) 0 0", fontSize: "var(--fs-sm)",
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}
+                      >
+                        {n.hook}
+                      </p>
+                    )}
+                  </Card>
+                </Link>
               ))}
-            </CardGrid>
+            </Stack>
+            )}
           </Stack>
-        )}
+          );
+        }}
       />
     </section>
   );

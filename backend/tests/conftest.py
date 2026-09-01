@@ -350,3 +350,35 @@ def _isolate_jobs_log(tmp_path, monkeypatch):
 
     monkeypatch.setattr(jobs, "JOBS_LOG", log)
     assert jobs.JOBS_LOG == log, "jobs log is not isolated"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_deploys_store(tmp_path, monkeypatch):
+    """Keep the test suite out of the operator's real deploy targets.
+
+    THE THIRD TIME THIS EXACT BUG HAS BEEN FOUND. `_isolate_usage_ledger` was
+    written for the usage ledger, `_isolate_jobs_log` for the jobs feed on
+    2026-08-29, and the deploys store sat one directory over with no fixture at
+    all. `deploys.create()` writes `.runtime/deploys.json`, which is live
+    operator state: it is the whole of the /deploys page.
+
+    Measured 2026-08-31: forty rows, every one of them `gizmo / prod`, created
+    between 08-21 and 08-30 at four to eleven per day. `test_apps_api.py` calls
+    `deploys.create(project_slug="gizmo", ...)` for its fixture, so the count
+    was simply the number of times anyone had run the backend suite. The
+    operator's Deploys page was forty identical fixture rows and nothing else.
+
+    URGENT AS OF bbadd24d, which made `reviewer.sh` run this suite on every
+    gated change: without this fixture the pollution rate goes from "when
+    someone remembers to run pytest" to "every commit".
+
+    Patches the env var AND the module attribute, for the reason spelled out in
+    `_isolate_usage_ledger`: `STORE_PATH` is bound at import, so an env-only fix
+    depends on import order.
+    """
+    store = tmp_path / "deploys.json"
+    monkeypatch.setenv("WORKSHOP_DEPLOYS_STORE", str(store))
+    from services import deploys
+
+    monkeypatch.setattr(deploys, "STORE_PATH", store)
+    assert deploys.STORE_PATH == store, "deploys store is not isolated"

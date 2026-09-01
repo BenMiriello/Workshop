@@ -45,7 +45,7 @@ function AgentsBody({ app }: { app: AppRecord }) {
         endpoint={endpoint}
         emptyTitle="No agents linked"
         emptyHint={unlinkedReason("agents", app.project_slug, 0) ?? "No roster agent is linked to this app's project yet."}
-        overflowHint="Browse them all from Agents."
+        overflowHint={<>Browse them all on <Link className="ws-link" to="/agents">Agents</Link>.</>}
         render={(rows) => (
           <CardGrid>
             {rows.map((a) => (

@@ -33,7 +33,7 @@ function RunsBody({ app }: { app: AppRecord }) {
         endpoint={endpoint}
         emptyTitle="No runs yet"
         emptyHint={unlinkedReason("runs", app.project_slug, 0) ?? "Bounded executions for this app (cron ticks, event reactions, loops) appear here."}
-        overflowHint="Browse the full history from Runs."
+        overflowHint={<>Browse the full history on <Link className="ws-link" to="/runs">Runs</Link>.</>}
         render={(rows) => (
           <Stack>
             {rows.map((j) => (

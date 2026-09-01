@@ -11,7 +11,7 @@
 // does it still take me to the wrong chats page? Some old chats page why does
 // it still exist even?" The endpoint now returns the global summary and the row
 // lives in components/chat/ChatRow.
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { MessagesSquare, Plus } from "lucide-react";
 import { Button, SectionLabel, Stack } from "@workshop/ui";
@@ -48,7 +48,7 @@ function ChatsBody({ app }: { app: AppRecord }) {
         endpoint={endpoint}
         emptyTitle="No chats yet"
         emptyHint={`Open a chat scoped to ${app.name} to see it here.`}
-        overflowHint="Browse them all from Chats."
+        overflowHint={<>Browse them all on <Link className="ws-link" to="/chats">Chats</Link>.</>}
         render={(rows) => (
           <Stack gap="sm">
             {rows.map((c) => (

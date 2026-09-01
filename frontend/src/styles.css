@@ -3581,8 +3581,12 @@ p.chat-workpanel__note { margin: 0; }
   display: flex; flex-wrap: wrap; align-content: flex-start;
   gap: 14px 16px;
 }
+/* Wide enough for a name. The tile was 62px against a 46px glyph, so the label
+   had ~62px for a word: "Development" rendered "Developm...", and it did that
+   in a card with an empty half beside it. The tiles wrap, so widening them
+   costs nothing until the row is genuinely full. */
 .ws-dashapps__tile {
-  width: 62px; display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+  width: 86px; display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
   text-decoration: none; color: inherit;
 }
 .ws-dashapps__tile:hover { opacity: 0.78; }
@@ -3591,9 +3595,13 @@ p.chat-workpanel__note { margin: 0; }
   display: flex; align-items: center; justify-content: center;
   background: var(--bg-inset); border: 1px solid var(--border); color: var(--accent);
 }
+/* Two lines before an ellipsis. A one-line clamp on a 62px tile is what turned
+   every multi-syllable app into a prefix; the names are short enough that two
+   lines hold all of them, and the tile is a fixed width so the grid stays even. */
 .ws-dashapps__name {
   max-width: 100%; font-size: var(--fs-xs); color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: center; overflow: hidden; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
 }
 
 /* ---- phone ---------------------------------------------------------------- */

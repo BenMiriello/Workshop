@@ -78,6 +78,7 @@ export function SectionLabel({
 // muted at rest like every other control (see "A control is not content").
 export function PageHeader({
   title,
+  eyebrow,
   sub,
   meta,
   back,
@@ -86,6 +87,15 @@ export function PageHeader({
   className,
 }: {
   title: ReactNode;
+  /** WHOSE page this is, above the title, uppercase and muted.
+   *
+   *  For a page whose title names the CONTENT ("Tickets", "Memory") while the
+   *  thing that owns it is elsewhere. The Tickets page hand-rolled exactly this
+   *  as its own `.ws-tickets__eyebrow` to print the scope over the title; the
+   *  per-app tabs then needed the same thing to say which app you are in, and a
+   *  second private copy is how an idiom becomes two idioms. Not `back`: an
+   *  eyebrow is a label, not a way out. */
+  eyebrow?: ReactNode;
   sub?: ReactNode;
   /** The facts you read once: status, scope, when it moved. One muted line
    *  under the title, so they are visible before any scrolling happens. */
@@ -105,6 +115,7 @@ export function PageHeader({
     <header className={cx("ws-page-header", variant === "entity" && "ws-page-header--entity", className)}>
       <div className="ws-page-header__main">
         {has(back) && <div className="ws-page-header__back">{back}</div>}
+        {has(eyebrow) && <div className="ws-page-header__eyebrow">{eyebrow}</div>}
         <h1 className="ws-page-header__title">{title}</h1>
         {has(sub) && <p className="ws-page-header__sub">{sub}</p>}
         {has(meta) && <div className="ws-page-header__meta">{meta}</div>}

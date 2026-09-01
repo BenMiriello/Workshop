@@ -49,7 +49,7 @@ import { DocDocument, NewNoteDocument, NoteDocument } from "./memory/MemoryDocum
 //   Chats  -> /chats, a first-class place with its own page and dock tile. The
 //             per-chat sharing control went with it, onto the chat's own
 //             toolbar (components/chat/ChatShare.tsx).
-//   Vault  -> /apps/notes, the notes app's own page. It is that app's private
+//   Vault  -> /apps/notes-app, the notes app's own page. It is that app's private
 //             store and drawing it here was a scope violation as well as a
 //             confusion.
 //   Files  -> /chats. An attachment is a thing you put in a chat, visible
@@ -115,7 +115,7 @@ const OVERFLOW_AT = 100;
  *  `?path=` selects the document. So it resolves by falling through. */
 const MOVED: Record<string, string> = {
   chats: "/chats",
-  vault: "/apps/notes",
+  vault: "/apps/notes-app",
   files: "/chats",
 };
 

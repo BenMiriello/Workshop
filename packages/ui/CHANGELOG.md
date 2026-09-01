@@ -12,6 +12,27 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.7.6 - 2026-08-31 - a page can say whose it is
+
+**Patch, additive.** One new optional prop.
+
+### Added
+
+- **`PageHeader` takes `eyebrow`** — whose page this is, above the title,
+  uppercase and muted. For a page whose title names the CONTENT ("Tickets",
+  "Memory") while the thing that owns it is somewhere else.
+
+  The Tickets page had already hand-rolled exactly this as a private
+  `.ws-tickets__eyebrow` to print its scope over the title. The per-app tabs
+  then needed the same thing for a different reason: an app's tab is headed
+  "Chats" or "Tickets", the app's own page column is collapsed by default, and
+  on an app with no bundled crumbs that left nothing on screen naming the app.
+  Reported 2026-08-31: "development STILL opens to the OLD chats page".
+
+  A second private copy is how one idiom becomes two, so the slot is in the kit
+  and both spellings share one CSS rule. Not `back`: an eyebrow is a label, not
+  a way out.
+
 ## 0.7.5 - 2026-08-28 - a name field you can actually empty
 
 **Patch, additive.** One new optional prop.

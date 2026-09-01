@@ -252,10 +252,19 @@ export const APPS: AppModule[] = [
     routes: () => <Route key="commute" path="/apps/commute" element={<CommuteApp groupNav={<AppGroupNav />} renderChatDock={makeChatDock("commute")} />} />,
   },
   {
+    // THE PATH MUST BE THE SLUG. This entry's id is `notes-app` (it is the app
+    // record's slug, and the API answers on it) while its crumb key and route
+    // said `/apps/notes`. `appPlaces()` takes an app's `home` from the crumb
+    // key, so places.ts built every generic tab as `/apps/notes/<tab>` -- and
+    // the generic route then resolved `appSlug="notes"`, which no app record
+    // has. All seven tabs rendered a full-page "no /api/apps record for slug
+    // notes" error. The reverse direction failed too: on `/apps/notes-app/...`,
+    // which does work, no place prefix matched, so the page column showed the
+    // Workshop root nav instead of this app's own.
     id: "notes-app",
     icon: "notebook-pen",
-    crumbs: { "/apps/notes": { label: "Notes", parent: "/apps" } },
-    routes: () => <Route key="notes" path="/apps/notes" element={<Notes />} />,
+    crumbs: { "/apps/notes-app": { label: "Notes", parent: "/apps" } },
+    routes: () => <Route key="notes" path="/apps/notes-app" element={<Notes />} />,
   },
   {
     id: "birds",

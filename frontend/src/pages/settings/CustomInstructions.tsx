@@ -201,14 +201,19 @@ export default function CustomInstructions() {
         </section>
       )}
 
-      <ActionBar flash={flash ? "Saved" : dirty ? "unsaved changes" : undefined}>
-        <Button variant="primary" onClick={save} loading={saving} disabled={!dirty}>
-          Save
-        </Button>
-        <Button variant="ghost" type="button" onClick={cancel} disabled={!dirty || saving}>
-          Cancel
-        </Button>
-      </ActionBar>
+      {/* Only while there is something to save: the bar is sticky and opaque,
+          so an unconditional one occludes a row of content at every scroll
+          position with both buttons disabled. Rule 7 pairs it with dirty. */}
+      {(dirty || flash) && (
+        <ActionBar flash={flash ? "Saved" : dirty ? "unsaved changes" : undefined}>
+          <Button variant="primary" onClick={save} loading={saving} disabled={!dirty}>
+            Save
+          </Button>
+          <Button variant="ghost" type="button" onClick={cancel} disabled={!dirty || saving}>
+            Cancel
+          </Button>
+        </ActionBar>
+      )}
     </div>
   );
 }

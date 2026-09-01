@@ -74,7 +74,22 @@ export function AppTabPage({
   return (
     <div className="ws-page">
       {chrome && (
+        // THE PAGE SAYS WHICH APP IT BELONGS TO.
+        //
+        // The h1 was the tab name alone, so opening an app landed you on a page
+        // headed "Chats" or "Tickets" with nothing on screen naming the app. For
+        // an app that ships its own crumbs that was survivable; for one that
+        // does not, the only identifier left was a 40px glyph in the dock, and
+        // the app's page column is collapsed by default (places.ts), so its own
+        // nav was not visible either. Reported 2026-08-31, on the app that is
+        // this repo: "development STILL opens to the OLD chats page".
+        //
+        // An eyebrow, not a bigger title: it is the same shape the Workshop
+        // pages already use for their scope (WORKSHOP over "Tickets"), so this
+        // adds no new idiom, and the tab name stays the h1 because the tab is
+        // what the page is showing.
         <PageHeader
+          eyebrow={app.name}
           title={title}
           sub={sub}
           actions={
@@ -120,7 +135,10 @@ export function CollectionBody<T>({
    *  whose collection is filled from somewhere else (runs, deploys) has no
    *  action to offer and must not grow a button that leads nowhere. */
   emptyAction?: ReactNode;
-  overflowHint: string;
+  /** ReactNode, not string: these lines name a destination ("Browse the full
+   *  queue from Tickets") and every one of them was plain text, so the page
+   *  told you where to go and made you get there yourself. */
+  overflowHint: ReactNode;
   render: (items: T[]) => ReactNode;
 }) {
   if (err) {
@@ -151,7 +169,9 @@ export function CollectionBody<T>({
   if (items.length > MAX_ROWS) {
     return (
       <>
-        <Notice>{`Showing the first ${MAX_ROWS} of ${items.length}. ${overflowHint}`}</Notice>
+        <Notice>
+          Showing the first {MAX_ROWS} of {items.length}. {overflowHint}
+        </Notice>
         {render(items.slice(0, MAX_ROWS))}
       </>
     );

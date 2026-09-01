@@ -484,6 +484,7 @@ function DeviceSection() {
 function AccountSection() {
   const { user, logout, changePassword } = useAuth();
   const [busy, setBusy] = useState(false);
+  const [confirmSignOutAll, setConfirmSignOutAll] = useState(false);
   const [cur, setCur] = useState("");
   const [next, setNext] = useState("");
   const [pwBusy, setPwBusy] = useState(false);
@@ -557,17 +558,34 @@ function AccountSection() {
           >
             <LogOut size={16} strokeWidth={1.8} aria-hidden /> Sign out
           </Button>
+          {/* CONFIRMED, AND DRESSED AS WHAT IT IS. This ended every session on
+              every device on one click, while rendering as flat grey text
+              beside a red "Sign out" that only ends this one. So the more
+              destructive of the two read as the safer of the two. Rule 8 wants
+              a ConfirmDialog naming the consequence; DeviceTokens two rows
+              down already uses one. */}
           <Button
-            variant="ghost"
+            variant="danger-ghost"
             size="sm"
             disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              await logout(true);
-            }}
+            onClick={() => setConfirmSignOutAll(true)}
           >
             Sign out everywhere
           </Button>
+          {confirmSignOutAll && (
+            <ConfirmDialog
+              open
+              title="Sign out everywhere?"
+              body="Every signed-in device is signed out, including this one. Anything running keeps running; you will need to sign in again to watch it."
+              confirmLabel="Sign out everywhere"
+              onCancel={() => setConfirmSignOutAll(false)}
+              onConfirm={async () => {
+                setConfirmSignOutAll(false);
+                setBusy(true);
+                await logout(true);
+              }}
+            />
+          )}
         </span>
       </Row>
       <DeviceTokens />

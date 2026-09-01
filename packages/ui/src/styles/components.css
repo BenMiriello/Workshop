@@ -841,10 +841,15 @@ a.ws-btn { text-decoration: none; }
   gap: var(--space-5); flex-wrap: wrap;
 }
 .ws-tickets__ident { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+/* WHOSE page this is, over the title. The Tickets page invented this to print
+   its scope; PageHeader's `eyebrow` slot is the shared version, and the two
+   share one rule so they cannot drift into two different eyebrows. */
+.ws-page-header__eyebrow,
 .ws-tickets__eyebrow {
   font-family: var(--font-mono); font-size: var(--fs-xs);
   letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint);
 }
+.ws-page-header__eyebrow { margin-bottom: var(--space-1); }
 .ws-tickets__titlerow { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
 .ws-tickets__title {
   margin: 0; font-size: var(--fs-xl); font-weight: var(--fw-semi);

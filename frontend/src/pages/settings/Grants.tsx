@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, ShieldCheck, ArrowRight, Users, Network, Database, Download } from "lucide-react";
-import { ActionBar, Button, Card, ConfirmDialog, PageHeader, Row, SectionLabel, Select, Input, StateBlock, StatusDot, Skeleton, Tag, catFor, shortHttpError } from "@workshop/ui";
+import { ActionBar, Button, Card, ConfirmDialog, PageHeader, Row, SectionLabel, Select, Input, Notice, StateBlock, StatusDot, Skeleton, Tag, catFor, shortHttpError } from "@workshop/ui";
 import GrantPicker from "../../components/GrantPicker";
 
 // Platform / Grants: operator-facing access-control editor.
@@ -539,14 +539,22 @@ export default function Grants() {
               title="No store grants"
               hint="Grants appear here when an app or agent is given access to a store. There is nothing to add by hand."
             />
-          ) : resourceGrants.length > MAX_ROWS ? (
-            <StateBlock
-              title="Too many grants to list safely"
-              hint={`${resourceGrants.length} store grants exceeds the ${MAX_ROWS}-row cap.`}
-            />
           ) : (
+            // OVERFLOW SHOWS THE CONTENT. This branch used to return a region
+            // reading "Too many grants to list safely" and render NONE of them,
+            // so 673 store grants meant the page showed zero and offered no way
+            // to see one. A long list is not a safety problem, and rule 9 says
+            // overflow is paginated or scrolled, never withheld. The cap still
+            // bounds what is drawn; the notice says what was left out and the
+            // filter above narrows to it.
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-              {resourceGrants.map((g) => {
+              {resourceGrants.length > MAX_ROWS && (
+                <Notice>
+                  Showing the first {MAX_ROWS} of {resourceGrants.length}. Use the
+                  filter to narrow to the ones you want.
+                </Notice>
+              )}
+              {resourceGrants.slice(0, MAX_ROWS).map((g) => {
                 const caveatKeys = Object.keys(g.caveats || {});
                 return (
                   <div
@@ -690,6 +698,13 @@ export default function Grants() {
         }
       />
 
+      {/* ONLY WHILE THERE IS SOMETHING TO SAVE. This was unconditional, and the
+          bar is `position: sticky; bottom: 0` with an opaque background, so on
+          a page this long it sat across the STORES card at every scroll
+          position, hiding a path line and a card header, with both its buttons
+          disabled because nothing was dirty. Rule 7 puts the bar with the dirty
+          state; a permanent bar is chrome that costs a row of content forever. */}
+      {(dirty || flash || (err && doc)) && (
       <ActionBar flash={flash ? "Saved ✓" : dirty ? "unsaved changes" : undefined}>
         <Button variant="primary" onClick={save} loading={saving} disabled={!dirty}>
           Save
@@ -701,6 +716,7 @@ export default function Grants() {
           <span className="ws-field__error" style={{ marginLeft: "var(--space-3)" }}>{err}</span>
         )}
       </ActionBar>
+      )}
 
       <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginTop: "var(--space-3)" }}>
         Source view per app: <code>/api/base-apps/permissions/&lt;app&gt;</code> (operator perspective).
