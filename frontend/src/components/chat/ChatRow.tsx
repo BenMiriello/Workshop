@@ -91,9 +91,14 @@ export function RunningDot({ running, ordinal }: { running: boolean; ordinal: nu
 }
 
 export default function ChatRow({
-  thread, ordinal = 0, onOpen, onArchive, onDelete,
+  thread, ordinal = 0, showScope = true, onOpen, onArchive, onDelete,
 }: {
   thread: ThreadSummary;
+  /** Whether to tag this row with its scope. FALSE on a list that is all one
+   *  scope, where the tag is the page's own title repeated once per row. The
+   *  caller decides by asking the ROWS (`spansScopes` in pages/chatList), not
+   *  by asking the filter. */
+  showScope?: boolean;
   /** Position among the RUNNING rows, so their pulses are offset rather than
    *  strobing in unison. 0 when nothing is running. */
   ordinal?: number;
@@ -104,7 +109,7 @@ export default function ChatRow({
   onDelete?: (t: ThreadSummary) => void;
 }) {
   const t = thread;
-  const tags = chatTags(t);
+  const tags = chatTags(t, showScope);
   return (
     <Card
       interactive

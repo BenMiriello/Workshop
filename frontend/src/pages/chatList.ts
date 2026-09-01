@@ -79,13 +79,38 @@ export type ChatTag = { kind: ChatTagKind; label: string };
  *  The branch's readable name comes from `branchName`, the same rule the chat
  *  toolbar's pill and its move list use, so a 32-character hex slug is shortened
  *  here exactly as it is there. */
-export function chatTags(t: {
-  context_key?: string | null;
-  role?: string | null;
-  branch_slug?: string | null;
-}): ChatTag[] {
+/**
+ * Whether the rows in hand actually differ in scope.
+ *
+ * THE SCOPE TAG IS ONLY INFORMATION WHEN IT VARIES. On an app's own Chats tab
+ * every row is that app, so a scope tag on each one is the page's own title
+ * repeated once per row and nothing else. Reported 2026-09-01 on the app that
+ * is this repo: every row read "Development" on the Development page.
+ *
+ * Same rule and same reason as `spansScopes` for tickets (lib/tasks.ts). The
+ * old rule there asked the FILTER, which is why an unfiltered list still
+ * printed one scope name fifty times; this asks the ROWS.
+ */
+export function spansScopes(rows: readonly { context_key?: string | null }[]): boolean {
+  const seen = new Set<string>();
+  for (const r of rows) {
+    seen.add(scopeName(r.context_key || "") || "");
+    if (seen.size > 1) return true;
+  }
+  return false;
+}
+
+export function chatTags(
+  t: {
+    context_key?: string | null;
+    role?: string | null;
+    branch_slug?: string | null;
+  },
+  /** False on a list that is all one scope, where the tag says nothing. */
+  showScope = true,
+): ChatTag[] {
   const tags: ChatTag[] = [];
-  const scope = scopeName(t.context_key || "");
+  const scope = showScope ? scopeName(t.context_key || "") : "";
   if (scope) tags.push({ kind: "scope", label: scope });
   const role = (t.role || "").trim();
   if (role) tags.push({ kind: "role", label: role });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { armedOf, chatTags, isArmed, newestFirst, visibleThreads } from "./chatList";
+import { spansScopes, armedOf, chatTags, isArmed, newestFirst, visibleThreads } from "./chatList";
 
 // A row, cut down to the fields these rules actually read. The list route sends
 // more; nothing here depends on the rest.
@@ -121,5 +121,42 @@ describe("chatTags", () => {
   it("always names a scope, including the unnamed root", () => {
     expect(chatTags({}).map((t) => t.label)).toEqual(["Workshop"]);
     expect(chatTags({ context_key: "development" }).map((t) => t.label)).toEqual(["Development"]);
+  });
+});
+
+describe("spansScopes", () => {
+  const row = (k: string | null) => ({ context_key: k });
+
+  it("is false when every row is the same scope", () => {
+    // The app-tab case: the tag would be the page's own title, once per row.
+    expect(spansScopes([row("app:development"), row("app:development")])).toBe(false);
+  });
+
+  it("is false for an empty list and for one row", () => {
+    expect(spansScopes([])).toBe(false);
+    expect(spansScopes([row("app:development")])).toBe(false);
+  });
+
+  it("is true as soon as two rows differ", () => {
+    expect(spansScopes([row("app:development"), row("app:birds")])).toBe(true);
+  });
+
+  it("counts a missing scope as its own value, not as a match", () => {
+    expect(spansScopes([row("app:development"), row(null)])).toBe(true);
+  });
+});
+
+describe("chatTags scope suppression", () => {
+  const t = { context_key: "app:development", role: "maker", branch_slug: "wt/x" };
+
+  it("drops only the scope tag, keeping role and branch", () => {
+    const kinds = chatTags(t, false).map((x) => x.kind);
+    expect(kinds).not.toContain("scope");
+    expect(kinds).toEqual(["role", "branch"]);
+  });
+
+  it("keeps the scope tag when asked, and that is the default", () => {
+    expect(chatTags(t).map((x) => x.kind)).toEqual(["scope", "role", "branch"]);
+    expect(chatTags(t, true).map((x) => x.kind)).toEqual(["scope", "role", "branch"]);
   });
 });

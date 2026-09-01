@@ -24,7 +24,7 @@ import ChatRow, { ChatScopeGlyph, shortModel } from "../components/chat/ChatRow"
 import { queryKeys } from "../lib/queryKeys";
 import { newChatHref } from "../lib/chatSelection";
 import { scopeLabel, scopeName } from "../components/chat/chatScope";
-import { visibleThreads, type ArmedFilter } from "./chatList";
+import { spansScopes, visibleThreads, type ArmedFilter } from "./chatList";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
 // its own object with an optional context binding (general / project / app /
@@ -94,7 +94,28 @@ function matches(t: ThreadSummary, needle: string): boolean {
   );
 }
 
-export default function Chats() {
+/** An app, when this list is one app's chats rather than every chat. */
+export type ChatsScope = { id: string; slug: string; name: string };
+
+/**
+ * THE CHAT LIST. One component, two mount points, exactly like TicketsView.
+ *
+ * `/chats` is a thin wrapper over it, and an app's Chats tab mounts it with
+ * `app` set. The tab used to draw its OWN list: no armed filter, no archive, no
+ * delete, no infinite scroll, a duplicate "CHATS" heading under a page already
+ * titled Chats, and a scope tag reading the app's own name on every single row.
+ * A worse copy of this list, over the same rows.
+ *
+ * Reported by the operator on 2026-08-29, 2026-08-31 and twice on 2026-09-01,
+ * the last time as "I have completely lost count of how many times I've told
+ * you to do this". Three previous rounds changed how the copy RENDERED. The
+ * copy was the bug.
+ */
+export function ChatsView({ app = null, header = true }: {
+  app?: ChatsScope | null;
+  /** False where a page header is already on screen above this (an app tab). */
+  header?: boolean;
+} = {}) {
   const nav = useNavigate();
   const qc = useQueryClient();
   // All threads, or only the ones that advance on their own. A view preference,
@@ -113,9 +134,21 @@ export default function Chats() {
   // app uses. Short interval because liveness (the running dot, a new turn, a new
   // last message) is the point; the payload is small and cached, so a tick that
   // changes nothing re-renders nothing.
+  // WHICH ROWS. An app's chats are the DATABASE's answer (chat_thread.app_id),
+  // and it is broader than any scope filter: an app's chats can sit under
+  // several context keys. So the app mount reads the app's own collection
+  // rather than filtering this one, and both render the same row.
+  const endpoint = app ? `/api/apps/${app.id}/chats` : "/api/chat/threads";
   const q = useQuery({
-    queryKey: queryKeys.chat.threads(null),
-    queryFn: () => chatApi.listThreads(),
+    queryKey: app ? queryKeys.apps.chats(app.id) : queryKeys.chat.threads(null),
+    queryFn: app
+      ? async (): Promise<ThreadSummary[]> => {
+          const r = await fetch(endpoint);
+          if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => "")}`);
+          const d = await r.json();
+          return (d.chats ?? []) as ThreadSummary[];
+        }
+      : () => chatApi.listThreads(),
     refetchInterval: 4000,
     staleTime: 0,
     retry: false,
@@ -141,9 +174,18 @@ export default function Chats() {
     // and this page cannot tell which from here, so the archive re-reads rather
     // than being patched. It is not mounted, so this costs nothing until it is.
     void qc.invalidateQueries({ queryKey: queryKeys.chat.threadsArchived() });
+    // The app's own collection is a different key and is not under the prefix
+    // above, so an archive from the app tab would leave the row on screen until
+    // the next poll without this.
+    if (app) void qc.invalidateQueries({ queryKey: queryKeys.apps.chats(app.id) });
   };
 
-  const newChat = () => nav(newChatHref("general"));
+  const newChat = () => nav(newChatHref(app ? app.slug : "general"));
+
+  // THE SCOPE TAG, ONLY WHERE IT SAYS SOMETHING. Never on an app's own tab (it
+  // would be the page title once per row), and on the global list only when the
+  // rows in hand actually differ. See `spansScopes`.
+  const showScope = useMemo(() => !app && spansScopes(threads ?? []), [app, threads]);
 
   // The list: narrowed by the filter, then newest first. Both rules live in
   // ./chatList so this page holds no ordering logic of its own.
@@ -217,12 +259,7 @@ export default function Chats() {
     }
   };
 
-  return (
-    <div>
-      <PageHeader
-        className="ws-chats-head"
-        title="Chats"
-        actions={
+  const controls = (
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
             {/* The armed filter, and the only control on the list. §6 retires
                 the Agents roster into it: a thread that is armed is what used
@@ -242,8 +279,20 @@ export default function Chats() {
               <Plus aria-hidden /> New chat
             </Button>
           </div>
-        }
-      />
+  );
+
+  return (
+    <div>
+      {header ? (
+        <PageHeader className="ws-chats-head" title="Chats" actions={controls} />
+      ) : (
+        // The app tab draws its own header above this (AppTabShell), so only
+        // the controls belong here. A second "Chats" heading under a page
+        // headed Chats is what this mount replaced.
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "var(--space-3)" }}>
+          {controls}
+        </div>
+      )}
 
       {actionErr && (
         <div style={{ marginBottom: "var(--space-3)" }}>
@@ -261,7 +310,7 @@ export default function Chats() {
         <StateBlock
           variant="error"
           title="Couldn't load chats"
-          hint={<code>GET /api/chat/threads: {err}</code>}
+          hint={<code>GET {endpoint}: {err}</code>}
           action={<Button size="sm" onClick={() => void q.refetch()}>Retry</Button>}
         />
       ) : threads === null ? (
@@ -273,7 +322,9 @@ export default function Chats() {
       ) : threads.length === 0 ? (
         <StateBlock
           title="No chats yet"
-          hint="Start a conversation with the general assistant, or open chat inside any app or project."
+          hint={app
+            ? `Open a chat scoped to ${app.name} to see it here.`
+            : "Start a conversation with the general assistant, or open chat inside any app or project."}
           action={
             <Button variant="primary" size="sm" onClick={newChat}>
               <Plus aria-hidden /> New chat
@@ -296,6 +347,7 @@ export default function Chats() {
                 key={t.id}
                 thread={t}
                 ordinal={runningOrdinals.get(t.id) ?? 0}
+                showScope={showScope}
                 onOpen={open}
                 onArchive={(x) => { void archiveOne(x); }}
                 onDelete={(x) => setPending({ id: x.id, title: x.title || "this chat" })}
@@ -323,6 +375,11 @@ export default function Chats() {
       />
     </div>
   );
+}
+
+/** `/chats`: the whole list, with its own page header. */
+export default function Chats() {
+  return <ChatsView />;
 }
 
 /**
