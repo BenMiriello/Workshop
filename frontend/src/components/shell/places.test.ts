@@ -7,23 +7,29 @@ import { APP_TABS } from "../../pages/apps/tabs/appTabState";
 // icon a row draws is the render's business.
 const icons = new Proxy({} as Record<string, typeof Bot>, { get: () => Bot });
 
-// Two apps that ship their own screens. `finance` has no linked working tree,
-// so five of the seven platform tabs can never hold anything for it; `birds`
-// has one and a file root, so it can have all seven. Neither declares a
-// `tabs` list, which is the "take everything you can have" default.
+// Two apps that ship their own screens, under FICTIONAL ids. The fixtures here
+// named two of this installation's real apps, which is a platform file naming a
+// specific app and is what scripts/check_no_app_names.py counts; the precedent
+// for renaming a fixture rather than re-pinning the gate is recorded in
+// docs/platform-redesign/app-separation-and-github-2026-08-20.md.
+//
+// `widgets` has no linked working tree, so five of the seven platform tabs can
+// never hold anything for it; `gizmo` has one and a file root, so it can have
+// all seven. Neither declares a `tabs` list, which is the "take everything you
+// can have" default.
 const APPS = [
-  { id: "finance", name: "Finance", home: "/apps/finance", ownScreen: true },
+  { id: "widgets", name: "Widgets", home: "/apps/widgets", ownScreen: true },
   {
-    id: "birds", name: "Birds", home: "/apps/birds", ownScreen: true,
-    projectSlug: "birds", hasFiles: true,
+    id: "gizmo", name: "Gizmo", home: "/apps/gizmo", ownScreen: true,
+    projectSlug: "gizmo", hasFiles: true,
   },
 ];
 
 const places = buildPlaces(APPS, icons);
 const home = places.find((p) => p.id === "home") as ShellPlace;
 const chats = places.find((p) => p.id === "chats") as ShellPlace;
-const birds = places.find((p) => p.id === "app:birds") as ShellPlace;
-const finance = places.find((p) => p.id === "app:finance") as ShellPlace;
+const gizmo = places.find((p) => p.id === "app:gizmo") as ShellPlace;
+const widgets = places.find((p) => p.id === "app:widgets") as ShellPlace;
 
 describe("placeFor", () => {
   it("puts an unclaimed route on Home rather than nowhere", () => {
@@ -34,8 +40,8 @@ describe("placeFor", () => {
 
   it("keeps the Apps LIST on Home and only a specific app on its own tile", () => {
     expect(placeFor(places, "/apps").id).toBe("home");
-    expect(placeFor(places, "/apps/finance").id).toBe("app:finance");
-    expect(placeFor(places, "/apps/birds/locations").id).toBe("app:birds");
+    expect(placeFor(places, "/apps/widgets").id).toBe("app:widgets");
+    expect(placeFor(places, "/apps/gizmo/locations").id).toBe("app:gizmo");
   });
 
   it("lights All chats while one conversation is open", () => {
@@ -65,8 +71,8 @@ describe("pageFor", () => {
   });
 
   it("keeps an app's single row active across its own sub-routes", () => {
-    expect(pageFor(birds, "/apps/birds")?.id).toBe("app");
-    expect(pageFor(birds, "/apps/birds/locations")?.id).toBe("app");
+    expect(pageFor(gizmo, "/apps/gizmo")?.id).toBe("app");
+    expect(pageFor(gizmo, "/apps/gizmo/locations")?.id).toBe("app");
   });
 
   it("keeps a row lit while you are on a record BELOW it", () => {
@@ -101,14 +107,14 @@ describe("buildPlaces", () => {
   it("opens an app full screen and Home with its list", () => {
     expect(home.defaultColumnOpen).toBe(true);
     expect(chats.defaultColumnOpen).toBe(true);
-    expect(birds.defaultColumnOpen).toBe(false);
+    expect(gizmo.defaultColumnOpen).toBe(false);
   });
 
   it("carries an app's DECLARED icon and gives Home an imported glyph", () => {
     // An app's icon is data (a token, a url, or absent -> a monogram of the
     // name). A platform place's is an import, because Home is not an app.
-    expect(birds.icon).toBeUndefined(); // this fixture declares none
-    expect(birds.Icon).toBeUndefined();
+    expect(gizmo.icon).toBeUndefined(); // this fixture declares none
+    expect(gizmo.Icon).toBeUndefined();
     expect(home.Icon).toBeTruthy();
     expect(home.icon).toBeUndefined();
   });
@@ -117,22 +123,22 @@ describe("buildPlaces", () => {
     // Every row a real route over a real /api/apps/{id}/... collection
     // (routes/apps.py). This app has a linked tree and a file root, so nothing
     // is filtered out and the list is the platform's full order.
-    const home = birds.pages[0].to;
-    expect(birds.pages.map((p) => p.id)).toEqual(["app", ...APP_TABS.map((t) => t.id)]);
-    expect(birds.pages.map((p) => p.to)).toEqual([
+    const home = gizmo.pages[0].to;
+    expect(gizmo.pages.map((p) => p.id)).toEqual(["app", ...APP_TABS.map((t) => t.id)]);
+    expect(gizmo.pages.map((p) => p.to)).toEqual([
       home,
       ...APP_TABS.map((t) => `${home}${t.suffix}`),
     ]);
   });
 
   it("does NOT draw a tab an app can never fill", () => {
-    // Ticket 7d8d733a. Finance has no linked working tree, so its tickets,
+    // Ticket 7d8d733a. Widgets has no linked working tree, so its tickets,
     // runs, deploys and agents can only ever be empty and it has no files at
     // all. Those rows used to be drawn anyway and explain themselves in an
     // empty state, which is a nav row that exists to apologise.
-    expect(finance.pages.map((p) => p.id)).toEqual(["app", "chats", "memory"]);
-    expect(finance.pages.map((p) => p.to)).toEqual([
-      "/apps/finance", "/apps/finance/chats", "/apps/finance/memory",
+    expect(widgets.pages.map((p) => p.id)).toEqual(["app", "chats", "memory"]);
+    expect(widgets.pages.map((p) => p.to)).toEqual([
+      "/apps/widgets", "/apps/widgets/chats", "/apps/widgets/memory",
     ]);
   });
 
@@ -179,7 +185,7 @@ describe("buildPlaces", () => {
   it("lands a place on its first page", () => {
     expect(landingFor(home)).toBe("/");
     expect(landingFor(chats)).toBe("/chats");
-    expect(landingFor(birds)).toBe("/apps/birds");
+    expect(landingFor(gizmo)).toBe("/apps/gizmo");
   });
 
   it("lands an app on the surface it DECLARED, over its first row", () => {

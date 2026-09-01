@@ -17,36 +17,38 @@ import {
 } from "./shellState";
 
 const icons = new Proxy({} as Record<string, typeof Bot>, { get: () => Bot });
-// An app that ships its own screens: `ownScreen` gives it the row for them,
-// above whatever platform tabs it has. See places.ts.
+// A FICTIONAL app that ships its own screens: `ownScreen` gives it the row for
+// them, above whatever platform tabs it has (places.ts). The id is invented
+// because a platform file naming a real app is what
+// scripts/check_no_app_names.py counts, fixtures included.
 const places = buildPlaces(
-  [{ id: "birds", name: "Birds", home: "/apps/birds", ownScreen: true, projectSlug: "birds", hasFiles: true }],
+  [{ id: "gizmo", name: "Gizmo", home: "/apps/gizmo", ownScreen: true, projectSlug: "gizmo", hasFiles: true }],
   icons,
 );
 const home = places.find((p) => p.id === "home") as ShellPlace;
-const birds = places.find((p) => p.id === "app:birds") as ShellPlace;
+const gizmo = places.find((p) => p.id === "app:gizmo") as ShellPlace;
 
 describe("columnOpen", () => {
   it("falls back to the place's default before anyone touches it", () => {
     expect(columnOpen(EMPTY_MEMORY, home)).toBe(true);
-    expect(columnOpen(EMPTY_MEMORY, birds)).toBe(false);
+    expect(columnOpen(EMPTY_MEMORY, gizmo)).toBe(false);
   });
 
   it("toggles, and the toggle is per place", () => {
-    const once = toggleColumn(EMPTY_MEMORY, birds);
-    expect(columnOpen(once, birds)).toBe(true);
+    const once = toggleColumn(EMPTY_MEMORY, gizmo);
+    expect(columnOpen(once, gizmo)).toBe(true);
     expect(columnOpen(once, home)).toBe(true); // untouched, still its default
 
-    const twice = toggleColumn(once, birds);
-    expect(columnOpen(twice, birds)).toBe(false);
+    const twice = toggleColumn(once, gizmo);
+    expect(columnOpen(twice, gizmo)).toBe(false);
   });
 
   it("opens without flipping, for the takeover's control in the content", () => {
     // A toggle from the content side would CLOSE the column for anyone whose
     // column was already open, which is the opposite of asking for the tree.
-    const opened = setColumnOpen(EMPTY_MEMORY, birds, true);
-    expect(columnOpen(opened, birds)).toBe(true);
-    expect(columnOpen(setColumnOpen(opened, birds, true), birds)).toBe(true);
+    const opened = setColumnOpen(EMPTY_MEMORY, gizmo, true);
+    expect(columnOpen(opened, gizmo)).toBe(true);
+    expect(columnOpen(setColumnOpen(opened, gizmo, true), gizmo)).toBe(true);
     // And it is still per place.
     expect(columnOpen(opened, home)).toBe(true);
   });
@@ -66,7 +68,7 @@ describe("columnOpen", () => {
 describe("openPath", () => {
   it("opens a place on its first page when nothing is remembered", () => {
     expect(openPath(EMPTY_MEMORY, home)).toBe("/");
-    expect(openPath(EMPTY_MEMORY, birds)).toBe("/apps/birds");
+    expect(openPath(EMPTY_MEMORY, gizmo)).toBe("/apps/gizmo");
   });
 
   it("restores exactly what you left", () => {
@@ -75,8 +77,8 @@ describe("openPath", () => {
   });
 
   it("restores a sub-route of a page, not just the page", () => {
-    const m = rememberPath(EMPTY_MEMORY, birds, "/apps/birds/locations");
-    expect(openPath(m, birds)).toBe("/apps/birds/locations");
+    const m = rememberPath(EMPTY_MEMORY, gizmo, "/apps/gizmo/locations");
+    expect(openPath(m, gizmo)).toBe("/apps/gizmo/locations");
   });
 
   it("ignores a remembered path that no longer belongs to the place", () => {
@@ -94,7 +96,7 @@ describe("openPath", () => {
 
 describe("the mobile page toolbar", () => {
   it("defaults to open everywhere, including an app's own page", () => {
-    expect(tabsOpen(EMPTY_MEMORY, tabsKey("app:birds", "app"))).toBe(true);
+    expect(tabsOpen(EMPTY_MEMORY, tabsKey("app:gizmo", "app"))).toBe(true);
     expect(tabsOpen(EMPTY_MEMORY, tabsKey("home", "dashboard"))).toBe(true);
   });
 
@@ -105,7 +107,7 @@ describe("the mobile page toolbar", () => {
     // Same place, different page: back to the default.
     expect(tabsOpen(closed, tabsKey("home", "tickets"))).toBe(true);
     // Different place entirely: back to the default.
-    expect(tabsOpen(closed, tabsKey("app:birds", "app"))).toBe(true);
+    expect(tabsOpen(closed, tabsKey("app:gizmo", "app"))).toBe(true);
   });
 
   it("re-opens on a second toggle of the same key", () => {
@@ -140,14 +142,14 @@ describe("column motion", () => {
 
   it("hard cuts on any navigation away, in the same read", () => {
     const m = grantMotion("/agents");
-    expect(settleMotion(m, "/apps/finance")).toBeNull();
+    expect(settleMotion(m, "/apps/widgets")).toBeNull();
   });
 
   it("does not animate on the way BACK to where the toggle happened", () => {
     // The case a bare path comparison gets wrong, and the one that produced the
     // slide-on-switch: toggle at Home, open an app, return to Home.
     let m = grantMotion("/agents");
-    m = settleMotion(m, "/apps/finance"); // leaving retires the grant
+    m = settleMotion(m, "/apps/widgets"); // leaving retires the grant
     expect(settleMotion(m, "/agents")).toBeNull();
   });
 
