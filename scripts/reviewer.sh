@@ -64,6 +64,12 @@
 #   - no routes/ file touched by this diff has MORE routes lacking
 #     response_model= than the pinned baseline (ADR 0023; see
 #     check_response_model.py's own header)
+#   - the frontend does not state MORE response shapes by hand than the pinned
+#     baseline: a response body's type is named from
+#     frontend/src/api/schema.gen.ts, never written out here. A hand-written one
+#     typechecks green while reading `undefined`, which is how the Page[T]
+#     rename left /tickets empty over 188 tickets for two weeks (see
+#     check_response_types.py's own header)
 #   - no response MODEL touched by this diff has more untyped fields
 #     (`dict[str, Any]`, `list[dict]`, bare `Any`) than the pinned baseline. The
 #     route-level response_model check above does not see these: a real model
@@ -685,6 +691,27 @@ _delta_check EXPLAINER_CHECK "check_explainer_text.py" "explainer_baseline.json"
 FRONTEND_STATE_CHECK="skipped"
 _delta_check FRONTEND_STATE_CHECK "check_frontend_state.py" "frontend_state_baseline.json"
 
+# 4.6c-2b A response shape is NAMED from the generated client, not hand-written.
+# The companion to check_generated_client.py above: that one keeps
+# frontend/src/api/schema.gen.ts true to the backend, this one is what makes the
+# frontend USE it. Counts the response boundaries carrying a hand-written type
+# and the ones carrying no type at all, with the COLLECTION reads split out as
+# their own number because that is where the failure is invisible.
+#
+# The measured cost of not having this: GET /api/tasks and GET /api/jobs moved
+# to Page[T] on 2026-08-17 (7e4aacbf) and seven frontend call sites never
+# followed. Every one still typechecked, because every one had hand-written its
+# own type, so /tickets printed "No tickets yet" over 188 open tickets for two
+# weeks with no error anywhere. An empty list is what a missing key looks like.
+#
+# UNCONDITIONAL, for the reason the whole-tree checks above are: the file a new
+# hand-written response type is written in is by definition a file nobody
+# thought to add to a gate list. A RATCHET rather than an absolute because the
+# tree carries hundreds, and because a route with no `response_model=` has no
+# generated type to name yet -- that half of the debt is RESPONSE_MODEL_CHECK's.
+RESPONSE_TYPES_CHECK="skipped"
+_delta_check RESPONSE_TYPES_CHECK "check_response_types.py" "response_types_baseline.json"
+
 # 4.6c-x THE FRESH-CLONE ASSERTION: what a stranger's clone actually contains.
 # UNCONDITIONAL, like the two whole-tree checks above it, and for the same
 # reason -- the gate this one supplements (check_pluggable_apps.sh) was scoped
@@ -1039,6 +1066,10 @@ if [[ "$FRONTEND_STATE_CHECK" == "fail" ]]; then
   REASONS+=("frontend_state_regression")
   COMPLETE="false"
 fi
+if [[ "$RESPONSE_TYPES_CHECK" == "fail" ]]; then
+  REASONS+=("handwritten_response_type")
+  COMPLETE="false"
+fi
 if [[ "$RESPONSE_MODEL_CHECK" == "fail" ]]; then
   REASONS+=("response_model_regression")
   COMPLETE="false"
@@ -1134,7 +1165,7 @@ TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK BACKEND_TESTS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
-export FRESH_CLONE_CHECK DEV_MODE_OFF_CHECK FRONTEND_STATE_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK
+export FRESH_CLONE_CHECK DEV_MODE_OFF_CHECK FRONTEND_STATE_CHECK RESPONSE_TYPES_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK
 RESULT_JSON=$(python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -1191,6 +1222,10 @@ out = {
     "prompt_layers": os.environ.get("PROMPT_LAYERS_CHECK", "skipped"),
     "explainer_text": os.environ.get("EXPLAINER_CHECK", "skipped"),
     "frontend_state": os.environ.get("FRONTEND_STATE_CHECK", "skipped"),
+    # Ratcheted: a response shape named from schema.gen.ts instead of written
+    # by hand. Three counts, and the list one is the one that matters most --
+    # a wrong shape on a list renders the empty state and nobody sees it.
+    "response_types": os.environ.get("RESPONSE_TYPES_CHECK", "skipped"),
     "response_model": os.environ.get("RESPONSE_MODEL_CHECK", "skipped"),
     # Absolute, not ratcheted: the tree is at zero raw storage calls, so any
     # new one is a cross-account leak rather than incremental debt.
@@ -1229,7 +1264,7 @@ PYEOF
 printf '%s\n' "$RESULT_JSON"
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK backend_tests=$BACKEND_TESTS_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK dev_mode_off=$DEV_MODE_OFF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK backend_tests=$BACKEND_TESTS_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK response_types=$RESPONSE_TYPES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK dev_mode_off=$DEV_MODE_OFF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi

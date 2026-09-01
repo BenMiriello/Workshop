@@ -1,0 +1,6 @@
+{
+  "_comment": "Ratchet baseline for check_response_types.py. These counts may only go DOWN. A response body's type is NAMED from frontend/src/api/schema.gen.ts (components[\"schemas\"][\"Name\"]), never written by hand: a hand-written one typechecks green while reading undefined, which is how GET /api/tasks and GET /api/jobs moving to Page[T] on 2026-08-17 left seven surfaces silently empty for two weeks (188 tickets under 'No tickets yet'). handwritten_response_types counts boundaries carrying a type this tree wrote itself; untyped_response_reads counts boundaries with no type at all; handwritten_list_reads is the subset of both that reads a COLLECTION and is the number to drive down first, because a wrong shape on a list renders the empty state and nobody sees it. A route with no response_model= has no generated type to name -- that debt is check_response_model.py's, and it is the reason this is a ratchet and not an absolute.",
+  "handwritten_response_types": 100,
+  "untyped_response_reads": 156,
+  "handwritten_list_reads": 140
+}
