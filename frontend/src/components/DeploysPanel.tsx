@@ -8,6 +8,7 @@ import { Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPi
 import { jobStatusKind, type JobEvidence } from "../lib/jobs";
 
 import { shortSha } from "../lib/sha";
+import type { components } from "../api/schema.gen";
 
 // Deploys panel — per-project target bindings.
 //
@@ -78,9 +79,20 @@ export default function DeploysPanel({ slug }: { slug: string }) {
       ]);
       if (!dr.ok) throw new Error(`deploys ${shortHttpError(dr.status, dr.statusText, await dr.text().catch(() => ""))}`);
       if (!pr.ok) throw new Error(`providers ${shortHttpError(pr.status, pr.statusText, await pr.text().catch(() => ""))}`);
+      // THE DEPLOY ROW CANNOT BE NAMED YET, and that is a backend finding, not
+      // a shortcut. `Deploy.target`, `Deploy.source` and `Deploy.current` are
+      // declared `dict` on the model, so the generated row is
+      // `Record<string, never>` and TypeScript refuses even a cast to the shape
+      // this file reads (`target.kind`, `source.branch`, `current.url`). Give
+      // those three fields real models in routes/api_models.py, regenerate, and
+      // this becomes components["schemas"]["DeployList"] like the reads below.
+      // Counted by scripts/check_opaque_fields.py.
       const dj = await dr.json();
-      const pj = await pr.json();
       setDeploys(dj.deploys || []);
+      // Same story one level down: the generated provider row carries
+      // `target_fields: Record<string, never>[]`, so it cannot be named here
+      // either until that field has a model.
+      const pj = await pr.json();
       setProviders(pj.providers || []);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -95,8 +107,8 @@ export default function DeploysPanel({ slug }: { slug: string }) {
     try {
       const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/deploys/${encodeURIComponent(deploy.id)}/runs`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = await r.json();
-      setRunsCache((c) => ({ ...c, [deploy.id]: j.runs || [] }));
+      const j: components["schemas"]["DeployRuns"] = await r.json();
+      setRunsCache((c) => ({ ...c, [deploy.id]: (j.runs ?? []) as Run[] }));
     } catch (e) {
       setBanner(e instanceof Error ? e.message : String(e));
     } finally {

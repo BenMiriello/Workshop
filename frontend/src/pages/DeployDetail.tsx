@@ -8,6 +8,7 @@ import { Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice,
 import { jobStatusKind, runHref, type JobEvidence } from "../lib/jobs";
 
 import { shortSha } from "../lib/sha";
+import type { components } from "../api/schema.gen";
 
 type Deploy = {
   id: string;
@@ -62,6 +63,14 @@ export default function DeployDetail() {
       // to via the cross-project list, then fetch the per-project routes.
       const listR = await fetch("/api/deploys");
       if (!listR.ok) throw new Error(`list: ${shortHttpError(listR.status, listR.statusText, await listR.text().catch(() => ""))}`);
+      // THE DEPLOY ROW CANNOT BE NAMED YET, and that is a backend finding, not
+      // a shortcut. `Deploy.target`, `Deploy.source` and `Deploy.current` are
+      // declared `dict` on the model, so the generated row is
+      // `Record<string, never>` and TypeScript refuses even a cast to the shape
+      // this file reads (`target.kind`, `source.branch`, `current.url`). Give
+      // those three fields real models in routes/api_models.py, regenerate, and
+      // this becomes components["schemas"]["DeployList"] like the reads below.
+      // Counted by scripts/check_opaque_fields.py.
       const listJ = await listR.json();
       const rec = (listJ.deploys as Deploy[]).find((d) => d.id === id);
       if (!rec) { setErr("deploy not found"); setLoading(false); return; }
@@ -71,8 +80,8 @@ export default function DeployDetail() {
         fetch(`/api/projects/${encodeURIComponent(rec.project_slug)}/deploys/${encodeURIComponent(id)}/notice`),
       ]);
       if (runsR.ok) {
-        const j = await runsR.json();
-        setRuns(j.runs || []);
+        const j: components["schemas"]["DeployRuns"] = await runsR.json();
+        setRuns((j.runs ?? []) as Run[]);
       }
       if (noticeR.ok) {
         setNotice(await noticeR.json());

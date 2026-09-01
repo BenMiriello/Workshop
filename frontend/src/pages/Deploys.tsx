@@ -4,6 +4,7 @@ import { Rocket, RefreshCw, ExternalLink, Ban, Power } from "lucide-react";
 import { Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill, Badge, Tag, Skeleton, Field, Input, Modal, ConfirmDialog, type StatusKind, TableScroll, Table, Segmented, timeAgo, shortHttpError } from "@workshop/ui";
 
 import { shortSha } from "../lib/sha";
+import type { components } from "../api/schema.gen";
 
 // /deploys — cross-project index of every hosted target across the workshop.
 // Each row is a Deploy: which project, which target, which branch, what's
@@ -50,9 +51,17 @@ export default function Deploys() {
       ]);
       if (!dr.ok) throw new Error(`deploys: ${shortHttpError(dr.status, dr.statusText, await dr.text().catch(() => ""))}`);
       if (!or.ok) throw new Error(`override: ${shortHttpError(or.status, or.statusText, await or.text().catch(() => ""))}`);
+      // THE DEPLOY ROW CANNOT BE NAMED YET, and that is a backend finding, not
+      // a shortcut. `Deploy.target`, `Deploy.source` and `Deploy.current` are
+      // declared `dict` on the model, so the generated row is
+      // `Record<string, never>` and TypeScript refuses even a cast to the shape
+      // this file reads (`target.kind`, `source.branch`, `current.url`). Give
+      // those three fields real models in routes/api_models.py, regenerate, and
+      // this becomes components["schemas"]["DeployList"] like the reads below.
+      // Counted by scripts/check_opaque_fields.py.
       const dj = await dr.json();
-      const oj = await or.json();
       setDeploys(dj.deploys || []);
+      const oj: components["schemas"]["DeploysOverride"] = await or.json();
       setOverride(oj);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
