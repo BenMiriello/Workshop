@@ -234,7 +234,9 @@ _PATHISH = re.compile(r"(?<![\w/.-])(?:/workspace/)?((?:[\w.-]+/)+[\w.-]+\.[A-Za
 # command with none of these are being read, not written, and adopting a file
 # because this turn ran `sed -n` over it is how the gate would end up demanding
 # delivery of somebody else's work.
-_WRITEISH = re.compile(r">|\btee\b|\bsed\b[^|]*-i|\bcp\b|\bmv\b|\btouch\b|\bchmod\b|<<")
+_WRITEISH = re.compile(
+    r">|\btee\b|\bsed\b[^|]*-i|\bcp\b|\bmv\b|\btouch\b|\bchmod\b|<<"
+    r"|\bgit\s+(?:add|rm|mv|commit|restore|checkout)\b")
 
 
 def declared_edits(transcript, since_ts):
@@ -364,8 +366,11 @@ def touched_files(since_ts, base_rev, explicit=None, certain=(), likely=()):
     as other agents saved them. A gate that grows a stranger's work between one
     run and the next is a gate nobody can satisfy.
 
-    Files this turn COMMITTED are always included, whichever signal is in use --
-    committing is the act that makes work this turn's own.
+    A commit CORROBORATES, it does not confer ownership: on a checkout where
+    several agents commit inside one turn's window, counting a commit on its own
+    adopted 54 of their files in a single run. It only counts for a path the
+    record already names, which is what lets a file edited last turn and
+    committed this one still be checked for delivery.
     """
     if explicit:
         return sorted({f for f in explicit if not _ignored(f)})
@@ -383,21 +388,16 @@ def touched_files(since_ts, base_rev, explicit=None, certain=(), likely=()):
         if _ignored(rel):
             continue
         p = ROOT / rel
-        if not p.exists():
-            # Deleted. Answerable for it only if the deletion is in a commit
-            # this turn made; a foreign uncommitted delete is not ours.
-            if rel in _committed_since(base_rev):
-                out.append(rel)
-            continue
         try:
-            recent = p.stat().st_mtime + 1 >= since_ts
+            recent = p.is_file() and p.stat().st_mtime + 1 >= since_ts
         except OSError:
-            continue
+            recent = False
+        committed = rel in _committed_since(base_rev)
         if recorded:
-            mine = rel in certain or (rel in likely and recent)
+            mine = rel in certain or (rel in likely and (recent or committed))
         else:
-            mine = recent
-        if mine or rel in _committed_since(base_rev):
+            mine = recent or committed
+        if mine:
             out.append(rel)
     return out
 
