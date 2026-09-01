@@ -3484,15 +3484,8 @@ export interface paths {
         delete: operations["remove_chat_threads__thread_id__delete"];
         options?: never;
         head?: never;
-        /**
-         * Patch Thread
-         * @description Write this thread's settings. Only the keys present in the body change.
-         *
-         *     `armed` is what advances the thread without a person; `role` names the role
-         *     definition it runs under. They are independent, so both are ordinary
-         *     optional keys here and setting one never touches the other.
-         */
-        patch: operations["patch_thread_chat_threads__thread_id__patch"];
+        /** Rename */
+        patch: operations["rename_chat_threads__thread_id__patch"];
         trace?: never;
     };
     "/chat/threads/{thread_id}/archive": {
@@ -7731,19 +7724,10 @@ export interface paths {
          *     here), `scope` (restrict to a single scope key), `labels` (comma-separated,
          *     a row matches if it carries ANY of them), `effort` (comma-separated, from
          *     tasks.EFFORTS), `assignee` (comma-separated, `operator` or `agent:<slug>`),
-         *     `source` (comma-separated, from tasks.SOURCE_KINDS: WHO ASKED for the work),
          *     `q` (case-insensitive substring of title or body), `ready` (only what the
          *     scheduler could pick up, or only what it could not).
          *     Ordering: `sort` (one of tasks.SORT_KEYS, including `queue` = the
-         *     scheduler's own order, plus `asks` = the order the operator put his own
-         *     asks in) + `desc`. Paging: `limit`/`offset`.
-         *
-         *     `source` is what makes the operator's own queue expressible. The field has
-         *     been on every ticket since the store existed and nothing read it: on
-         *     2026-09-01, 132 of 208 open tickets were `agent` (an agent noticed
-         *     something), 46 were `operator` (a person asked), and no view anywhere could
-         *     tell the two apart. An agent noticing something is a proposal; a person
-         *     asking for something is work, and it is not the same list.
+         *     scheduler's own order) + `desc`. Paging: `limit`/`offset`.
          *
          *     `labels` and `effort` exist so the list page's filter chips push DOWN to the
          *     server like status and scope already did. A chip narrowed in the browser
@@ -7804,11 +7788,6 @@ export interface paths {
          * @description File a task into a scope through the dedup path, so a manual ticket
          *     dedupes against open tasks exactly like a chat-filed one. Returns the task
          *     plus the dedup decision (exact | merge | related | distinct).
-         *
-         *     REFUSES a ticket with no executable acceptance, 400, carrying the sentence
-         *     that says what would satisfy it (services/ticket_format.acceptance_refusal).
-         *     A ticket whose finish line is prose leaves the worker to invent one and the
-         *     reviewer to guess at it, which is how 195 open tickets came to have none.
          */
         post: operations["create_tasks_post"];
         delete?: never;
@@ -7864,36 +7843,6 @@ export interface paths {
          */
         get: operations["list_labels_tasks_labels_get"];
         put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/tasks/order": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Read Ask Order
-         * @description The operator's ranking of his own asks. Empty is a normal state.
-         *
-         *     Not a priority and not a second queue: see services/ask_order for why the
-         *     rank cannot live in `priority` (it is a five-name band, so an arbitrary order
-         *     collapses on the first round trip).
-         */
-        get: operations["read_ask_order_tasks_order_get"];
-        /**
-         * Write Ask Order
-         * @description Replace the ranking. Which of his own asks matters most is the operator's
-         *     call, so this takes what he arranged and stores it, with nothing to approve
-         *     and nothing to confirm.
-         */
-        put: operations["write_ask_order_tasks_order_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -9697,25 +9646,6 @@ export interface components {
         AppUiIn: {
             /** Agent Button */
             agent_button?: boolean | null;
-        };
-        /**
-         * AskOrderIn
-         * @description The whole order, not a move. The client already holds the list it is
-         *     looking at, so sending the new arrangement is one idempotent write with no
-         *     "move up from where?" ambiguity and no server-side index arithmetic to get
-         *     wrong when two rows changed between the read and the click.
-         */
-        AskOrderIn: {
-            /** Keys */
-            keys: string[];
-        };
-        /**
-         * AskOrderOut
-         * @description What is stored now: `<scope>/<id>` keys, most important first.
-         */
-        AskOrderOut: {
-            /** Order */
-            order: string[];
         };
         /** AssigneesOut */
         AssigneesOut: {
@@ -14001,27 +13931,6 @@ export interface components {
             items: components["schemas"]["Task"][];
             page: components["schemas"]["PageMeta"];
         };
-        /**
-         * PatchThread
-         * @description The thread's own settings, as a partial write.
-         *
-         *     ONE PATCH, NOT A ROUTE PER FIELD. `title` was the only thing this endpoint
-         *     could set, under the name `RenameThread`, which is why `mode` ended up with
-         *     a POST of its own. `armed` and `role` are ordinary settings and go here.
-         *
-         *     An omitted key is left alone; `role: null` CLEARS the role, which is a real
-         *     write and is why the handler asks `model_fields_set` rather than testing for
-         *     None. `title` stays optional so the rename call that every client already
-         *     makes keeps working unchanged.
-         */
-        PatchThread: {
-            /** Armed */
-            armed?: string | null;
-            /** Role */
-            role?: string | null;
-            /** Title */
-            title?: string | null;
-        };
         /** Perception */
         Perception: {
             turn_end: components["schemas"]["DetectorStatus"];
@@ -15076,6 +14985,11 @@ export interface components {
         RenameBranchResult: {
             /** Branches */
             branches: components["schemas"]["Branch"][];
+        };
+        /** RenameThread */
+        RenameThread: {
+            /** Title */
+            title: string;
         };
         /** RepoBody */
         RepoBody: {
@@ -16299,8 +16213,6 @@ export interface components {
         };
         /** TaskAcceptanceIn */
         TaskAcceptanceIn: {
-            /** Criteria */
-            criteria?: components["schemas"]["TaskAcceptanceCriterion"][] | null;
             /** Kind */
             kind: string;
             /** Spec */
@@ -16350,7 +16262,6 @@ export interface components {
         };
         /** TaskCreateIn */
         TaskCreateIn: {
-            acceptance?: components["schemas"]["TaskAcceptanceIn"] | null;
             /** Body */
             body?: string | null;
             /** Effort */
@@ -16771,11 +16682,6 @@ export interface components {
             } | null;
             /** Archived At */
             archived_at?: string | null;
-            /**
-             * Armed
-             * @default off
-             */
-            armed: string;
             /** Card States */
             card_states?: {
                 [key: string]: components["schemas"]["StoredCardState"];
@@ -16813,8 +16719,6 @@ export interface components {
             model?: string | null;
             /** Permission Mode */
             permission_mode?: string | null;
-            /** Role */
-            role?: string | null;
             /** Scope */
             scope: string;
             /** Summary */
@@ -16899,11 +16803,6 @@ export interface components {
             } | null;
             /** Archived At */
             archived_at?: string | null;
-            /**
-             * Armed
-             * @default off
-             */
-            armed: string;
             /** Card States */
             card_states?: {
                 [key: string]: components["schemas"]["StoredCardState"];
@@ -16936,8 +16835,6 @@ export interface components {
             model?: string | null;
             /** Permission Mode */
             permission_mode?: string | null;
-            /** Role */
-            role?: string | null;
             /** Scope */
             scope: string;
             /** Summary */
@@ -16967,11 +16864,6 @@ export interface components {
             agent_id?: string | null;
             /** Archived At */
             archived_at?: string | null;
-            /**
-             * Armed
-             * @default off
-             */
-            armed: string;
             /** Branch Slug */
             branch_slug?: string | null;
             /** Context Key */
@@ -16994,8 +16886,6 @@ export interface components {
             mode: string;
             /** Model */
             model?: string | null;
-            /** Role */
-            role?: string | null;
             /**
              * Running
              * @default false
@@ -17045,11 +16935,6 @@ export interface components {
             } | null;
             /** Archived At */
             archived_at?: string | null;
-            /**
-             * Armed
-             * @default off
-             */
-            armed: string;
             /** Card States */
             card_states?: {
                 [key: string]: components["schemas"]["StoredCardState"];
@@ -17090,8 +16975,6 @@ export interface components {
             queue_held: boolean;
             /** Queued */
             queued: components["schemas"]["QueuedMessage"][];
-            /** Role */
-            role?: string | null;
             /** Scope */
             scope: string;
             /** Summary */
@@ -25115,7 +24998,7 @@ export interface operations {
             };
         };
     };
-    patch_thread_chat_threads__thread_id__patch: {
+    rename_chat_threads__thread_id__patch: {
         parameters: {
             query?: never;
             header?: never;
@@ -25126,7 +25009,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PatchThread"];
+                "application/json": components["schemas"]["RenameThread"];
             };
         };
         responses: {
@@ -31773,7 +31656,6 @@ export interface operations {
                 labels?: string | null;
                 effort?: string | null;
                 assignee?: string | null;
-                source?: string | null;
                 include_done?: boolean;
                 q?: string | null;
                 ready?: boolean | null;
@@ -31890,59 +31772,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LabelsOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    read_ask_order_tasks_order_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AskOrderOut"];
-                };
-            };
-        };
-    };
-    write_ask_order_tasks_order_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AskOrderIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AskOrderOut"];
                 };
             };
             /** @description Validation Error */

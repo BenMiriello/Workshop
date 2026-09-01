@@ -1,8 +1,7 @@
 import { useRef } from "react";
 import { Archive, GitBranch, MoreVertical, Trash2 } from "lucide-react";
-import { Card, Menu, MenuItem, MenuSeparator, Tag, catFor } from "@workshop/ui";
+import { Card, Menu, MenuItem, MenuSeparator } from "@workshop/ui";
 import type { ThreadSummary } from "../../lib/chat";
-import { armedLabel, armedOf, armedOption, isArmed, roleOf } from "./chatArmed";
 import { branchName } from "./chatBranch";
 import { scopeKind, scopeLabel, scopeName } from "./chatScope";
 import { pulseDelay } from "../../pages/chatPulse";
@@ -153,35 +152,6 @@ export default function ChatRow({
               characters of hex on half the branches this install serves;
               `branchName` is the same rule the toolbar's pill and its move list
               use. */}
-          {/* WHAT ADVANCES THIS THREAD WITHOUT A PERSON, and under what role.
-              Shown only when there is something to say: `off` with no role is
-              every ordinary conversation, and a row does not spend width
-              announcing the ordinary case. The armed mark is an icon in the
-              meta line rather than a status pill, because it is a SETTING and
-              not an outcome; the five status hues are reserved for outcomes.
-              The role is categorical ("which one is it"), which is exactly what
-              `Tag` + `catFor` are for. */}
-          {isArmed(t) && (
-            <>
-              <span className="ws-chat-row__sep" aria-hidden>·</span>
-              <span
-                className="ws-card__meta"
-                title={armedOption(armedOf(t)).gloss}
-                aria-label={`Runs unasked: ${armedLabel(t)}`}
-              >
-                {(() => {
-                  const Icon = armedOption(armedOf(t)).Icon;
-                  return <Icon size={12} aria-hidden />;
-                })()}
-              </span>
-            </>
-          )}
-          {roleOf(t) && (
-            <>
-              <span className="ws-chat-row__sep" aria-hidden>·</span>
-              <Tag hue={catFor(roleOf(t))} variant="neutral">{roleOf(t)}</Tag>
-            </>
-          )}
           {t.branch_slug && (
             <>
               <span className="ws-chat-row__sep" aria-hidden>·</span>

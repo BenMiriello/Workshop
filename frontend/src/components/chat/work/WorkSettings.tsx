@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Check, ChevronLeft } from "lucide-react";
-import { Field, Input, Notice, Prop, Props, SectionLabel } from "@workshop/ui";
-import { chatApi } from "../../../lib/chat";
-import { ARMED_OPTIONS, type ArmedId } from "../chatArmed";
+import { Prop, Props, SectionLabel } from "@workshop/ui";
 import { scopeLabel } from "../chatScope";
 import { CHAT_MODES, type ChatModeId } from "../chatModes";
 
@@ -40,12 +38,8 @@ const EXEC_MODES: { id: string; name: string; gloss: string }[] = [
 ];
 
 export default function WorkSettings({
-  threadId, scope, chatMode, onChooseChatMode, onBack,
+  scope, chatMode, onChooseChatMode, onBack,
 }: {
-  /** This conversation's id, or null before its first message has created one.
-   *  `armed` and `role` are stored ON the thread, so there is nothing to set
-   *  until there is a thread; the section says so rather than disappearing. */
-  threadId: string | null;
   /** The chat's task scope, or null for a chat that files nowhere. */
   scope: string | null;
   chatMode: ChatModeId;
@@ -81,56 +75,6 @@ export default function WorkSettings({
       .catch(() => { if (!cancelled) setExec(null); });
     return () => { cancelled = true; };
   }, [scope]);
-
-  // WHAT ADVANCES THIS THREAD WITHOUT A PERSON, and under what role. Two
-  // independent fields on the thread itself, which is the distinction this
-  // panel has to keep visible: the two sections above are about the SCOPE's
-  // queue, and these are about this one conversation.
-  //
-  // Read once when the panel opens, like the two above. Committed ON CHANGE for
-  // the same reason the chat mode is: one conversation, cheap, reversible, and
-  // the next turn is when it takes effect either way.
-  const [armed, setArmed] = useState<ArmedId>("off");
-  const [role, setRole] = useState("");
-  const [roleDraft, setRoleDraft] = useState("");
-  const [threadErr, setThreadErr] = useState<string | null>(null);
-  useEffect(() => {
-    if (!threadId) return;
-    let cancelled = false;
-    chatApi.getThread(threadId)
-      .then((t) => {
-        if (cancelled) return;
-        const next = (ARMED_OPTIONS.find((o) => o.id === t.armed)?.id ?? "off") as ArmedId;
-        setArmed(next);
-        setRole(t.role ?? "");
-        setRoleDraft(t.role ?? "");
-      })
-      .catch((e) => { if (!cancelled) setThreadErr(String(e)); });
-    return () => { cancelled = true; };
-  }, [threadId]);
-
-  function chooseArmed(next: ArmedId) {
-    if (!threadId || next === armed) return;
-    const prev = armed;
-    setArmed(next);                       // optimistic; the server confirms
-    setThreadErr(null);
-    chatApi.patchThread(threadId, { armed: next })
-      .then((t) => setArmed(((t.armed ?? "off") as ArmedId)))
-      // Put the control back rather than showing a setting the server does not
-      // have: a thread that looks armed and is not is worse than a failure.
-      .catch((e) => { setArmed(prev); setThreadErr(String(e)); });
-  }
-
-  function commitRole() {
-    const next = roleDraft.trim();
-    if (!threadId || next === role) return;
-    const prev = role;
-    setRole(next);
-    setThreadErr(null);
-    chatApi.patchThread(threadId, { role: next || null })
-      .then((t) => { setRole(t.role ?? ""); setRoleDraft(t.role ?? ""); })
-      .catch((e) => { setRole(prev); setRoleDraft(prev); setThreadErr(String(e)); });
-  }
 
   const execMode = exec?.mode ?? "reactive";
   function chooseExec(mode: string) {
@@ -199,65 +143,6 @@ export default function WorkSettings({
           {scope ? scopeLabel(scope) : "Nowhere. This chat has no ticket queue."}
         </Prop>
       </Props>
-
-      {/* THE TWO FIELDS ON THE THREAD ITSELF, and they are two because they are
-          independent: `armed` decides whether this thread works unasked, `role`
-          names the definition it runs under, and neither implies the other. A
-          thread armed with no role continues on its own context, which is the
-          ordinary case. Collapsing them into one "make this an agent" control
-          is the shape this design exists to replace. */}
-      <SectionLabel>Runs unasked</SectionLabel>
-      {threadId ? (
-        <>
-          <div className="chat-workpanel__modes" role="radiogroup" aria-label="Runs unasked">
-            {ARMED_OPTIONS.map((m) => {
-              const on = m.id === armed;
-              return (
-                <button
-                  key={m.id}
-                  type="button"
-                  className="chat-workpanel__mode"
-                  role="radio"
-                  aria-checked={on}
-                  onClick={() => chooseArmed(m.id)}
-                >
-                  <span className="chat-workpanel__mode-mark">
-                    {on && <Check size={14} strokeWidth={2} aria-hidden />}
-                  </span>
-                  <span className="chat-workpanel__mode-body">
-                    <span className="chat-workpanel__mode-name">{m.name}</span>
-                    <span className="chat-workpanel__mode-gloss">{m.gloss}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          <Field
-            label="Role"
-            help="Optional. Names the definition this thread runs under, like Planner or Builder. Leave it empty and the thread carries on with its own context."
-          >
-            <Input
-              value={roleDraft}
-              placeholder="No role"
-              onChange={(e) => setRoleDraft(e.target.value)}
-              onBlur={commitRole}
-              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-            />
-          </Field>
-        </>
-      ) : (
-        <Props className="chat-workpanel__props">
-          <Prop label="Runs unasked">
-            Nothing yet. Send a message first, then this chat can be set to run
-            on its own.
-          </Prop>
-        </Props>
-      )}
-      {threadErr && (
-        <Notice tone="error" where={`/api/chat/threads/${threadId}`}>
-          Couldn't save this chat's settings. {threadErr}
-        </Notice>
-      )}
 
       {/* The scope choice, distinct from the chat choice above: filing is what
           THIS conversation does, execution is what the whole scope does with

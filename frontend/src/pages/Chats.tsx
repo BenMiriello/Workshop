@@ -16,13 +16,11 @@ import {
   Notice,
   PageHeader,
   SectionLabel,
-  Segmented,
   Select,
   Skeleton,
   StateBlock,
 } from "@workshop/ui";
 import { chatApi, threadAgent, type ThreadSummary } from "../lib/chat";
-import { isArmed } from "../components/chat/chatArmed";
 import ChatRow, { ChatScopeGlyph, shortModel } from "../components/chat/ChatRow";
 import { queryKeys } from "../lib/queryKeys";
 import { newChatHref } from "../lib/chatSelection";
@@ -41,14 +39,6 @@ import { scopeLabel, scopeName } from "../components/chat/chatScope";
 // How the list is ordered. Recent groups the rows by date; the other two are a
 // single flat list. Commits on change (a view preference).
 type Sort = "recent" | "oldest" | "messages";
-
-// WHICH THREADS. This is what replaced the Agents page. There was a roster of
-// four markdown files that had run once between them since 2026-07-18, on its
-// own route, while the threads that actually do unattended work were somewhere
-// else entirely. "Armed" is not a second kind of object, so it is not a second
-// page: it is a filter over the one list of threads. A view preference, so it
-// commits on change.
-type Which = "all" | "armed";
 
 // Recency buckets, the mockup's date headings. A chat's bucket comes from the
 // same field the Recent sort orders by (updated_at), so a row's heading and its
@@ -115,7 +105,6 @@ export default function Chats() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const [sort, setSort] = useState<Sort>("recent");
-  const [which, setWhich] = useState<Which>("all");
   // A delete waiting on its confirm dialog, and a one-off action failure that
   // leaves the list on screen (a Notice, not a whole-page error block).
   const [pending, setPending] = useState<{ id: string; title: string } | null>(null);
@@ -162,16 +151,16 @@ export default function Chats() {
   const newChat = () => nav(newChatHref("general"));
 
   const sorted = useMemo(() => {
-    const list = threads ? threads.filter((t) => which === "all" || isArmed(t)) : [];
+    const list = threads ? [...threads] : [];
     if (sort === "oldest") list.sort((a, b) => (a.updated_at || "").localeCompare(b.updated_at || ""));
     else if (sort === "messages") list.sort((a, b) => (b.message_count || 0) - (a.message_count || 0));
     else list.sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
     return list;
-  }, [threads, sort, which]);
+  }, [threads, sort]);
 
   // Reset only on a re-sort, NOT on every poll: a refetch returns a new array
   // each tick, and resetting on that would snap the list back to the first page.
-  useEffect(() => { setShown(PAGE); }, [sort, which]);
+  useEffect(() => { setShown(PAGE); }, [sort]);
 
   const visible = sorted.slice(0, shown);
   const more = shown < sorted.length;
@@ -256,16 +245,6 @@ export default function Chats() {
         title="Chats"
         actions={
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-            {/* Armed is a FILTER here, not a page. See the `Which` type. */}
-            <Segmented<Which>
-              ariaLabel="Which chats"
-              value={which}
-              onChange={setWhich}
-              options={[
-                { value: "all", label: "All" },
-                { value: "armed", label: "Armed" },
-              ]}
-            />
             {/* Sort, not a scope filter: this is the workshop's own chats page,
                 and the page column already says which place you are in. A bare
                 Select (it carries its own chevron); commits on change. */}
@@ -320,14 +299,6 @@ export default function Chats() {
               <Plus aria-hidden /> New chat
             </Button>
           }
-        />
-      ) : sorted.length === 0 ? (
-        /* A filter that hides everything is not the same empty as no chats at
-           all, and the hint has to say how to leave the state it put you in. */
-        <StateBlock
-          title="No armed chats"
-          hint="An armed chat is one that advances without you. Open a chat, go to Tickets then Settings in its work panel, and set Runs unasked."
-          action={<Button size="sm" onClick={() => setWhich("all")}>Show all chats</Button>}
         />
       ) : (
         <>

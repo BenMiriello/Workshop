@@ -51,7 +51,7 @@ def _shape_row(row: dict) -> dict:
     rules changes.
     """
     from services import context_window, scope_tree
-    from services.chat_store import DEFAULT_CHAT_MODE, _clamp_armed, _clean_role
+    from services.chat_store import DEFAULT_CHAT_MODE
 
     ck = row.get("context_key") or "general"
 
@@ -73,10 +73,6 @@ def _shape_row(row: dict) -> dict:
         # disagree about where a chat lives.
         "scope": scope_tree.scope_for_context(ck),
         "mode": row.get("mode") or DEFAULT_CHAT_MODE,
-        # Clamped through the SAME helpers `chat_store._summary_row` uses, so
-        # the two read paths cannot disagree about what an armed thread is.
-        "armed": _clamp_armed(row.get("armed")),
-        "role": _clean_role(row.get("role")),
         # WHO ANSWERS, when that is an agent -- the same field
         # `chat_store._summary_row` hands back, off the same value.
         "agent_id": row.get("agent_slug"),

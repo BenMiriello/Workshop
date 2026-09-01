@@ -697,16 +697,6 @@ export const chatApi = {
       body: JSON.stringify({ title }),
     }).then(j<ThreadSummary>),
 
-  // The thread's own settings, partially. Only the keys sent change, so arming
-  // a thread never touches its role and naming a role never arms it -- the two
-  // fields are independent and the write shape says so. `role: null` clears it.
-  patchThread: (id: string, patch: components["schemas"]["PatchThread"]) =>
-    fetch(`/api/chat/threads/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    }).then(j<ThreadSummary>),
-
   // /compact: run the CLI's OWN compaction on this chat's live session.
   //
   // It is a TURN, not a server-side edit of the transcript. Workshop used to
