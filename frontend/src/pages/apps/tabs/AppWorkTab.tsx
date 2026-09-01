@@ -1,10 +1,31 @@
-// The Work tab: every branch open on this app, one row each.
+// The Work tab. THREE LENSES ON ONE QUESTION, and the first one is tickets.
 //
-// threads-branches-and-pages-2026-08-29.md section 6, "Per app", verbatim: "A
-// branch is a row. Collapsed it shows the name, the ticket, and the holder.
-// Expanded it shows the threads on it and the state of its change. Each thread
-// row carries its own controls: armed on/off, its role, and whether it holds the
-// lease." Section 7 step 3 is this change.
+// threads-branches-and-pages-2026-08-29.md section 6 read as though the branch
+// were the organising axis. Its own ADDENDUM supersedes that and is the model of
+// record: "A ticket is the only object that spans the whole life of a piece of
+// work. It exists before a branch does, while the branch is open, and after the
+// branch is merged and deleted... Work (tickets) is the main list... Branches is
+// a lens, not a home. It answers a different and narrower question: what is
+// unmerged, what has uncommitted work, what can be deleted. That is `git branch`
+// with a UI, and it is genuinely useful, and it is not where you start your day."
+//
+// So: Tickets is the default lens and the app's queue. Branches is the lens
+// beside it. Runs is the third, because section 6 has Work absorb `/runs` too
+// and a run that no ticket owns would otherwise have nowhere left to appear.
+//
+// THE LENS IS IN THE URL (`?lens=`), not in component state, for the reason
+// frontend/CLAUDE.md gives: view, scope and tab belong in the URL, so a link to
+// what you are looking at is a link to what you are looking at.
+//
+// THE TICKETS LENS IS `TicketsView` PINNED TO THIS APP'S SCOPE. Mounted, not
+// linked and not re-drawn: a second list of the same rows is how this repo
+// ended up with five design generations of ticket list. The app Tickets tab it
+// replaces is deleted in the same change.
+//
+// The BRANCH lens below is section 6 verbatim: "A branch is a row. Collapsed it
+// shows the name, the ticket, and the holder. Expanded it shows the threads on
+// it and the state of its change. Each thread row carries its own controls:
+// armed on/off, its role, and whether it holds the lease."
 //
 // THIS FILE RENDERS AND DECIDES NOTHING. The grouping, the state word, the
 // ordering and every sentence are `lib/workView.ts`, which is executed by
@@ -31,13 +52,16 @@
 // encodes this and renders the reason as a sentence rather than a dead button.
 // Queue and steer are fully live.
 import { useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, useSearchParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, GitBranch, GitPullRequestArrow, MessagesSquare } from "lucide-react";
 import {
-  Button, Card, CopyButton, Notice, Prop, Props, Row, SectionLabel, Stack,
-  StatusDot, StatusPill, Tag, catFor, shortHttpError,
+  Button, Card, CopyButton, Notice, Prop, Props, Row, SectionLabel, Segmented,
+  Stack, StateBlock, StatusDot, StatusPill, Tag, catFor, shortHttpError,
 } from "@workshop/ui";
+import TicketsView from "../../../components/tickets/TicketsView";
+import { RunsBody } from "./AppRunsTab";
+import { scopeForContext } from "../../../lib/scope";
 
 import type { AppRecord } from "../../../lib/apps";
 import { changesUnavailable, type Change } from "../../../lib/changeReview";
@@ -378,11 +402,67 @@ function ThreadRow({
   );
 }
 
+// The three lenses, in the order the addendum puts them. `tickets` is first and
+// is the default: it is the only one of the three that answers "what needs
+// doing", and the other two answer questions you ask second.
+const LENSES = [
+  { value: "tickets", label: "Tickets" },
+  { value: "branches", label: "Branches" },
+  { value: "runs", label: "Runs" },
+] as const;
+
+type Lens = (typeof LENSES)[number]["value"];
+
+function lensFrom(raw: string | null): Lens {
+  return LENSES.some((l) => l.value === raw) ? (raw as Lens) : "tickets";
+}
+
 export default function AppWorkTab() {
   const { appSlug = "" } = useParams();
+  const [params, setParams] = useSearchParams();
+  const lens = lensFrom(params.get("lens"));
+
+  const pick = (next: Lens) => {
+    const p = new URLSearchParams(params);
+    // The default is spelled by leaving the param off, the same rule the ticket
+    // filters use, so a plain /apps/x/work is the canonical address of the
+    // default view rather than one of two spellings of it.
+    if (next === "tickets") p.delete("lens");
+    else p.set("lens", next);
+    setParams(p, { replace: true });
+  };
+
   return (
-    <AppTabPage slug={appSlug} title="Work" sub="Every branch open on this app.">
-      {(app) => <WorkBody app={app} />}
+    <AppTabPage
+      slug={appSlug}
+      title="Work"
+      sub="What needs doing, what is in flight, and what is done."
+      actions={() => (
+        <Segmented<Lens>
+          value={lens}
+          onChange={pick}
+          options={LENSES.map((l) => ({ value: l.value, label: l.label }))}
+          ariaLabel="Which view of this app's work"
+        />
+      )}
+    >
+      {(app) => {
+        if (lens === "branches") return <WorkBody app={app} />;
+        // Runs are a project's, so an app with no tree has none. RunsBody
+        // already states that in the tab rule's own words, so there is no
+        // second wording of it here.
+        if (lens === "runs") return <RunsBody app={app} />;
+        // TICKETS, the default. `header={false}` because the page header above
+        // already carries the app eyebrow, the title and the lens switcher.
+        return app.project_slug ? (
+          <TicketsView scope={scopeForContext(app.slug)} header={false} />
+        ) : (
+          <StateBlock
+            title="No tickets"
+            hint={unlinkedReason("tickets", app.project_slug, 0) ?? undefined}
+          />
+        );
+      }}
     </AppTabPage>
   );
 }

@@ -22,7 +22,10 @@ import { AppTabPage, CollectionBody } from "./AppTabShell";
 import { unlinkedReason } from "./appTabState";
 import { queryKeys } from "../../../lib/queryKeys";
 
-function RunsBody({ app }: { app: AppRecord }) {
+// EXPORTED so the Work tab's Runs lens mounts THIS, not a second drawing of
+// the same rows. Runs stopped being a tab on 2026-09-01 (appTabState.ts) and
+// became a lens inside Work; this route still resolves for a deep link.
+export function RunsBody({ app }: { app: AppRecord }) {
   const endpoint = `/api/apps/${app.id}/runs`;
   const q = useQuery({
     queryKey: queryKeys.apps.runs(app.id),
