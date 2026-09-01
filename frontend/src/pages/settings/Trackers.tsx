@@ -101,7 +101,16 @@ export default function Trackers() {
       setData(c);
       setCandidates(t.candidates ?? []);
       setScopes(s.scopes ?? []);
-      if (c?.connection?.mode) setMode(c.connection.mode);
+      // A CONNECTION THAT IS OFF HAS NO MODE FOR THE CONNECT FORM TO ADOPT.
+      // The form offers only the modes you can connect IN, so `off` matches no
+      // option: the Select fell back to displaying its first one while the
+      // state still said "off", and the help line under it read "Connected but
+      // idle" beside a control reading "import". Seed it only with a mode the
+      // form can actually show.
+      const offered: string[] = (c?.modes ?? []).filter((m: string) => m !== "off");
+      if (c?.connection?.mode && offered.includes(c.connection.mode)) {
+        setMode(c.connection.mode);
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
