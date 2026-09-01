@@ -17,7 +17,12 @@ import {
 } from "./shellState";
 
 const icons = new Proxy({} as Record<string, typeof Bot>, { get: () => Bot });
-const places = buildPlaces([{ id: "birds", name: "Birds", home: "/apps/birds" }], icons);
+// An app that ships its own screens: `ownScreen` gives it the row for them,
+// above whatever platform tabs it has. See places.ts.
+const places = buildPlaces(
+  [{ id: "birds", name: "Birds", home: "/apps/birds", ownScreen: true, projectSlug: "birds", hasFiles: true }],
+  icons,
+);
 const home = places.find((p) => p.id === "home") as ShellPlace;
 const birds = places.find((p) => p.id === "app:birds") as ShellPlace;
 

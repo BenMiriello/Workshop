@@ -33,6 +33,22 @@ router = APIRouter()
 # that the ADR's migration posture says must land with its frontend edit.
 
 
+class AppSurface(BaseModel):
+    """Where an app opens and which per-app tabs it has
+    (`services/app_surface.py`). Closed: every field is filled by the resolver.
+
+    `tabs` is already filtered to what this app can hold, in the app's own
+    order when it declared one. `project_slug` and `files` are the FACTS behind
+    that filter, carried so the client can word an empty state with the same
+    reason the tab list was built from instead of guessing at it."""
+
+    home: str
+    tabs: list[str]
+    declared: bool
+    project_slug: str | None = None
+    files: bool
+
+
 class LauncherCard(BaseModel):
     """A launcher card. The display fields come from the app spec's own `card`
     and vary by app -- an external app carries `href`/`external`/`probe` where a
@@ -50,6 +66,8 @@ class LauncherCard(BaseModel):
     href: str | None = None
     external: bool | None = None
     probe: str | None = None
+    # Absent only for an app that is a link out of this shell.
+    surface: AppSurface | None = None
 
 
 class LauncherCards(BaseModel):

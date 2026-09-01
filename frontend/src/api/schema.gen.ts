@@ -3626,74 +3626,48 @@ export interface paths {
         put?: never;
         /**
          * Compact Thread
-         * @description Reclaim the LIVE window: drop the session, keep the transcript.
+         * @description Compact this chat by running the CLI's OWN `/compact` on its session.
          *
-         *     THE CLI CAN ACTUALLY DO THIS, and this docstring said the opposite for
-         *     months. Corrected 2026-08-27; the paragraph below is kept because the wrong
-         *     version was reasoned from twice and the reason it was wrong is the useful
-         *     part.
+         *     WORKSHOP NO LONGER SUMMARIZES ANYTHING ITSELF. Until 2026-08-29 this
+         *     endpoint ran a custom fold: a Haiku call summarized everything but a
+         *     ~4000-token tail, the summary was stored on the thread, the cut moved, and
+         *     the live session was detached so the next turn would re-assemble
+         *     `summary + tail`. That was ~280 lines carrying a token-budget walk, a
+         *     user-turn alignment pass, a "meaningful fold" guardrail, a deferred landing
+         *     task and a cancel protocol, and every one of those knobs was an answer to
+         *     the question "what should a compaction keep" -- a question this project
+         *     never actually had to answer, because the provider answers it.
          *
-         *     What it used to say: `/compact` sent as a raw turn is parsed, in headless
-         *     mode (`-p --input-format stream-json`), into a local-command block that
-         *     nothing executes. The turn at 2026-08-12T05:10:18Z came back in two seconds
-         *     having recorded
+         *     So it is deleted and the provider's own compaction is what runs. The CLI
+         *     compacts here (measured 2026-08-27 on 2.1.143 with this backend's own spawn
+         *     flags: `trigger:manual`, 27,088 -> 2,104 tokens in 17.4s), and it is already
+         *     what happens UNASKED when a window fills -- 29 `trigger:auto` boundaries on
+         *     record. The button and the automatic path now do the same thing, which they
+         *     did not before.
          *
-         *         user    <command-name>/compact</command-name>
-         *         system  local_command
-         *                 <local-command-caveat> ... DO NOT respond to these messages
+         *     IT IS A TURN, because that is what a slash command is. `_is_raw_command`
+         *     sends a single-line "/" message to the CLI verbatim instead of wrapping it
+         *     in a prompt, which is what makes the CLI register it as a command rather
+         *     than read it as text. `build_streaming` already handles the rest end to end:
+         *     it watches for the `compact_boundary` meta event, replaces the CLI's
+         *     context-usage dump with one sentence, writes the boundary the transcript
+         *     draws its divider from, and re-derives the window reading.
          *
-         *     with no `compact_boundary` behind it.
+         *     SO THIS DOES NOT WAIT FOR IT. It returns the turn that is now running; the
+         *     divider, the reply and the new meter reading arrive on the change stream
+         *     like any other turn's output. Reporting a fold count here is not possible
+         *     any more and was never worth much: the count Workshop reported described
+         *     Workshop's own fold, not the provider's.
          *
-         *     THAT WAS A FALSE NEGATIVE. Those exact records are also what a WORKING
-         *     `/compact` writes, and the boundary lands at the END of the operation, which
-         *     takes 12 to 190 seconds in every case on record. The test read the
-         *     transcript two seconds in. Re-measured 2026-08-27 on the installed 2.1.143,
-         *     spawned with this backend's own flags: a `/compact` turn ran, recorded
-         *     `trigger:manual`, 27,088 -> 2,104 tokens, `durationMs` 17,446, and
-         *     `<local-command-stdout>Compacted </local-command-stdout>`; a resumed turn
-         *     afterwards started from the collapsed context. It takes focus instructions
-         *     as `<command-args>` too. Corroborating, from the session files: three
-         *     `trigger:manual` boundaries fired in headless runs on 2026-08-12 itself,
-         *     and 29 `trigger:auto` ones have fired since at 126k-153k tokens. The
-         *     control-request list quoted here (initialize, set_model, ... set_color) is
-         *     real and still contains no compaction verb; that only means there is no
-         *     CONTROL-PROTOCOL trigger, which is not the same as no trigger.
+         *     NOTHING IS DELETED, still. The transcript is append-only and untouched.
+         *     Compaction shrinks what the MODEL is handed, never what the operator can
+         *     read.
          *
-         *     NONE OF THAT CHANGES WHAT THIS ENDPOINT DOES TODAY. It still runs Workshop's
-         *     own fold, and whether it should keep doing so now that the CLI's own
-         *     compaction is reachable is an open operator decision, deliberately not
-         *     settled here. See section 1 and section 3 of
-         *     docs/platform-redesign/chat-context-and-compaction-2026-08-25.md.
-         *
-         *     DETACHING IS HALF THE ANSWER, and on its own it is not compaction. The next
-         *     turn mints a fresh session and re-assembles the prompt, so the CLI's private
-         *     copy of the conversation goes. But the prompt it re-assembles is the whole
-         *     transcript, so a long chat comes straight back to where it was. Measured on
-         *     2026-08-12: the cut was recorded, the meter subtracted it, and the prompt
-         *     still carried every message from before it, because `_assemble_full_prompt`
-         *     never applied the cut at all. Both this and /clear were bookkeeping.
-         *
-         *     So this folds, and the fold is the point:
-         *
-         *       1. everything except roughly the last `_COMPACT_KEEP_TAIL_TOKENS` worth
-         *          of the tail (walked newest to oldest, see `_fold_summary`) is summarized
-         *          into a running summary stored on the thread;
-         *       2. the cut moves to that point, so the prompt carries `summary + tail`;
-         *       3. the live session is detached, so the next turn actually uses it.
-         *
-         *     NOTHING IS DELETED. The log is append-only and untouched: the operator's
-         *     transcript still shows every message, and the summary stands in only for
-         *     what the MODEL is handed. A `boundary` event records the fold, so the
-         *     divider in the transcript is read rather than guessed and says the same
-         *     thing on every device.
-         *
-         *     IT REPORTS WHAT HAPPENED, including nothing. The summarizer is a model call
-         *     and it can fail; when it does, this says so and changes nothing, rather than
-         *     answering 200 over a fold that did not happen. That failure is not
-         *     hypothetical: this call passed its whole prompt as an argv element until
-         *     today, so it died with E2BIG on exactly the threads long enough to need
-         *     compacting, the error was swallowed as best-effort, and the chat said
-         *     "Compacted. Earlier messages are now a summary." over it.
+         *     THE SCOPE'S WORKING STATE IS STILL WRITTEN, and it is a separate feature
+         *     that happened to ride on the fold's summary. See `_write_working_state`:
+         *     one note per scope, so a chat that does not exist yet can continue from
+         *     this one. It runs in the background off the transcript as it stands right
+         *     now, and never delays or fails the compaction.
          */
         post: operations["compact_thread_chat_threads__thread_id__compact_post"];
         delete?: never;
@@ -9386,22 +9360,50 @@ export interface components {
             /** Agents */
             agents: components["schemas"]["RosterAgent"][];
         };
-        /** AppChat */
+        /**
+         * AppChat
+         * @description The SAME summary `GET /api/chat/threads` returns, narrowed to one app.
+         *
+         *     The four fields below the timestamps were missing, so this endpoint could
+         *     not describe a chat the way the global list does and the app's Chats tab
+         *     rendered bare titles. A response model that does not declare a field drops
+         *     it silently on the wire, which is how they went missing in the first
+         *     place.
+         */
         AppChat: {
             /** Agent Id */
             agent_id?: string | null;
             /** Archived At */
             archived_at?: string | null;
+            /** Branch Slug */
+            branch_slug?: string | null;
             /** Context Key */
             context_key?: string | null;
             /** Created At */
             created_at?: string | null;
             /** Id */
             id: string;
+            /**
+             * Last Message
+             * @default
+             */
+            last_message: string;
+            /** Last User At */
+            last_user_at?: string | null;
+            /**
+             * Message Count
+             * @default 0
+             */
+            message_count: number;
             /** Mode */
             mode: string;
             /** Model */
             model?: string | null;
+            /**
+             * Running
+             * @default false
+             */
+            running: boolean;
             /** Scope */
             scope?: string | null;
             /** Title */
@@ -9612,6 +9614,28 @@ export interface components {
             services: components["schemas"]["ServiceStatus"][];
             /** Slug */
             slug: string;
+        };
+        /**
+         * AppSurface
+         * @description Where an app opens and which per-app tabs it has
+         *     (`services/app_surface.py`). Closed: every field is filled by the resolver.
+         *
+         *     `tabs` is already filtered to what this app can hold, in the app's own
+         *     order when it declared one. `project_slug` and `files` are the FACTS behind
+         *     that filter, carried so the client can word an empty state with the same
+         *     reason the tab list was built from instead of guessing at it.
+         */
+        AppSurface: {
+            /** Declared */
+            declared: boolean;
+            /** Files */
+            files: boolean;
+            /** Home */
+            home: string;
+            /** Project Slug */
+            project_slug?: string | null;
+            /** Tabs */
+            tabs: string[];
         };
         /** AppTicketList */
         AppTicketList: {
@@ -11010,25 +11034,25 @@ export interface components {
         };
         /**
          * CompactResult
-         * @description Five exit paths, so most fields are optional: cancelled mid-flight,
-         *     nothing to fold, deferred behind a live turn, landed, or refused as busy.
-         *     `folded` is how many messages went behind the boundary.
+         * @description Compaction is the CLI's own `/compact`, run as a turn on this chat's
+         *     live session, so this reports what happened to that TURN and nothing else.
+         *
+         *     `turn_id` is the turn now running; the boundary, the divider and the new
+         *     window reading all arrive on the change stream the same way any turn's
+         *     output does. `queued` means the chat was busy and the command joined the
+         *     waiting queue, which is a real acceptance, not a refusal.
+         *
+         *     The old shape reported a fold Workshop computed itself (`folded`,
+         *     `summary_chars`, `session_reset`, `deferred`). There is no such fold any
+         *     more.
          */
         CompactResult: {
-            /** Busy */
-            busy?: boolean | null;
-            /** Cancelled */
-            cancelled?: boolean | null;
-            /** Deferred */
-            deferred?: boolean | null;
             /** Error */
             error?: string | null;
-            /** Folded */
-            folded?: number | null;
-            /** Session Reset */
-            session_reset?: boolean | null;
-            /** Summary Chars */
-            summary_chars?: number | null;
+            /** Queued */
+            queued?: boolean | null;
+            /** Turn Id */
+            turn_id?: string | null;
         };
         /** ConcurrencyPatch */
         ConcurrencyPatch: {
@@ -12827,6 +12851,7 @@ export interface components {
             probe?: string | null;
             /** Route */
             route?: string | null;
+            surface?: components["schemas"]["AppSurface"] | null;
             /** Tagline */
             tagline?: string | null;
             /** Title */

@@ -1,4 +1,4 @@
-import { lazyPage } from "./lib/lazyPage";
+import { lazyPage, RouteSkeleton } from "./lib/lazyPage";
 import { runHref } from "./lib/jobs";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import Agents from "./pages/Agents";
@@ -15,6 +15,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
 import { Shell } from "./components/shell/Shell";
 import { AppProviders, AppSuspense, appRoutes } from "./apps/registry";
+import { useAppPlacesState } from "./apps/useAppPlaces";
 
 // LAZY BY ROUTE. Each of these is a page the app does not need to render its
 // first screen, and several drag heavy libraries behind them (Usage pulls
@@ -75,10 +76,26 @@ const AppDeploysTab = lazyPage(() => import("./pages/apps/tabs/AppDeploysTab"));
 
 // Deep-link / mobile-shell compatibility: the builder work pane moved from
 // /agents/build/:slug to /agents/:slug/chat. Keep old links working.
-/** An app's base path lands on its first tab. */
+/** An app's base path lands on the surface the app chose.
+ *
+ *  This used to be a hardcoded `/chats`, which is the whole of ticket 7d8d733a:
+ *  every app with no bundled UI opened on a generic chat list, because this one
+ *  line decided it for all of them. The app's landing is resolved from its own
+ *  declaration (backend/services/app_surface.py) and reaches here through the
+ *  launcher, so it is the SAME answer the dock tile and the launcher card give.
+ *
+ *  It waits for that answer rather than guessing. A redirect is a one-way move:
+ *  guessing `/chats` and correcting it a moment later is exactly the landing
+ *  nobody chose, and the operator would be on it before the correction arrived.
+ *  An app the platform does not know still falls back to its chat list, which
+ *  is the one tab every app has. */
 function AppHomeRedirect() {
   const { appSlug = "" } = useParams();
-  return <Navigate to={`/apps/${encodeURIComponent(appSlug)}/chats`} replace />;
+  const { apps, ready } = useAppPlacesState();
+  if (!ready) return <RouteSkeleton />;
+  const slug = encodeURIComponent(appSlug);
+  const app = apps.find((a) => a.id === appSlug);
+  return <Navigate to={app?.landing ?? `/apps/${slug}/chats`} replace />;
 }
 
 function AgentBuildRedirect() {

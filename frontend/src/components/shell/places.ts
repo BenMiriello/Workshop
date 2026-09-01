@@ -14,32 +14,39 @@
 // list for the dock to hold. See
 // docs/platform-redesign/app-is-the-entity-2026-08-20.md.
 //
-// STAGE C IS BUILT (2026-08-20): every app place gets the same eight-row page
-// list -- App, Chats, Agents, Memory, Files, Tickets, Runs, Deploys -- backed
-// by GET /api/apps/{id} and its nested collections (routes/apps.py). This
-// used to be one row per app because the collections hung off a separate
-// PROJECT registry the dock never read; now every collection is a real
-// /api/apps/{id}/... route and an app's page list is the same eight rows
-// whether or not that app happens to have a linked project tree.
+// AN APP'S PAGE LIST IS THE APP'S, not one fixed set of eight rows (changed
+// 2026-09-01, ticket 7d8d733a). Stage C gave every app the same eight -- the
+// app plus Chats, Agents, Memory, Files, Tickets, Runs, Deploys -- on the
+// reasoning that every one of them is a real route over a real
+// /api/apps/{id}/... collection, and that an honestly-empty tab beats a fake
+// one. Both halves of that are true and it was still the wrong answer: five of
+// the seven can only ever be empty for an app with no linked working tree, so
+// the operator opened app after app onto rows that existed to apologise.
 //
-// AN APP WITH NO LINKED PROJECT TREE still gets all eight rows, and five of
-// them (Files, Tickets, Runs, Deploys, Agents) are honestly empty there, with
-// the page itself saying why. That is not a nav
-// row with nothing behind it: the route is real, the fetch is real, and the
-// answer is a real, explained empty list -- never a 404, never another app's
-// data. Chats and Memory are real and non-empty-by-default for every app,
-// linked or not (services/apps.py chats_for_app / notes_for_app need no
-// project link at all).
+// Two things decide the list now, and neither of them is a branch on an app:
+//
+//   * WHAT THE APP CAN HOLD. `tabsForApp` in pages/apps/tabs/appTabState.ts,
+//     off the facts the backend resolves once per app (a linked project tree,
+//     a file root). A tab that can never be anything but empty is not drawn.
+//   * WHAT THE APP DECLARED. `backend/services/app_surface.py` reads a
+//     `surface` block from the app's own manifest or its registry record: the
+//     tabs it wants, in its order, and the surface it opens on.
+//
+// AND AN APP OPENS ON WHAT IT CHOSE. `landing` is the app's own answer,
+// resolved by the backend so the dock and the launcher grid cannot send the
+// operator to two different places. Absent a declaration it is the app's first
+// available tab -- which is still a real choice about a real app rather than
+// the hardcoded chat list every app used to land on.
 //
 // EVERY PAGE HERE RESOLVES TO A ROUTE THAT EXISTS. A row that navigates
 // nowhere is worse than a missing row: it teaches the operator the nav lies.
 
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
-// The seven per-app tab rows, in the operator's own order. One list, read by
+// Which per-app tab rows this app gets, and in which order. One rule, read by
 // both this file (the page column) and App.tsx (the route table), so the two
 // can never drift apart on what a tab is called or where it lives.
-import { APP_TABS } from "../../pages/apps/tabs/appTabState";
+import { tabsForApp, type AppTabFacts } from "../../pages/apps/tabs/appTabState";
 
 export type PlaceKind = "home" | "chats" | "app" | "settings";
 
@@ -62,6 +69,10 @@ export type ShellPlace = {
    *  is the fallback, which is what makes it the root. */
   prefixes: string[];
   pages: ShellPage[];
+  /** Where this place opens when nothing is remembered about it, when it is
+   *  not simply the first page. An app declares this (see `landingFor`); the
+   *  platform places do not, because their first row IS their landing. */
+  landing?: string;
   /** A platform place's glyph. Home and All chats are platform nav, so their
    *  icons ARE imports; an app's is not. See `icon` below. */
   Icon?: ComponentType<LucideProps>;
@@ -85,9 +96,22 @@ export type ShellPlace = {
 export type AppDescriptor = {
   id: string;
   name: string;
+  /** The app's BASE path: its route prefix, and the stem every tab URL is
+   *  built from. Not necessarily where it opens -- see `landing`. */
   home: string;
   icon?: string;
-};
+  /** Where the app opens, resolved from its own declaration by
+   *  backend/services/app_surface.py. Absent while the platform's answer is
+   *  still in flight, in which case the first tab row stands in. */
+  landing?: string;
+  /** The tab ids this app declared, in its order, or absent for "every tab it
+   *  can have, in the platform's order". */
+  tabs?: readonly string[];
+  /** Whether this app has its OWN screen at `home`. An app that ships UI gets
+   *  a row for it above its tabs; one that does not would get a row pointing
+   *  at a redirect, which is a row to nowhere. */
+  ownScreen?: boolean;
+} & Partial<AppTabFacts>;
 
 function matchesPrefix(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(prefix + "/");
@@ -135,9 +159,13 @@ export function pageFor(place: ShellPlace, pathname: string): ShellPage | null {
   return best;
 }
 
-/** The path a place opens on when nothing is remembered about it. */
+/** The path a place opens on when nothing is remembered about it.
+ *
+ *  An app's `landing` is its own declaration and outranks its first row: an app
+ *  may keep Chats in its column while opening on its tickets. Everything else
+ *  opens on its first page, which is the same answer this always gave. */
 export function landingFor(place: ShellPlace): string {
-  return place.pages[0]?.to ?? "/";
+  return place.landing ?? place.pages[0]?.to ?? "/";
 }
 
 /**
@@ -237,28 +265,39 @@ export function buildPlaces(
     ],
   };
 
-  const appPlaces: ShellPlace[] = apps.map((app) => ({
-    id: `app:${app.id}`,
-    kind: "app" as const,
-    name: app.name,
-    prefixes: [app.home],
-    icon: app.icon,
-    defaultColumnOpen: false,
-    // EIGHT ROWS, the same set for every app: the app's own screen plus the
-    // seven tabs in `APP_TABS`, each a real route backed by a real
-    // /api/apps/{id}/... collection (routes/apps.py). No per-app branch here
-    // -- see the module comment above for which rows are honestly empty on an
-    // unlinked app and why that is not the same thing as a fake row.
-    pages: [
-      { id: "app", label: app.name, to: app.home, Icon: icons.apps },
-      ...APP_TABS.map((t) => ({
+  const appPlaces: ShellPlace[] = apps.map((app) => {
+    // THE ROWS THIS APP HAS, not a fixed eight. See the module comment: the
+    // rule is `tabsForApp`, the facts come from the app's resolved surface,
+    // and no branch here knows which app it is looking at.
+    const tabs = tabsForApp(app.tabs, {
+      projectSlug: app.projectSlug ?? null,
+      hasFiles: app.hasFiles ?? false,
+    });
+    const pages: ShellPage[] = [
+      // An app that ships its own screens gets a row for them, first. One that
+      // does not gets no such row: `/apps/<slug>` is only a redirect for it, so
+      // the row would point at its own tab list.
+      ...(app.ownScreen
+        ? [{ id: "app", label: app.name, to: app.home, Icon: icons.apps }]
+        : []),
+      ...tabs.map((t) => ({
         id: t.id,
         label: t.label,
         to: `${app.home}${t.suffix}`,
         Icon: icons[t.id] ?? icons.apps,
       })),
-    ],
-  }));
+    ];
+    return {
+      id: `app:${app.id}`,
+      kind: "app" as const,
+      name: app.name,
+      prefixes: [app.home],
+      icon: app.icon,
+      defaultColumnOpen: false,
+      landing: app.landing,
+      pages,
+    };
+  });
 
   return [home, chats, ...appPlaces, settings];
 }

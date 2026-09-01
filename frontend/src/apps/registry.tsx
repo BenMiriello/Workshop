@@ -417,8 +417,10 @@ export function appPlaces(): {
   name: string;
   home: string;
   icon?: string;
+  landing: string;
+  ownScreen: true;
 }[] {
-  const out: { id: string; name: string; home: string; icon?: string }[] = [];
+  const out: ReturnType<typeof appPlaces> = [];
   for (const a of APPS) {
     const paths = Object.keys(a.crumbs).sort((x, y) => x.length - y.length);
     const home = a.link?.to ?? paths[0];
@@ -428,6 +430,12 @@ export function appPlaces(): {
       name: a.link?.label ?? a.crumbs[home]?.label ?? a.id,
       home,
       icon: a.icon,
+      // An app in THIS list ships its own screens, so its home is where it
+      // opens. That is the declaration this file has always carried; it just
+      // had no name until the platform grew one for apps that make it
+      // elsewhere (backend/services/app_surface.py).
+      landing: home,
+      ownScreen: true,
     });
   }
   return out;

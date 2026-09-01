@@ -8,8 +8,8 @@ import { menuFocusMove, placeMenuRows, placeMenuSections } from "./placeMenu";
 const icons = new Proxy({} as Record<string, typeof Bot>, { get: () => Bot });
 
 const APPS = [
-  { id: "widgets", name: "Widgets", home: "/apps/widgets" },
-  { id: "gizmo", name: "Gizmo", home: "/apps/gizmo" },
+  { id: "widgets", name: "Widgets", home: "/apps/widgets", ownScreen: true },
+  { id: "gizmo", name: "Gizmo", home: "/apps/gizmo", ownScreen: true },
 ];
 
 const places = buildPlaces(APPS, icons);

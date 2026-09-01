@@ -922,7 +922,12 @@ def launcher_cards() -> list[dict[str, Any]]:
 
     Each card carries display fields (title/tagline/icon/route|href) plus the
     app id and, from the identity manifest, its `agent_button` preference so the
-    launcher and in-app assistant dock derive entirely from this data."""
+    launcher and in-app assistant dock derive entirely from this data.
+
+    It also carries the app's resolved SURFACE (`services/app_surface.py`):
+    where the app opens and which per-app tabs it has. Both the launcher grid
+    and the shell's dock read this list, so resolving it once here is what
+    stops the two from sending the operator to different places."""
     from services import manifests
 
     cards: list[dict[str, Any]] = []
@@ -969,14 +974,45 @@ def launcher_cards() -> list[dict[str, Any]]:
                 "title": row.get("name") or slug,
                 "tagline": "",
                 "icon": row.get("icon"),
-                # The generic per-app tabs are the only surface an app without a
-                # spec has, and chats is the one every app has something in.
-                "route": f"/apps/{slug}/chats",
+                # The generic per-app tabs are the only surface an app without
+                # a spec has. WHICH of them it opens on is the app's to say --
+                # `_attach_surfaces` below fills `route` from the declaration,
+                # and until 2026-09-01 this line spelled `/chats` for every one
+                # of them, which is the landing nobody chose.
             })
     except Exception:  # pragma: no cover - the launcher must not die on this
         log.warning("could not read app rows for the launcher", exc_info=True)
 
-    return _self_first(cards)
+    return _self_first(_attach_surfaces(cards))
+
+
+def _attach_surfaces(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Resolve each card's surface and let it decide the card's `route`.
+
+    An external app (an `href`, no route of ours) is a link out rather than a
+    place in this shell, so it has no per-app tabs and keeps its href.
+
+    An app that ships its own screens declares its home as the card's `route`,
+    and that stays its home unless it also declares a `surface` block -- which
+    is the more specific statement and wins. An app that declares neither opens
+    on the first tab the platform can actually serve it, which is what makes
+    "an app with no bundled UI" stop meaning "an app that opens on a chat
+    list": an app with no tickets, runs, deploys or agents no longer has those
+    tabs at all, so the set it opens from is the set it really has."""
+    from services import app_surface
+
+    for card in cards:
+        if card.get("external") or (card.get("href") and not card.get("route")):
+            continue
+        app_id = card.get("id") or ""
+        try:
+            surface = app_surface.surface_for(app_id, own_route=card.get("route"))
+        except Exception:  # pragma: no cover - the launcher must not die on this
+            log.warning("could not resolve the surface for %s", app_id, exc_info=True)
+            continue
+        card["surface"] = surface
+        card["route"] = surface["home"]
+    return cards
 
 
 def _self_first(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:

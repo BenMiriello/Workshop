@@ -7,15 +7,23 @@ import { APP_TABS } from "../../pages/apps/tabs/appTabState";
 // icon a row draws is the render's business.
 const icons = new Proxy({} as Record<string, typeof Bot>, { get: () => Bot });
 
+// Two apps that ship their own screens. `finance` has no linked working tree,
+// so five of the seven platform tabs can never hold anything for it; `birds`
+// has one and a file root, so it can have all seven. Neither declares a
+// `tabs` list, which is the "take everything you can have" default.
 const APPS = [
-  { id: "finance", name: "Finance", home: "/apps/finance" },
-  { id: "birds", name: "Birds", home: "/apps/birds" },
+  { id: "finance", name: "Finance", home: "/apps/finance", ownScreen: true },
+  {
+    id: "birds", name: "Birds", home: "/apps/birds", ownScreen: true,
+    projectSlug: "birds", hasFiles: true,
+  },
 ];
 
 const places = buildPlaces(APPS, icons);
 const home = places.find((p) => p.id === "home") as ShellPlace;
 const chats = places.find((p) => p.id === "chats") as ShellPlace;
 const birds = places.find((p) => p.id === "app:birds") as ShellPlace;
+const finance = places.find((p) => p.id === "app:finance") as ShellPlace;
 
 describe("placeFor", () => {
   it("puts an unclaimed route on Home rather than nowhere", () => {
@@ -105,18 +113,51 @@ describe("buildPlaces", () => {
     expect(home.icon).toBeUndefined();
   });
 
-  it("gives every app the same eight rows, each a real /api/apps/{id} route", () => {
-    // Stage C of app-is-the-entity-2026-08-20.md: an app's own screen plus
-    // Chats, Agents, Memory, Files, Tickets, Runs, Deploys, all backed by
-    // routes/apps.py -- real for every app, whether or not it happens to be
-    // linked to a project tree (five of the seven are honestly empty on an
-    // unlinked app, never a fake row with nothing behind it).
+  it("gives an app that can hold everything its own screen plus all seven tabs", () => {
+    // Every row a real route over a real /api/apps/{id}/... collection
+    // (routes/apps.py). This app has a linked tree and a file root, so nothing
+    // is filtered out and the list is the platform's full order.
     const home = birds.pages[0].to;
     expect(birds.pages.map((p) => p.id)).toEqual(["app", ...APP_TABS.map((t) => t.id)]);
     expect(birds.pages.map((p) => p.to)).toEqual([
       home,
       ...APP_TABS.map((t) => `${home}${t.suffix}`),
     ]);
+  });
+
+  it("does NOT draw a tab an app can never fill", () => {
+    // Ticket 7d8d733a. Finance has no linked working tree, so its tickets,
+    // runs, deploys and agents can only ever be empty and it has no files at
+    // all. Those rows used to be drawn anyway and explain themselves in an
+    // empty state, which is a nav row that exists to apologise.
+    expect(finance.pages.map((p) => p.id)).toEqual(["app", "chats", "memory"]);
+    expect(finance.pages.map((p) => p.to)).toEqual([
+      "/apps/finance", "/apps/finance/chats", "/apps/finance/memory",
+    ]);
+  });
+
+  it("takes an app's DECLARED tabs, in its order, and no others", () => {
+    // The declaration narrows and orders; it cannot conjure a tab the app
+    // cannot hold (`deploys` here), because that would put the apology back.
+    const [app] = buildPlaces(
+      [{
+        id: "ops", name: "Ops", home: "/apps/ops", projectSlug: "ops",
+        tabs: ["tickets", "chats", "deploys"], hasFiles: false,
+      }],
+      icons,
+    ).filter((p) => p.kind === "app");
+    expect(app.pages.map((p) => p.id)).toEqual(["tickets", "chats", "deploys"]);
+  });
+
+  it("gives no app-screen row to an app that ships no screens", () => {
+    // `/apps/<slug>` is only a redirect for such an app, so a row there would
+    // point at its own tab list.
+    const [app] = buildPlaces(
+      [{ id: "ops", name: "Ops", home: "/apps/ops", projectSlug: "ops", hasFiles: false }],
+      icons,
+    ).filter((p) => p.kind === "app");
+    expect(app.pages.map((p) => p.id)).not.toContain("app");
+    expect(app.pages[0].id).toBe("chats");
   });
 
   it("still lists no Activity entry (design doc section 8.3, not built yet)", () => {
@@ -139,6 +180,21 @@ describe("buildPlaces", () => {
     expect(landingFor(home)).toBe("/");
     expect(landingFor(chats)).toBe("/chats");
     expect(landingFor(birds)).toBe("/apps/birds");
+  });
+
+  it("lands an app on the surface it DECLARED, over its first row", () => {
+    // The whole of ticket 7d8d733a: an app opens where it said, not on
+    // whatever the platform happened to list first. An app may keep Chats in
+    // its column while opening on its ticket queue.
+    const [app] = buildPlaces(
+      [{
+        id: "ops", name: "Ops", home: "/apps/ops", projectSlug: "ops",
+        landing: "/apps/ops/tickets", hasFiles: false,
+      }],
+      icons,
+    ).filter((p) => p.kind === "app");
+    expect(app.pages[0].id).toBe("chats");
+    expect(landingFor(app)).toBe("/apps/ops/tickets");
   });
 });
 
