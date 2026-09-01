@@ -180,6 +180,14 @@ Measured surface today: 32 top-level pages, 13 pure redirects, 12 settings rows,
 
 **Per app:** Overview, **Work**, Chats, Memory, Files, Settings.
 
+> **BUILT 2026-09-01, in this order: Work, Overview, Chats, Memory, Files.**
+> Work is FIRST, not second. An app opens on its first tab
+> (`backend/services/app_surface.py`, `_resolve_home`), and the operator
+> reported an app opening somewhere he did not want on 2026-08-29, 08-31 and
+> twice on 09-01. None of what Overview holds (the autonomy brake, the
+> services, the deploys, the environment) is a thing you open an app to look
+> at. There is no Settings tab: what would have been on it IS Overview.
+
 **Work** is the new one and it absorbs four pages. **A branch is a row.**
 Collapsed it shows the name, the ticket, and the holder. Expanded it shows the
 threads on it and the state of its change. Each thread row carries its own
@@ -197,6 +205,11 @@ pill.
 
 - `/projects` and `/projects/:slug` (1801 lines). Project is not an entity; that
   was settled on 2026-08-20. The app's Overview and Work replace it.
+  **DONE 2026-09-01.** Both pages deleted, 2025 lines. `/projects` redirects to
+  `/apps` and `/projects/<slug>` to that app's Overview, which mounts the four
+  panels that lived nowhere else. The operator's word on it: "I think, as you
+  could see, if you understood what we were doing, you could see that that is
+  sort of being phased out and has no place anymore."
 - `/branches` and `Branches.tsx` (486 lines, imported by nothing).
 - `/runs`, `/changes`, `/deploys` as top-level pages: they become the app's Work
   view. `/runs` is already unreachable from nav and its own comment cites a nav
