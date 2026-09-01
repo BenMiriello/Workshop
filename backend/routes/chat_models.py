@@ -127,6 +127,14 @@ class ThreadSummary(BaseModel):
     context_key: str
     scope: str
     mode: str
+    # WHAT ADVANCES THIS THREAD WITHOUT A PERSON: off | on-message | schedule |
+    # on-ready-ticket (`chat_store.ARMED_MODES`). Always present, never null:
+    # "nothing advances it" is a real answer and it is most threads' answer.
+    armed: str = "off"
+    # WHICH ROLE DEFINITION IT RUNS UNDER, by free-text name. Null is a good
+    # value: an armed thread with no role continues on its own context.
+    # Independent of `armed`; neither implies the other.
+    role: str | None = None
     agent_id: str | None = None
     model: str | None = None
     title: str
@@ -241,6 +249,14 @@ class ThreadSettings(BaseModel):
     # nobody and trusted by nobody -- see chat_store._document.
     scope: str
     mode: str
+    # WHAT ADVANCES THIS THREAD WITHOUT A PERSON: off | on-message | schedule |
+    # on-ready-ticket (`chat_store.ARMED_MODES`). Always present, never null:
+    # "nothing advances it" is a real answer and it is most threads' answer.
+    armed: str = "off"
+    # WHICH ROLE DEFINITION IT RUNS UNDER, by free-text name. Null is a good
+    # value: an armed thread with no role continues on its own context.
+    # Independent of `armed`; neither implies the other.
+    role: str | None = None
     agent_id: str | None = None
     model: str | None = None
     title: str

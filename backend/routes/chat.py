@@ -156,8 +156,25 @@ class PostMessage(BaseModel):
     client_id: str | None = None
 
 
-class RenameThread(BaseModel):
-    title: str
+class PatchThread(BaseModel):
+    """The thread's own settings, as a partial write.
+
+    ONE PATCH, NOT A ROUTE PER FIELD. `title` was the only thing this endpoint
+    could set, under the name `RenameThread`, which is why `mode` ended up with
+    a POST of its own. `armed` and `role` are ordinary settings and go here.
+
+    An omitted key is left alone; `role: null` CLEARS the role, which is a real
+    write and is why the handler asks `model_fields_set` rather than testing for
+    None. `title` stays optional so the rename call that every client already
+    makes keeps working unchanged.
+    """
+
+    title: str | None = None
+    # See chat_store.ARMED_MODES. Out-of-range values clamp to `off` rather than
+    # 400: the failure direction for "what runs unasked" is a thread that does
+    # nothing.
+    armed: str | None = None
+    role: str | None = None
 
 
 class RescopeThread(BaseModel):
@@ -808,8 +825,22 @@ def _active_turn_payload(thread_id: str, meta: dict) -> dict | None:
 
 
 @router.patch("/threads/{thread_id}", response_model=cm.ThreadSettings, response_model_exclude_unset=True)
-async def rename(thread_id: str, body: RenameThread):
-    t = chat_store.rename_thread(thread_id, body.title)
+async def patch_thread(thread_id: str, body: PatchThread):
+    """Write this thread's settings. Only the keys present in the body change.
+
+    `armed` is what advances the thread without a person; `role` names the role
+    definition it runs under. They are independent, so both are ordinary
+    optional keys here and setting one never touches the other."""
+    sent = body.model_fields_set
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    if "title" in sent and body.title is not None:
+        t = chat_store.rename_thread(thread_id, body.title)
+    if "armed" in sent:
+        t = chat_store.set_thread_armed(thread_id, body.armed)
+    if "role" in sent:
+        t = chat_store.set_thread_role(thread_id, body.role)
     if t is None:
         raise HTTPException(404, "thread not found")
     return _without_messages(t)
@@ -1317,33 +1348,39 @@ async def spawn_task(thread_id: str, body: SpawnTask):
     # several seconds" is that, and the answer is that a button must not wait
     # for it. The canonical-hash tier is pure computation and stays.
     from services import task_dedup
-    result = task_dedup.dedup_add(
-        root, text=text, acceptance=acceptance,
-        priority=body.priority or 0,
-        effort=(body.effort or "").strip() or None,
-        type=(body.type or "").strip() or None,
-        source={"kind": "chat", "ref": thread_id},
-        # The operator asked for the work; the ASSISTANT wrote the spec. `source`
-        # records the first, `scoped_by` the second, and conflating them is what
-        # makes a bad spec untraceable — the field would say the operator wrote a
-        # paragraph a model actually wrote. Distilled-from-thread specs are the
-        # main way tickets get filed, so this is the common case, not an edge.
-        scoped_by="agent:chat",
-        # `todo`, both for "File ticket" and "File and run". This endpoint is only
-        # ever reached by the operator clicking a button in the ticket-drafts
-        # dialog or on a task-proposal card, having read and often edited the
-        # draft first. That click IS the approval, and making it land as a `draft`
-        # for a second approval would be the "say the magic word" step the
-        # operator has explicitly rejected.
-        #
-        # `draft` is for filings NOBODY looked at: a task-patch block the
-        # assistant emitted mid-reply (services/task_scope), the triager turning
-        # a note into a ticket, and imports from an external tracker.
-        status="todo",
-        # SOMEONE IS WATCHING A SPINNER, so the comparison that costs seconds
-        # runs after this returns (below) instead of inside it.
-        semantic=False,
-    )
+    # A refusal here is the acceptance gate (services/ticket_format): the dialog
+    # gets a 400 whose message says what would satisfy it, beside the draft it
+    # already has, rather than an unhandled 500 on a button click.
+    try:
+        result = task_dedup.dedup_add(
+            root, text=text, acceptance=acceptance,
+            priority=body.priority or 0,
+            effort=(body.effort or "").strip() or None,
+            type=(body.type or "").strip() or None,
+            source={"kind": "chat", "ref": thread_id},
+            # The operator asked for the work; the ASSISTANT wrote the spec. `source`
+            # records the first, `scoped_by` the second, and conflating them is what
+            # makes a bad spec untraceable — the field would say the operator wrote a
+            # paragraph a model actually wrote. Distilled-from-thread specs are the
+            # main way tickets get filed, so this is the common case, not an edge.
+            scoped_by="agent:chat",
+            # `todo`, both for "File ticket" and "File and run". This endpoint is only
+            # ever reached by the operator clicking a button in the ticket-drafts
+            # dialog or on a task-proposal card, having read and often edited the
+            # draft first. That click IS the approval, and making it land as a `draft`
+            # for a second approval would be the "say the magic word" step the
+            # operator has explicitly rejected.
+            #
+            # `draft` is for filings NOBODY looked at: a task-patch block the
+            # assistant emitted mid-reply (services/task_scope), the triager turning
+            # a note into a ticket, and imports from an external tracker.
+            status="todo",
+            # SOMEONE IS WATCHING A SPINNER, so the comparison that costs seconds
+            # runs after this returns (below) instead of inside it.
+            semantic=False,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     # The semantic comparison, off the request. It LINKS a near-duplicate rather
     # than merging one, because a merge decided after the operator has watched
     # his ticket appear would take it away again.

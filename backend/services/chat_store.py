@@ -94,6 +94,40 @@ def _clamp_mode(mode: str | None) -> str:
     return _LEGACY_CHAT_MODES.get(mode or "", DEFAULT_CHAT_MODE)
 
 
+# WHAT ADVANCES A THREAD WITHOUT A PERSON. The one field that decides whether a
+# thread works unasked (threads-branches-and-pages-2026-08-29 §1).
+#
+#   off              nothing advances it. The default, and what almost every
+#                    thread is: a conversation moves when someone types.
+#   on-message       an inbound message on the thread advances it, whoever sent
+#                    it -- a person, another thread, or a bridge.
+#   schedule         a clock advances it.
+#   on-ready-ticket  a ready ticket in the thread's scope advances it.
+#
+# `armed` and `role` are INDEPENDENT and neither implies the other. A thread can
+# be armed with no role (it continues with its own context, which is what
+# "nudge it along" means) or carry a role and never be armed. "Agent" is a
+# description of a thread that is armed, not a second kind of object -- which is
+# why there is no second entity, no conversion gesture, and no thread a person
+# cannot type into.
+ARMED_MODES = ("off", "on-message", "schedule", "on-ready-ticket")
+DEFAULT_ARMED = "off"
+
+
+def _clamp_armed(value: str | None) -> str:
+    """An armed setting the store will keep. Unknown -> off, which is the safe
+    direction: an unrecognised value must not make a thread work unasked."""
+    return value if value in ARMED_MODES else DEFAULT_ARMED
+
+
+def _clean_role(value: str | None) -> str | None:
+    """A role name, or None. Free text (Planner, Builder, Researcher) because
+    the human-facing name is the layer the closed write-authority enum never
+    had; `agent_authority._ROLE_WRITES` stays closed and stays separate."""
+    text_value = (value or "").strip()
+    return text_value[:64] or None
+
+
 # The operator's chosen default for NEW chats, overriding DEFAULT_CHAT_MODE.
 # Lives beside the threads it applies to, one small file per owner. A chat stores
 # its mode at creation, so changing this never rewrites a conversation that
@@ -523,6 +557,12 @@ def _document(meta: dict, messages: list[dict], seqs: list[int], cut_seq: int = 
     # `orchestrated` into `auto` on the way out, so no thread log has to be
     # rewritten for the enum to have collapsed.
     t["mode"] = _clamp_mode(t.get("mode"))
+    # CLAMPED for the same reason `mode` is: a thread written before the field
+    # existed carries nothing, and "nothing" has to read as `off` rather than as
+    # a missing key the client has to have an opinion about. `role` is genuinely
+    # nullable and stays absent-or-null.
+    t["armed"] = _clamp_armed(t.get("armed"))
+    t["role"] = _clean_role(t.get("role"))
     # THE SUMMARY IS THE RESOLVED BOUNDARY'S, OR THERE IS NONE. `meta.summary`
     # is thread-global and reaches here through the copy above; on its own that
     # made going back past a compaction incoherent, because the cut correctly
@@ -631,6 +671,12 @@ def create_thread(
         # nobody has configured must not silently lose its tools. See
         # set_thread_mcp_servers.
         "mcp_servers_enabled": None,
+        # What advances this thread without a person, and under what role
+        # definition. Written explicitly at creation so a thread's own file says
+        # `off` rather than leaving every reader to infer it from an absent key.
+        # See ARMED_MODES; the two are independent.
+        "armed": DEFAULT_ARMED,
+        "role": None,
         "title": title or "New chat",
         "created_at": now,
         "updated_at": now,
@@ -749,6 +795,11 @@ def _summary_row(thread_id: str) -> dict | None:
         # stored -- see `_document`.
         "scope": scope_tree.scope_for_context(ck),
         "mode": _clamp_mode(meta.get("mode")),
+        # WHAT ADVANCES THIS THREAD WITHOUT A PERSON, and under what role. Both
+        # on the row so the chat list can filter on "armed" without one call per
+        # thread -- which is what replaces the agent roster as a page.
+        "armed": _clamp_armed(meta.get("armed")),
+        "role": _clean_role(meta.get("role")),
         # WHO ANSWERS THIS CHAT, when that is an agent. An `agent:<slug>` chat is
         # answered by that agent, so the key IS the answer; `agent_id` carries
         # the historical case, a chat that was with an agent whose scope no
@@ -983,6 +1034,23 @@ def set_thread_mode(thread_id: str, mode: str) -> dict | None:
     a retired value maps forward (`orchestrated` -> `auto`) and anything else
     clamps to DEFAULT_CHAT_MODE."""
     return _patch(thread_id, mode=_clamp_mode(mode))
+
+
+def set_thread_armed(thread_id: str, armed: str | None) -> dict | None:
+    """Set what advances this thread without a person. See ARMED_MODES.
+
+    Clamps rather than raising, the same way `set_thread_mode` does: an
+    unrecognised value lands on `off`, so the failure direction is a thread that
+    does nothing rather than a thread that runs on a value nobody meant."""
+    return _patch(thread_id, armed=_clamp_armed(armed))
+
+
+def set_thread_role(thread_id: str, role: str | None) -> dict | None:
+    """Name the role definition this thread runs under, or None to clear it.
+
+    Independent of `armed`: setting a role does not arm a thread and clearing
+    one does not disarm it."""
+    return _patch(thread_id, role=_clean_role(role))
 
 
 def set_thread_model(thread_id: str, model: str | None) -> dict | None:
@@ -1438,6 +1506,13 @@ def note_auto_compact(thread_id: str) -> None:
     _meta, _msgs, seqs, _cut = folded
     at_seq = seqs[-1] if seqs else 0
     chat_log.append_sync(thread_id, {"kind": "boundary", "mode": "auto", "at_seq": at_seq})
+    # AND THE IMAGES WENT WITH IT. This is the one thing a compaction takes that
+    # its summary cannot give back, so the thread is marked as owing them and
+    # the next real turn re-attaches them. Measured; see
+    # services/attachment_carry. Local import: that module reads this one, so
+    # importing it at the top would close a cycle.
+    from services import attachment_carry
+    attachment_carry.note_dropped(thread_id)
 
 
 def set_summary(thread_id: str, summary: str, *, folded_through: int) -> dict | None:
@@ -1951,9 +2026,21 @@ def clear_agent_session(thread_id: str, slug: str) -> dict | None:
 def clear_thread_session(thread_id: str) -> dict | None:
     """Detach the thread from its claude session so the next turn starts a fresh
     one (and re-sends the assembled history, so nothing is forgotten). Used when
-    the session is gone from disk or a resume failed."""
+    the session is gone from disk or a resume failed.
+
+    "Nothing is forgotten" was never quite true. The re-assembled history is
+    TEXT, so it carries no image -- the same hole a compaction leaves. So the
+    images are marked as owed here too and the next real turn re-attaches them
+    (see services/attachment_carry). That is right for every caller: a rescope,
+    a fork, a branch switch, a session pruned off disk and a failed resume all
+    hand the next turn the transcript as prose. A `/clear` does NOT come through
+    here -- `clear_thread_context` drops `claude_session` itself, and drops
+    `turn_marks` in the same write, so an operator who has just discarded the
+    whole context is not handed their screenshots back."""
     if chat_log.read_meta(thread_id) is None:
         return None
+    from services import attachment_carry  # local: see note_auto_compact
+    attachment_carry.note_dropped(thread_id)
     return _patch(thread_id, claude_session=None)
 
 

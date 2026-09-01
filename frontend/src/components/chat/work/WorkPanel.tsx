@@ -277,6 +277,7 @@ function WorkBody({
       <>
         {problem}
         <WorkSettings
+          threadId={selfSessionId ?? null}
           scope={scope}
           chatMode={chatMode}
           onChooseChatMode={onChooseChatMode}

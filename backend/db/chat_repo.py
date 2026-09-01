@@ -619,8 +619,8 @@ def create_thread(s: Session, org_id: UUID | str, owner_user_id: UUID | str, *,
     cols = {"id": thread_id, "org_id": str(org_id),
             "owner_user_id": str(owner_user_id), "context_key": context_key,
             "scope": scope, "external_id": external_id, "title": title}
-    allowed = ("mode", "model", "effort", "permission_mode", "seed_title",
-               "title_source", "agent_slug", "summary",
+    allowed = ("mode", "armed", "role", "model", "effort", "permission_mode",
+               "seed_title", "title_source", "agent_slug", "summary",
                "claude_session", "voice_session", "context_tokens",
                "archived_at", "created_at", "updated_at")
     for k, v in fields.items():
@@ -685,7 +685,7 @@ def _thread_fields(meta: dict) -> dict:
     # Imported here, not at module scope: `services.chat_store` reaches this
     # module through chat_log -> chat_branches -> chat_repo, so a top-level
     # import would close that loop.
-    from services.chat_store import _clamp_mode
+    from services.chat_store import _clamp_armed, _clamp_mode, _clean_role
     from services import scope_tree
 
     ctx = meta.get("context_key") or "general"
@@ -722,6 +722,13 @@ def _thread_fields(meta: dict) -> dict:
         "claude_session": meta.get("claude_session") or None,
         "voice_session": meta.get("voice_session") or None,
         "agent_slug": meta.get("agent_id") or None,
+        # THE TWO KEYSTONE FIELDS, mirrored like every other mutable column.
+        # Clamped through `chat_store` rather than copied raw, for the same
+        # reason `mode` is: a thread whose file predates the fields carries no
+        # key at all, and the mirror must not write NULL into a NOT NULL column
+        # or an unrecognised value past the check constraint.
+        "armed": _clamp_armed(meta.get("armed")),
+        "role": _clean_role(meta.get("role")),
         "archived_at": _iso(meta.get("archived_at")),
         "created_at": _iso(meta.get("created_at")),
         "updated_at": _iso(meta.get("updated_at")),
@@ -749,6 +756,7 @@ def sync_thread_fields(s: Session, tid: UUID | str, meta: dict) -> None:
         "  permission_mode = :permission_mode, summary = :summary, "
         "  context_tokens = :context_tokens, claude_session = :claude_session, "
         "  voice_session = :voice_session, agent_slug = :agent_slug, "
+        "  armed = :armed, role = :role, "
         "  archived_at = :archived_at, updated_at = :updated_at, "
         "  state = COALESCE(state, '{}'::jsonb) || :state "
         "WHERE id = :tid"),
@@ -827,7 +835,7 @@ head_msg AS (
 -- NOT `t.scope`. The caller derives it from `t.context_key` through
 -- `scope_tree.scope_for_context`, the same way the file fold does, so selecting
 -- the column would only offer a second answer that can be stale.
-SELECT t.id, t.external_id, t.context_key, t.mode,
+SELECT t.id, t.external_id, t.context_key, t.mode, t.armed, t.role,
        t.agent_slug, t.model, t.title, t.seed_title, t.state,
        t.created_at, t.updated_at, t.archived_at,
        COALESCE(agg.message_count, 0) AS message_count,

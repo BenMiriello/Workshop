@@ -59,7 +59,7 @@ from services.latitude import LATITUDES
 # `services.latitude` at module scope, so importing it here does not drag the
 # service layer into the schema. This was two identical tuples until 2026-08-17;
 # `services/tasks.py` asked for exactly this pointing-one-at-the-other.
-from services.chat_store import CHAT_MODES
+from services.chat_store import ARMED_MODES, CHAT_MODES
 from services.tasks import EFFORTS, STATE_TYPES as STATE_CATEGORIES
 
 # --- controlled vocabularies -------------------------------------------------
@@ -1491,6 +1491,27 @@ class ChatThread(Base, Timestamps, SoftDelete):
     permission_mode: Mapped[str | None] = mapped_column(String(32))
     agent_slug: Mapped[str | None] = mapped_column(String(64))
 
+    # WHAT ADVANCES THIS THREAD WITHOUT A PERSON, and under what definition.
+    # The keystone of threads-branches-and-pages-2026-08-29 sec 1: one entity,
+    # two independent fields. `armed` is the only field that decides whether a
+    # thread works unasked; `role` names a role definition and is nullable,
+    # because an armed thread with no role continuing on its own context is the
+    # ordinary case, not a broken one. Neither implies the other.
+    #
+    # `ARMED_MODES` is imported from `services.chat_store` at the top of this
+    # file, for the same reason `CHAT_MODES` is: one list, not a mirrored
+    # restatement that can drift. Adding OR REMOVING a value there means a
+    # migration for `ck_chat_thread_armed` as well, and removing one means a
+    # data migration FIRST -- see revision `a4e2c7b19f30`.
+    #
+    # `role` is a free-text NAME (Planner, Builder, Researcher), deliberately
+    # not the closed maker/reviewer/triager/keeper/broker enum. That enum is a
+    # write-authority set (`agent_authority._ROLE_WRITES`), it stays closed, and
+    # it is a different question: what a thread is FOR versus what it may write.
+    armed: Mapped[str] = mapped_column(String(24), nullable=False,
+                                       server_default="off")
+    role: Mapped[str | None] = mapped_column(String(64))
+
     # chat_thread and chat_branch reference each other, so this FK is added
     # after both tables exist (`use_alter`). Composite on (id, org_id) like
     # every other FK here: see `_org_target`.
@@ -1520,6 +1541,7 @@ class ChatThread(Base, Timestamps, SoftDelete):
 
     __table_args__ = (
         CheckConstraint(_one_of("mode", CHAT_MODES), name="ck_chat_thread_mode"),
+        CheckConstraint(_one_of("armed", ARMED_MODES), name="ck_chat_thread_armed"),
         _org_target("chat_thread"),
         # The current branch must be a branch OF THIS THREAD. `id` on the left
         # is the thread's own id, matched against chat_branch.thread_id.
