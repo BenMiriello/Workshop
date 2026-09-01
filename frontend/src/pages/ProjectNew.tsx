@@ -4,6 +4,7 @@ import { Button, Card, Field, Input, Notice, PageHeader, SectionLabel, Segmented
 import { Markdown } from "@workshop/ui/markdown";
 import type { ProjectSensitivity } from "@shared/types";
 import { slugify } from "../components/chat/uiCardActions";
+import type { components } from "../api/schema.gen";
 
 // New-project flow. Single form. Submits to POST /api/projects/ which
 // scaffolds from the chosen template, writes the brief into PROJECT.md,
@@ -11,7 +12,9 @@ import { slugify } from "../components/chat/uiCardActions";
 // from GET /api/projects/templates: the backend is the single source of
 // truth for which templates exist and what they're labeled/hinted.
 
-type TemplateInfo = { slug: string; label: string; hint: string };
+// The project templates, named from the generated client. GET
+// /api/projects/templates answers a bare array of these.
+type TemplateInfo = components["schemas"]["ProjectTemplate"];
 
 const SENS_OPTIONS: SegmentedOption<ProjectSensitivity>[] = [
   { value: "private", label: "Private" },

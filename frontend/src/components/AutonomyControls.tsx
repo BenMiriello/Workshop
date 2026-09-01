@@ -4,6 +4,7 @@ import { Button, ConfirmDialog, Notice, Select, StatusDot, Toggle, SettingsSecti
 import { Power, Play, Square } from "lucide-react";
 import { describeAutonomy } from "../lib/autonomy";
 import { queryKeys } from "../lib/queryKeys";
+import type { components } from "../api/schema.gen";
 
 // Autonomy controls. The global cron-autonomy pause (AUTONOMY_DISABLED) and the
 // queue runner. The AUTONOMY_DISABLED switch is operationally load-bearing and
@@ -48,7 +49,10 @@ type AutonomyStatus = {
 // defaulted, so this list is what the operator names one from. The platform
 // repo is in it only when developer mode is on, because the gate would refuse
 // it otherwise and an option that always fails is not an option.
-type RunTarget = { key: string; label: string; dir: string };
+// A tree the runner may be pointed at, named from the generated client. The
+// hand-written copy knew three of its fields and not `scope`, which is what the
+// picker needs to say which queue a tree serves.
+type RunTarget = components["schemas"]["RunnerTarget"];
 
 const POLL_MS = 15_000;
 
@@ -101,7 +105,8 @@ export default function AutonomyControls() {
     queryFn: async (): Promise<RunTarget[]> => {
       const r = await fetch("/api/queue/runner/targets");
       if (!r.ok) throw new Error(String(r.status));
-      return ((await r.json()).targets || []) as RunTarget[];
+      const j: components["schemas"]["RunnerTargets"] = await r.json();
+      return j.targets ?? [];
     },
     refetchInterval: POLL_MS,
     ...POLLED,
@@ -130,7 +135,8 @@ export default function AutonomyControls() {
     queryFn: async (): Promise<{ running: boolean }> => {
       const r = await fetch(`/api/queue/runner?dir=${encodeURIComponent(scope)}`);
       if (!r.ok) throw new Error(String(r.status));
-      return { running: !!(await r.json()).running };
+      const j: components["schemas"]["QueueRunnerState"] = await r.json();
+      return { running: !!j.running };
     },
     // The runner's flock is per TREE, so "is one resident" is only answerable
     // once a tree is named. Nothing is probed until then, and the row says so

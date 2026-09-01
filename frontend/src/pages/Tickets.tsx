@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import { Button, Card, Field, Input, Modal, PageActionBar, Row, Select, Skeleton, Stack, StateBlock, Textarea, shortHttpError } from "@workshop/ui";
+import { Button, Card, Field, Input, Modal, Notice, PageActionBar, Row, Select, Skeleton, Stack, StateBlock, Textarea, shortHttpError } from "@workshop/ui";
 import { type Task, cleanTitle, scopeLabel, ticketHref } from "../lib/tasks";
 import type { components } from "../api/schema.gen";
 import { rowTotal } from "../lib/pageTotal";
@@ -153,8 +153,8 @@ export default function Tickets() {
     queryKey: queryKeys.tasks.scopes(),
     queryFn: async (): Promise<string[]> => {
       const r = await fetch("/api/tasks/scopes");
-      const j = r.ok ? await r.json() : { scopes: [] };
-      return orderScopes(j.scopes ?? []);
+      const j: components["schemas"]["ScopesOut"] | null = r.ok ? await r.json() : null;
+      return orderScopes(j?.scopes ?? []);
     },
     staleTime: 60_000,
   });
@@ -165,8 +165,8 @@ export default function Tickets() {
     queryFn: async (): Promise<LabelCount[]> => {
       const p = labelScope ? `?scope=${encodeURIComponent(labelScope)}` : "";
       const r = await fetch(`/api/tasks/labels${p}`);
-      const j = r.ok ? await r.json() : { labels: [] };
-      return (j.labels ?? []) as LabelCount[];
+      const j: components["schemas"]["LabelsOut"] | null = r.ok ? await r.json() : null;
+      return (j?.labels ?? []) as LabelCount[];
     },
     staleTime: 30_000,
   });
@@ -176,8 +176,8 @@ export default function Tickets() {
     queryFn: async (): Promise<LabelCount[]> => {
       const p = labelScope ? `?scope=${encodeURIComponent(labelScope)}` : "";
       const r = await fetch(`/api/tasks/assignees${p}`);
-      const j = r.ok ? await r.json() : { assignees: [] };
-      return (j.assignees ?? []) as LabelCount[];
+      const j: components["schemas"]["AssigneesOut"] | null = r.ok ? await r.json() : null;
+      return (j?.assignees ?? []) as LabelCount[];
     },
     staleTime: 30_000,
   });
@@ -406,9 +406,17 @@ export default function Tickets() {
 }
 
 // ---- New ticket -------------------------------------------------------------
-// Scope, title, description. Nothing else: every other field is either empty on
-// every live ticket or has a sensible default, and a create form that asks for
-// nine things is the form people stop filling in.
+// Scope, title, description, and the check that says it is done. Nothing else:
+// every other field is either empty on every live ticket or has a sensible
+// default, and a create form that asks for nine things is the form people stop
+// filling in.
+//
+// ACCEPTANCE IS THE FOURTH FIELD BECAUSE THE SERVER REFUSES A TICKET WITHOUT IT.
+// Measured 2026-09-01: 208 open tickets, none of them carrying one, so every
+// ticket's finish line was a sentence in a 337-word body and a worker handed one
+// picked its own. It is a command a reviewer can run, not a restatement of the
+// objective; `services/ticket_format` owns the rule and the refusal wording, and
+// the refusal is shown here as a Notice rather than invented a second time.
 
 function CreateTicket({
   scopes,
@@ -424,6 +432,7 @@ function CreateTicket({
   const [scope, setScope] = useState(initialScope);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [check, setCheck] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -440,7 +449,10 @@ function CreateTicket({
       const r = await fetch(`/api/tasks`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ scope, title: clean, body: body.trim() }),
+        body: JSON.stringify({
+          scope, title: clean, body: body.trim(),
+          acceptance: { kind: "command", spec: check.trim() },
+        }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       onCreated(await r.json());
@@ -463,6 +475,10 @@ function CreateTicket({
       }
     >
       <Stack>
+        {/* A rejected submit is a LINE, not a region: the form is right there.
+            It used to ride the Title field's `error` slot, which put a refusal
+            about the acceptance check under the title. */}
+        {err && <Notice tone="error">{err}</Notice>}
         <Field label="Scope" htmlFor="new-ticket-scope">
           <Select
             id="new-ticket-scope"
@@ -475,7 +491,7 @@ function CreateTicket({
             ))}
           </Select>
         </Field>
-        <Field label="Title" htmlFor="new-ticket-title" error={err ?? undefined}>
+        <Field label="Title" htmlFor="new-ticket-title">
           <Input
             id="new-ticket-title"
             value={title}
@@ -490,6 +506,16 @@ function CreateTicket({
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder="What done looks like, where to start, what to leave alone."
+          />
+        </Field>
+        {/* Not optional, and the label says what it takes rather than
+            explaining the rule. The server states the rule when it refuses. */}
+        <Field label="Check that it is done" htmlFor="new-ticket-check">
+          <Input
+            id="new-ticket-check"
+            value={check}
+            onChange={(e) => setCheck(e.target.value)}
+            placeholder="npm run typecheck"
           />
         </Field>
       </Stack>

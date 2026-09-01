@@ -11,6 +11,7 @@ import {
   FolderPlus,
 } from "lucide-react";
 import { Button, Card, CardGrid, Divider, PageHeader, Notice, Row, SectionLabel, Segmented, Skeleton, StateBlock, StatusDot, Toggle, type SegmentedOption, type StatusKind, shortHttpError } from "@workshop/ui";
+import type { components } from "../api/schema.gen";
 
 // Apps page: a uniform grid of cards. Every app — internal or external — looks
 // the same here. Tap a card to enter the app. Privacy-on-glance: cards show
@@ -60,16 +61,12 @@ type AppCard = {
 // is manifest-driven (GET /api/base-apps/launcher): which apps appear, their
 // order, titles, icons, and routes all come from the installed-app catalog, not
 // from a hardcoded list here. A fresh instance installs nothing => empty roster.
-type LauncherApp = {
-  id: string;
-  title: string;
-  tagline: string;
-  icon: string;
-  route?: string;
-  href?: string;
-  external?: boolean;
-  probe?: string; // service-probe name for external apps (health dot)
-};
+// The launcher card, named from the generated client
+// (services/app_surface.LauncherCard). The hand-written copy declared `title`,
+// `tagline` and `icon` as REQUIRED strings; all three are `string | null` on
+// the route, so this page was written to render a card the server can send with
+// no title at all.
+type LauncherApp = components["schemas"]["LauncherCard"];
 
 // What icon this app declared. The frontend registry entry wins (it is the
 // app's own declaration for a compiled-in app), then the backend launcher
@@ -79,8 +76,8 @@ type LauncherApp = {
 // generic placeholder for anything in neither. AppGlyph resolves the string and
 // falls back to a monogram of the title, which names the app instead of
 // shrugging at it.
-const iconFor = (app: { id: string; icon: string }): string | undefined =>
-  appIcon(app.id) ?? app.icon;
+const iconFor = (app: { id: string; icon?: string | null }): string | undefined =>
+  appIcon(app.id) ?? app.icon ?? undefined;
 
 type LauncherState =
   | { kind: "loading" }
@@ -364,8 +361,8 @@ export default function Apps() {
     try {
       const r = await fetch("/api/base-apps/launcher");
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = (await r.json()) as { apps?: LauncherApp[] };
-      setLauncher({ kind: "loaded", apps: j.apps || [] });
+      const j = (await r.json()) as components["schemas"]["LauncherCards"];
+      setLauncher({ kind: "loaded", apps: j.apps ?? [] });
     } catch (e) {
       setLauncher({ kind: "error", message: e instanceof Error ? e.message : String(e) });
     }
@@ -468,11 +465,15 @@ export default function Apps() {
       ? launcher.apps.map((app) => ({
           key: app.id,
           icon: iconFor(app),
-          title: app.title,
-          tagline: app.tagline,
-          to: app.external ? undefined : app.route,
-          href: app.external ? app.href : undefined,
-          external: app.external,
+          // The route may send no title and no tagline: all three of these are
+          // `string | null` there, and were declared as required strings here.
+          // A card with no name falls back to the app's id rather than to a
+          // blank tile, which is what the old type made unrepresentable.
+          title: app.title ?? app.id,
+          tagline: app.tagline ?? "",
+          to: app.external ? undefined : (app.route ?? undefined),
+          href: app.external ? (app.href ?? undefined) : undefined,
+          external: app.external ?? undefined,
           status: statusFor(app),
         }))
       : [];

@@ -45,7 +45,10 @@ export type AppPlace = {
 async function fetchLauncher(): Promise<LauncherCard[]> {
   const r = await fetch("/api/base-apps/launcher");
   if (!r.ok) throw new Error(`launcher ${r.status}`);
-  const j = (await r.json()) as { apps?: LauncherCard[] };
+  // LauncherCards, named rather than re-described. This list decides which
+  // apps exist in the shell at all, so an envelope rename here would empty the
+  // whole app switcher and read as "no apps installed".
+  const j = (await r.json()) as components["schemas"]["LauncherCards"];
   return j.apps ?? [];
 }
 

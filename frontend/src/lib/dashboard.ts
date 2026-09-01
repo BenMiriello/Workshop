@@ -55,7 +55,8 @@ export const fetchThreads = () => get<ThreadSummary[]>("/api/chat/threads");
  *  from the rows, and the limit is set high enough that the count is the real
  *  one rather than the page's. */
 export const fetchRunning = (limit = 12) =>
-  get<{ items: Job[] }>(`/api/jobs?status=running&limit=${limit}`).then((p) => p.items ?? []);
+  get<components["schemas"]["Page_Job_"]>(`/api/jobs?status=running&limit=${limit}`)
+    .then((p) => p.items ?? []);
 
 /** The rolling budget window. Tokens, not money: this system has no price
  *  table, and a dollar figure would have to be invented. */

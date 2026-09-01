@@ -48,6 +48,7 @@ import { displayDefault,
   type UiCardSpec,
 } from "./uiCardActions";
 import { normalizeCardSpec } from "./cardSchema";
+import type { components } from "../../api/schema.gen";
 
 // ---- Extraction ------------------------------------------------------------
 // A parsed answer is an ordered list of markdown runs and ui-card blocks. A
@@ -207,7 +208,7 @@ function TaskScopeField({
     setScopes(null);
     fetch("/api/tasks/scopes")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))))
-      .then((j: { scopes?: string[] }) => {
+      .then((j: components["schemas"]["ScopesOut"]) => {
         if (cancelled) return;
         const list = j.scopes ?? [];
         // Always keep the prefilled scope selectable even if it has no store yet.
@@ -529,8 +530,8 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
     if (!isTaskProposal) return;
     let cancelled = false;
     fetch("/api/tasks/scopes")
-      .then((r) => (r.ok ? r.json() : { pickup: null }))
-      .then((j) => { if (!cancelled) setPickupMap(j.pickup ?? null); })
+      .then(async (r) => (r.ok ? ((await r.json()) as components["schemas"]["ScopesOut"]) : null))
+      .then((j) => { if (!cancelled) setPickupMap((j?.pickup ?? null) as PickupMap | null); })
       .catch(() => { /* falls back to the pure predicate */ });
     return () => { cancelled = true; };
   }, [isTaskProposal]);

@@ -56,6 +56,7 @@ import VoiceSettings from "./VoiceSettings";
 import { type UiCardCtx } from "./chat/uiCardActions";
 import { computeSupersededKeys } from "./chat/UiCard";
 import { queryKeys } from "../lib/queryKeys";
+import type { components } from "../api/schema.gen";
 
 // The unified chat. COMPOSITION over one store and a handful of hooks, each of
 // which owns one seam:
@@ -819,8 +820,8 @@ export default function Chat({
     queryKey: queryKeys.chat.mentionable(activeId),
     queryFn: ({ signal }) =>
       fetch(`/api/chat/threads/${encodeURIComponent(activeId!)}/mentionable`, { signal })
-        .then((r) => (r.ok ? r.json() : { agents: [] }))
-        .then((j) => (j.agents || []) as MentionableAgent[])
+        .then(async (r) => (r.ok ? ((await r.json()) as components["schemas"]["MentionableAgents"]) : null))
+        .then((j) => (j?.agents ?? []) as MentionableAgent[])
         .catch(() => [] as MentionableAgent[]),
     enabled: !!activeId,
     // The key RECURS: switching back to a thread is the same key again, and the
