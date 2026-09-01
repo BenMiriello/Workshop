@@ -264,7 +264,9 @@ export default function JobDetail() {
       // page's error region. Unchanged.
       try {
         const cr = await fetch(`/api/jobs?parent_id=${encodeURIComponent(id)}&limit=100`);
-        return cr.ok ? (((await cr.json()).jobs ?? []) as Job[]) : [];
+        // `items`, not `jobs`: Page[Job] since 7e4aacbf. The old key meant a
+        // run's child runs never appeared.
+        return cr.ok ? (((await cr.json()).items ?? []) as Job[]) : [];
       } catch {
         return [];
       }

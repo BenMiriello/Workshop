@@ -319,7 +319,9 @@ export default function Agents() {
         fetch("/api/jobs?limit=200"),
       ]);
       setProjects(pR.ok ? await pR.json() : []);
-      setJobs(jR.ok ? (await jR.json()).jobs || [] : []);
+      // `items`: Page[Job] since 7e4aacbf. The old `jobs` key meant every
+      // agent row showed no last run.
+      setJobs(jR.ok ? (await jR.json()).items || [] : []);
     } catch (e) {
       setErr(String(e));
     }

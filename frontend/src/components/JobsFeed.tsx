@@ -17,7 +17,10 @@ import { queryKeys } from "../lib/queryKeys";
 // PageHeader (the Work tab supplies its own) and moves Refresh inline with the
 // filter.
 
-type JobsResp = { jobs: Job[]; count: number };
+// GET /api/jobs answers Page[Job]: `items`, plus a `page` whose `total` is null
+// on this endpoint by design (ADR 0023 clause 1). Reading the pre-rename `jobs`
+// key left the Runs feed permanently empty; see pages/Tickets.tsx `TasksResp`.
+type JobsResp = { items: Job[]; page?: { total: number | null } };
 
 type StatusFilter = "all" | "running" | "awaiting_input" | "done" | "failed";
 
@@ -145,7 +148,7 @@ export default function JobsFeed() {
   const { refetch } = q;
   const refresh = useCallback(() => { void refetch(); }, [refetch]);
 
-  const jobs = data?.jobs ?? [];
+  const jobs = data?.items ?? [];
 
   const refreshBtn = (
     <Button size="sm" onClick={refresh} loading={loading}>

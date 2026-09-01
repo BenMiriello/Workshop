@@ -547,7 +547,9 @@ export default function ProjectDetail() {
       const r = await fetch(`/api/tasks?scope=${encodeURIComponent(taskScope)}&include_done=true`);
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       const d = await r.json();
-      setTasks(d.tasks as Task[]);
+      // `items`, not `tasks`: GET /api/tasks answers Page[Task] since 7e4aacbf.
+      // The old key read `undefined`, so this panel showed no tasks at all.
+      setTasks((d.items ?? []) as Task[]);
     } catch (e) {
       setTasksErr(String(e));
       setTasks([]);

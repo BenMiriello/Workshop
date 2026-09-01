@@ -23,6 +23,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button, Card, Field, Input, Modal, PageActionBar, Row, Select, Skeleton, Stack, StateBlock, Textarea, shortHttpError } from "@workshop/ui";
 import { type Task, cleanTitle, scopeLabel, ticketHref } from "../lib/tasks";
+import type { components } from "../api/schema.gen";
 import { queryKeys } from "../lib/queryKeys";
 import {
   PAGE_SIZE, apiQuery, clampPage, defaultFilters, isNarrowed, pageCount,
@@ -39,7 +40,20 @@ import {
   type LabelCount,
 } from "../components/tickets/TicketFilters";
 
-type TasksResp = { tasks: Task[]; count: number; total: number };
+// THE SERVER'S OWN STATEMENT OF THIS SHAPE, not a second copy of it.
+//
+// This was hand-written as `{tasks, count, total}`. `GET /api/tasks` stopped
+// answering in that shape on 2026-08-17 (7e4aacbf), when it moved to
+// `Page[Task]` -- `tasks` became `items` and `total` moved inside `page`, a
+// rename that route's own docstring spells out. Nothing failed: the hand-written
+// type still described the old shape, so `data.tasks` typechecked and was
+// `undefined` at runtime, and this page rendered "No tickets yet" over 188 open
+// tickets for two weeks. The board and ProjectDetail read the same dead fields.
+//
+// `schema.gen.ts` is generated from the routes and gated by
+// scripts/check_generated_client.py, so naming the generated type is what makes
+// the next rename a red typecheck here instead of a silently empty page.
+type TasksResp = components["schemas"]["Page_Task_"];
 
 export default function Tickets() {
   const nav = useNavigate();
@@ -180,12 +194,16 @@ export default function Tickets() {
   // corrected rather than shown empty.
   useEffect(() => {
     if (!data) return;
-    const safe = clampPage(page, data.total);
+    const safe = clampPage(page, data.page?.total ?? 0);
     if (safe !== page) goToPage(safe);
   }, [data, page, goToPage]);
 
-  const rows = data?.tasks ?? [];
-  const total = data?.total ?? 0;
+  // The cast narrows `status` only. The generated schema types it `string`
+  // because the route's Pydantic model does; `lib/tasks.Task` states the closed
+  // set the UI actually switches on. Same strings either way -- the field NAMES
+  // above are what the generated type is being relied on for.
+  const rows = (data?.items ?? []) as Task[];
+  const total = data?.page?.total ?? 0;
   const pages = pageCount(total);
   const narrowed = isNarrowed(urlFilters, view);
   // The board draws its own scope-spanning rows; the table only shows the scope

@@ -166,7 +166,9 @@ export default function TaskPanel({
     queryFn: async (): Promise<Task[]> => {
       const r = await fetch(endpoint);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      return ((await r.json()) as { tasks?: Task[] }).tasks ?? [];
+      // `items`: GET /api/tasks answers Page[Task] since 7e4aacbf. The old
+      // `tasks` key read `undefined`, so this panel listed nothing.
+      return ((await r.json()) as { items?: Task[] }).items ?? [];
     },
     refetchInterval: (query) => (open && anyDoing(query.state.data) ? POLL_MS : false),
     // `usePoll` runs a catch-up read on the way back from hidden, but only

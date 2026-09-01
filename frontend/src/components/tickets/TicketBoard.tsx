@@ -24,6 +24,7 @@ import {
   type TicketFilters, type TicketSort,
 } from "../../lib/ticketFilters";
 import { TagStrip, TicketKey, TicketMeta } from "./bits";
+import type { components } from "../../api/schema.gen";
 
 type LaneState = {
   rows: Task[];
@@ -51,8 +52,11 @@ function Lane({
       const p = laneQuery(filters, sort, status, limit);
       const r = await fetch(`/api/tasks?${p.toString()}`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = await r.json();
-      setState({ rows: j.tasks ?? [], total: j.total ?? 0, loading: false, err: null });
+      // `items` / `page.total`, the Page[Task] shape this route has answered in
+      // since 7e4aacbf. Reading the pre-rename `tasks` / `total` here left every
+      // lane permanently empty; see the note on `TasksResp` in pages/Tickets.tsx.
+      const j: components["schemas"]["Page_Task_"] = await r.json();
+      setState({ rows: (j.items ?? []) as Task[], total: j.page?.total ?? 0, loading: false, err: null });
     } catch (e) {
       setState((s) => ({
         ...s, loading: false, err: e instanceof Error ? e.message : String(e),
