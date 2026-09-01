@@ -507,20 +507,60 @@ of the line.
    Nothing in this plan needs a new document, and this one exists only because
    it was asked for.
 
-### 8.3 In flight as of this writing
+### 8.3 What this session actually did about it
 
-Six subagents, launched at the start of this session:
+Nineteen work streams, **47 commits**, run as parallel subagents and graded from
+the main thread rather than accepted on report. Every item in §8.2 is either
+built or explicitly blocked, and the blocked one is named.
 
-- an app opens to what it declares, not a generic chat list with seven tabs
-  (ticket `7d8d733a`, the most-repeated complaint in the record)
-- the chat branch/revert affordance, built to the settled 2026-08-29 model
-- durable wakeup, clock and notify, declared through the existing mechanism
-- the runner's interpreter and environment (§2)
-- the two unimplemented fresh-clone assertions plus the CLAUDE.md section (§7)
-- a measured plan-versus-reality ledger across all 153 design docs
-- web research on agent methodology, verification and handoff practice
+**§8.2 item 2 — executable acceptance:** built and refused at every filing door,
+including a PATCH door that was open twice over and had been silently DELETING
+runnable criteria when a ticket was saved from the UI. Ratchet pinned at 202.
 
----
+**§8.2 item 4 — the runner's environment:** fixed and independently verified.
+Ticket selection works in a cron-like environment again; it had been broken since
+2026-08-25. **Autonomy remains off by the operator's own choice** — the flag was
+not touched.
+
+**§8.2 item 5 — the fresh-clone assertion:** its two unimplemented halves now run
+for real. They fail, and the 2026-08-24 prediction is confirmed exactly: 20x
+`TS2307` from literal module specifiers in `registry.tsx`, and
+`ImportError: cannot import name 'location' from 'services'` from platform code.
+So driving `no_app_source` to zero would still not make a stranger's clone build.
+
+**§8.2 item 6 — the missing basic tools:** durable wakeup, clock and notify,
+proven live end-to-end (armed, process killed, alarm survived, fired at its time,
+the woken turn answered). It also found `_grants_background` returning False for
+every chat, so the durable-work paragraph had been reaching nobody.
+
+**§8.2 item 7 — verification:** `scripts/done.sh` plus a Stop hook. Done is now a
+machine decision with evidence — command output, exit codes, screenshots — and a
+turn cannot end by declaring itself finished. It blocked this session's own stop.
+
+**The audit's central finding, made executable:** `check_dead_surface.py` (knip
+for the frontend half, per the research) means "a change deletes the surface it
+replaces" now fails the build. That was the one invariant enforced by prose and
+the only one that had never held.
+
+**And a near-miss worth recording, because it is this document's own thesis.**
+The thread keystone was built complete, and its ORM declared two columns the live
+database did not have. Neither `apply.sh` nor `restart_backend.sh` ran alembic —
+there was no migration step in the deploy path at all — and a restart was already
+armed. Proven rather than predicted: a real ORM read returned
+`UndefinedColumn: column chat_thread.armed does not exist`. The permission
+classifier blocked the migration for two different agents, neither worked around
+it, and the work was **reverted to save the running app**. `apply.sh` now reports
+schema drift and refuses to restart ahead of it. The keystone is one operator
+command from re-landing, and Roles, the Work view, the Branches lens, deleting
+`/projects` and Settings 12-rows-to-9 all wait behind it.
+
+Health at the end: backend **4173 passed / 19 known** (from 4036), typecheck 0,
+frontend 1517 passed, design clean, app-name literals 479 -> 468, prompt layers 0.
+
+**What is deliberately NOT claimed:** six of the operator's tickets have code
+landed and still read `todo`. The backend-dependent ones could not be verified
+in-turn (§5.2), and marking them done on a claim is the exact failure this
+document is about.
 
 ## 8.4 What the outside evidence says, and where it corrects the above
 
