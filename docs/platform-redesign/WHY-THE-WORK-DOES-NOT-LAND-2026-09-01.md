@@ -476,7 +476,36 @@ made most often**, so the prioritisation every session performed was guesswork
 wearing the clothes of judgement. The capability that fixes it took an afternoon
 and paid for itself in one query.
 
-Dispatched the moment it surfaced.
+Dispatched the moment it surfaced — and the answer inverts part of this
+document's thesis, which is worth more than a confirmation would have been.
+
+**It was already fixed.** `efb38e6a`, 2026-08-29 14:33:59, **fifteen minutes
+after his last complaint about it**, deleted the second read-signal outright with
+the commit note "Three reverts on one rule means the rule is wrong." The
+operator's model — the working indicator's POSITION is the read signal, one fact,
+one signal — is what the app now implements, and it is precisely what he asked
+for on 2026-08-18: *"in my expectation of the system the logic of whether a
+message has been read and whether the working indicator is below it are the same
+or at least functionally equivalent."* The second cluster (a new message
+appearing at the bottom and then jumping) was fixed on 2026-08-25 and **he
+confirmed it himself the next day**.
+
+Verified live rather than assumed: real sends driven through the built origin
+with a MutationObserver recording every DOM state — 175 frames across a 2m22s
+turn, one ordering change, no committed message rendering dim.
+
+So the most-repeated complaint in the corpus is not an example of work not
+getting done. **It is an example of work getting done and never being closed
+out.** Sixteen occasions of asking, a correct fix three days ago, and no moment
+at which anyone said "this is fixed, look". The ticket did not know, the operator
+did not know, and every audit since — including this one, until an hour ago —
+carried it as an open wound.
+
+That is the same defect as §1 seen from the other side. A queue that cannot
+record what was asked also cannot record what was answered, and the cost of the
+second half is that real work gets no credit and gets re-litigated. The fix now
+carries a regression test that was proven to fail, so the seventeenth report
+cannot be about this.
 
 ---
 
