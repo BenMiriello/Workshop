@@ -1438,6 +1438,13 @@ def note_auto_compact(thread_id: str) -> None:
     _meta, _msgs, seqs, _cut = folded
     at_seq = seqs[-1] if seqs else 0
     chat_log.append_sync(thread_id, {"kind": "boundary", "mode": "auto", "at_seq": at_seq})
+    # AND THE IMAGES WENT WITH IT. This is the one thing a compaction takes that
+    # its summary cannot give back, so the thread is marked as owing them and
+    # the next real turn re-attaches them. Measured; see
+    # services/attachment_carry. Local import: that module reads this one, so
+    # importing it at the top would close a cycle.
+    from services import attachment_carry
+    attachment_carry.note_dropped(thread_id)
 
 
 def set_summary(thread_id: str, summary: str, *, folded_through: int) -> dict | None:
@@ -1951,9 +1958,21 @@ def clear_agent_session(thread_id: str, slug: str) -> dict | None:
 def clear_thread_session(thread_id: str) -> dict | None:
     """Detach the thread from its claude session so the next turn starts a fresh
     one (and re-sends the assembled history, so nothing is forgotten). Used when
-    the session is gone from disk or a resume failed."""
+    the session is gone from disk or a resume failed.
+
+    "Nothing is forgotten" was never quite true. The re-assembled history is
+    TEXT, so it carries no image -- the same hole a compaction leaves. So the
+    images are marked as owed here too and the next real turn re-attaches them
+    (see services/attachment_carry). That is right for every caller: a rescope,
+    a fork, a branch switch, a session pruned off disk and a failed resume all
+    hand the next turn the transcript as prose. A `/clear` does NOT come through
+    here -- `clear_thread_context` drops `claude_session` itself, and drops
+    `turn_marks` in the same write, so an operator who has just discarded the
+    whole context is not handed their screenshots back."""
     if chat_log.read_meta(thread_id) is None:
         return None
+    from services import attachment_carry  # local: see note_auto_compact
+    attachment_carry.note_dropped(thread_id)
     return _patch(thread_id, claude_session=None)
 
 

@@ -25,7 +25,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import (agent_slots, build_agents, chat_attachments, chat_drain,
+from services import (agent_slots, attachment_carry, build_agents,
+                      chat_attachments, chat_drain,
                       chat_log, chat_queue, chat_store, chat_worktree, leases,
                       llm_router, model_caps, ownership, reply_guard, turn_end,
                       worktrees)
@@ -2664,10 +2665,23 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
     # prompt rather than to the stored message: an image block carries no name,
     # so without it the model cannot tell which of three files is meant, but the
     # transcript renders chips and must not also show the sentence.
+    #
+    # AND THE IMAGES A COMPACTION TOOK COME BACK HERE. A compaction replaces the
+    # session's history with a text summary, and a summary cannot carry a
+    # picture -- measured, see services/attachment_carry, which also has the
+    # experiment that shows an ORDINARY turn boundary loses nothing. `due` is
+    # `[]` on every turn but the first one after a compaction, so this costs one
+    # meta read in the normal case. The carried blocks go FIRST, ahead of
+    # anything attached to this message, and `carry_note` says so, because an
+    # image block carries no name and the model maps blocks to names by order.
     _atts = meta.get("attachments") or []
-    att_blocks = chat_attachments.content_blocks(_atts, meta.get("owner_id"))
+    _carry = attachment_carry.due(meta.get("thread_id") or "", meta["prompt"],
+                                  meta.get("owner_id"))
+    att_blocks = (chat_attachments.content_blocks(_carry, meta.get("owner_id"))
+                  + chat_attachments.content_blocks(_atts, meta.get("owner_id")))
     _named = chat_attachments.describe(_atts)
-    _prompt = f"{meta['prompt']}\n\n{_named}" if _named else meta["prompt"]
+    _carry_note = attachment_carry.describe(_carry)
+    _prompt = "\n\n".join([meta["prompt"], *(x for x in (_carry_note, _named) if x)])
     if not write_to_turn(turn.id, _prompt, att_blocks, origin=meta.get("origin")):
         turn.error = "could not deliver the prompt to the turn's input channel"
         _push(turn, "error", {"detail": turn.error})
@@ -2681,6 +2695,11 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
         _cleanup_turn_input(turn.id)
         await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)
         return
+    # ONLY ONCE THE BLOCKS ARE ACTUALLY ON THE CHANNEL. Clearing the mark before
+    # the write would spend the one re-send on a delivery that never happened,
+    # and the images would then be owed forever with nothing left to notice it.
+    if _carry:
+        attachment_carry.note_carried(meta.get("thread_id") or "")
     _preempt = (meta.get("tree") or {}).get("preempted")
     if _preempt:
         _push(turn, "preempt_notice", _preempt)
