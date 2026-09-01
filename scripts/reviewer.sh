@@ -45,6 +45,10 @@
 #     the acceptance command / operator review, not a tracked-file diff (F18)
 #   - zero NEW stub markers introduced (preexisting stubs in unchanged code are OK)
 #   - python typecheck passes on changed .py files (uses backend venv mypy if present)
+#   - the BACKEND TEST SUITE has no failure outside its pinned baseline, when
+#     the diff touches Python (ADR-less; see check_backend_tests.py's own
+#     header for why this arrived only on 2026-08-31 -- the suite could not
+#     finish before then, so there was nothing to gate on)
 #   - typescript tsc --noEmit passes on changed .ts/.tsx files
 #   - no enum value-set touching this diff is declared in two places (R3, only
 #     when the diff introduces or touches an existing same-language duplicate —
@@ -376,6 +380,39 @@ if $_APPS_RELEVANT; then
   fi
 fi
 unset _APPS_CORE _APPS_FORBIDDEN _APPS_RELEVANT _apf
+
+# 4.5b The backend test suite, as a ratchet.
+#
+# THIS GATE RAN MYPY AND NEVER PYTEST until 2026-08-31, for one concrete reason:
+# the suite hung at 32% and could not finish, so there was nothing to gate on.
+# That hang is fixed (a test called the real `compact_thread`, which spawns a CLI
+# turn that never returns under pytest), the suite completes in ~3.5 minutes, and
+# the reason is gone.
+#
+# What the absence cost, measured the day it was wired: `GET /api/tasks` renamed
+# its response keys on 2026-08-17, seven frontend call sites kept reading the old
+# ones, and /tickets rendered "No tickets yet" over 188 open tickets for two
+# weeks. Every typecheck and every design check passed throughout, because each
+# call site hand-wrote the type it was reading.
+#
+# Known failures are pinned by id, not counted, so a fixed test and a newly
+# broken one cannot cancel out. Only a failure absent from the baseline fails
+# this check. See check_backend_tests.py for the full contract.
+#
+# ONLY WHEN PYTHON CHANGED. It is the slowest check here by an order of
+# magnitude, and a frontend-only diff cannot move it.
+BACKEND_TESTS_CHECK="skipped"
+if [[ -n "$PY_FILES" ]]; then
+  if [[ -f "$WORKSHOP/scripts/check_backend_tests.py" && -f "$WORKSHOP/scripts/backend_tests_baseline.json" ]]; then
+    if python3 "$WORKSHOP/scripts/check_backend_tests.py" --quiet >/dev/null 2>&1; then
+      BACKEND_TESTS_CHECK="ok"
+    else
+      BACKEND_TESTS_CHECK="fail"
+    fi
+  else
+    AMBIGUOUS+=("backend_tests_check_unavailable")
+  fi
+fi
 
 # 4.6b No hardcoded machine or operator identity. STILL UNCONDITIONAL — unlike
 # the apps check this has no relevance precondition, because a path or a
@@ -1048,6 +1085,9 @@ if [[ "$STUB_COUNT" -gt 0 ]]; then
   REASONS+=("new_stubs:$STUB_COUNT")
   COMPLETE="false"
 fi
+if [[ "$BACKEND_TESTS_CHECK" == "fail" ]]; then
+  REASONS+=("backend_tests_regressed"); COMPLETE="false"
+fi
 if [[ "$PY_CHECK" == "fail" ]]; then
   REASONS+=("py_typecheck_fail")
   COMPLETE="false"
@@ -1088,7 +1128,7 @@ AMBIGUOUS_JSON=$(printf '%s\n' "${AMBIGUOUS[@]:-}" | python3 -c "import json,sys
 # Emit JSON. Build via env vars + Python decoding so shell quoting is safe.
 COMPLETE_BOOL=$([[ "$COMPLETE" == "true" ]] && echo 1 || echo 0)
 TS_NOW=$(ts)
-export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
+export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK BACKEND_TESTS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
 export FRESH_CLONE_CHECK DEV_MODE_OFF_CHECK FRONTEND_STATE_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK
@@ -1110,6 +1150,7 @@ out = {
     "stub_hits": json.loads(os.environ["STUB_HITS_JSON"]),
     "typecheck": {"py": os.environ["PY_CHECK"], "ts": os.environ["TS_CHECK"]},
     "design":    os.environ["DESIGN_CHECK"],
+    "backend_tests": os.environ.get("BACKEND_TESTS_CHECK", "skipped"),
     "pluggable_apps": os.environ["APPS_CHECK"],
     "hardcoding": os.environ.get("HARDCODE_CHECK", "skip"),
     # The same probes over docs/ and *.md, which `--all` covers and nothing
@@ -1185,7 +1226,7 @@ PYEOF
 printf '%s\n' "$RESULT_JSON"
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK dev_mode_off=$DEV_MODE_OFF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK backend_tests=$BACKEND_TESTS_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK dev_mode_off=$DEV_MODE_OFF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi

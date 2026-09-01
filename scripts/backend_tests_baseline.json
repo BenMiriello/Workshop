@@ -1,0 +1,26 @@
+{
+  "_comment": "Known-failing backend tests. A ratchet: entries may be removed, never added without a deliberate decision. See check_backend_tests.py.",
+  "failures": [
+    "tests/test_chat_turn_lifecycle.py::TestAPromptThatCannotBeDeliveredEndsTheRun::test_the_run_ends_rather_than_idling_forever",
+    "tests/test_db_schema.py::test_no_composite_set_null_nulls_its_discriminator",
+    "tests/test_db_tenancy.py::test_verify_rls_actually_detects_a_broken_table",
+    "tests/test_dev_mode_gate.py::TestDoor3SelfProjectRow::test_it_is_still_addressable_by_slug",
+    "tests/test_dev_mode_gate.py::TestDoor6AutonomyRunEndpoint::test_it_refuses_before_opening_a_job",
+    "tests/test_dev_mode_gate.py::TestDoor6AutonomyRunEndpoint::test_the_endpoint_refuses_with_a_reason_the_ui_can_show",
+    "tests/test_doc_status.py::TestRealDocsRegression::test_none_of_the_corrected_docs_still_read_as_misleading",
+    "tests/test_edge_websocket_proxy.py::TestTheEdgeCarriesTheUpgrade::test_a_blocked_path_is_refused_without_dialing",
+    "tests/test_memory_consolidation_m6.py::TestB5TheGpuNoteIsTrue::test_the_index_line_matches_the_corrected_note",
+    "tests/test_memory_consolidation_m6.py::TestB5TheGpuNoteIsTrue::test_the_note_no_longer_asserts_the_two_false_claims",
+    "tests/test_memory_consolidation_m6.py::TestB5TheGpuNoteIsTrue::test_the_note_records_what_is_true_now",
+    "tests/test_next_ready_unattended.py::test_dependencies_still_gate_unattended",
+    "tests/test_next_ready_unattended.py::test_ordering_within_the_eligible_set_is_still_priority_first",
+    "tests/test_next_ready_unattended.py::test_the_root_ticket_case",
+    "tests/test_next_ready_unattended.py::test_unattended_picks_a_code_and_ready_ticket",
+    "tests/test_runner_brake_split.py::TestARefusedTargetCarriesTheGatesReason::test_dev_mode_on_permits_the_platform_repo",
+    "tests/test_scoped_exec.py::test_scope_is_presented_at_workspace",
+    "tests/test_scoped_exec.py::test_scope_realpath_in_argv_is_remapped",
+    "tests/test_semantic_index.py::TestEmbedNormalisation::test_a_zero_vector_does_not_become_nan",
+    "tests/test_ticket_producers_state_acceptance.py::TestTheDistiller::test_the_prompt_asks_for_the_same_four_fields",
+    "tests/test_ticket_producers_state_acceptance.py::TestTheDraftProposalPrompt::test_the_labels_are_the_ones_the_checker_looks_for"
+  ]
+}

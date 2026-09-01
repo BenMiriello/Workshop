@@ -333,7 +333,10 @@ Below the blocks, in order: messages queued for the next turn (not sent at all y
 
 **A turn in flight is always visible.** The working indicator is driven by whether the SERVER says a turn is active (`active_turn`), not by whether this tab holds an SSE socket. A turn whose stream dropped past its reconnect budget, one the operator stopped watching, and one started in another tab are all still running, and all still say so with an elapsed clock anchored to the turn's real start. See `turnStatus.ts`.
 
-Note: `scripts/reviewer.sh` runs typecheck + design only; it does not run tests (backend or frontend). Run them yourself.
+Note: `scripts/reviewer.sh` runs the BACKEND suite as a ratchet when Python
+changed (`check_backend_tests.py`, known failures pinned by id, a new one
+fails the run). It still does not run the frontend's vitest, so run
+`cd frontend && npm test` yourself.
 
 ## App navigation (one header per app, one source of sections)
 
