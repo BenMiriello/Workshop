@@ -86,9 +86,13 @@ here; a check that failed until every one was converted would be turned off in
 a week, which is the documented fate of the gate `check_frontend_state.py`'s
 header describes. So the debt is frozen and the direction is enforced.
 
-PIN FROM A COMMITTED TREE. The counts come from `git ls-files`, so pinning with
-work in progress records whatever the index happened to hold. Commit, then
---write-baseline. (Same trap that mis-pinned `no_app_names_baseline.json`.)
+PIN FROM A COMMITTED TREE. The scan covers tracked files AND new untracked ones
+(`--others --exclude-standard`), because the gate runs on the working tree and a
+brand-new file is still this run's work -- counting only tracked files would make
+the one thing this exists to stop invisible until the moment it is committed. The
+cost is that pinning with work in progress records whatever happened to be on
+disk, so commit first, then --write-baseline. (Same trap that mis-pinned
+`no_app_names_baseline.json`.)
 
 DELTA MODE (`--since <ref>`) is the same mechanism as `check_no_app_names.py`
 and `check_frontend_state.py`, for the same reason: judged against a static pin,
@@ -196,11 +200,18 @@ def tracked_files(root: Path = ROOT) -> list[str]:
     holds exactly the tracked tree. `.git` is a FILE in a worktree, so
     `.exists()` rather than `.is_dir()`."""
     if (root / ".git").exists():
+        # `--others --exclude-standard` as well as `--cached`: a brand-new file
+        # that has not been `git add`ed yet is still this run's work, and the
+        # gate runs on the WORKING TREE. Counting only tracked files would mean
+        # the one thing this exists to stop -- a NEW hand-written response type
+        # -- is invisible until the moment it is committed. Ignored files stay
+        # out, so `scratch/` and `node_modules` are not walked.
         out = subprocess.run(
-            ["git", "ls-files", "--", SCAN_PREFIX],
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard",
+             "--", SCAN_PREFIX],
             cwd=root, capture_output=True, text=True, check=True,
         ).stdout
-        return [ln for ln in out.splitlines() if ln]
+        return sorted({ln for ln in out.splitlines() if ln})
     base = root / SCAN_PREFIX
     if not base.exists():
         return []
