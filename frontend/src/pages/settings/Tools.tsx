@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Lock, Pencil, Plus, Trash2, Wrench } from "lucide-react";
+import { Pencil, Plus, Trash2, Wrench } from "lucide-react";
 import {
   ActionBar,
   Button,
@@ -265,6 +265,13 @@ export default function Tools() {
   // up in the menus without an edit here.
   const kinds = toolFacet(all, "kind");
   const provenances = toolFacet(all, "provenance");
+  // A FACET WITH ONE VALUE BEHIND IT IS AN INERT CONTROL: every choice returns
+  // the whole catalog. Offered only where the rows actually differ, which is
+  // the same question that decides whether owner is worth a hue below.
+  const ownerVaries = provenances.length > 1;
+  const kindVaries = kinds.length > 1;
+  // Whether any row has an action, which is what the second column holds.
+  const anyEditable = all.some((t) => t.editable);
   const matched = filterTools(all, filter);
   const shown = capRows(matched, expanded);
   const summary = catalogSummary(all);
@@ -310,32 +317,50 @@ export default function Tools() {
             )}
           </Row>
 
-          {/* The two axes the rows differ on, plus free text: the same filter
-              /stores already carries, on the page that most needs one. The
-              catalog only grows, and 21 rows with no way to narrow them is a
-              list you read once and then scroll past. A VIEW PREFERENCE, so
-              every control commits on change (design system rule 7). */}
+          {/* SAID ONCE. It used to be a lock line on every row of a column that
+              was the same on every row. It is one fact about the whole catalog
+              while no tool here is yours, so it belongs beside the catalog and
+              not beside each of its 21 members. */}
+          {!loadErr && all.length > 0 && !anyEditable && (
+            <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginTop: "var(--space-1)" }}>
+              Platform and app tools are used, not edited. Declare one with New tool and it gets Edit and Delete here.
+            </p>
+          )}
+
+          {/* The axes the rows ACTUALLY differ on, plus free text: the same
+              filter /stores already carries, on the page that most needs one.
+              The catalog only grows, and 21 rows with no way to narrow them is
+              a list you read once and then scroll past. A VIEW PREFERENCE, so
+              every control commits on change (design system rule 7).
+
+              Each select appears only while its field has more than one value
+              in it. A menu whose every option returns the whole list is a
+              control that does nothing, which is worse than an absent one. */}
           {!loadErr && all.length > 0 && (
             <Row wrap between style={{ marginBottom: "var(--space-3)", gap: "var(--space-2)" }}>
               <Row wrap style={{ gap: "var(--space-2)" }}>
-                <Field label="Kind">
-                  <Select
-                    value={filter.kind}
-                    onChange={(e) => setFilter((f) => ({ ...f, kind: e.target.value }))}
-                  >
-                    <option value="all">All kinds</option>
-                    {kinds.map((k) => <option key={k} value={k}>{k}</option>)}
-                  </Select>
-                </Field>
-                <Field label="Owner">
-                  <Select
-                    value={filter.provenance}
-                    onChange={(e) => setFilter((f) => ({ ...f, provenance: e.target.value }))}
-                  >
-                    <option value="all">All owners</option>
-                    {provenances.map((p) => <option key={p} value={p}>{provenanceLabel(p)}</option>)}
-                  </Select>
-                </Field>
+                {kindVaries && (
+                  <Field label="Kind">
+                    <Select
+                      value={filter.kind}
+                      onChange={(e) => setFilter((f) => ({ ...f, kind: e.target.value }))}
+                    >
+                      <option value="all">All kinds</option>
+                      {kinds.map((k) => <option key={k} value={k}>{k}</option>)}
+                    </Select>
+                  </Field>
+                )}
+                {ownerVaries && (
+                  <Field label="Owner">
+                    <Select
+                      value={filter.provenance}
+                      onChange={(e) => setFilter((f) => ({ ...f, provenance: e.target.value }))}
+                    >
+                      <option value="all">All owners</option>
+                      {provenances.map((p) => <option key={p} value={p}>{provenanceLabel(p)}</option>)}
+                    </Select>
+                  </Field>
+                )}
               </Row>
               <Field>
                 <Input
@@ -390,14 +415,24 @@ export default function Tools() {
               <Stack gap="sm">
                 <TableScroll>
                   {/* The kit's 520px floor is a sensible default for a six
-                      column diagnostics table. This one has two, and the floor
-                      alone was enough to push the Owner column off the right
+                      column diagnostics table. This one has one or two, and the
+                      floor alone was enough to push the second off the right
                       edge of a phone. */}
                   <Table style={{ minWidth: 0 }}>
                     <thead>
                       <tr>
                         <th>Tool</th>
-                        <th>Owner</th>
+                        {/* A COLUMN THAT SAYS THE SAME THING ON EVERY ROW IS
+                            NOT A COLUMN. This was Owner, and on a catalog with
+                            no user tools in it that is 21 identical `Platform`
+                            tags over 21 identical `Used, not edited` lines: a
+                            fifth of the table's width spent restating the
+                            summary line above it. Owner moves onto the row's
+                            own meta line, and what is left here is the thing
+                            that actually differs between rows, which is whether
+                            this one is yours to change. When none of them is,
+                            there is no second column at all. */}
+                        {anyEditable && <th>Yours</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -423,19 +458,29 @@ export default function Tools() {
                               <span className="ws-mono">{t.id}</span>
                               {" \u00b7 "}
                               {t.kind}
+                              {/* OWNER RIDES HERE, and it is a Tag only while
+                                  it varies. A categorical hue is information
+                                  when it tells rows apart; on a catalog that is
+                                  all one provenance it tints every row and
+                                  labels nothing, which is the same rule the
+                                  design system applies to every other hue. */}
+                              {" \u00b7 "}
+                              {ownerVaries
+                                ? <Tag hue={catFor(t.provenance)}>{provenanceLabel(t.provenance)}</Tag>
+                                : provenanceLabel(t.provenance)}
                             </span>
                           </td>
-                          {/* Owner and editability are ONE fact: the API
-                              derives `editable` from provenance and nothing
-                              else. They share a cell so a phone can hold both,
-                              and so a row never says who owns it in one place
-                              and what that means in another. */}
-                          <td>
-                            {/* flex-start, or the Stack stretches a Tag into a
-                                480px bar on a wide screen. */}
-                            <Stack gap="sm" style={{ alignItems: "flex-start" }}>
-                              <Tag hue={catFor(t.provenance)}>{provenanceLabel(t.provenance)}</Tag>
-                              {t.editable ? (
+                          {/* Only what differs. `editable` is derived from
+                              provenance by the API and nothing else, so a row
+                              that is not yours has nothing to put here: not a
+                              disabled button (a control that cannot act is
+                              worse than no control) and not a lock line either,
+                              because 21 identical lock lines is the column this
+                              replaced. That platform and app tools are used
+                              rather than edited is said once, above. */}
+                          {anyEditable && (
+                            <td>
+                              {t.editable && (
                                 <Row wrap style={{ gap: "var(--space-2)" }}>
                                   <Button
                                     size="sm"
@@ -454,29 +499,13 @@ export default function Tools() {
                                     <Trash2 size={14} strokeWidth={1.8} aria-hidden /> Delete
                                   </Button>
                                 </Row>
-                              ) : (
-                                // Not a disabled button: a control that cannot
-                                // act is worse than no control. The sentence is
-                                // the API's own ("can be used but not edited").
-                                <span
-                                  className="ws-muted"
-                                  style={{
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: "var(--space-2)",
-                                    fontSize: "var(--fs-xs)",
-                                  }}
-                                >
-                                  <Lock size={14} strokeWidth={1.8} aria-hidden />
-                                  Used, not edited
-                                </span>
                               )}
-                            </Stack>
-                          </td>
+                            </td>
+                          )}
                         </tr>,
                         t.description ? (
                           <tr key={`${t.id}:what`}>
-                            <td colSpan={2} style={{ paddingTop: 0 }}>
+                            <td colSpan={anyEditable ? 2 : 1} style={{ paddingTop: 0 }}>
                               {/* A measure, not the full row: a description
                                   set across 1200px is one long line the eye
                                   loses its place in. Narrower than the cell on
