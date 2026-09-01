@@ -223,8 +223,17 @@ export function ChatsView({ app = null, header = true }: {
     return m;
   }, [visible]);
 
-  const open = (t: ThreadSummary) =>
-    nav(`/chat/${encodeURIComponent(t.context_key)}?thread=${encodeURIComponent(t.id)}`);
+  // THE APP'S SLUG STANDS IN FOR A MISSING SCOPE KEY, and only on the app
+  // mount, where there is a right answer. `/api/apps/{id}/chats` selects rows
+  // by `chat_thread.app_id`, which is broader than any scope key, so a row can
+  // come back with `context_key` null; without this the row opened
+  // `/chat/null`. The bespoke list this mount replaced carried the same
+  // fallback, so dropping it would have been a regression hidden inside a fix.
+  const open = (t: ThreadSummary) => {
+    const key = (t.context_key || (app ? app.slug : "")).trim();
+    if (!key) return;
+    nav(`/chat/${encodeURIComponent(key)}?thread=${encodeURIComponent(t.id)}`);
+  };
 
   // Archive is the one action on the row itself: frequent and reversible. It
   // drops the row locally rather than refetching the whole list to learn one
