@@ -215,6 +215,9 @@ if [ "${1:-}" != "--force" ] && [ -d "$turns_dir" ]; then
     echo "Wait for it to finish, or use:" >&2
     echo "  scripts/restart_backend.sh --deferred   # restart after the reply lands" >&2
     echo "  scripts/restart_backend.sh --force      # restart anyway" >&2
+    echo "This is expected, not a failure: an agent's own turn is usually the" >&2
+    echo "live one. \`bash scripts/apply.sh\` handles the deferral for you." >&2
+    echo "Why, and what it costs: docs/applying-changes.md" >&2
     exit 2
   fi
   # And refuse during the COMMIT window, which the pid check above cannot see:
@@ -238,6 +241,8 @@ if [ "${1:-}" != "--force" ] && [ -d "$turns_dir" ]; then
     echo "REFUSING: a run still holds its thread, so its reply is not committed yet." >&2
     echo "  $holder" >&2
     echo "Restarting now would lose that reply. Use --deferred, which waits for it." >&2
+    echo "This is expected, not a failure. Why, and what it costs:" >&2
+    echo "  docs/applying-changes.md" >&2
     exit 2
   fi
 fi

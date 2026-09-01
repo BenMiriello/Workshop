@@ -135,6 +135,9 @@ else
     warn "not building: the bundle is stale because of UNCOMMITTED UI work:"
     printf '            %s\n' $ui_wip
     say  "          commit it and the post-commit hook builds, or: bash scripts/apply.sh --publish-wip"
+    say  "          this is expected on a shared tree -- the work above may be"
+    say  "          another agent's, and publishing it would ship a half-edit."
+    say  "          Why it declines rather than builds: docs/applying-changes.md"
     UI_SKIPPED=1
   fi
   if [ "$CHECK" = 0 ] && [ "$UI_SKIPPED" = 0 ]; then
@@ -286,6 +289,10 @@ else
     warn "not restarting: the backend is stale because of UNCOMMITTED work:"
     printf '            %s\n' $be_wip
     say  "          commit it and rerun, or: bash scripts/apply.sh --publish-wip"
+    say  "          this is expected on a shared tree -- the work above may be"
+    say  "          another agent's, and restarting onto a half-written file"
+    say  "          takes the backend down for everyone."
+    say  "          Why it declines rather than restarts: docs/applying-changes.md"
     BE_SKIPPED=1
     [ -n "$BE_SKIP_WHY" ] || BE_SKIP_WHY="uncommitted backend work above"
   fi
