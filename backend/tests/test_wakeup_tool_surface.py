@@ -15,8 +15,6 @@ make.
 """
 from __future__ import annotations
 
-import json
-import os
 
 import pytest
 
@@ -41,7 +39,7 @@ def test_they_are_chat_scope_because_an_alarm_needs_a_thread_to_ring_on():
         assert tool.scopes == ("chat",)
 
 
-def test_their_descriptions_have_one_source(monkeypatch):
+def test_their_descriptions_have_one_source():
     """The registry reads the server's own constants; duplicating the prose is
     how a catalog starts describing a tool the server no longer exposes."""
     wake = next(t for t in tr.PLATFORM_TOOLS if t.id.endswith("wake_me"))
