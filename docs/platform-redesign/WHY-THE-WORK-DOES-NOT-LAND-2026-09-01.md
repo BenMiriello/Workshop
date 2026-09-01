@@ -223,9 +223,19 @@ Missing, in rough order of how much each one costs us:
 6. **Executable acceptance on a ticket.** The field exists and is empty 195/195.
 7. **Sight of its own past runs.** A chat cannot ask what happened while it was
    not running, which is why every session re-surveys instead of resuming.
-8. **Image persistence.** Uploads survive exactly one turn
-   (`build_streaming.py`). Asked for 2026-08-27; still the oldest unaddressed
-   request.
+8. **Image persistence.** Asked for 2026-08-27; still the oldest unaddressed
+   request. **The recorded diagnosis is wrong and is retracted here.** Handoffs
+   have said "uploads survive exactly one turn (`build_streaming.py:2666`)".
+   Measured today: attachment bytes are content-addressed and durable
+   (`chat_attachments`), and the CLI stores image blocks as base64 *in the
+   session file* — 36 session transcripts in this installation contain
+   `"type":"image"` — so a resumed turn does reload them. What does destroy them
+   is **compaction**, which replaces history with a text summary; 11 sessions
+   here contain both an image and a compact boundary. The real fix is therefore
+   about surviving compaction, not about per-turn injection, and the previously
+   cited line was never the cause. Recorded rather than quietly corrected,
+   because acting on an inherited conclusion without re-measuring is the exact
+   failure §3 is about.
 
 Note the shape of items 1–4: we are not missing the *ability* to have these. We
 built the extensibility mechanism for exactly this and declared nothing in it.
