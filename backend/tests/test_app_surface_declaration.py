@@ -174,3 +174,17 @@ def test_a_declaration_keeps_its_live_tabs_when_only_some_retired(install):
     # Partial retirement is a narrowing, not a reset: the app still said Chats.
     install(record={"tabs": ["tickets", "chats"]})
     assert app_surface.surface_for("widgets")["tabs"] == ["chats"]
+
+
+def test_a_partly_retired_declaration_keeps_its_live_tabs_and_says_so(install, caplog):
+    # THE REAL CASE, measured on this installation 2026-09-01. An app declared
+    # the tabs of the day; three of the five retired. The survivors are
+    # non-empty, so nothing looked broken, and the app had quietly lost Work.
+    install(record={"tabs": ["tickets", "runs", "files", "agents", "chats"]})
+    import logging
+    with caplog.at_level(logging.WARNING, logger="workshop.apps"):
+        s = app_surface.surface_for("widgets")
+    assert s["tabs"] == ["files", "chats"]
+    assert "work" not in s["tabs"]
+    # The point of the test: it is SAID.
+    assert any("retired tab" in r.getMessage() for r in caplog.records), caplog.text

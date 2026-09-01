@@ -207,16 +207,30 @@ def surface_for(slug: str, *, own_route: str | None = None) -> dict:
         # names but cannot hold is dropped rather than rendered empty, which is
         # the whole point; a tab it does not name is not offered.
         tabs = [t for t in wanted if t in available]
-        # A DECLARATION THAT NAMES ONLY RETIRED TABS MUST NOT STRAND THE APP.
-        # Before Work absorbed tickets/runs/deploys, `{"tabs": ["tickets"]}` was
-        # a perfectly good declaration. Filtered against the current tab set it
-        # now yields [], and an empty list sends `_resolve_home` to the app's
-        # BASE path -- which is the redirect that lands back on itself, so the
-        # app would never open at all. An app whose whole declaration retired
-        # falls back to what the platform can serve it.
-        if not tabs and any(t in RETIRED_TAB_IDS for t in wanted):
-            log.info("app %s declares only retired tabs %s; using the platform set",
-                     slug, wanted)
+        # A STALE DECLARATION IS THE THING THAT GOES WRONG HERE, and it goes
+        # wrong QUIETLY, which is why this logs in every case rather than only
+        # the fatal one.
+        #
+        # Measured 2026-09-01 on this installation: an app declared
+        # `{"home": "tickets", "tabs": ["tickets","runs","files","agents",
+        # "chats"]}`, written when those were the tabs. Filtered against the
+        # current set that is ["files","chats"] -- non-empty, so nothing was
+        # obviously broken, and the app had simply lost Work, its primary
+        # surface, without a word anywhere. Declaring is narrowing, so honouring
+        # it is right; being silent about a declaration that has partly expired
+        # is not.
+        retired = [t for t in wanted if t in RETIRED_TAB_IDS]
+        if retired:
+            log.warning(
+                "app %s declares retired tab(s) %s; they are dropped. Its tabs "
+                "are now %s. Update or remove the surface declaration.",
+                slug, retired, tabs or "(none)")
+        # AND IT MUST NOT STRAND THE APP ENTIRELY. An empty list sends
+        # `_resolve_home` to the app's BASE path, which is the redirect that
+        # lands back on itself, so the app would never open at all.
+        if not tabs and retired:
+            log.warning("app %s declares only retired tabs; using the platform set",
+                        slug)
             tabs = available
     else:
         tabs = available
