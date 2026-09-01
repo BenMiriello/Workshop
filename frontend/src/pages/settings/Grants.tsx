@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, ShieldCheck, ArrowRight, Users, Network, Database, Download } from "lucide-react";
 import { ActionBar, Button, Card, ConfirmDialog, PageHeader, Row, SectionLabel, Select, Input, Notice, StateBlock, StatusDot, Skeleton, Tag, catFor, shortHttpError } from "@workshop/ui";
 import GrantPicker from "../../components/GrantPicker";
+import type { components } from "../../api/schema.gen";
 
 // Platform / Grants: operator-facing access-control editor.
 // app-platform-plan.md §3.2 + workshop-v1/01-agents-and-chat.md §2.
@@ -15,22 +16,22 @@ import GrantPicker from "../../components/GrantPicker";
 // the whole doc via PUT; Cancel reverts to the loaded baseline.
 
 type GrantMode = "read" | "rw";
-type Grant = { from: string; to: string; capability: string; mode: GrantMode };
-type Guest = { id: string; app: string; capabilities: string[] };
+// The rows, named from the generated client. `mode` is narrowed the way
+// lib/tasks.ts narrows a status: the schema types it `string` because the
+// route's model does, and the editor switches on the closed set. The field
+// NAMES are what the generated type is relied on for.
+type Grant = Omit<components["schemas"]["AppGrant"], "mode"> & { mode: GrantMode };
+type Guest = components["schemas"]["Guest"];
 type GrantsDoc = { grants: Grant[]; guests: Guest[] };
 
 // Phase-4 resource-scoped grants: per-invocation capability tokens over Stores.
 // Read-only here (minted through the GrantPicker broker); revoke is the one write.
-type ResourceGrant = {
-  id: string;
-  from: string;
-  to: string;
-  store_uri: string;
-  subtree?: boolean;
-  verbs: string[];
-  caveats?: Record<string, unknown>;
-  created_at?: string;
-};
+// A resource-scoped grant over a Store, named from the generated client. The
+// same eight fields were written out by hand in THREE files (this one,
+// pages/ProjectDetail.tsx and pages/settings/Grants.tsx) and two of the three
+// disagreed with the route about which are required: `subtree`, `caveats` and
+// `created_at` are all promised, not optional.
+type ResourceGrant = components["schemas"]["ResourceGrant"];
 
 // A declared Store: a named, typed handle onto an app's data (GET /api/stores).
 type StoreRow = {
@@ -80,7 +81,9 @@ export default function Grants() {
       const [g, m] = await Promise.all([
         fetch("/api/grants").then(async (r) => {
           if (!r.ok) throw new Error(`grants: ${shortHttpError(r.status, r.statusText, await r.text().catch(() => ""))}`);
-          return r.json() as Promise<GrantsDoc & { resource_grants?: ResourceGrant[] }>;
+          // GrantsDocument: the whole envelope, app-level grants and guests and
+          // resource grants together, named rather than intersected by hand.
+          return r.json() as Promise<components["schemas"]["GrantsDocument"]>;
         }),
         fetch("/api/base-apps/manifests").then(async (r) => {
           if (!r.ok) throw new Error(`manifests: ${shortHttpError(r.status, r.statusText, await r.text().catch(() => ""))}`);
@@ -88,7 +91,7 @@ export default function Grants() {
         }),
       ]);
       const normalized: GrantsDoc = {
-        grants: Array.isArray(g.grants) ? g.grants : [],
+        grants: Array.isArray(g.grants) ? (g.grants as Grant[]) : [],
         guests: Array.isArray(g.guests) ? g.guests : [],
       };
       setDoc(normalized);

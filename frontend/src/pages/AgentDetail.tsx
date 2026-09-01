@@ -18,6 +18,7 @@ import {
 } from "../lib/agentTriggers";
 import { ticketHref } from "../lib/tasks";
 import { queryKeys } from "../lib/queryKeys";
+import type { components } from "../api/schema.gen";
 
 // One Agent, one config surface, typed by ROLE. There is no `runtime` field.
 // This page is the definition (editable), triggers, the grant set
@@ -64,16 +65,12 @@ function isMaker(a: Pick<AgentDetailData, "role" | "project_slug">): boolean {
 }
 
 // A Phase-4 resource-scoped grant minted TO this agent (over a Store).
-type ResourceGrant = {
-  id: string;
-  from: string;
-  to: string;
-  store_uri: string;
-  subtree?: boolean;
-  verbs: string[];
-  caveats?: Record<string, unknown>;
-  created_at?: string;
-};
+// A resource-scoped grant over a Store, named from the generated client. The
+// same eight fields were written out by hand in THREE files (this one,
+// pages/ProjectDetail.tsx and pages/settings/Grants.tsx) and two of the three
+// disagreed with the route about which are required: `subtree`, `caveats` and
+// `created_at` are all promised, not optional.
+type ResourceGrant = components["schemas"]["ResourceGrant"];
 
 const MAX_GRANTS = 200; // overflow guard for the per-agent grants list
 
@@ -555,8 +552,12 @@ function ExistingAgent({ agentId }: { agentId: string }) {
 
   useEffect(() => {
     fetch(`/api/agents/${encodeURIComponent(agentId)}/jobs?limit=25`)
-      .then((r) => (r.ok ? r.json() : { jobs: [] }))
-      .then((d) => setJobs(d.jobs || []))
+      // AgentJobsOut, named from the generated client. `{ jobs, count }` is
+      // this route's real envelope and NOT the one GET /api/jobs moved to, so
+      // reading it by hand here looked identical to the call sites that had
+      // silently gone stale. Naming it is what tells the two apart.
+      .then(async (r) => (r.ok ? ((await r.json()) as components["schemas"]["AgentJobsOut"]) : null))
+      .then((d) => setJobs(d?.jobs ?? []))
       .catch(() => setJobs([]));
   }, [agentId]);
 
@@ -566,9 +567,9 @@ function ExistingAgent({ agentId }: { agentId: string }) {
     try {
       const r = await fetch("/api/grants");
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const data = (await r.json()) as { resource_grants?: ResourceGrant[] };
+      const data: components["schemas"]["GrantsDocument"] = await r.json();
       const to = `agent:${agentId}`;
-      setGrants((data.resource_grants || []).filter((g) => g.to === to));
+      setGrants((data.resource_grants ?? []).filter((g) => g.to === to));
     } catch (e) {
       setGrantsErr(String(e));
     }

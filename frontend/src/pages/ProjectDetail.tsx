@@ -114,16 +114,12 @@ type RosterAgent = {
 };
 
 // A resource-scoped capability grant from GET /api/grants (resource_grants[]).
-type ResourceGrant = {
-  id: string;
-  from: string;
-  to: string;
-  store_uri: string;
-  subtree: boolean;
-  verbs: string[];
-  caveats: Record<string, unknown>;
-  created_at: string;
-};
+// A resource-scoped grant over a Store, named from the generated client. The
+// same eight fields were written out by hand in THREE files (this one,
+// pages/ProjectDetail.tsx and pages/settings/Grants.tsx) and two of the three
+// disagreed with the route about which are required: `subtree`, `caveats` and
+// `created_at` are all promised, not optional.
+type ResourceGrant = components["schemas"]["ResourceGrant"];
 
 const stateKind = (s?: string): StatusKind => {
   switch (s) {
@@ -592,8 +588,8 @@ export default function ProjectDetail() {
     try {
       const r = await fetch("/api/grants");
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      const d = await r.json();
-      setResourceGrants((d.resource_grants ?? []) as ResourceGrant[]);
+      const d: components["schemas"]["GrantsDocument"] = await r.json();
+      setResourceGrants(d.resource_grants ?? []);
     } catch (e) {
       setGrantsErr(String(e));
       setResourceGrants([]);
