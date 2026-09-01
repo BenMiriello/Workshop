@@ -291,6 +291,43 @@ today's work, and it dictates the next action:**
 
 ---
 
+## 5.2 A self-hosting agent cannot verify its own backend change
+
+Measured today, and it explains a whole class of "you said it worked and it did
+not" that has been read as carelessness:
+
+    backend pid 1512991  (uvicorn main:app on :8000)
+      -> 1526224 bwrap
+        -> 1526226 claude
+          -> this session
+
+**The agent editing the backend is a child process of the backend it is
+editing.** `restart_backend.sh` correctly refuses to restart while a turn it
+hosts is live, and `apply.sh` therefore defers the restart until after the turn
+ends. So within the turn that makes a backend change, the agent is structurally
+unable to see that change running. Everything it can screenshot or `curl` is the
+OLD code.
+
+This is not a discipline problem and no amount of "test it properly" fixes it.
+It has three consequences worth stating:
+
+1. A backend change reported as verified in the same turn is either verified
+   against something other than the live backend, or it is not verified. Both
+   happened today; the honest ones said which. The correct phrasing is
+   **"unverified-live"**, and it should be used rather than avoided.
+2. The workaround that works is standing up a separate backend on another port
+   against the same tree, which one agent did today to answer the app-landing
+   question. That is the right technique and it should be the norm for any
+   backend change whose effect is visible.
+3. Frontend changes do NOT have this problem: the bundle rebuilds and the
+   operator's origin serves it inside the turn. The asymmetry is worth knowing —
+   UI work can be closed in-turn, backend work cannot.
+
+The deferred restart is the correct design and must not be "fixed" by forcing a
+restart mid-turn: that kills the session and every subagent in it.
+
+---
+
 ## 6. What is actually missing from the application
 
 A Workshop chat's entire tool grant, from `_tool_list()` in
