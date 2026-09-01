@@ -138,51 +138,23 @@ class TestWaitQuiet:
         asyncio.run(scenario())
 
 
-class TestCompactDefersMidRun:
-    def test_the_fold_lands_only_when_the_thread_goes_quiet(self, chatty, monkeypatch):
-        import routes.chat as rc
-        tid = chatty
-        monkeypatch.setattr(rc, "_summarize_sync", lambda prev, msgs: "S")
-        chat_store.begin_turn(tid, "run-1")
-        turn = build_streaming.Turn(id="run-1", thread_id=tid, agent_slug="a")
-        turn.spawned = True
-        build_streaming.TURNS["run-1"] = turn
-
-        async def scenario():
-            r = await rc.compact_thread(tid)
-            assert r["deferred"] is True and r["folded"] > 0
-            # Computed, not landed: the summary is not on the thread and the
-            # operation still holds the door.
-            assert not chat_store.get_thread(tid).get("summary")
-            assert thread_ops.pending(tid) == "compact"
-            # A second compact while one is pending is refused, not stacked,
-            # and says BUSY: "deferred" would promise a landing this press
-            # never computed.
-            r2 = await rc.compact_thread(tid)
-            assert r2["busy"] is True and r2["folded"] == 0
-            assert "deferred" not in r2
-            # The run ends; the landing task fires.
-            chat_store.commit_turn(tid, "run-1", [], "done")
-            turn.finished.set()
-            for _ in range(50):
-                if thread_ops.pending(tid) is None:
-                    break
-                await asyncio.sleep(0.02)
-            assert thread_ops.pending(tid) is None
-            assert chat_store.get_thread(tid).get("summary") == "S"
-        asyncio.run(scenario())
-
-    def test_a_quiet_thread_lands_inline(self, chatty, monkeypatch):
-        import routes.chat as rc
-        monkeypatch.setattr(rc, "_summarize_sync", lambda prev, msgs: "S")
-
-        async def scenario():
-            r = await rc.compact_thread(chatty)
-            assert r.get("deferred") is None or r.get("deferred") is False
-            assert r["folded"] > 0
-            assert chat_store.get_thread(chatty).get("summary") == "S"
-            assert thread_ops.pending(chatty) is None
-        asyncio.run(scenario())
+# THE COMPACT HALF OF THIS PAIR IS GONE, deliberately.
+#
+# `TestCompactDefersMidRun` lived here and pinned Workshop's own fold: compute a
+# summary, hold it behind a `thread_ops` operation while a run was live, land it
+# when the thread went quiet. `5be52599` deleted that fold -- compaction is the
+# provider's own `/compact`, sent as an ordinary turn -- so there is no summary
+# to compute, nothing to defer, and no operation to hold. The tests kept
+# asserting `folded`, `deferred` and `_summarize_sync` and had been red since.
+#
+# What replaced them, so this is not a silent loss of coverage:
+#   - that compaction registers NO operation to cancel is pinned in
+#     test_operation_cancel.test_compaction_has_no_operation_to_cancel
+#   - what it does instead is pinned in test_compact_uses_the_provider.py
+#
+# /clear still defers, still needs the mid-run race closed, and keeps its class
+# below unchanged. The two verbs stopped being symmetrical; only one of them is
+# a cut.
 
 
 class TestClearDefersMidRun:

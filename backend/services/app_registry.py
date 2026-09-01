@@ -976,7 +976,32 @@ def launcher_cards() -> list[dict[str, Any]]:
     except Exception:  # pragma: no cover - the launcher must not die on this
         log.warning("could not read app rows for the launcher", exc_info=True)
 
-    return cards
+    return _self_first(cards)
+
+
+def _self_first(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The installation's OWN source sorts to the front of the launcher.
+
+    The dock is drawn in launcher order, and an app with no catalog spec is
+    appended after every specced one -- so the app that is this checkout landed
+    dead last, under every app built with it. Operator instruction 2026-08-31:
+    put it first when it is present.
+
+    BY DECLARATION, never by name. `self: true` in the project registry is the
+    same fact `dev_only` and the ADR-0014 address interlock already read, so
+    this adds no second source of truth and spells no slug (which
+    scripts/check_no_app_names.py counts and CLAUDE.md forbids). An
+    installation with no self-declared app is unchanged: nothing matches and
+    the order stands.
+
+    Stable within each group: `sorted` with a boolean key preserves the
+    catalog's order among the rest.
+    """
+    try:
+        from services import app_links
+    except Exception:  # pragma: no cover - ordering must not break the launcher
+        return cards
+    return sorted(cards, key=lambda c: not app_links.is_self_slug(c.get("id") or ""))
 
 
 def ensure_identity_manifests() -> None:
