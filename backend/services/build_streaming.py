@@ -1968,6 +1968,13 @@ def _proc_alive(pid: int | None, *, starttime: str | None = None) -> bool:
     return _is_agent_proc(pid, unknown=True)
 
 
+# THE CLI'S OWN BACKGROUND-TASK LIFECYCLE, as `system` subtypes. Observed
+# directly on 2026-09-01 with this driver's flags: a background Agent emits
+# `task_started` at launch and `task_notification` when its result comes back
+# (`background_tasks_changed` and `task_updated` ride along and say nothing this
+# needs). Named here so the driver and `turn_end` agree on one vocabulary.
+_BG_TASK_EVENTS = frozenset({"task_started", "task_notification"})
+
 _AGENT_COMMS = frozenset({"claude", "bwrap", "sudo", "turn-exec"})
 
 
@@ -2290,22 +2297,15 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
         # "the bytes reached the process" into "the turn has read it" — the
         # difference between a chat that is waiting and one that looks broken.
         "--replay-user-messages",
-        # A subagent backgrounded inside a chat turn is killed with the turn:
-        # `_retire_turn_proc` signals the whole process GROUP at the turn's
-        # result, and a restart is a second way to lose it. (It is not that the
-        # CLI exits on its own -- under stream-json it idles on open stdin; see
-        # subagent_guard's docstring, which corrects that.) The Agent/Task tool
-        # backgrounds BY DEFAULT in this CLI, so a naturally-written call (the
-        # flag omitted) backgrounds and the turn dies waiting for it. This hook
-        # fails closed: it allows the call ONLY when run_in_background is
-        # explicitly false, forcing the subagent inline. The prompt rule alone
-        # did not hold twice, so this is the structural guarantee behind it.
-        # See services/subagent_guard.py and chat-agent-integration-2026-08-18.md.
-        "--settings", json.dumps({"hooks": {"PreToolUse": [{
-            "matcher": "Agent|Task",
-            "hooks": [{"type": "command",
-                       "command": f"python3 {_WORKSHOP_ROOT}/backend/services/subagent_guard.py"}],
-        }]}}),
+        # NO SUBAGENT HOOK HERE ANY MORE, and that is the fix rather than a
+        # loosening. A PreToolUse hook used to deny any Agent/Task call that was
+        # not explicitly foreground, because a backgrounded subagent's result
+        # never arrived. The cause was never the CLI: it was `_retire_turn_proc`
+        # SIGTERMing the process GROUP on the parent's first result, with the
+        # subagent inside that group. `turn_end` now counts pending background
+        # tasks and holds the turn open until they report, so the thing the hook
+        # was preventing cannot happen, and denying the call would only remove a
+        # capability that works. Measured end to end 2026-09-01; see turn_end.
     ]
     # WHICH SCOPE this turn's search tool reaches (memory-and-documentation-
     # model-2026-08-14.md sec C). Pinned here, once, before EITHER tool-surface
@@ -2731,6 +2731,9 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     state = {"compacted": False, "saw_result": False, "last_ctx": 0,
              "replays": 0, "results": 0, "foreign_results": 0,
              "seg_at_result": -1,
+             # Background subagents launched by this turn, and how many have
+             # reported. The difference is what `turn_end` waits on.
+             "bg_started": 0, "bg_reported": 0,
              # Seeded at NOW, not at 0: `chat_worktree.enter` wrote the first beat
              # when it took the lease, so the first renewal is due one window
              # from the start of the turn rather than on the first loop pass.
@@ -2875,6 +2878,22 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                     _maybe_write_blocked(turn, meta, payload)
             elif kind == "meta" and payload.get("subtype") == "compact_boundary":
                 state["compacted"] = True
+            elif kind == "meta" and payload.get("subtype") in _BG_TASK_EVENTS:
+                # A BACKGROUND SUBAGENT IS WORK THIS TURN IS STILL OWED, and
+                # these are the CLI's own words for its lifecycle. Verified
+                # against the real CLI 2026-09-01: `task_started` on launch,
+                # `task_notification` when it reports back. Between them the
+                # parent's own `result` can land, and retiring on it kills the
+                # subagent, because it lives in this turn's process group.
+                # `turn_end` reads the difference and holds the turn open.
+                sub = payload.get("subtype")
+                if sub == "task_started":
+                    state["bg_started"] += 1
+                else:
+                    state["bg_reported"] += 1
+                # A notification is real activity, so it resets the silence clock
+                # the background bound measures.
+                state["activity_at"] = time.time()
             elif kind == "user_echo":
                 # THE RECEIPT THAT THE CLI READ ONE OF OUR MESSAGES. Nothing is
                 # rendered from it (see below), but it is the only evidence that
@@ -2983,7 +3002,12 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                 stopped=turn.stop_requested,
                 produced_since_result=(
                     int(state["seg_at_result"]) >= 0
-                    and len(turn.segments) > int(state["seg_at_result"])))):
+                    and len(turn.segments) > int(state["seg_at_result"])),
+                # Clamped: a `task_notification` can belong to a task started by
+                # a PREVIOUS process (the resume case turn_end's header
+                # describes), which would otherwise drive this negative.
+                background_pending=max(
+                    0, int(state["bg_started"]) - int(state["bg_reported"])))):
             # THE FIRST RESULT IS NOT THE END OF THE TURN, only the end of one
             # request. Retiring on it killed whatever the CLI had started for a
             # second prompt — an injected message, or the task-notification the

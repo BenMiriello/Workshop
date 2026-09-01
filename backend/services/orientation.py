@@ -65,9 +65,9 @@ def manifest_text(scope_key: str | None = None) -> str:
         # provides it -- so a caller who wanted out-of-band work read a refusal
         # instead of a redirect. This manifest exists so nothing has to
         # rediscover where a capability lives; the capability was missing from it.
-        "- Work that should outlive this turn and report back into the chat when "
-        "it lands: `spawn_background`. A subagent (the Agent tool) runs INLINE in "
-        "this chat, so it must be issued foreground; several issued in one "
-        "message still run at the same time.\n"
+        "- Work that should outlive this turn and come back as a LATER turn: "
+        "`spawn_background`. A subagent (the Agent tool) belongs to THIS turn "
+        "instead, foreground or background, and the turn stays open until it "
+        "reports.\n"
         "- `where_is` restates this map any time you need it."
     )

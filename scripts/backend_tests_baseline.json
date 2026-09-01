@@ -17,8 +17,6 @@
     "tests/test_next_ready_unattended.py::test_the_root_ticket_case",
     "tests/test_next_ready_unattended.py::test_unattended_picks_a_code_and_ready_ticket",
     "tests/test_runner_brake_split.py::TestARefusedTargetCarriesTheGatesReason::test_dev_mode_on_permits_the_platform_repo",
-    "tests/test_scoped_exec.py::test_scope_is_presented_at_workspace",
-    "tests/test_scoped_exec.py::test_scope_realpath_in_argv_is_remapped",
     "tests/test_semantic_index.py::TestEmbedNormalisation::test_a_zero_vector_does_not_become_nan",
     "tests/test_ticket_producers_state_acceptance.py::TestTheDistiller::test_the_prompt_asks_for_the_same_four_fields",
     "tests/test_ticket_producers_state_acceptance.py::TestTheDraftProposalPrompt::test_the_labels_are_the_ones_the_checker_looks_for"

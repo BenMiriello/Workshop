@@ -62,6 +62,15 @@ from dataclasses import dataclass
 # protecting against by ending too early.
 STUCK_GRACE_S = 60.0
 
+# The same backstop, for a turn holding a BACKGROUND SUBAGENT. Much larger,
+# because a background agent legitimately produces nothing on the parent's
+# stream while it works: measured 2026-09-01, a background agent writing a short
+# essay went 29 seconds between the parent's result and its own first output, and
+# a real research task runs for minutes. 60s would kill exactly the case this
+# exists to support. Ten minutes of COMPLETE silence still bounds a task that
+# died without reporting, and Stop still ends the turn instantly.
+BACKGROUND_GRACE_S = 600.0
+
 
 @dataclass(frozen=True)
 class TurnProgress:
@@ -92,6 +101,14 @@ class TurnProgress:
     # finished. Defaults False so a caller that does not track it gets the old
     # behaviour rather than a turn that never retires.
     produced_since_result: bool = False
+    # BACKGROUND SUBAGENTS LAUNCHED BY THIS TURN AND NOT YET REPORTED.
+    #
+    # `task_started` minus `task_notification`, off the CLI's own system events.
+    # A background agent runs in the turn's process GROUP, so retiring the turn
+    # kills it; while one is outstanding the CLI still owes us its result, in
+    # exactly the sense the other three counts mean. Defaults 0, so a caller that
+    # does not track it behaves as before.
+    background_pending: int = 0
 
 
 def turn_is_over(p: TurnProgress) -> bool:
@@ -122,6 +139,24 @@ def turn_is_over(p: TurnProgress) -> bool:
     # This is the same intent, stated so that producing output can only ever
     # DELAY retirement. Cost when the turn really is done: one more result, which
     # the CLI emits immediately. The idle bound still catches a wedged turn.
+    # A BACKGROUND SUBAGENT IS WORK THIS TURN IS STILL OWED.
+    #
+    # Measured end to end against the real CLI on 2026-09-01, with the flags this
+    # driver uses. A background Agent was launched at 15.4s; the parent said its
+    # piece and `result` #1 landed at 18.8s; the subagent's answer arrived at
+    # 47.6s, on the SAME process, followed by `task_notification`; the model
+    # answered it and `result` #2 landed at 59.3s. Nothing about it is broken.
+    #
+    # What was broken is here: retiring on result #1 SIGTERMs the process group,
+    # and the subagent is in that group, so it was killed 29 seconds before it
+    # would have spoken. That is the whole of "background subagents do not work
+    # in this deployment" -- it was never the CLI, it was this line.
+    #
+    # So a pending background task holds the turn exactly as an unread injection
+    # does. Stop still ends it at once, and BACKGROUND_GRACE_S still bounds a
+    # task that dies without reporting.
+    if p.background_pending > 0:
+        return p.idle_s >= BACKGROUND_GRACE_S
     if p.produced_since_result:
         return p.idle_s >= STUCK_GRACE_S
     # Everything we handed over has been read, everything read has been

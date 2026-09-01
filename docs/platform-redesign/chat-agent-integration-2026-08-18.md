@@ -157,6 +157,33 @@ survive that restart the way the turn's own outer process does (`KillMode=proces
 + no `os.killpg` on shutdown, `docs §2` above — built for the turn's process,
 never extended to a subagent nested inside it).
 
+> **SUPERSEDED 2026-09-01. The guard is deleted; background subagents work.**
+>
+> The paragraph above got the shape of the answer right and the cause wrong, and
+> the correction is the whole point. It says a backgrounded call "genuinely works
+> when nothing disturbs the process" and blames restarts. Restarts are real but
+> they are the SECOND cause. The first is ours and it fires on every turn:
+> `_retire_turn_proc` sends SIGTERM to the whole process GROUP the moment
+> `turn_end` says the turn is over, and a background subagent lives in that
+> group. It was killed by the turn that launched it, not by a restart.
+>
+> Measured against the real CLI on 2026-09-01, this driver's own flags: Agent
+> launched background at 15.4s, `task_started`; the parent's `result` #1 at
+> 18.8s (where the driver kills); the subagent's answer at 47.6s on the SAME
+> process; `task_notification` at 47.7s; the model answered it and `result` #2
+> landed at 59.3s. Nothing is broken and nothing needs `--resume`.
+>
+> So the fix is in the retirement rule, not in a hook: `turn_end.TurnProgress`
+> carries `background_pending` (`task_started` minus `task_notification`, off the
+> CLI's own system events) and a turn is not over while one is outstanding, with
+> its own long silence bound. `services/subagent_guard.py` and its test are
+> deleted, the `--settings` hook is gone from `_build_cmd`, and `DELEGATION_RULE`
+> now says both modes work. Pinned in `tests/test_turn_end_background.py`.
+>
+> The lesson worth keeping: "we could not make it work" was recorded as "it does
+> not work here", and that reading survived a year and a hook because nobody
+> re-ran the experiment against the part of the system we control.
+
 Step 1: since a prompt-only fix cannot be trusted, `services/subagent_guard.py`
 is a PreToolUse hook wired into every chat turn's argv (`--settings` in
 `build_streaming._build_cmd`) that structurally denies `run_in_background: true`
