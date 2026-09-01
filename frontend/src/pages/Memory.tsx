@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { Button, ConfirmDialog, PageActionBar, PageHeader, Row, Stack, Input, StateBlock, Skeleton, Tag, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, userStorage } from "@workshop/ui";
 import { scopeLabel } from "../lib/tasks";
+import { NOTES_APP_ID } from "../apps/registry";
 import { httpFail } from "../lib/http";
 import { useIsWide } from "../lib/useMediaQuery";
 import { useDirectoryPage } from "../components/shell/directory";
@@ -49,7 +50,8 @@ import { DocDocument, NewNoteDocument, NoteDocument } from "./memory/MemoryDocum
 //   Chats  -> /chats, a first-class place with its own page and dock tile. The
 //             per-chat sharing control went with it, onto the chat's own
 //             toolbar (components/chat/ChatShare.tsx).
-//   Vault  -> /apps/notes-app, the notes app's own page. It is that app's private
+//   Vault  -> the notes app's own page (its id comes from apps/registry, the
+//            one file allowed to name an app). It is that app's private
 //             store and drawing it here was a scope violation as well as a
 //             confusion.
 //   Files  -> /chats. An attachment is a thing you put in a chat, visible
@@ -115,7 +117,7 @@ const OVERFLOW_AT = 100;
  *  `?path=` selects the document. So it resolves by falling through. */
 const MOVED: Record<string, string> = {
   chats: "/chats",
-  vault: "/apps/notes-app",
+  vault: `/apps/${NOTES_APP_ID}`,
   files: "/chats",
 };
 

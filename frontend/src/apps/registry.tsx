@@ -60,6 +60,13 @@ const Budget = lazyPage(() => import("../pages/apps/Budget"));
 const LocationApp = lazyPage(() => import("../pages/apps/Location"));
 const CommuteApp = lazyPage(() => import("../pages/apps/Commute"));
 const Notes = lazyPage(() => import("../pages/apps/notes/Notes"));
+
+// The notes app's id, declared once. This file is the one frontend file allowed
+// to name an app (frontend/CLAUDE.md), so the name lives here and everything
+// that needs the app's base path derives it, rather than each site typing the
+// slug again and one of them getting it wrong.
+export const NOTES_APP_ID = "notes-app";
+const notesAppHome = `/apps/${NOTES_APP_ID}`;
 const Birds = lazyPage(() => import("../pages/apps/Birds"));
 const Locations = lazyPage(() => import("../pages/apps/birds/Locations"));
 const LocationDetail = lazyPage(() => import("../pages/apps/birds/LocationDetail"));
@@ -252,19 +259,21 @@ export const APPS: AppModule[] = [
     routes: () => <Route key="commute" path="/apps/commute" element={<CommuteApp groupNav={<AppGroupNav />} renderChatDock={makeChatDock("commute")} />} />,
   },
   {
-    // THE PATH MUST BE THE SLUG. This entry's id is `notes-app` (it is the app
-    // record's slug, and the API answers on it) while its crumb key and route
-    // said `/apps/notes`. `appPlaces()` takes an app's `home` from the crumb
-    // key, so places.ts built every generic tab as `/apps/notes/<tab>` -- and
-    // the generic route then resolved `appSlug="notes"`, which no app record
-    // has. All seven tabs rendered a full-page "no /api/apps record for slug
-    // notes" error. The reverse direction failed too: on `/apps/notes-app/...`,
-    // which does work, no place prefix matched, so the page column showed the
-    // Workshop root nav instead of this app's own.
-    id: "notes-app",
+    // THE PATH MUST BE THE SLUG, so it is DERIVED from the id rather than typed
+    // beside it. This entry's crumb key and route used to be spelled one letter
+    // short of its id. `appPlaces()` takes an app's `home` from the crumb key,
+    // so places.ts built every generic tab from the short path, and the generic
+    // route then resolved an app slug no record has: all seven tabs rendered a
+    // full-page "no such app" error. The reverse failed too -- on the path that
+    // DOES work, no place prefix matched, so the page column showed the Workshop
+    // root nav instead of this app's own.
+    //
+    // Two spellings of one name is the bug. There is now one, and the paths are
+    // built from it, so they cannot drift apart again.
+    id: NOTES_APP_ID,
     icon: "notebook-pen",
-    crumbs: { "/apps/notes-app": { label: "Notes", parent: "/apps" } },
-    routes: () => <Route key="notes" path="/apps/notes-app" element={<Notes />} />,
+    crumbs: { [notesAppHome]: { label: "Notes", parent: "/apps" } },
+    routes: () => <Route key="notes" path={notesAppHome} element={<Notes />} />,
   },
   {
     id: "birds",
