@@ -20,6 +20,15 @@ with any other agent**. You do not need to coordinate and you do not need to ask
 
 `bash scripts/apply.sh --check` reports drift without changing anything.
 
+**One surface it reports and never fixes: the database schema.** It compares the
+tree's alembic head to the live `alembic_version`, and when the tree is ahead it
+**declines the backend restart** and names the command to run — because starting
+code whose migration has not landed is a guaranteed outage (a missing column
+fails at query time, which the import preflight cannot see; that is exactly how
+`15883681` nearly took chat down on 2026-09-01). Running the migration stays the
+operator's act, in his own terminal. Nothing in this repo's deploy path runs
+alembic, deliberately.
+
 Mechanics, costs and troubleshooting: [`docs/applying-changes.md`](docs/applying-changes.md).
 That file is the ONLY current source for how to apply a change. Restart and
 rebuild commands in dated handoff docs and under `docs/platform-redesign/` are

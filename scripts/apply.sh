@@ -26,6 +26,12 @@
 # an agent reasoning about other agents' in-flight work is inventing a problem
 # the tooling already owns.
 #
+# ONE SURFACE IS REPORTED AND NEVER APPLIED: the database schema. Every other
+# check here ends in this script fixing the thing; the schema check ends in it
+# telling you and refusing to restart the backend on top of the gap. Applying a
+# migration to a live database is a deliberate act with a blast radius this
+# script cannot judge, so it stays the operator's, in a terminal. See section 2.
+#
 # WHAT IT COSTS (measured 2026-08-13, so nobody has to guess again):
 #   bundle rebuild   ~17s, and NOTHING restarts -- the edge serves dist from
 #                    disk per request, so no requests drop and no stream cuts
@@ -43,11 +49,14 @@ CHECK=0
 PUBLISH_WIP=0
 UI_SKIPPED=0
 BE_SKIPPED=0
+BE_SKIP_WHY=""      # named, because "still stale by choice" must say whose choice
 for arg in "$@"; do
   case "$arg" in
     --check|-n) CHECK=1 ;;
     --publish-wip) PUBLISH_WIP=1 ;;
-    -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    # The whole leading comment block, however long it grows -- a hardcoded line
+    # range silently truncates the help the moment anyone edits the header.
+    -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     *) echo "apply.sh: unknown argument '$arg' (try --check or --help)" >&2; exit 64 ;;
   esac
 done
@@ -61,6 +70,9 @@ plan() { DRIFT=1; if [ "$CHECK" = 1 ]; then say "  STALE   $1"; else say "  appl
 ok()   { say "  ok      $1"; }
 warn() { say "  warn    $1"; }
 fail() { FAILED=1; say "  FAILED  $1"; }
+# Drift this script will NOT close. `plan` prints "apply" on a real run, which
+# would be a lie for the schema: nothing here runs a migration, by design.
+stale(){ DRIFT=1; say "  STALE   $1"; }
 
 # A linked worktree builds into ITS OWN frontend/dist, while the public edge
 # serves the canonical tree's dist by absolute path (WORKSHOP_DIST in the unit).
@@ -146,7 +158,72 @@ except Exception:
 fi
 
 # ---------------------------------------------------------------------------
-# 2. The backend. The only genuinely disruptive one, so it is the only one that
+# 2. The database schema: the tree's alembic head against the live database's
+#    alembic_version. REPORTED, NEVER APPLIED.
+#
+#    THIS IS THE ONE SURFACE THIS SCRIPT DOES NOT FIX. Every other check ends in
+#    a rebuild or a restart; this one ends in a refusal, because applying DDL to
+#    a live database is an act whose blast radius this script cannot judge.
+#
+#    It exists because on 2026-09-01 a commit added two columns to chat_thread
+#    plus the migration that creates them, and NOTHING in this deploy path ran
+#    alembic -- not this script, not restart_backend.sh. Live stayed at
+#    b9f3e2d07a16, a read through the committed code answered
+#    `UndefinedColumn: column chat_thread.armed does not exist`, and a deferred
+#    restart was already armed. The commit was reverted to save the app.
+#
+#    restart_backend.sh's import preflight is structurally unable to catch it:
+#    a missing column fails at QUERY time and `import main` imports perfectly.
+#    So the comparison has to happen here, before the restart is armed.
+# ---------------------------------------------------------------------------
+# The venv python has alembic and sqlalchemy; the system one usually does not,
+# and answers "COULD NOT DETERMINE" rather than pretending.
+MIG_PY="backend/.venv/bin/python"
+[ -x "$MIG_PY" ] || MIG_PY="$(command -v python3 2>/dev/null || true)"
+MIG_STATE="unknown"
+MIG_MSG="schema: COULD NOT DETERMINE -- no python available to run scripts/migration_state.py"
+MIG_FIX=""
+if [ -n "$MIG_PY" ] && [ -f scripts/migration_state.py ]; then
+  mig_line="$("$MIG_PY" scripts/migration_state.py 2>/dev/null | tail -1)"
+  if [ -n "$mig_line" ]; then
+    MIG_STATE="${mig_line%%$'\t'*}"
+    mig_rest="${mig_line#*$'\t'}"
+    MIG_MSG="${mig_rest%%$'\t'*}"
+    MIG_FIX="${mig_rest#*$'\t'}"
+  fi
+fi
+
+MIG_BLOCKS=0    # the tree needs schema the live database does not have
+MIG_UNKNOWN=0   # the comparison did not happen; this is NOT "in sync"
+case "$MIG_STATE" in
+  ok)
+    ok "$MIG_MSG" ;;
+  tree_ahead)
+    MIG_BLOCKS=1
+    stale "$MIG_MSG"
+    say  "          apply.sh does not run migrations and will not. Run this yourself:"
+    say  "            $MIG_FIX" ;;
+  live_ahead)
+    # The database is ahead of the tree -- a revert, or an old checkout. Real
+    # drift, so it is reported. It does NOT hold the restart: the code on disk
+    # never names whatever that revision added, so the extra schema is inert,
+    # and after a revert like 2026-09-01's the restart is the very thing that
+    # puts the app back on code the database can serve. Blocking it would hold
+    # the app down to protect it from columns nothing reads.
+    stale "$MIG_MSG"
+    say  "          this does not hold the restart back: $MIG_FIX" ;;
+  not_configured)
+    warn "$MIG_MSG" ;;
+  *)
+    # A check that silently passes when it could not measure is the failure mode
+    # this repo keeps getting bitten by. Undecidable is loud, and it is not ok.
+    MIG_UNKNOWN=1
+    warn "$MIG_MSG"
+    [ -n "$MIG_FIX" ] && say "          $MIG_FIX" ;;
+esac
+
+# ---------------------------------------------------------------------------
+# 3. The backend. The only genuinely disruptive one, so it is the only one that
 #    is deferred rather than immediate.
 # ---------------------------------------------------------------------------
 BE_SRC="$(bash scripts/backend_source_id.sh 2>/dev/null || echo unknown)"
@@ -187,6 +264,21 @@ else
   # leaving a finished route unserved behind a fixture nobody was running.
   # Excluding it ENFORCES this guard's stated rule (do not start someone else's
   # half-written code) rather than relaxing it.
+  # THE SCHEMA COMES FIRST, before the uncommitted-work question, because it is
+  # the more certain outage of the two. Someone else's half-written file MIGHT
+  # not import; code whose migration has not landed WILL fail every request that
+  # touches the new column, and it will do it after the restart, from a service
+  # that started cleanly. Same shape as the guard below and for the same reason:
+  # decline, say exactly why, name what to do.
+  if [ "$MIG_BLOCKS" = 1 ]; then
+    warn "not restarting: this tree's migrations have not been applied to the live database (above)."
+    say  "          Restarting onto that is an outage, not a risk: the service starts fine and"
+    say  "          then fails every query for a column that is not there. The import preflight"
+    say  "          cannot see it. Apply the migration and rerun:"
+    say  "            $MIG_FIX"
+    BE_SKIPPED=1
+    BE_SKIP_WHY="unapplied migrations above"
+  fi
   be_wip="$(git status --porcelain -uall -- backend 2>/dev/null | awk '{print $NF}' \
     | grep -E '(\.py|requirements[^/]*\.txt)$' | grep -v 'workshop_public_app\.py$' \
     | grep -v '^backend/tests/' || true)"
@@ -195,6 +287,7 @@ else
     printf '            %s\n' $be_wip
     say  "          commit it and rerun, or: bash scripts/apply.sh --publish-wip"
     BE_SKIPPED=1
+    [ -n "$BE_SKIP_WHY" ] || BE_SKIP_WHY="uncommitted backend work above"
   fi
   if [ "$CHECK" = 0 ] && [ "$BE_SKIPPED" = 0 ]; then
     if bash scripts/restart_backend.sh --deferred >/dev/null 2>&1; then
@@ -277,13 +370,24 @@ PY
 fi
 
 if [ "$CHECK" = 1 ]; then
-  [ "$DRIFT" = 0 ] && say "in sync" || say "drift found (run: bash scripts/apply.sh)"
-  exit "$DRIFT"
+  # EXIT 0 MEANS "MEASURED, AND IN SYNC" -- never "asked, and could not tell".
+  # The schema is the one surface whose live side can be unreachable, and a
+  # check that passes when it could not measure is worth less than no check.
+  if [ "$DRIFT" = 1 ]; then
+    say "drift found (run: bash scripts/apply.sh)"
+    [ "$MIG_BLOCKS" = 1 ] && say "  ...except the schema, which apply.sh will not touch: $MIG_FIX"
+  elif [ "$MIG_UNKNOWN" = 1 ]; then
+    say "NOT in sync as far as this can tell: the schema could not be measured (above)"
+  else
+    say "in sync"
+  fi
+  exit $(( DRIFT || MIG_UNKNOWN ))
 fi
 [ "$FAILED" = 1 ] && { say "apply: something failed (above)"; exit 1; }
 # Never let a skip pass for a success. Something deliberately not done still has
 # to be said out loud, or the next reader concludes the bundle is current.
 [ "$UI_SKIPPED" = 1 ] && say "apply: the bundle is still STALE by choice (uncommitted UI work above)"
-[ "$BE_SKIPPED" = 1 ] && say "apply: the backend is still STALE by choice (uncommitted backend work above)"
-[ "$ACTED" = 0 ] && [ "$DRIFT" = 0 ] && say "already in sync; nothing to do"
+[ "$BE_SKIPPED" = 1 ] && say "apply: the backend is still STALE by choice ($BE_SKIP_WHY)"
+[ "$MIG_UNKNOWN" = 1 ] && say "apply: the schema was NOT compared (above), so this run cannot claim in sync"
+[ "$ACTED" = 0 ] && [ "$DRIFT" = 0 ] && [ "$MIG_UNKNOWN" = 0 ] && say "already in sync; nothing to do"
 exit 0

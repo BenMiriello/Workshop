@@ -35,6 +35,7 @@ differ:
   `scripts/backend_source_id.sh` computes the id on disk. Different means restart.
 - **The Vite dev server**, which reads `frontend/.env` only at service start.
 - **The public edge**, when `backend/workshop_public_app.py` itself changes.
+- **The database schema** — reported, never applied. See below.
 
 Both of the first two comparisons are exact, because the running thing reports
 its own version. That is what makes the script idempotent and what makes "did my
@@ -42,6 +43,46 @@ change land" answerable instead of assumed.
 
 `bash scripts/apply.sh --check` reports drift and changes nothing. It is a good
 first move when you pick up work someone else left.
+
+## The one surface it reports and never fixes: the schema
+
+`apply.sh` compares the tree's alembic head against the live database's
+`alembic_version` and prints it beside the others. It does **not** run alembic,
+and nothing else in the deploy path does either.
+
+| what it prints | what it means | does it hold the restart? |
+| --- | --- | --- |
+| `ok      schema (<rev>)` | live is exactly at the tree's head | no |
+| `STALE   schema: the tree is N migrations AHEAD` | code here queries columns the database does not have | **yes** |
+| `STALE   schema: the live database is at <rev>, which THIS TREE DOES NOT CONTAIN` | a revert, or a checkout older than the database | no |
+| `warn    schema: COULD NOT DETERMINE ...` | unreachable, or no driver — this is **not** "in sync", and `--check` exits non-zero | no |
+| `warn    schema: no database configured ...` | nothing to compare | no |
+
+**Tree ahead of live is the one case that declines the backend restart**, in the
+same shape as the uncommitted-work refusal: it says why and names the command.
+Applying it is yours to run, in a terminal:
+
+```bash
+set -a; . ~/.config/workshop/db-admin.env; set +a
+cd backend && .venv/bin/alembic upgrade head
+```
+
+Then `bash scripts/apply.sh` again, which will now restart.
+
+The reverse case — live ahead of the tree — is reported but does not block,
+because the code on disk never names what that revision added, so the extra
+schema is inert, and after a revert the restart is the thing that puts the app
+back on code the database can serve.
+
+WHY THIS EXISTS, and why it is a guard rather than an auto-migrator. On
+2026-09-01 a commit added two columns to `chat_thread` plus the migration that
+creates them. Live stayed at `b9f3e2d07a16`, a read through the committed code
+answered `UndefinedColumn: column chat_thread.armed does not exist`, and a
+deferred restart was already armed; the commit was reverted to save the app.
+`restart_backend.sh`'s import preflight cannot catch that class of break — a
+missing column fails at QUERY time and `import main` imports perfectly. Applying
+DDL to a live database is an act with a blast radius no script can judge, so the
+job here is to make the drift impossible to miss, not to resolve it.
 
 ## You do not need to coordinate
 
@@ -161,6 +202,9 @@ of them; the entry point is `apply.sh`.
 - `scripts/ui_source_id.sh`, `scripts/backend_source_id.sh` — the two definitions
   of "which version is this". Everything that compares running code to source
   calls these, so there is never a second opinion.
+- `scripts/migration_state.py` — the tree's alembic head against the live
+  `alembic_version`, as one `state<TAB>headline<TAB>remedy` line. One SELECT, no
+  writes, no alembic invocation. Run it directly to see the schema answer alone.
 
 ## Where instructions live
 
