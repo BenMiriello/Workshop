@@ -9,11 +9,13 @@ the thread to take its own next turn (services/chat_drain.request_continuation).
 The operator keeps chatting the whole time and the chat picks the result up on
 its own when it lands.
 
-Why a Job and not a backgrounded subagent: a chat turn is a one-shot process
-that exits when it stops emitting tool calls, so a subagent nested in it cannot
-outlive it (services/subagent_guard.py). A Job is the durable, restart-surviving
-primitive that can (services/jobs.py); the completion-to-chat delivery reuses
-the same seam a ticket run uses (services/run_report + chat_drain).
+Why a Job and not a backgrounded subagent: a subagent nested in a chat turn is
+killed with that turn -- `_retire_turn_proc` signals the whole process group at
+the turn's result -- so it cannot outlive it (services/subagent_guard.py, whose
+docstring corrects the "one-shot process that exits by itself" story this
+comment used to repeat). A Job is the durable, restart-surviving primitive that
+can (services/jobs.py); the completion-to-chat delivery reuses the same seam a
+ticket run uses (services/run_report + chat_drain).
 
 Two entry points:
   launch(...) -> job_id     opens the Job, spawns the detached runner.

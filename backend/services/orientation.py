@@ -58,5 +58,16 @@ def manifest_text(scope_key: str | None = None) -> str:
         "- When you cite a doc, note or ticket, write it as a managed link "
         "(`workshop:doc/<path>`, `workshop:note/<scope>/<id>`, "
         "`workshop:ticket/<id>`) so it renders as a chip, not raw text.\n"
+        # THE ONE TOOL THAT ANSWERS "HOW DO I RUN SOMETHING IN THE BACKGROUND".
+        # Added 2026-08-31. A chat's subagents run inline (a backgrounded one is
+        # killed with the turn), and the guard that enforces that used to say
+        # "backgrounding is not available here" without naming the tool that
+        # provides it -- so a caller who wanted out-of-band work read a refusal
+        # instead of a redirect. This manifest exists so nothing has to
+        # rediscover where a capability lives; the capability was missing from it.
+        "- Work that should outlive this turn and report back into the chat when "
+        "it lands: `spawn_background`. A subagent (the Agent tool) runs INLINE in "
+        "this chat, so it must be issued foreground; several issued in one "
+        "message still run at the same time.\n"
         "- `where_is` restates this map any time you need it."
     )

@@ -2290,10 +2290,11 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
         # "the bytes reached the process" into "the turn has read it" — the
         # difference between a chat that is waiting and one that looks broken.
         "--replay-user-messages",
-        # A chat turn is a one-shot process: it exits when it stops emitting
-        # tool calls, and nothing re-invokes it to collect a backgrounded
-        # subagent's late result (and this backend restarts often -- any
-        # concurrent turn's apply.sh can trigger one). The Agent/Task tool
+        # A subagent backgrounded inside a chat turn is killed with the turn:
+        # `_retire_turn_proc` signals the whole process GROUP at the turn's
+        # result, and a restart is a second way to lose it. (It is not that the
+        # CLI exits on its own -- under stream-json it idles on open stdin; see
+        # subagent_guard's docstring, which corrects that.) The Agent/Task tool
         # backgrounds BY DEFAULT in this CLI, so a naturally-written call (the
         # flag omitted) backgrounds and the turn dies waiting for it. This hook
         # fails closed: it allows the call ONLY when run_in_background is

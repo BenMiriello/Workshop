@@ -3,14 +3,28 @@
 Root cause (docs/platform-redesign/chat-agent-integration-2026-08-18.md, and
 verified again 2026-08-20 on a real dead turn): a background Agent/Task call
 only delivers its result if the SAME live process survives to receive the CLI's
-own `task_notification` and answer it. A chat turn is a one-shot `claude -p`
-process: the moment it emits text with no pending tool call it is DONE and the
-process exits. Nothing in build_streaming re-invokes it to collect a background
-subagent's late result, and on top of that this backend restarts often (any
-concurrent turn's apply.sh can trigger one). So a backgrounded subagent's work
-is lost, and the model -- believing it will be called back -- writes a "holding
-until the mappers report" style closing line and stops. The operator then sees
-a chat that promised a follow-up it can never make.
+own `task_notification` and answer it. That process does not survive, so the
+work is lost and the model -- believing it will be called back -- writes a
+"holding until the mappers report" closing line and stops. The chat then shows
+a promised follow-up that can never arrive.
+
+WHY IT DOES NOT SURVIVE, CORRECTED 2026-08-31. This docstring and the deny
+reason below both used to say "a chat turn is a one-shot `claude -p` process:
+the moment it emits text with no pending tool call it is DONE and the process
+exits." That is FALSE, and three places in this tree say so: `_retire_turn_proc`
+and `turn_end`'s own header both record that under `--input-format stream-json`
+the CLI does NOT exit when a turn finishes -- stdin is still open, so it idles
+for the next message -- and the stdin FIFO is opened O_RDWR precisely so the
+child never sees EOF. That architecture predates this guard by three weeks, so
+the explanation was wrong when it was written.
+
+The real reason is that WE end it: on the turn's balanced `result`,
+`_retire_turn_proc` sends SIGTERM to the whole process GROUP, which includes any
+subagent still running in the background. (The frequent backend restarts named
+in the design doc are a second, independent way to lose it.) The outcome the
+guard prevents is real and was measured twice; the mechanism is ours, not the
+CLI's. Getting this right matters because the wrong version reads as "the tool
+cannot do this", which is the kind of claim that stops anyone looking again.
 
 THE HOLE THIS CLOSES. The Agent/Task tool in this CLI (2.1.143) runs a subagent
 in the BACKGROUND BY DEFAULT: omit `run_in_background` and the call returns
@@ -39,15 +53,23 @@ import sys
 
 DENIED_TOOLS = ("Agent", "Task")
 
+# WHAT THE CALLER IS TOLD. Two things this used to get wrong, both fixed
+# 2026-08-31: it asserted a mechanism that is not true (see the docstring), and
+# it said "backgrounding is not available here" while the platform's own
+# background primitive sat unmentioned in the same toolbox. A model that
+# genuinely wanted out-of-band work read that as "give up".
+#
+# So: say what to do, and name the tool that does the thing being refused.
+# Several foreground subagents issued in ONE message still run concurrently,
+# which is what most callers actually wanted from backgrounding.
 DENY_REASON = (
-    "In this chat a subagent must run in the FOREGROUND, and the Agent/Task "
-    "tool backgrounds by default, so you must say so explicitly: re-issue this "
-    "call with run_in_background set to false. Backgrounding is not available "
-    "here -- this turn is a one-shot process that exits when you stop emitting "
-    "tool calls, so a background subagent's result is never delivered and the "
-    "turn dies waiting for it. The turn has no time limit, so waiting for the "
-    "subagent inline is safe and is the only path that reliably returns its "
-    "result into this reply."
+    "In this chat a subagent runs in the FOREGROUND, and the Agent/Task tool "
+    "backgrounds by default, so you have to say so: re-issue this call with "
+    "run_in_background set to false. A backgrounded one is killed with the turn "
+    "before it can report, so its result never arrives. The turn has no time "
+    "limit, so waiting inline is safe, and several subagents issued in one "
+    "message still run at the same time. If you want work to outlive this turn "
+    "and report back into the chat later, that is what spawn_background is for."
 )
 
 
