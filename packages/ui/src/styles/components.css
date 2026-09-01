@@ -2538,6 +2538,45 @@ span.ws-filterchip__open { cursor: default; }
 .ws-tabbar__tab:hover { color: var(--fg); }
 .ws-tabbar__tab.is-active { color: var(--fg); font-weight: var(--fw-semi); border-bottom-color: var(--accent); }
 
+/* A BAR THAT SCROLLS SAYS SO.
+   The bar hides its scrollbar (above), deliberately: a full-width horizontal
+   scrollbar in a 40px strip looked broken. What went with it was the only sign
+   that there was anything past the right edge. On a 390px phone the Workshop
+   page list drew six of its ten tabs and the last label was cut mid-word, with
+   nothing to say the other four existed. Reported 2026-08-31.
+
+   So: a mask that fades the right edge, present exactly while there IS more to
+   the right. "Exactly while" is the whole difficulty. CSS cannot ask whether an
+   element overflows, so the fade's WIDTH is driven by the bar's own scroll
+   position and shrinks to nothing as the last tab arrives. A registered custom
+   property is what makes a length animatable at all.
+
+   Two fallbacks, both deliberate. A bar that does not scroll has no scroll
+   timeline, so the animation never applies and the base value of 0 leaves the
+   bar unmasked. A browser with no scroll timelines skips the block entirely and
+   gets today's behaviour. Neither ever shows a permanent fade on a bar with
+   three tabs in it, which would be a mark for a thing that is not there. */
+@property --ws-tabbar-fade {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@supports (animation-timeline: scroll(self inline)) {
+  .ws-tabbar {
+    mask-image: linear-gradient(to right, black calc(100% - var(--ws-tabbar-fade)), transparent);
+    animation: ws-tabbar-edge linear both;
+    animation-timeline: scroll(self inline);
+  }
+  /* Held at full width for most of the travel and released over the last
+     stretch, so arriving at the end reads as arriving rather than as the mark
+     switching off. */
+  @keyframes ws-tabbar-edge {
+    from { --ws-tabbar-fade: 28px; }
+    80%  { --ws-tabbar-fade: 28px; }
+    to   { --ws-tabbar-fade: 0px; }
+  }
+}
+
 /* ---- Phone: the place menu ----------------------------------------------
    A DROPDOWN anchored under bar one's TILE. Not a drawer and not a sheet: an
    earlier left slide-over was replaced during design, and the mockup still

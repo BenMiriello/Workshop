@@ -12,6 +12,22 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.7.8 - 2026-09-01 - a scrolling tab bar says it scrolls
+
+**Patch, additive.** CSS only: no export added, removed or altered.
+
+### Changed
+
+- **`.ws-tabbar` fades its right edge while there is more to the right.** The
+  bar hides its scrollbar on purpose, and that hid the only sign that a phone
+  was showing six of ten tabs.
+
+  The fade's width is driven by the bar's own scroll position, so a bar that
+  does not scroll never wears one, and it releases as the last tab arrives. It
+  is behind `@supports (animation-timeline: scroll(self inline))` and a
+  registered `--ws-tabbar-fade` property; a browser without scroll timelines
+  renders the bar exactly as before.
+
 ## 0.7.7 - 2026-09-01 - the scheme's description sits under the scheme
 
 **Patch, additive.** No API change: no prop added, removed or altered.

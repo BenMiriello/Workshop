@@ -129,6 +129,22 @@ describe("the app shell cannot scroll its own chrome away", () => {
     expect(kitRule(".ws-tabbar__tab")).toContain("transition: color");
   });
 
+  it("says the page toolbar scrolls, and only while it does", () => {
+    // The bar hides its scrollbar, so a phone showed six of ten tabs with no
+    // sign the rest existed. The mark is a right-edge mask whose width is
+    // driven by the bar's own scroll position, so a bar that does not scroll
+    // never wears one. Reported 2026-08-31.
+    expect(kit).toContain("@property --ws-tabbar-fade");
+    expect(kit).toContain("animation-timeline: scroll(self inline)");
+    expect(kit).toContain("mask-image: linear-gradient(to right, black calc(100% - var(--ws-tabbar-fade))");
+    // Gated, so a browser without scroll timelines gets today's bar rather
+    // than a fade that never goes away.
+    expect(kit).toContain("@supports (animation-timeline: scroll(self inline))");
+    // The initial value is what an unscrollable bar resolves to: no fade.
+    const prop = kit.slice(kit.indexOf("@property --ws-tabbar-fade"));
+    expect(prop.slice(0, prop.indexOf("}"))).toContain("initial-value: 0px");
+  });
+
   it("gives the page toolbar a stronger hairline than bar one", () => {
     // So the two bars read as one block separated from the content, rather than
     // as two stacked strips.
