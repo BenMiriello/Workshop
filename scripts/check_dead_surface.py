@@ -248,7 +248,7 @@ def _shell_modules(tree: Path, tracked: set[str]) -> set[str]:
             continue
         seen.add(rel)
         try:
-            text = (tree / rel).read_text(encoding="utf-8", errors="ignore")
+            text = _read_tracked(tree / rel) or ""
         except OSError:
             continue
         base = Path(rel).parent
@@ -266,13 +266,40 @@ def _shell_modules(tree: Path, tracked: set[str]) -> set[str]:
     return seen
 
 
+
+def _read_tracked(path: Path) -> str | None:
+    """A tracked file's text, or None when it is not on disk.
+
+    `tracked` comes from the git INDEX, so between `rm` and `git add` the index
+    still names a file the tree no longer has. That is a deletion in progress,
+    which is precisely the state a worker is in when it deletes a surface, and
+    it is the state this checker most needs to survive. It used to raise
+    FileNotFoundError from whichever read site got there first and take the
+    whole run down. A gate that crashes is a gate that is not running.
+    """
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+
+
 def _routes_and_links(tree: Path, tracked: list[Path]) -> tuple[list[dict], dict[str, list[str]]]:
     routes: list[dict] = []
     links: dict[str, list[str]] = {}
     rels = {p.relative_to(tree).as_posix() for p in tracked}
     shell = _shell_modules(tree, rels)
     for path in _frontend_files(tree, tracked):
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        # A TRACKED FILE THAT IS NOT ON DISK IS A DELETION IN PROGRESS, not an
+        # error. `tracked` comes from the git index, so between `rm` and `git
+        # add` the index still names a file the tree no longer has -- exactly
+        # the state a worker is in when it deletes a surface, which is the state
+        # this checker most needs to survive. It used to raise FileNotFoundError
+        # and take the whole run down, and a gate that crashes is a gate that is
+        # not running: on 2026-09-01 it crashed on an unstaged TicketTable.tsx
+        # deletion and reported nothing at all about the rest of the tree.
+        text = _read_tracked(path)
+        if text is None:
+            continue
         rel = path.relative_to(tree).as_posix()
         route_spans = [(m.start(), m.end()) for m in _ROUTE_RE.finditer(text)]
         for match in (_ROUTE_RE.finditer(text) if rel in shell else ()):
@@ -310,7 +337,9 @@ def _nav_targets(tree: Path, tracked: list[Path]) -> set[str]:
     for path in _frontend_files(tree, tracked):
         if path.name.endswith((".test.ts", ".test.tsx")):
             continue
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        text = _read_tracked(path)
+        if text is None:
+            continue
         for match in nav_re.finditer(text):
             value = match.group(1) if match.group(1) is not None else match.group(2)
             if value.startswith("/"):
@@ -375,7 +404,7 @@ def _imported_names(mods: dict[str, tuple[Path, bool]]) -> set[str]:
         if name.startswith("tests.") or name == "tests":
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+            tree = ast.parse(_read_tracked(path) or "")
         except (OSError, SyntaxError, ValueError):
             continue
         if is_pkg:
@@ -422,7 +451,10 @@ def _external_corpus(tree: Path, tracked: list[Path]) -> list[tuple[str, str]]:
         if "/" not in rel and not rel.endswith(".sh"):
             continue
         try:
-            corpus.append((rel, path.read_text(encoding="utf-8", errors="ignore")))
+            body = _read_tracked(path)
+            if body is None:
+                continue
+            corpus.append((rel, body))
         except OSError:
             continue
     return corpus
@@ -455,7 +487,7 @@ def _scan_backend(tree: Path, rules: dict, tracked: list[Path]) -> dict:
         rel = path.relative_to(tree).as_posix()
         per_module[name] = {
             "file": rel,
-            "lines": len(path.read_text(encoding="utf-8", errors="ignore").splitlines()),
+            "lines": len((_read_tracked(path) or "").splitlines()),
             "external_refs": _external_refs(corpus, name, rel),
         }
     return {"modules_scanned": len(mods), "per_module": per_module}
@@ -537,7 +569,7 @@ def _caller_corpus(tree: Path, tracked: list[Path],
         if rel in skip:
             continue
         try:
-            body = path.read_text(encoding="utf-8", errors="ignore")
+            body = _read_tracked(path) or ""
         except OSError:
             continue
         if path.suffix in (".py", ".sh"):
