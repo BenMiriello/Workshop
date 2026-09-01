@@ -164,11 +164,45 @@ has no isolation, so agents overwrite each other.**
   `apply.sh`. `restart_backend.sh` has no `flock`, so they will fire in sequence
   after this turn. Worst case is a few extra seconds of pause, not data loss.
 
+- **The coordinator made the same mistake it had warned four agents about.** Commit
+  `fbc5d3f3`, a docs commit, swept in another agent's in-flight
+  `git mv pages/Tickets.tsx -> components/tickets/TicketsView.tsx` without its
+  import fixes, because `git add <path>` followed by a bare `git commit` commits
+  the WHOLE INDEX. `fbc5d3f3` and `46b5caf1` therefore do not build (`App.tsx`
+  imports `./pages/Tickets`, which does not exist at those revisions);
+  `22276b33` restored a buildable tree. No live impact, but those two revisions
+  are not bisectable. **The correct form is `git commit -- <paths>`, always.**
+
 **If this is done again:** tell every agent to `git commit -- <explicit paths>`,
 never `git add -A`, never `git stash`/`reset --hard`/`checkout -- .`, and to
 commit early rather than holding a large working set. Better still, give agents
 that touch overlapping files their own worktrees — the machinery exists
 (`services/worktrees.py`, `run_worktree.py`) and this is exactly what it is for.
+
+## Owed: residue from the app Tickets tab change
+
+`22276b33` replaced the app Tickets tab's bespoke list with the real view and
+deleted the frontend half in the same commit, correctly. **The backend half was
+not deleted.** `GET /api/apps/{app_id}/tickets` (`backend/routes/apps.py:247`),
+the `AppTicketList` model (`:137`) and `apps_svc.tickets_for_app`
+(`services/apps.py:313`) now have ZERO non-test callers.
+
+`check_dead_surface.py` passes only because its granularity is "api AREA", and
+the apps area is still called for runs/chats/notes/deploys. **That is a real gap
+in a gate that shipped today** and is worth knowing: area-level detection cannot
+see a single dead route inside a live area.
+
+Mitigating, and why this is a decision rather than an oversight: the route is one
+member of a documented uniform family of app sub-collections with a contract test
+that loops over all of them, so removing only `/tickets` breaks the symmetry
+deliberately. But the commit does not mention it, which is what makes it residue
+rather than a choice.
+
+Also found, no live impact: the tab computes `scopeForContext(app.slug)` while
+the server's `apps.owned_scope()` resolves from `project_slug`. They agree today
+because every linked app here has `slug == project_slug`; an app where they
+differed would diverge, and `owned_scope` is not on the wire so the client cannot
+just read it.
 
 ## Open questions for the operator
 
