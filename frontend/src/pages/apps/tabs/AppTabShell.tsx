@@ -139,8 +139,22 @@ export function CollectionBody<T>({
   if (items.length === 0) {
     return <StateBlock title={emptyTitle} hint={emptyHint} action={emptyAction} />;
   }
+  // OVERFLOW SHOWS THE CONTENT. This used to return a region reading "Too many
+  // to render" and nothing else, so an app with 409 tickets had a Tickets tab
+  // that displayed zero of them and told the operator to go delete some. That
+  // is the failure state wearing the overflow state's name: a long list is not
+  // an error, and the four-states rule (frontend/CLAUDE.md rule 9) says overflow
+  // is paginated or scrolled, never withheld.
+  //
+  // A LINE, not a region, for the same reason the rest of this file uses one:
+  // the content is on screen and one thing about it is qualified.
   if (items.length > MAX_ROWS) {
-    return <StateBlock title="Too many to render" hint={overflowHint} />;
+    return (
+      <>
+        <Notice>{`Showing the first ${MAX_ROWS} of ${items.length}. ${overflowHint}`}</Notice>
+        {render(items.slice(0, MAX_ROWS))}
+      </>
+    );
   }
   return <>{render(items)}</>;
 }

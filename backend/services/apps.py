@@ -233,16 +233,33 @@ def chats_for_app(app_id: str, *, archived: bool = False) -> list[dict] | None:
             "branch_slug": None,
         }
         rich = fold.get(tid)
-        if rich is not None:
-            row.update({
-                "title": rich.get("title") or title,
-                "model": rich.get("model") or row["model"],
-                "updated_at": rich.get("updated_at") or row["updated_at"],
-                "message_count": rich.get("message_count") or 0,
-                "last_message": rich.get("last_message") or "",
-                "last_user_at": rich.get("last_user_at"),
-                "branch_slug": rich.get("branch_slug"),
-            })
+        # A ROW THE FOLD DOES NOT HAVE IS NOT A CHAT. It is skipped.
+        #
+        # This module's docstring says nothing here fabricates data, and the
+        # first version of this merge did: it kept such a row "thin, rather
+        # than vanishing from its app", on the theory that the DB knew about a
+        # conversation the file store had not caught up with. Measured
+        # 2026-08-31, that theory was wrong in 59 of 126 rows on one app. Every
+        # one of them carried the backfill's own timestamp, an empty title
+        # rendered as "New chat", no messages, and `GET /chat/threads/<id>`
+        # answering 404 -- so the tab listed 59 conversations that could not be
+        # opened, while the global chat list, which reads the fold, correctly
+        # showed none of them.
+        #
+        # The fold is the store that can actually serve a thread, so it decides
+        # what exists. The DB still decides WHICH app a chat belongs to, which
+        # is the part it is authoritative for and the reason this merge exists.
+        if rich is None:
+            continue
+        row.update({
+            "title": rich.get("title") or title,
+            "model": rich.get("model") or row["model"],
+            "updated_at": rich.get("updated_at") or row["updated_at"],
+            "message_count": rich.get("message_count") or 0,
+            "last_message": rich.get("last_message") or "",
+            "last_user_at": rich.get("last_user_at"),
+            "branch_slug": rich.get("branch_slug"),
+        })
         out.append(row)
     # Newest conversation first, by when the operator last spoke, which is the
     # order the global list uses. Falls back to updated_at for a row the fold

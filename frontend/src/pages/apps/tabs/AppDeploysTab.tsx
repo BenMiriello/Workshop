@@ -43,7 +43,7 @@ function DeploysBody({ app }: { app: AppRecord }) {
         endpoint={endpoint}
         emptyTitle="No deploy targets"
         emptyHint={unlinkedReason("deploys", app.project_slug, 0) ?? "This app has no deploy target configured yet."}
-        overflowHint="Retire unused deploy targets from the project's Deployments section."
+        overflowHint="Browse them all from Deploys."
         render={(rows) => (
           <Stack>
             {rows.map((d) => (

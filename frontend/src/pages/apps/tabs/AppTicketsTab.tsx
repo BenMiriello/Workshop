@@ -46,7 +46,7 @@ function TicketsBody({ app }: { app: AppRecord }) {
         endpoint={endpoint}
         emptyTitle="No open tickets"
         emptyHint={unlinkedReason("tickets", app.project_slug, 0) ?? "Nothing filed against this app yet."}
-        overflowHint="Close out or delete completed tickets, or browse the full board from Tickets."
+        overflowHint="Browse the full queue from Tickets."
         render={(rows) => (
           <CardGrid>
             {rows.map((t) => (

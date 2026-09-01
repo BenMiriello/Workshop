@@ -45,7 +45,7 @@ function AgentsBody({ app }: { app: AppRecord }) {
         endpoint={endpoint}
         emptyTitle="No agents linked"
         emptyHint={unlinkedReason("agents", app.project_slug, 0) ?? "No roster agent is linked to this app's project yet."}
-        overflowHint="Retire unused agent definitions."
+        overflowHint="Browse them all from Agents."
         render={(rows) => (
           <CardGrid>
             {rows.map((a) => (

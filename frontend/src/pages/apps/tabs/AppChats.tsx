@@ -48,7 +48,7 @@ function ChatsBody({ app }: { app: AppRecord }) {
         endpoint={endpoint}
         emptyTitle="No chats yet"
         emptyHint={`Open a chat scoped to ${app.name} to see it here.`}
-        overflowHint="Archive old chats from the chat toolbar to bring this list down."
+        overflowHint="Browse them all from Chats."
         render={(rows) => (
           <Stack gap="sm">
             {rows.map((c) => (

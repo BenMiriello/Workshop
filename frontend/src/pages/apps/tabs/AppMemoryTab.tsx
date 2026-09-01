@@ -205,7 +205,7 @@ function MemoryBody({ app }: { app: AppRecord }) {
         emptyTitle="No notes yet"
         emptyHint={`Notes here are shared with ${app.name}'s agents and go into its chat context.`}
         emptyAction={newNote}
-        overflowHint="Consolidate or archive older notes from the Memory page."
+        overflowHint="Browse them all from the Memory page."
         render={(rows) => (
           <Stack gap="sm">
             <Row between wrap style={{ alignItems: "baseline" }}>
