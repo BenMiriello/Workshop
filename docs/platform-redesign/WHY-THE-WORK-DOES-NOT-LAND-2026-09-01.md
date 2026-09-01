@@ -370,6 +370,36 @@ built the extensibility mechanism for exactly this and declared nothing in it.
 
 ---
 
+## 6.1 The sharpest instance of the problem is this document
+
+The operator's point, made while this was being written: an agent had just spent
+an hour hand-mining chat transcripts, docs, tickets and git history to answer
+"what has he asked for, and what did he repeat" — and that should be a capability
+of the system rather than archaeology repeated from scratch every time.
+
+He was more right than he knew. `semantic_index.PLATFORM_KINDS` is
+`("note", "doc", "chat", "ticket")`. **Chat transcripts were already indexed and
+already searchable.** The hour of `grep` over raw `log.jsonl` files was spent
+rebuilding, badly, a thing the installation already had.
+
+The genuine gap turned out to be one layer up and much narrower: similarity
+ranking structurally cannot answer "was this said once or six times, and when
+last", because six restatements of one thing are six ordinary passages competing
+for the same result slot, and the per-source cap suppresses them by design.
+Counting is a different operation from ranking. That is now
+`services/repetition.py`, and it deliberately reports only facts — this text, by
+this author, in these threads, on these dates, this many times — because deciding
+what a repetition MEANS is an unplanned system that stays out until it is
+designed (spike `2850a442`).
+
+**So the failure was not a missing capability. It was not knowing about one that
+existed** — the same failure as §3, where fully-built mechanisms sit unused, and
+the same failure as `.runtime/tools.json` being empty. This document is itself an
+instance of the thing it describes, which is worth stating plainly rather than
+quietly fixing.
+
+---
+
 ## 7. Instance versus baseline product, and where it belongs
 
 The operator asked that this distinction be stated and remembered in the right
