@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { Archive, GitBranch, MoreVertical, Trash2 } from "lucide-react";
 import { Card, Menu, MenuItem, MenuSeparator } from "@workshop/ui";
 import type { ThreadSummary } from "../../lib/chat";
+import { branchName } from "./chatBranch";
 import { scopeKind, scopeLabel, scopeName } from "./chatScope";
 import { pulseDelay } from "../../pages/chatPulse";
 import ScopeIcon from "./ScopeIcon";
@@ -142,10 +143,23 @@ export default function ChatRow({
             </>
           )}
           <span className="ws-card__meta ws-chat-row__when">{relTime(t.updated_at)}</span>
+          {/* THE WORD IS BRANCH. This said "In a worktree", which is the one
+              string `REVIEW-plan-vs-reality-2026-08-29.md` §7.3 cited by name
+              as drift from `threads-branches-and-pages-2026-08-29.md` §3 ("the
+              interface says branch"). It was also the only place a person could
+              read it here, because the tag is an icon and the label is what a
+              screen reader gets. The hover text was the raw slug, which is 32
+              characters of hex on half the branches this install serves;
+              `branchName` is the same rule the toolbar's pill and its move list
+              use. */}
           {t.branch_slug && (
             <>
               <span className="ws-chat-row__sep" aria-hidden>·</span>
-              <span className="ws-card__meta" title={t.branch_slug} aria-label="In a worktree">
+              <span
+                className="ws-card__meta"
+                title={branchName(t)}
+                aria-label={`Branch: ${branchName(t)}`}
+              >
                 <GitBranch size={12} aria-hidden />
               </span>
             </>
