@@ -82,6 +82,9 @@ const REQUIRES_LINKED_PROJECT: Record<CollectionTabId, boolean> = {
 
 const COLLECTION_NOUN: Record<CollectionTabId, string> = {
   work: "branches",
+  // Overview is four controls over a working tree, not a collection, so it
+  // never reaches `unlinkedReason`. The entry exists because the record is
+  // exhaustive over CollectionTabId; the page writes its own sentence.
   overview: "settings",
   chats: "chats",
   memory: "notes",

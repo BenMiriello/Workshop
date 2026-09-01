@@ -31,20 +31,23 @@ import DeploysPanel from "../../../components/DeploysPanel";
 import EnvironmentPanel from "../../../components/EnvironmentPanel";
 import type { AppRecord } from "../../../lib/apps";
 import { AppTabPage } from "./AppTabShell";
-import { unlinkedReason } from "./appTabState";
 
 function OverviewBody({ app }: { app: AppRecord }) {
   const slug = app.project_slug;
 
-  // AN APP WITH NO WORKING TREE HAS NONE OF THIS, and says so in the same
-  // sentence the tab rule already gives rather than a second wording of it.
-  // Every one of the four panels reads /api/projects/<slug>/..., so without a
-  // linked tree they would each render their own error.
+  // AN APP WITH NO WORKING TREE HAS NONE OF THIS. Every one of the four panels
+  // reads /api/projects/<slug>/..., so without a linked tree each would render
+  // its own error and the page would be four error regions stacked.
   if (!slug) {
     return (
       <StateBlock
         title="Nothing to show yet"
-        hint={unlinkedReason("work", null, 0) ?? undefined}
+        // Its own sentence rather than `unlinkedReason("overview", ...)`. That
+        // helper names the COLLECTION a tab is short of ("no branches yet",
+        // "no tickets yet"), and this tab is not a collection: it is four
+        // controls over a working tree. "This app has no settings yet" would be
+        // a true-shaped sentence about the wrong thing.
+        hint="This app has no linked working tree, so it has nothing to run, deploy or configure."
       />
     );
   }
