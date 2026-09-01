@@ -233,6 +233,27 @@ and is not evidence of a defect.
     for q in ['how do I restart the backend','why is the backend restart deferred']:
         print(q, [(h['kind'], h['ref']) for h in si.search(q, limit=3)['hits']])"
 
+## Found while building the notify tool: two dead delivery channels
+
+`WORKSHOP_NOTIFY_FILE` is a **dead drop**. Measured 2026-09-01: four writers
+(`services/commute/alerter.py`, `scripts/autonomy_report.sh`,
+`scripts/daily_todo_digest.sh`, and `scoped_exec` passing the var through) and
+**no reader anywhere** — not in this tree, not on the host. The file is
+`.runtime/notify-masini.txt`, 369 KB, last written **2026-08-20**.
+
+So the commute alerter and the daily digest have been writing to a file nobody
+reads. Whatever those were meant to tell the operator, they told nobody. Same for
+`WORKSHOP_DISCORD_ENV`, which existed and was also read by nobody.
+
+The notify tool (`28a37e7e`) therefore does NOT use the file — it delivers over
+Discord, the channel the operator actually reads, declared via
+`WORKSHOP_OPERATOR_DISCORD_USER`. Building it on the file would have been
+theatre: a tool that reports success into a void.
+
+**Worth deciding separately:** the four existing writers are still writing into
+the void. Either point them at the live channel or delete them; leaving them is a
+third instance of a mechanism that exists, runs, and reaches nothing.
+
 ## Open questions for the operator
 
 - Autonomy is off by his own choice. Once the runner env is fixed and proven,
