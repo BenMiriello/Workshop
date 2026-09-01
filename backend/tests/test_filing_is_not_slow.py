@@ -50,6 +50,7 @@ def test_an_exact_duplicate_is_still_caught_without_embedding(no_embedding):
 
 def test_filing_interactively_does_not_embed(tmp_path, no_embedding):
     out = task_dedup.dedup_add(tmp_path, text="A ticket filed from a button",
+                               acceptance={"kind": "command", "spec": "pytest -q"},
                                semantic=False)
     assert out["decision"] == "distinct"
     assert tasks.get_task(tmp_path, out["task"]["id"]) is not None
@@ -61,7 +62,8 @@ def test_the_pass_afterwards_links_and_never_merges(tmp_path, monkeypatch):
     nothing."""
     first = tasks.add(tmp_path, text="Rewrite the toolbar picker")
     second = task_dedup.dedup_add(
-        tmp_path, text="Rework the picker in the toolbar", semantic=False)["task"]
+        tmp_path, text="Rework the picker in the toolbar", semantic=False,
+        acceptance={"kind": "command", "spec": "pytest -q"})["task"]
     # Both are near-identical in meaning; force the semantic tier to say so.
     monkeypatch.setattr(task_dedup, "embed_texts",
                         lambda texts: [[1.0, 0.0]] * len(texts))

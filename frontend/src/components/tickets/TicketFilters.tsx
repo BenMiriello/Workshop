@@ -13,8 +13,8 @@ import {
   Segmented, StatusDot,
 } from "@workshop/ui";
 import {
-  TASK_STATUSES, TASK_SORTS, TASK_EFFORTS, scopeLabel, taskStatusKind, taskStatusLabel,
-  taskStatusTitle, type TaskSort,
+  TASK_STATUSES, TASK_SORTS, TASK_EFFORTS, TASK_SOURCES, scopeLabel, sourceLabel,
+  taskStatusKind, taskStatusLabel, taskStatusTitle, type TaskSort,
 } from "../../lib/tasks";
 import {
   chipsFor, clearField, toggleValue,
@@ -52,6 +52,19 @@ function FieldMenuBody({ filters, scopes, labels, assignees, onFilters }: {
           onToggle={() => onFilters(toggleValue(filters, "status", s))}
         >
           {taskStatusLabel(s)}
+        </MenuCheckItem>
+      ))}
+      {/* WHERE IT CAME FROM. Second, under Status, because on this queue it is
+          the strongest narrowing there is: 132 of 208 open tickets were filed by
+          an agent noticing something while it worked. */}
+      <MenuLabel>Source</MenuLabel>
+      {TASK_SOURCES.map((k) => (
+        <MenuCheckItem
+          key={k}
+          checked={filters.source.includes(k)}
+          onToggle={() => onFilters(toggleValue(filters, "source", k))}
+        >
+          {sourceLabel(k)}
         </MenuCheckItem>
       ))}
       <MenuLabel>Effort</MenuLabel>
@@ -168,6 +181,7 @@ export function TicketFilterBar({
   const chips = chipsFor(filters, view, {
     scope: scopeLabel,
     status: taskStatusLabel,
+    source: sourceLabel,
   });
 
   return (
@@ -233,7 +247,9 @@ export function TicketFilterCompact({
   filters: Filters; sort: TicketSort; view: TicketView;
   onOpen: () => void; onFilters: (next: Filters) => void;
 }) {
-  const chips = chipsFor(filters, view, { scope: scopeLabel, status: taskStatusLabel });
+  const chips = chipsFor(filters, view, {
+    scope: scopeLabel, status: taskStatusLabel, source: sourceLabel,
+  });
   const sortLabel = TASK_SORTS.find((s) => s.value === sort.key)?.label ?? sort.key;
   return (
     <div className="ws-ticketbar-compact">
@@ -321,6 +337,23 @@ export function TicketFilterSheet({
                 </button>
               );
             })}
+          </div>
+        </section>
+
+        <section>
+          <div className="ws-section-label">Source</div>
+          <div className="ws-pillset">
+            {TASK_SOURCES.map((k) => (
+              <button
+                key={k}
+                type="button"
+                className="ws-selectpill"
+                aria-pressed={filters.source.includes(k)}
+                onClick={() => onFilters(toggleValue(filters, "source", k))}
+              >
+                {sourceLabel(k)}
+              </button>
+            ))}
           </div>
         </section>
 

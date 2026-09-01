@@ -1,0 +1,8 @@
+{
+  "_open_tickets": 202,
+  "per_scope_without_executable_acceptance": {
+    "development": 195,
+    "workshop": 7
+  },
+  "without_executable_acceptance": 202
+}

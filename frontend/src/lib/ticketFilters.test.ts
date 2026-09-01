@@ -7,7 +7,11 @@ import {
 } from "./ticketFilters";
 import type { TaskStatus } from "./tasks";
 
-const fmt = { scope: (k: string) => k.replace("project:", "Project: "), status: (s: string) => s };
+const fmt = {
+  scope: (k: string) => k.replace("project:", "Project: "),
+  status: (s: string) => s,
+  source: (s: string) => s,
+};
 const q = (s: string) => new URLSearchParams(s);
 
 describe("the default status set follows the view", () => {
@@ -55,6 +59,7 @@ describe("the URL is the filter state", () => {
     const filters = {
       q: "oauth", status: ["todo", "blocked"] as TaskStatus[], scope: "project:birds",
       labels: ["design", "chat-reported"], effort: ["quick"], assignee: ["agent:builder"],
+      source: ["operator", "chat"],
     };
     const sort = { key: "priority", dir: "asc" } as const;
     const p = writeParams(filters, sort, "board");
@@ -94,12 +99,14 @@ describe("every filter reaches the server", () => {
     const p = apiQuery({
       q: "oauth", status: ["todo", "blocked"], scope: "workshop",
       labels: ["design"], effort: ["quick", "deep"], assignee: ["operator"],
+      source: ["operator", "chat"],
     }, { key: "priority", dir: "asc" }, 50);
     expect(p.get("status")).toBe("todo,blocked");
     expect(p.get("scope")).toBe("workshop");
     expect(p.get("labels")).toBe("design");
     expect(p.get("effort")).toBe("quick,deep");
     expect(p.get("assignee")).toBe("operator");
+    expect(p.get("source")).toBe("operator,chat");
     expect(p.get("q")).toBe("oauth");
     expect(p.get("sort")).toBe("priority");
     expect(p.get("desc")).toBe("false");
@@ -108,12 +115,13 @@ describe("every filter reaches the server", () => {
 
   it("omits a filter that is not set, rather than sending an empty one", () => {
     const p = apiQuery(
-      { q: "", status: [], scope: null, labels: [], effort: [], assignee: [] },
+      { q: "", status: [], scope: null, labels: [], effort: [], assignee: [], source: [] },
       DEFAULT_SORT, 50);
     expect(p.has("status")).toBe(false);
     expect(p.has("scope")).toBe(false);
     expect(p.has("labels")).toBe(false);
     expect(p.has("q")).toBe(false);
+    expect(p.has("source")).toBe(false);
   });
 });
 
@@ -141,9 +149,10 @@ describe("chips say what is narrowing the list", () => {
   it("keeps a fixed chip order as filters come and go", () => {
     const chips = chipsFor({
       q: "", status: ["todo"], scope: "workshop", labels: ["design"],
-      effort: ["quick"], assignee: ["operator"],
+      effort: ["quick"], assignee: ["operator"], source: ["agent"],
     }, "table", fmt);
-    expect(chips.map((c) => c.field)).toEqual(["status", "scope", "tag", "effort", "assignee"]);
+    expect(chips.map((c) => c.field))
+      .toEqual(["status", "source", "scope", "tag", "effort", "assignee"]);
   });
 
   it("drops the chip whose filter is cleared", () => {

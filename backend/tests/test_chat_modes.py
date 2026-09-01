@@ -201,7 +201,8 @@ class TestAutoMode:
         monkeypatch.setattr(
             task_scope, "relational_scope_for_root",
             lambda r: None if Path(r) == tmp_path else _real_scope(r))
-        patch = 'Sure.\n\n```task-patch\n{"add":[{"text":"Filed by auto"}]}\n```\n'
+        patch = ('Sure.\n\n```task-patch\n{"add":[{"text":"Filed by auto",'
+                 '"acceptance":{"kind":"command","spec":"pytest -q"}}]}\n```\n')
         _, notes = task_scope.apply_task_patch("general", patch, "t1", "auto")
         assert not any("Direct mode" in n for n in notes)
         from services import tasks
@@ -331,7 +332,11 @@ class TestSubagentsAreReal:
 
 
 class TestFilingGuard:
-    PATCH = 'Sure.\n\n```task-patch\n{"add":[{"text":"Should not be filed"}]}\n```\n'
+    # Carries an acceptance because filing REQUIRES a runnable one
+    # (services/ticket_format); these cases are about the mode guard, not about
+    # the acceptance gate, which has its own file.
+    PATCH = ('Sure.\n\n```task-patch\n{"add":[{"text":"Should not be filed",'
+             '"acceptance":{"kind":"command","spec":"pytest -q"}}]}\n```\n')
 
     def test_direct_mode_refuses_to_file(self, tmp_path):
         cleaned, notes = task_scope.apply_task_patch("general", self.PATCH, "t1", "direct")

@@ -147,7 +147,9 @@ def test_a_posted_comment_returns_the_detail_shape(client, roots):
 
 
 def test_create_returns_the_detail_shape(client, roots):
-    out = client.post("/api/tasks", json={"scope": "workshop", "title": "Brand new"})
+    out = client.post("/api/tasks", json={
+        "scope": "workshop", "title": "Brand new",
+        "acceptance": {"kind": "command", "spec": "pytest -q"}})
     assert out.status_code == 200, out.text
     rec = out.json()["task"]
     assert rec["title"] == "Brand new"

@@ -67,6 +67,15 @@ export type TicketFilters = {
   /** `operator` or `agent:<slug>`. Open set: agents are registered at runtime
    *  and a deployment has as many people as it has. */
   assignee: string[];
+  /** WHERE THE TICKET CAME FROM, from `TASK_SOURCES`. A row matches if it
+   *  carries ANY of these.
+   *
+   *  Every ticket has carried this since the store existed and no view read it,
+   *  while 132 of 208 open tickets were filed by an agent noticing something. It
+   *  is a plain filter over a stored value: no inference, and it says where a
+   *  ticket came from rather than what anyone intended. See lib/tasks
+   *  TaskSource, including why `unknown` is one of the values. */
+  source: string[];
 };
 
 export type TicketSort = { key: TaskSort; dir: "asc" | "desc" };
@@ -77,7 +86,7 @@ export const DEFAULT_SORT: TicketSort = { key: "updated", dir: "desc" };
 export function defaultFilters(view: TicketView): TicketFilters {
   return {
     q: "", status: defaultStatuses(view), scope: null,
-    labels: [], effort: [], assignee: [],
+    labels: [], effort: [], assignee: [], source: [],
   };
 }
 
@@ -93,7 +102,7 @@ export const isDefaultStatus = (f: TicketFilters, view: TicketView): boolean =>
 /** Is anything narrowing the list beyond the view's own default? */
 export function isNarrowed(f: TicketFilters, view: TicketView): boolean {
   return !!f.q || !!f.scope || f.labels.length > 0 || f.effort.length > 0
-    || f.assignee.length > 0 || !isDefaultStatus(f, view);
+    || f.assignee.length > 0 || f.source.length > 0 || !isDefaultStatus(f, view);
 }
 
 // ---- URL round trip ----------------------------------------------------------
@@ -118,7 +127,8 @@ export function parseSort(params: URLSearchParams): TicketSort {
   const key = params.get("sort");
   const dir = params.get("dir");
   return {
-    key: (["updated", "created", "priority", "title", "status", "queue"] as const)
+    key: (["updated", "created", "priority", "title", "status", "queue",
+           "source"] as const)
       .includes((key ?? "") as TaskSort) ? (key as TaskSort) : DEFAULT_SORT.key,
     dir: dir === "asc" ? "asc" : "desc",
   };
@@ -144,6 +154,7 @@ export function parseFilters(params: URLSearchParams, view: TicketView): TicketF
     labels: csv(params.get("tag")),
     effort: csv(params.get("effort")),
     assignee: csv(params.get("assignee")),
+    source: csv(params.get("source")),
   };
 }
 
@@ -183,6 +194,7 @@ export function writeParams(
   set("tag", filters.labels.join(",") || null);
   set("effort", filters.effort.join(",") || null);
   set("assignee", filters.assignee.join(",") || null);
+  set("source", filters.source.join(",") || null);
   set("status", isDefaultStatus(filters, view)
     ? null
     : (filters.status.length === 0 ? ALL : filters.status.join(",")));
@@ -207,6 +219,7 @@ export function apiQuery(
   if (filters.labels.length) p.set("labels", filters.labels.join(","));
   if (filters.effort.length) p.set("effort", filters.effort.join(","));
   if (filters.assignee.length) p.set("assignee", filters.assignee.join(","));
+  if (filters.source.length) p.set("source", filters.source.join(","));
   if (filters.q) p.set("q", filters.q);
   p.set("sort", sort.key);
   p.set("desc", sort.dir === "desc" ? "true" : "false");
@@ -236,10 +249,12 @@ export function laneQuery(
 // ---- chips -------------------------------------------------------------------
 // One chip per ACTIVE filter, each removable. The key reads muted and the value
 // reads in the accent, so a row of chips scans as "Status · 2  Scope Development".
-export type TicketFilterField = "status" | "scope" | "tag" | "effort" | "assignee";
+export type TicketFilterField =
+  "status" | "scope" | "tag" | "effort" | "assignee" | "source";
 
 export const FILTER_FIELDS: { field: TicketFilterField; label: string }[] = [
   { field: "status", label: "Status" },
+  { field: "source", label: "Source" },
   { field: "scope", label: "Scope" },
   { field: "tag", label: "Tag" },
   { field: "effort", label: "Effort" },
@@ -260,7 +275,11 @@ export type FilterChipSpec = {
 export function chipsFor(
   filters: TicketFilters,
   view: TicketView,
-  fmt: { scope: (key: string) => string; status: (s: string) => string },
+  fmt: {
+    scope: (key: string) => string;
+    status: (s: string) => string;
+    source: (s: string) => string;
+  },
 ): FilterChipSpec[] {
   const chips: FilterChipSpec[] = [];
   const many = (n: number) => `· ${n}`;
@@ -275,6 +294,15 @@ export function chipsFor(
     chips.push({ field: "status", label: "Status", value: fmt.status(filters.status[0]) });
   } else if (filters.status.length > 1) {
     chips.push({ field: "status", label: "Status", value: many(filters.status.length) });
+  }
+
+  // Directly after Status, and before Scope: on a queue that is two thirds
+  // agent-filed, which door a ticket came through narrows the list further than
+  // anything else on the bar.
+  if (filters.source.length === 1) {
+    chips.push({ field: "source", label: "Source", value: fmt.source(filters.source[0]) });
+  } else if (filters.source.length > 1) {
+    chips.push({ field: "source", label: "Source", value: many(filters.source.length) });
   }
 
   if (filters.scope) {
@@ -308,16 +336,20 @@ export function clearField(f: TicketFilters, field: TicketFilterField): TicketFi
     case "tag": return { ...f, labels: [] };
     case "effort": return { ...f, effort: [] };
     case "assignee": return { ...f, assignee: [] };
+    case "source": return { ...f, source: [] };
   }
 }
 
 /** Toggle one value of a multi-value filter. */
 export function toggleValue(
-  f: TicketFilters, field: "status" | "tag" | "effort" | "assignee", value: string,
+  f: TicketFilters,
+  field: "status" | "tag" | "effort" | "assignee" | "source",
+  value: string,
 ): TicketFilters {
   const key = field === "status" ? "status"
     : field === "tag" ? "labels"
-    : field === "effort" ? "effort" : "assignee";
+    : field === "effort" ? "effort"
+    : field === "source" ? "source" : "assignee";
   const cur = f[key] as string[];
   const next = cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value];
   return { ...f, [key]: next } as TicketFilters;

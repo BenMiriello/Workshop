@@ -495,6 +495,13 @@ def apply_task_patch(context_key: str | None, reply: str,
 
     added = updated = noted = 0
     merged = related = 0
+    # A REFUSED ADD IS REPORTED, not swallowed. `except ValueError: pass` below
+    # is the right shape for a malformed op nobody can act on, and the wrong one
+    # for the acceptance gate, whose whole value is the sentence saying what
+    # would satisfy it: the assistant is still in the conversation and can refile
+    # correctly in its next turn, but only if it is told. Deduped, because ten
+    # adds refused for one reason are one thing to say.
+    refusals: list[str] = []
     for op in patch.get("add", []) or []:
         if not isinstance(op, dict) or not (op.get("text") or "").strip():
             continue
@@ -526,8 +533,10 @@ def apply_task_patch(context_key: str | None, reply: str,
                 added += 1
             else:
                 added += 1
-        except ValueError:
-            pass
+        except ValueError as e:
+            msg = str(e)
+            if "acceptance" in msg and msg not in refusals:
+                refusals.append(msg)
     for op in patch.get("update", []) or []:
         if not isinstance(op, dict) or not op.get("id"):
             continue
@@ -558,6 +567,7 @@ def apply_task_patch(context_key: str | None, reply: str,
     if noted:
         bits.append(f"noted {noted}")
     notes = ["Tasks: " + ", ".join(bits) + "."] if bits else []
+    notes.extend(f"Not filed: {r}" for r in refusals)
     return cleaned, notes
 
 

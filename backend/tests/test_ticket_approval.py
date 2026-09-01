@@ -153,6 +153,7 @@ def test_an_unattended_filing_starts_as_a_draft(tmp_path, monkeypatch):
                                                         "cosine": None})
     res = task_dedup.dedup_add(tmp_path, text="Suggested by the assistant",
                                source={"kind": "chat", "ref": "t1"},
+                               acceptance={"kind": "command", "spec": "pytest -q"},
                                scoped_by="agent:chat", status="draft")
     assert res["task"]["status"] == "draft"
 
@@ -168,5 +169,6 @@ def test_filing_defaults_to_the_queue_for_callers_that_do_not_ask(tmp_path, monk
                                                         "matched_id": None,
                                                         "cosine": None})
     res = task_dedup.dedup_add(tmp_path, text="Filed by the operator",
+                               acceptance={"kind": "command", "spec": "pytest -q"},
                                source={"kind": "operator", "ref": "work-ui"})
     assert res["task"]["status"] == "todo"

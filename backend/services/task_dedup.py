@@ -50,7 +50,7 @@ import os
 import re
 from pathlib import Path
 
-from services import tasks
+from services import tasks, ticket_format
 
 log = logging.getLogger(__name__)
 
@@ -399,6 +399,7 @@ def dedup_add(
     scoped_by: str | None = None,
     status: str = "todo",
     semantic: bool = True,
+    require_acceptance: bool = True,
 ) -> dict:
     """Create a task from a chat, deduped against open tasks in this scope.
 
@@ -417,6 +418,14 @@ def dedup_add(
     `tasks.add` even if the model phrases the task differently on a later pass.
     Omitted (the chat path), the canonical hash is used exactly as before.
 
+    ``require_acceptance`` is the ticket-acceptance gate (services/ticket_format):
+    a filing with no command and no runnable criteria raises ValueError carrying
+    the sentence that says what would satisfy it. It defaults ON because every
+    caller of this function is filing real work into a real queue. The one caller
+    that passes False is `ticket_drafts`, which files MODEL PROPOSALS at status
+    `draft` for the operator to read: a draft is not yet a ticket, and refusing
+    the proposal would throw away the reading rather than the guessing.
+
     - merge/exact: no new task; the matched task gets an evidence entry carrying
       the new chat's provenance (the signal is preserved, not dropped).
     - related: a new task is created with discovered_from + an evidence link to
@@ -426,6 +435,14 @@ def dedup_add(
     text = (text or "").strip()
     if not text:
         raise ValueError("text required")
+    # A TICKET WITHOUT AN EXECUTABLE FINISH LINE IS NOT A TICKET.
+    # Checked before `decide`, so the answer does not depend on whether this
+    # filing happens to dedupe into an existing row: a producer that would be
+    # refused must be refused every time, or it learns nothing.
+    if require_acceptance:
+        refusal = ticket_format.acceptance_refusal(acceptance)
+        if refusal:
+            raise ValueError(refusal)
     src = source or {"kind": "chat", "ref": None}
     src_ref = src.get("ref") or "chat"
     prov = provenance or canonical_hash(text)

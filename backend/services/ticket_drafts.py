@@ -276,6 +276,11 @@ async def propose(thread_id: str, root, scope: str) -> dict:
                 type=prop.get("type") or None,
                 source={"kind": "chat", "ref": thread_id},
                 scoped_by="agent:chat",
+                # A PROPOSAL, not a ticket. These are filed at `draft` for the
+                # operator to read and edit; the acceptance gate applies when one
+                # is actually filed into the queue (the chat's File ticket
+                # button, POST /api/tasks, the CLI). See dedup_add.
+                require_acceptance=False,
             )
         except Exception as e:  # one bad proposal must not lose the others
             log.warning("filing proposal failed for %s: %s", thread_id, e)

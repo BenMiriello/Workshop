@@ -658,6 +658,37 @@ else
   AMBIGUOUS+=("prompt_layers_check_unavailable")
 fi
 
+# 4.6c-iiid A ticket without an EXECUTABLE finish line is not a ticket, and the
+# count of open tickets that have none may only go down. Measured 2026-09-01:
+# 208 open tickets, `acceptance` null on all 208, a field that had existed since
+# the store did and had never once been filled. So every ticket's finish line
+# was a sentence inside a 337-word body, and a worker handed one formed its own
+# view of "done" and reported success against that view. That is the mechanism
+# behind "you have no concept of completeness": nothing had ever stated one.
+#
+# The gate that stops it growing is at the two filing paths
+# (services/ticket_format.acceptance_refusal, refused by POST /api/tasks and by
+# `project_tasks.py add`). This is the other half, and it exists because the
+# existing 208 must NOT be retro-fitted: writing acceptance onto a ticket whose
+# body never stated one is guessing at what someone meant weeks ago and
+# recording the guess as fact.
+#
+# UNCONDITIONAL, and this one measures a LIVE STORE rather than the tree, so it
+# has no --since: there is no ticket store to check out at a base ref. Per
+# scope, so a process that cannot see a project tree does not read as progress.
+# See the script's own header.
+TICKET_ACCEPTANCE_CHECK="skipped"
+if [[ -f "$WORKSHOP/scripts/check_ticket_acceptance.py" \
+      && -f "$WORKSHOP/scripts/ticket_acceptance_baseline.json" ]]; then
+  if python3 "$WORKSHOP/scripts/check_ticket_acceptance.py" >/dev/null 2>&1; then
+    TICKET_ACCEPTANCE_CHECK="ok"
+  else
+    TICKET_ACCEPTANCE_CHECK="fail"
+  fi
+else
+  AMBIGUOUS+=("ticket_acceptance_check_unavailable")
+fi
+
 # THE APPLICATION IS NOT A PLACE TO LEAVE NOTES FOR THE OPERATOR. No screen
 # explains its own mechanism in prose: no paragraph under a control describing
 # how a feature ranks, no parenthetical teaching a file format, no help line
@@ -1091,6 +1122,10 @@ if [[ "$PROMPT_LAYERS_CHECK" == "fail" ]]; then
   REASONS+=("installation_fact_in_platform_prompt")
   COMPLETE="false"
 fi
+if [[ "$TICKET_ACCEPTANCE_CHECK" == "fail" ]]; then
+  REASONS+=("ticket_without_executable_acceptance")
+  COMPLETE="false"
+fi
 if [[ "$EXPLAINER_CHECK" == "fail" ]]; then
   REASONS+=("explainer_text_in_the_application")
   COMPLETE="false"
@@ -1203,7 +1238,7 @@ export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK AP
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
 export DEAD_SURFACE_CHECK
-export FRESH_CLONE_CHECK DEV_MODE_OFF_CHECK FRONTEND_STATE_CHECK RESPONSE_TYPES_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK
+export TICKET_ACCEPTANCE_CHECK FRESH_CLONE_CHECK DEV_MODE_OFF_CHECK FRONTEND_STATE_CHECK RESPONSE_TYPES_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK
 RESULT_JSON=$(python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -1258,6 +1293,7 @@ out = {
     # installation-specific facts, so a new one is not incremental debt,
     # it is a fact about this checkout shipped to every installation.
     "prompt_layers": os.environ.get("PROMPT_LAYERS_CHECK", "skipped"),
+    "ticket_acceptance": os.environ.get("TICKET_ACCEPTANCE_CHECK", "skipped"),
     "explainer_text": os.environ.get("EXPLAINER_CHECK", "skipped"),
     "frontend_state": os.environ.get("FRONTEND_STATE_CHECK", "skipped"),
     # Ratcheted per item: surface nothing reaches. The rule it enforces is
@@ -1306,7 +1342,7 @@ PYEOF
 printf '%s\n' "$RESULT_JSON"
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK backend_tests=$BACKEND_TESTS_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK dead_surface=$DEAD_SURFACE_CHECK response_types=$RESPONSE_TYPES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK dev_mode_off=$DEV_MODE_OFF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK backend_tests=$BACKEND_TESTS_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK ticket_acceptance=$TICKET_ACCEPTANCE_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK dead_surface=$DEAD_SURFACE_CHECK response_types=$RESPONSE_TYPES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK dev_mode_off=$DEV_MODE_OFF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi

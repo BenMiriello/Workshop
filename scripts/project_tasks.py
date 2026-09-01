@@ -13,7 +13,12 @@ Verbs (all take a scope directory as the first positional):
   next-ready <dir> [--assignee A]     dependency-aware next ready task
   list-json <dir> [--assignee A] [--include-done]
   add <dir> "text" [--priority N] [--depends-on id,id] [--assignee A]
-      [--touches glob,glob] [--acceptance-cmd CMD] [--criterion 'desc::cmd::expect']
+      [--touches glob,glob] --acceptance-cmd CMD | --criterion 'desc::cmd::expect'
+      # ACCEPTANCE IS REQUIRED. A ticket with no command and no runnable
+      # criterion is refused (exit 2) with the sentence that says what would
+      # satisfy it: a filing whose finish line is prose leaves the worker to
+      # invent one and the reviewer to guess at it. services/ticket_format owns
+      # the rule; docs/ticket-writing.md says how to choose the check.
       [--max-attempts N] [--effort s|m|l] [--latitude strict|standard|open]
       [--execution code|judgement|external] [--type bug|feature|task]
       # --execution is the UNATTENDED selection predicate. Unset = unclassified
@@ -22,6 +27,10 @@ Verbs (all take a scope directory as the first positional):
       # --type is the work CATEGORY, orthogonal to --execution. Unset = the
       # store does not invent one.
       [--discovered-from id] [--provenance KEY] [--source KIND] [--source-ref REF]
+      # --source is WHERE this ticket came from: operator | chat | agent |
+      # autogen | unknown. Unset records `unknown`, which is the same default
+      # the API uses. It is not `agent` and it is not `operator`: guessing is
+      # what made the field unreadable (see services/tasks SOURCE_KINDS).
       # --source-ref is what the ticket came FROM (a chat thread id for
       # --source chat). Omit it and the ticket is orphaned: nothing links it
       # back to the conversation that asked for it.
@@ -86,8 +95,16 @@ if (importlib.util.find_spec("sqlalchemy") is None
         os.environ["WORKSHOP_TASKS_CLI_REEXEC"] = "1"
         os.execv(str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]])
 
-from services import tasks  # noqa: E402
+from services import tasks, ticket_format  # noqa: E402
 from services.latitude import LATITUDES as _LATITUDES  # noqa: E402
+
+# What to type instead, on THIS command. `ticket_format.ACCEPTANCE_HINT` says
+# what an acceptance is; this says how to spell one here.
+_ACCEPTANCE_FIX = (
+    "add --acceptance-cmd 'npm run typecheck' for a single command, or repeat "
+    "--criterion 'the suite passes::pytest -q::exit0' for assertions the gate "
+    "executes. Both may be given."
+)
 
 
 def _pin_owner() -> None:
@@ -310,7 +327,15 @@ def main(argv: list[str]) -> int:
                          "migration, investigation, routine maintenance). "
                          "Unset means unclassified; the store never invents a "
                          "type.")
-    sp.add_argument("--source", default="agent")
+    # `unknown` when nothing is said, the SAME default the API door uses
+    # (services/tasks.add). It used to default to `agent` here while the API
+    # defaulted to `operator`, so one filing got two different provenances
+    # depending on which door it came through and `operator` doubled as the
+    # value for "nobody recorded anything". Say who asked; nothing infers it.
+    sp.add_argument("--source", default="unknown",
+                    choices=("operator", "chat", "agent", "autogen", "unknown"),
+                    help="where this ticket came FROM. Unset records nothing, "
+                         "which is honest and is not the same as `operator`.")
     sp.add_argument("--source-ref", default=None,
                     help="what this ticket came FROM: a chat thread id for "
                          "--source chat. Without it the ticket is orphaned and "
@@ -375,6 +400,16 @@ def main(argv: list[str]) -> int:
                 # reviewer-kind: the assertions run alongside the reviewer's diff gate.
                 acceptance = acceptance or {"kind": "reviewer", "spec": None}
                 acceptance["criteria"] = criteria
+            # A TICKET WITHOUT AN EXECUTABLE FINISH LINE IS NOT A TICKET.
+            # Refused HERE as well as in the store's own filing path, because
+            # this is the surface an agent actually types at: the message has to
+            # name the two flags that would satisfy it, on the command that was
+            # just refused, or the next attempt is another guess. See
+            # services/ticket_format and docs/ticket-writing.md.
+            refusal = ticket_format.acceptance_refusal(acceptance)
+            if refusal:
+                print(json.dumps({"error": refusal, "fix": _ACCEPTANCE_FIX}))
+                return 2
             t = tasks.add(
                 root, text=a.text, priority=a.priority, depends_on=_csv(a.depends_on),
                 assignee=a.assignee, touches=_csv(a.touches), acceptance=acceptance,

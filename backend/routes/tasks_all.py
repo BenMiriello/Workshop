@@ -33,9 +33,9 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from routes.api_models import (DeletedOut, Job, LabelCount, Readiness, Task,
-                               TaskLink)
+                               TaskAcceptanceCriterion, TaskLink)
 from services import (tasks, task_scope, task_dedup, task_decision, jobs, ownership,
-                      work_review,
+                      work_review, ticket_format,
                       knowledge, standing, permissions, ticket_readiness,
                       latitude as latitude_svc)
 from wsplatform.http import DEFAULT_PAGE, MAX_PAGE, Page, PageMeta
@@ -268,6 +268,7 @@ async def list_all(
     labels: str | None = None,
     effort: str | None = None,
     assignee: str | None = None,
+    source: str | None = None,
     include_done: bool = True,
     q: str | None = None,
     ready: bool | None = None,
@@ -292,10 +293,21 @@ async def list_all(
     here), `scope` (restrict to a single scope key), `labels` (comma-separated,
     a row matches if it carries ANY of them), `effort` (comma-separated, from
     tasks.EFFORTS), `assignee` (comma-separated, `operator` or `agent:<slug>`),
+    `source` (comma-separated, from tasks.SOURCE_KINDS: where the ticket came
+    FROM),
     `q` (case-insensitive substring of title or body), `ready` (only what the
     scheduler could pick up, or only what it could not).
     Ordering: `sort` (one of tasks.SORT_KEYS, including `queue` = the
-    scheduler's own order) + `desc`. Paging: `limit`/`offset`.
+    scheduler's own order and `source` = the door it came through) + `desc`.
+    Paging: `limit`/`offset`.
+
+    `source` was on every ticket since the store existed and nothing read it: on
+    2026-09-01, 132 of 208 open tickets came through the agent door and no view
+    anywhere could tell them from the rest. It reports WHERE A TICKET CAME FROM
+    and nothing more. It is not a record of what anyone intended, and `unknown`
+    is one of its values precisely so it cannot be read as one: see
+    tasks.SOURCE_KINDS for the day `operator` doubled as the value for "nobody
+    recorded anything" and put 34 tickets under a name that had not filed them.
 
     `labels` and `effort` exist so the list page's filter chips push DOWN to the
     server like status and scope already did. A chip narrowed in the browser
@@ -352,6 +364,7 @@ async def list_all(
     want_status = _csv_filter(status, tasks.STATUSES, "status")
     want_type = _csv_filter(state_type, tasks.STATE_TYPES, "state_type")
     want_effort = _csv_filter(effort, tasks.EFFORTS, "effort")
+    want_source = _csv_filter(source, tasks.SOURCE_KINDS, "source")
     # Free text, so these are split but not validated (see the docstring). An
     # assignee is `operator` or `agent:<slug>`, and the set of agents is open,
     # so there is no closed vocabulary to check against.
@@ -390,6 +403,9 @@ async def list_all(
                     tasks.state_type(t.get("status")) not in want_type:
                 continue
             if want_effort is not None and t.get("effort") not in want_effort:
+                continue
+            if want_source is not None and \
+                    tasks.source_kind(t) not in want_source:
                 continue
             if want_assignee is not None and \
                     str(t.get("assignee") or "") not in want_assignee:
@@ -552,6 +568,17 @@ async def list_assignees(scope: str | None = None) -> dict:
 
 # ---- Create ----------------------------------------------------------------
 
+class TaskAcceptanceIn(BaseModel):
+    # Mirrors the store's acceptance shape (services/tasks.py Canonical Task):
+    # {"kind": "reviewer"|"command"|"operator", "spec": str|None,
+    #  "criteria": [{"desc", "cmd", "expect"}]}. `spec` carries the command line
+    # when kind == "command"; reviewer/operator ignore it. `criteria` are the
+    # assertions the gate EXECUTES (services/change_gates.CRITERIA_GATE).
+    kind: str
+    spec: str | None = None
+    criteria: list[TaskAcceptanceCriterion] | None = None
+
+
 class TaskCreateIn(BaseModel):
     scope: str = Field(min_length=1)
     # A caller sends `title` (+ optional `body`), or one `text` blob the store
@@ -568,6 +595,11 @@ class TaskCreateIn(BaseModel):
     execution: str | None = None
     # strict|standard|open, or null to inherit from the scope (latitude.py).
     latitude: str | None = None
+    # HOW A REVIEWER WILL KNOW THIS IS DONE, and it is not optional. A ticket
+    # filed with no command and no runnable criterion is refused; see
+    # services/ticket_format for the rule and the refusal wording. Typed rather
+    # than free-form so the store gets the shape it normalizes.
+    acceptance: TaskAcceptanceIn | None = None
 
 
 class TaskCreateOut(BaseModel):
@@ -588,7 +620,13 @@ class TaskCreateOut(BaseModel):
 async def create(body: TaskCreateIn) -> dict:
     """File a task into a scope through the dedup path, so a manual ticket
     dedupes against open tasks exactly like a chat-filed one. Returns the task
-    plus the dedup decision (exact | merge | related | distinct)."""
+    plus the dedup decision (exact | merge | related | distinct).
+
+    REFUSES a ticket with no executable acceptance, 400, carrying the sentence
+    that says what would satisfy it (services/ticket_format.acceptance_refusal).
+    A ticket whose finish line is prose leaves the worker to invent one and the
+    reviewer to guess at it, which is how 195 open tickets came to have none.
+    """
     root = _require_root(body.scope)
     # Dedup embeds the whole ticket, so the pair is joined back into one blob
     # here rather than teaching the embedder about the split.
@@ -608,6 +646,8 @@ async def create(body: TaskCreateIn) -> dict:
             labels=body.labels or [],
             source={"kind": "operator", "ref": "work-ui"},
             scoped_by="operator",
+            acceptance=(body.acceptance.model_dump(exclude_none=True)
+                        if body.acceptance else None),
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -644,14 +684,6 @@ async def create(body: TaskCreateIn) -> dict:
 
 
 # ---- Single task -----------------------------------------------------------
-
-class TaskAcceptanceIn(BaseModel):
-    # Mirrors the store's acceptance shape (services/tasks.py Canonical Task):
-    # {"kind": "reviewer"|"command"|"operator", "spec": str|None}. `spec` carries
-    # the command line when kind == "command"; reviewer/operator ignore it.
-    kind: str
-    spec: str | None = None
-
 
 class TaskPatchIn(BaseModel):
     status: str | None = None
@@ -883,18 +915,34 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
     reason = (body.reason or "").strip()
     if reason and body.status is None:
         raise HTTPException(400, "reason describes a status change; send status too")
-    # Acceptance: an empty/none kind clears it (falsy dict -> store sets None); a
-    # real kind must be one of the three the store recognizes. tasks.update reads
-    # None as "leave unchanged", so only forward a value when one was sent.
+    # Acceptance. THE SECOND DOOR, and it was open twice over.
+    #
+    # It rebuilt the record as `{kind, spec}`, so editing a ticket through this
+    # route silently DELETED its `criteria` -- the runnable assertions are the
+    # main form acceptance actually takes (`project_tasks.py --criterion` files
+    # `{kind: reviewer, spec: null, criteria: [...]}`, and change_gates executes
+    # them), so a save from the UI turned a checkable ticket into an unchecked
+    # one. And it accepted any of the three kinds with nothing runnable in it,
+    # which is the shape the CREATE door refuses, so a filing could be walked
+    # back through here one request later.
+    #
+    # Both are closed the same way: carry the whole record, and hold a PATCH to
+    # the rule the create path uses. Clearing is refused for the same reason -- a
+    # ticket that had a finish line and now has none is the regression the
+    # ratchet counts, and it must not be reachable by sending an empty kind.
     acceptance_arg = None
     if body.acceptance is not None:
         kind = (body.acceptance.kind or "").strip()
-        if kind in ("", "none"):
-            acceptance_arg = {}  # falsy -> update() clears acceptance to None
-        elif kind in _ACCEPTANCE_KINDS:
-            acceptance_arg = {"kind": kind, "spec": body.acceptance.spec}
-        else:
-            raise HTTPException(400, f"acceptance kind must be one of {sorted(_ACCEPTANCE_KINDS)} or none")
+        if kind not in _ACCEPTANCE_KINDS:
+            raise HTTPException(
+                400, f"acceptance kind must be one of {sorted(_ACCEPTANCE_KINDS)}")
+        acceptance_arg = {"kind": kind, "spec": body.acceptance.spec}
+        if body.acceptance.criteria is not None:
+            acceptance_arg["criteria"] = [
+                c.model_dump(exclude_none=True) for c in body.acceptance.criteria]
+        refusal = ticket_format.acceptance_refusal(acceptance_arg)
+        if refusal:
+            raise HTTPException(400, refusal)
     # Write-through, per §4 of docs/platform-redesign/
     # ticket-lifecycle-and-integration-2026-08-10.md: "A local edit to a
     # tracker-owned field goes to the remote first and the local copy is updated

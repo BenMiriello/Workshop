@@ -328,12 +328,53 @@ export type Task =
     effective_latitude?: EffectiveLatitude;
   };
 
+// ---- source: WHERE THE TICKET CAME FROM -------------------------------------
+// Mirrors backend services/tasks.SOURCE_KINDS. It has been on every ticket since
+// the store existed and no view read it.
+//
+// IT IS PROVENANCE, NOT INTENT, and the difference is the whole reason `unknown`
+// is in the list. Until 2026-09-01 a ticket with no recorded source read as
+// `operator`, and the two filing doors disagreed (the API stamped `operator`
+// when told nothing, the CLI stamped `agent`). So 34 tickets said the operator
+// filed them and he said he had filed "maybe one or two"; twelve were an agent
+// writing up his complaints through the door that defaults to his name. Both
+// doors now record `unknown` when nobody says, and the older records are NOT
+// re-attributed, because deciding after the fact what someone meant is the
+// failure that produced this.
+//
+// So this field answers "where did this come from", and a filter over it is a
+// filter over a stored value. It does not answer "what did the operator ask
+// for": that needs a concept this system has not designed yet.
+
+export type TaskSource = "operator" | "chat" | "agent" | "autogen" | "unknown";
+
+export const TASK_SOURCES: TaskSource[] =
+  ["operator", "chat", "agent", "autogen", "unknown"];
+
+// An unrecorded or unrecognised source reads as `unknown`, never as a person.
+export const sourceOf = (task: { source?: { kind?: string | null } | null }): TaskSource => {
+  const kind = (task.source?.kind ?? "") as TaskSource;
+  return TASK_SOURCES.includes(kind) ? kind : "unknown";
+};
+
+// Each one says what was RECORDED, in the words that claim exactly that much.
+const SOURCE_LABEL: Record<TaskSource, string> = {
+  operator: "Filed by the operator",
+  chat: "Filed from a chat",
+  agent: "Filed by an agent",
+  autogen: "Filed by a program",
+  unknown: "Provenance not recorded",
+};
+
+export const sourceLabel = (kind?: string | null): string =>
+  SOURCE_LABEL[(kind ?? "") as TaskSource] ?? String(kind ?? "");
+
 // ---- ordering ---------------------------------------------------------------
 // Mirrors backend tasks.SORT_KEYS. The list endpoint sorts; the client only
 // names the key, so the two cannot drift into two different ideas of "priority".
 
 export type TaskSort =
-  | "updated" | "created" | "priority" | "title" | "status" | "queue";
+  | "updated" | "created" | "priority" | "title" | "status" | "queue" | "source";
 
 export const TASK_SORTS: { value: TaskSort; label: string }[] = [
   { value: "updated", label: "Last updated" },
@@ -344,6 +385,11 @@ export const TASK_SORTS: { value: TaskSort; label: string }[] = [
   // The scheduler's own order (priority desc, then oldest first), so the top of
   // the list is what a sweep would actually pick up next rather than a guess.
   { value: "queue", label: "Next to run" },
+  // WHERE IT CAME FROM: operator, then chat, then agent, then program, then
+  // whatever recorded nothing; inside each, the scheduler's order. On a queue
+  // that is two thirds agent-filed, grouping by the door a ticket came through
+  // is what lets the rest of the list be read at all.
+  { value: "source", label: "Source" },
 ];
 
 // The seven task statuses -> the five design status kinds. Meaning, never a new

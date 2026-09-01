@@ -739,6 +739,54 @@ def _normalize_effort(value) -> str | None:
 EFFORTS = ("quick", "standard", "deep")
 
 
+# --- source: WHERE THE TICKET CAME FROM --------------------------------------
+# Stored on every ticket since the store existed (`source.kind`, see the
+# Canonical Task block at the top of this file).
+#
+#   operator   filed by a person, through a surface a person drives
+#   chat       filed out of a conversation, carrying that thread id in `ref`
+#   agent      filed by an agent while it was doing something else
+#   autogen    emitted by a program (a reconcile, an import, a migration)
+#   unknown    NOTHING WAS RECORDED. Not a guess, not a default: the absence.
+#
+# `unknown` EXISTS BECAUSE `operator` USED TO MEAN BOTH, and that made the field
+# unusable. Until 2026-09-01 a missing or malformed source read as `operator`
+# here, `add()` stamped `operator` when a caller passed none, and the CLI's
+# `--source` defaulted to `agent`. So the same filing got a different provenance
+# depending on which door it came through, and the operator's own name doubled
+# as the value for "nobody wrote anything down". Measured that day: 34 tickets
+# said `operator` and the operator said he had filed "maybe one or two". Twelve
+# of them were an agent writing up his complaints, with `ref` null, through the
+# door that defaults to his name.
+#
+# So: both doors now default to `unknown`, and this function reports the absence
+# as the absence. THE EXISTING RECORDS ARE NOT RE-ATTRIBUTED -- deciding after
+# the fact which of the 34 he really filed would be guessing at intent and
+# storing the guess as fact, which is the failure that produced this mess.
+#
+# The relational column's CHECK predates `autogen` and `unknown` and accepts
+# NULL, and `db/ticket_sync` already drops an unrecognised kind to NULL, so both
+# round-trip as "not recorded" with no migration.
+SOURCE_KINDS = ("operator", "chat", "agent", "autogen", "unknown")
+
+
+# Ordering for `sort_tasks(key="source")`: what a person filed, then what came
+# out of a conversation, then what an agent filed on its own, then what a
+# program emitted, then what nothing recorded.
+_SOURCE_RANK = {k: i for i, k in enumerate(SOURCE_KINDS)}
+
+
+def source_kind(task: dict) -> str:
+    """Where this ticket came from, with the absence reported as `unknown`.
+
+    Never guesses. A record with no source, a malformed one, or a kind this
+    build has not heard of is `unknown`, because "nobody wrote it down" is a
+    fact and attributing it to anyone is not. See SOURCE_KINDS."""
+    src = task.get("source")
+    kind = str((src or {}).get("kind") or "").strip() if isinstance(src, dict) else ""
+    return kind if kind in SOURCE_KINDS else "unknown"
+
+
 # --- execution: can a machine do this at all ---------------------------------
 # A SPEC field, not an exec field: it is a thing the operator sets about the work
 # itself, and an external tracker would legitimately want it. It is the selection
@@ -935,7 +983,10 @@ def _normalize(task: dict) -> dict:
     acceptance = _normalize_acceptance(task.get("acceptance"))
     src = task.get("source")
     if not isinstance(src, dict):
-        src = {"kind": "operator", "ref": None}
+        # NOT `operator`. A record that recorded nothing says so; see SOURCE_KINDS
+        # for the day the operator's own name doubling as the unknown value put
+        # 34 tickets under his name that he had not filed.
+        src = {"kind": "unknown", "ref": None}
     # title/body are canonical; `text` is projected from them below. A record
     # written before this (title absent) migrates here on READ, so no store needs
     # a rewrite pass to load correctly — the repair lands the next time it
@@ -1000,7 +1051,7 @@ def _normalize(task: dict) -> dict:
         # there, and a comment thread is not something we mirror to a tracker
         # today (the sync boundary is title/body/status/labels/assignee/priority).
         "comments": _norm_comments(task.get("comments")),
-        "source": {"kind": str(src.get("kind") or "operator"), "ref": src.get("ref")},
+        "source": {"kind": str(src.get("kind") or "unknown"), "ref": src.get("ref")},
         "provenance": task.get("provenance") or None,
         "touches": [str(t) for t in (task.get("touches") or []) if t],
         "discovered_from": task.get("discovered_from") or None,
@@ -2089,7 +2140,11 @@ def add(
             "execution": execution,
             "type": type,
             "latitude": latitude,
-            "source": source or {"kind": "operator", "ref": None},
+            # `unknown` when the caller did not say, which is the SAME default
+            # the CLI door uses. It used to be `operator` here and `agent` there,
+            # so one filing got two different provenances depending on the door.
+            # A caller that knows who asked passes it; nothing infers it.
+            "source": source or {"kind": "unknown", "ref": None},
             "scoped_by": scoped_by, "sync": sync,
             "provenance": provenance, "created": now, "updated": now,
         })
@@ -2684,7 +2739,8 @@ def delete_comment(root: Path, task_id: str, comment_id: str, *,
 _STATUS_RANK = {"blocked": 0, "doing": 1, "in_review": 2, "todo": 3, "draft": 4,
                 "parked": 5, "done": 6, "cancelled": 7}
 
-SORT_KEYS = ("updated", "created", "priority", "title", "status", "queue")
+SORT_KEYS = ("updated", "created", "priority", "title", "status", "queue",
+             "source")
 
 
 def sort_tasks(items: list[dict], key: str = "updated",
@@ -2693,12 +2749,14 @@ def sort_tasks(items: list[dict], key: str = "updated",
 
     `desc` defaults per key to the direction that is useful rather than the one
     that is alphabetical: newest first for dates, biggest first for priority,
-    A-Z for title, most-urgent first for status, and next-to-run first for queue.
+    A-Z for title, most-urgent first for status, next-to-run first for queue, and
+    operator-door-first for source.
     """
     if key not in SORT_KEYS:
         key = "updated"
     # `status` ranks ascending (0 = most urgent) so its useful default is
     # ascending; the date and priority keys want biggest first; title wants A-Z.
+    # `source` ranks ascending too (0 = the operator asked for it).
     reverse = (key in ("updated", "created", "priority")) if desc is None else bool(desc)
     if key == "priority":
         def rank(t: dict):
@@ -2710,6 +2768,15 @@ def sort_tasks(items: list[dict], key: str = "updated",
         def rank(t: dict):
             return (_STATUS_RANK.get(str(t.get("status")), 99),
                     str(t.get("updated") or ""))
+    elif key == "source":
+        # WHERE IT CAME FROM, in the order of SOURCE_KINDS, so a list groups by
+        # the door a ticket came through rather than sorting alphabetically. On
+        # 2026-09-01 the agent door outnumbered every other two to one in the
+        # open queue with no way to tell them apart. Within one source the
+        # tie-break is the SCHEDULER's order (priority desc, oldest first).
+        def rank(t: dict):
+            return (_SOURCE_RANK.get(source_kind(t), 99),
+                    -_as_int(t.get("priority"), 0), str(t.get("created") or ""))
     elif key == "queue":
         # The scheduler's own order: highest priority first, oldest first within
         # a priority — the same key `next_ready` sorts candidates by, so "what
