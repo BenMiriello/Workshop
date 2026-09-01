@@ -42,6 +42,7 @@ import {
   type ToolFilter,
   type ToolRecord,
 } from "../../lib/tools";
+import McpServers from "./McpServers";
 
 // Settings -> Tools. Every capability this instance can name, who owns each,
 // and CRUD for the ones the operator owns.
@@ -279,9 +280,15 @@ export default function Tools() {
 
   return (
     <div>
+      {/* ONE PAGE FOR ONE QUESTION. Tools and MCP were two Settings rows and
+          two answers to "what can this instance call"; the split described
+          where each record lives, which is not something the operator is
+          asking. Section 6 of threads-branches-and-pages-2026-08-29 collapses
+          them, and the MCP surface renders below as a section of this page
+          rather than as a page of its own. */}
       <PageHeader
-        title="Tools"
-        sub="Every capability this system can name, and who owns each one."
+        title="Tools and MCP"
+        sub="Every capability this system can call, and who owns each one."
         actions={
           form === null ? (
             <Button size="sm" variant="ghost" onClick={() => setForm({ mode: "create" })}>
@@ -571,6 +578,11 @@ export default function Tools() {
           </Card>
         </section>
       </Stack>
+
+      {/* The MCP half. Read-only on purpose, and unchanged by the move: the
+          per-chat on/off switch it might have grown already exists in the
+          chat, and this page does not grow a second, disagreeing one. */}
+      <McpServers embedded />
 
       <ConfirmDialog
         open={deleting !== null}

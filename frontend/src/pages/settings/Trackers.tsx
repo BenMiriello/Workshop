@@ -69,7 +69,16 @@ const MODE_HELP: Record<string, string> = {
   sync: "Two way. The tracker owns the wording; workshop owns status and run history.",
 };
 
-export default function Trackers() {
+/** The issue tracker connection, as a page of its own or as a section of the
+ *  Apps page.
+ *
+ *  TRACKERS FOLDS INTO APPS (threads-branches-and-pages-2026-08-29 section 6).
+ *  A tracker is a thing this installation is connected to, which is the
+ *  question the Apps page already answers; it was a row of its own because it
+ *  arrived on its own. `embedded` drops the PageHeader so the host page keeps
+ *  the one header a screen is allowed.
+ */
+export default function Trackers({ embedded = false }: { embedded?: boolean } = {}) {
   const [data, setData] = useState<Payload | null>(null);
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -156,7 +165,9 @@ export default function Trackers() {
 
   return (
     <div>
-      <PageHeader title="Trackers" />
+      {embedded
+        ? <SectionLabel>Issue tracker</SectionLabel>
+        : <PageHeader title="Trackers" />}
 
       {err && (
         <div style={{ marginBottom: "var(--space-3)" }}>

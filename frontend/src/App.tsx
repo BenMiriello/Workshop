@@ -32,8 +32,9 @@ const ProjectNew = lazyPage(() => import("./pages/ProjectNew"));
 const ProjectDetail = lazyPage(() => import("./pages/ProjectDetail"));
 const AppPreview = lazyPage(() => import("./pages/AppPreview"));
 const Grants = lazyPage(() => import("./pages/settings/Grants"));
-const Trackers = lazyPage(() => import("./pages/settings/Trackers"));
-const McpServers = lazyPage(() => import("./pages/settings/McpServers"));
+// Trackers and McpServers are no longer routed: they are SECTIONS now, of
+// Settings > Apps and Settings > Tools and MCP respectively, and each is
+// imported by the page it is a section of. Their old routes redirect.
 const ModelProviders = lazyPage(() => import("./pages/settings/ModelProviders"));
 const ToolsSettings = lazyPage(() => import("./pages/settings/Tools"));
 const CustomInstructions = lazyPage(() => import("./pages/settings/CustomInstructions"));
@@ -190,8 +191,10 @@ export default function App() {
           <Route path="/projects/:slug" element={<ProjectDetail />} />
           <Route path="/projects/:slug/run" element={<AppPreview />} />
           <Route path="/settings/grants" element={<Grants />} />
-          <Route path="/settings/trackers" element={<Trackers />} />
-          <Route path="/settings/mcp" element={<McpServers />} />
+          <Route path="/settings/trackers" element={<Navigate to="/settings/apps" replace />} />
+          {/* Tools and MCP are one page now (places.ts). The routes stay as
+              redirects: a bookmark to either is still a bookmark. */}
+          <Route path="/settings/mcp" element={<Navigate to="/settings/tools" replace />} />
           <Route path="/settings/models" element={<ModelProviders />} />
           <Route path="/settings/tools" element={<ToolsSettings />} />
           <Route path="/settings/instructions" element={<CustomInstructions />} />

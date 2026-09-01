@@ -359,7 +359,7 @@ function CreateAgent() {
           </>
         )}
         <Row end>
-          <Button variant="ghost" onClick={() => nav("/agents")} disabled={busy}>Cancel</Button>
+          <Button variant="ghost" onClick={() => nav("/roles")} disabled={busy}>Cancel</Button>
           <Button variant="primary" onClick={submit} loading={busy} disabled={busy || !name.trim()}>
             Create agent
           </Button>
@@ -662,7 +662,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
     if (agent && isMaker(agent)) {
       await fetch(`/api/agents/build/${encodeURIComponent(agent.slug)}/retire`, { method: "POST" });
     }
-    nav("/agents");
+    nav("/roles");
   };
 
   if (err && !agent) {

@@ -257,15 +257,20 @@ export function buildPlaces(
       { id: "instructions", label: "Instructions", to: "/settings/instructions", Icon: icons.instructions },
       { id: "memory", label: "Memory", to: "/settings/memory", Icon: icons.memory },
       { id: "apps", label: "Apps", to: "/settings/apps", Icon: icons.apps },
-      { id: "trackers", label: "Trackers", to: "/settings/trackers", Icon: icons.trackers },
+      // Trackers folds into Apps, same section, same reason: a tracker is a
+      // thing an app is connected to, not a place of its own.
       // PROVIDERS, not Models. The page behind it is a credentials screen: a
       // subscription row and the API keys this installation holds. There is no
       // model list on it and no default to set, because which model a chat uses
       // is picked in that chat. A nav entry promising a selection the page does
       // not have is the label lying about the page.
       { id: "models", label: "Providers", to: "/settings/models", Icon: icons.models },
-      { id: "mcp", label: "MCP", to: "/settings/mcp", Icon: icons.mcp },
-      { id: "tools", label: "Tools", to: "/settings/tools", Icon: icons.tools },
+      // TOOLS AND MCP ARE ONE PAGE. Both answer "what can this instance
+      // call", and asking that question in two places is what
+      // threads-branches-and-pages-2026-08-29.md section 6 collapses. The MCP
+      // page is a section of it now (settings/McpServers.tsx takes `embedded`);
+      // /settings/mcp redirects here.
+      { id: "tools", label: "Tools and MCP", to: "/settings/tools", Icon: icons.tools },
       { id: "access", label: "Access", to: "/settings/grants", Icon: icons.access },
       // Fleet concurrency, the autonomy brake, and the queue runner. This was
       // "This host" until 2026-08-20, when the GPU/broker/Ollama residency rows

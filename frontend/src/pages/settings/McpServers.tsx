@@ -88,7 +88,16 @@ function ToolList({ tools }: { tools: Tool[] }) {
   );
 }
 
-export default function McpServers() {
+/** MCP servers, as a page of its own or as a section of another.
+ *
+ *  SETTINGS HAS ONE PAGE FOR "WHAT CAN THIS INSTANCE CALL", and MCP and Tools
+ *  are two answers to it (threads-branches-and-pages-2026-08-29 section 6,
+ *  "Tools and MCP as one page"). They were two rows because they are two
+ *  sources, which is a fact about where the records live and not a question the
+ *  operator was ever asking. `embedded` drops this component's own PageHeader
+ *  so the host page keeps the one header a screen is allowed.
+ */
+export default function McpServers({ embedded = false }: { embedded?: boolean } = {}) {
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
@@ -120,14 +129,23 @@ export default function McpServers() {
 
   return (
     <div>
-      <PageHeader
-        title="MCP servers"
-        actions={
+      {embedded ? (
+        <Row between wrap style={{ gap: "var(--space-3)", marginTop: "var(--space-6)" }}>
+          <SectionLabel icon={<Plug aria-hidden />}>MCP servers</SectionLabel>
           <Button variant="ghost" size="sm" onClick={() => void load(true)} disabled={loading}>
             <RefreshCw aria-hidden /> {loading ? "Checking" : "Refresh"}
           </Button>
-        }
-      />
+        </Row>
+      ) : (
+        <PageHeader
+          title="MCP servers"
+          actions={
+            <Button variant="ghost" size="sm" onClick={() => void load(true)} disabled={loading}>
+              <RefreshCw aria-hidden /> {loading ? "Checking" : "Refresh"}
+            </Button>
+          }
+        />
+      )}
 
       <Stack>
         <section>

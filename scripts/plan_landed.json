@@ -25,7 +25,7 @@
       "id": "1-thread-fields-and-roster-retired",
       "title": "Thread carries armed and role; the file-agent roster is gone",
       "source": "section 7 step 1, with sections 1 and 6",
-      "_note": "'Thread fields (armed, role) land AND the file-agent roster is retired, in one change. Not one, then the other.' Both halves are asserted together on purpose, because doing the first alone is what leaves two systems.",
+      "_note": "'Thread fields (armed, role) land AND the file-agent roster is retired, in one change. Not one, then the other.' Both halves are asserted together on purpose, because doing the first alone is what leaves two systems.\n\nWHAT THIS DELIBERATELY DOES NOT ASSERT: that `agents/*.md` is empty. Those files are gitignored (.gitignore:92, only agents/_templates/ is tracked), so they are INSTALLATION data, not repo content, and a gate in the repo must not measure one checkout's data. That is the same rule as 'no platform source file may name a specific app', applied here. The doc's 'the four inert files are retired' is true of this installation and is recorded in the commit that removed two of them; the other two are NOT inert and were kept on purpose (memory-keeper.md carries a live cron that scripts/dispatch_triggers.sh reads, and development-maker.md is the resident queue runner's persona injected by scripts/ralph.sh).",
       "assertions": [
         {
           "kind": "regex_present",
@@ -34,14 +34,21 @@
           "regex": "armed"
         },
         {
+          "kind": "regex_present",
+          "says": "the arming enum has one source",
+          "path": "backend/services/chat_store.py",
+          "regex": "THREAD_ARMED"
+        },
+        {
           "kind": "absent",
           "says": "the Agents roster page is deleted",
           "path": "frontend/src/pages/Agents.tsx"
         },
         {
-          "kind": "absent",
-          "says": "the inert agent definition files are retired",
-          "path": "agents/*.md"
+          "kind": "regex_absent",
+          "says": "nothing routes a roster of agents any more",
+          "path": "frontend/src/App.tsx",
+          "regex": "path=\"/agents\" element=\\{<Agents"
         }
       ]
     },

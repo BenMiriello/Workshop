@@ -10,9 +10,9 @@
     },
     "5-settings-nine-rows": {
       "pinned": "2026-09-01",
-      "because": "Twelve rows today. The collapse needs Roles to exist as a page (it is one of the nine), and Roles comes from step 1's retirement of the agent roster, so this is ordered behind it. Trackers folding into Apps and Tools merging with MCP are each a real page edit, not a nav-list edit.",
-      "blocked_on": "step 1: a Roles page, which is one of the nine rows.",
-      "blocked_on_check": "ls frontend/src/pages/Roles.tsx >/dev/null 2>&1"
+      "because": "Twelve rows down to TEN, on 2026-09-01. The two real merges are done and are page changes, not nav changes: settings/McpServers.tsx takes `embedded` and renders as a section of settings/Tools.tsx ('Tools and MCP'), and settings/Trackers.tsx renders under InstalledApps in the Apps tab. Both old routes redirect. The last row is Instructions, and section 6's list of nine simply OMITS it without saying where it goes, while CLAUDE.md names /settings/instructions as the authority for the L3 prompt layer. Guessing a host for it would be inventing a decision the plan did not make, which is the failure this whole gate exists to stop.",
+      "blocked_on": "A decision, not code: where the operator's custom instructions live once Settings has nine rows. Chat is the obvious host and is not the same thing as a stated answer.",
+      "blocked_on_check": "! grep -q 'to: \"/settings/instructions\"' frontend/src/components/shell/places.ts"
     },
     "3-work-view-absorbs-the-top-level-pages": {
       "pinned": "2026-09-01",

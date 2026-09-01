@@ -41,8 +41,11 @@ const NODES: Record<string, RouteNode> = {
   "/marketplace": { label: "Marketplace" },
   // Per-app nodes are merged in below from the app registry.
   "/": { label: "Home" },
-  "/agents": { label: "Agents" },
-  "/agents/new": { label: "New agent", parent: "/agents" },
+  // ROLES, NOT AGENTS. The roster is retired; /agents redirects to /roles
+  // (App.tsx). A crumb that named a page nobody can reach would be the
+  // trail lying about where you are.
+  "/roles": { label: "Roles" },
+  "/agents/new": { label: "New agent", parent: "/roles" },
   // Route and label agree since ADR 0023. /work still resolves, as a redirect
   // that keeps its query, so old links and bookmarks are unaffected.
   "/tickets": { label: "Tickets" },
@@ -74,16 +77,16 @@ export function resolveCrumbs(pathname: string): Crumb[] {
   }
   // New agent: /agents/new.
   if (pathname === "/agents/new") {
-    return [{ label: "Agents", to: "/agents" }, { label: "New agent" }];
+    return [{ label: "Roles", to: "/roles" }, { label: "New agent" }];
   }
   // Agent work pane: /agents/<slug>/chat (and the legacy /agents/build/<slug>
-  // redirect target). Reads Agents / <slug> / Chat.
+  // redirect target). Reads Roles / <slug> / Chat.
   const chatMatch = pathname.match(/^\/agents\/([^/]+)\/chat$/);
   const buildMatch = pathname.match(/^\/agents\/build\/([^/]+)$/);
   if (chatMatch || buildMatch) {
     const slug = decodeURIComponent((chatMatch || buildMatch)![1]);
     return [
-      { label: "Agents", to: "/agents" },
+      { label: "Roles", to: "/roles" },
       { label: slug, to: `/agents/${encodeURIComponent(slug)}` },
       { label: "Chat" },
     ];
@@ -91,7 +94,7 @@ export function resolveCrumbs(pathname: string): Crumb[] {
   // Agent detail: /agents/<slug>.
   if (pathname.startsWith("/agents/")) {
     return [
-      { label: "Agents", to: "/agents" },
+      { label: "Roles", to: "/roles" },
       { label: decodeURIComponent(pathname.slice("/agents/".length)) },
     ];
   }

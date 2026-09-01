@@ -31,6 +31,7 @@ import {
 } from "../lib/memoryPolicy";
 import AutonomyControls from "../components/AutonomyControls";
 import InstalledApps from "./settings/InstalledApps";
+import Trackers from "./settings/Trackers";
 
 import type { PermissionState } from "@shared/native-bridge";
 
@@ -93,8 +94,19 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
       {tab === "chat" && <ChatSection />}
       {tab === "memory" && <MemorySection />}
       {/* Panels contributed by installed apps. Settings does not know which
-          apps exist or what they need configured. */}
-      {tab === "apps" && <InstalledApps />}
+          apps exist or what they need configured.
+
+          TRACKERS FOLDS IN HERE (threads-branches-and-pages-2026-08-29 section
+          6). An issue tracker is a thing this installation is connected to,
+          which is the question this page already answers; it had a row of its
+          own because it arrived on its own, not because it is a different
+          kind of thing. */}
+      {tab === "apps" && (
+        <>
+          <InstalledApps />
+          <Trackers embedded />
+        </>
+      )}
       {tab === "agents" && (
         <>
           {/* How the agent fleet runs: concurrency limits, the autonomy brake,
@@ -868,14 +880,18 @@ type Concurrency = { turns: Pool; helpers: Pool };
 type ConcurrencyDraft = { max_turns: number; max_helpers: number };
 
 function AgentsSection() {
-  const [agents, setAgents] = useState<unknown[] | null>(null);
   const [conc, setConc] = useState<Concurrency | null>(null);
   const [concErr, setConcErr] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch("/api/agents/").then((r) => r.ok ? r.json() : []).then((d) => setAgents(Array.isArray(d) ? d : []));
-  }, []);
+  // THE FLEET COUNT AND THE "NEW AGENT" BUTTON ARE GONE. Both belonged to the
+  // roster: one counted `GET /api/agents/`, which counted markdown files on
+  // disk rather than anything that runs, and the other made a second entity
+  // that the model no longer has. A thread is the one entity, and what runs
+  // unasked is a thread that is armed
+  // (threads-branches-and-pages-2026-08-29 sections 1 and 6). What is left in
+  // this section is what was always true of the whole installation rather than
+  // of any one agent: how many model processes may run at once.
 
   const loadConc = useCallback(() => {
     setConcErr(null);
@@ -906,13 +922,11 @@ function AgentsSection() {
 
   return (
     <Section icon={Bot} title="Agents">
-      <Row label="fleet">
-        {agents == null ? "loading…" : `${agents.length} agent${agents.length === 1 ? "" : "s"}`}
-        {agents && agents.length > 0 && (
-          <span style={{ marginLeft: "0.5rem" }}>
-            <Link to="/agents" style={{ color: "var(--accent)" }}>manage ↗</Link>
-          </span>
-        )}
+      <Row label="what runs unasked">
+        <span>
+          A thread that is armed. Its arming and its role are set on{" "}
+          <Link to="/roles">Roles</Link>, and on the thread itself.
+        </span>
       </Row>
       {/* How many model processes may run at once. Each one is a whole OS
           process, so this is the only thing standing between a runaway fan-out
@@ -987,11 +1001,6 @@ function AgentsSection() {
           </Button>
         </div>
       ))}
-      <Row label="new agent">
-        <Link to="/agents/new">
-          <Button size="sm" variant="ghost">New agent ↗</Button>
-        </Link>
-      </Row>
     </Section>
   );
 }
