@@ -30,9 +30,9 @@ import {
   type ShareValue,
 } from "../lib/memoryPolicy";
 import AutonomyControls from "../components/AutonomyControls";
+import InstalledApps from "./settings/InstalledApps";
 
 import type { PermissionState } from "@shared/native-bridge";
-import { AppSuspense, appSettingsPanels } from "../apps/registry";
 
 // Settings. One section per tab, ordered by how often the operator touches it.
 //
@@ -94,7 +94,7 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
       {tab === "memory" && <MemorySection />}
       {/* Panels contributed by installed apps. Settings does not know which
           apps exist or what they need configured. */}
-      {tab === "apps" && <AppSuspense>{appSettingsPanels()}</AppSuspense>}
+      {tab === "apps" && <InstalledApps />}
       {tab === "agents" && (
         <>
           {/* How the agent fleet runs: concurrency limits, the autonomy brake,

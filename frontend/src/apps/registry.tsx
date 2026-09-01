@@ -388,12 +388,16 @@ export function AppSuspense({ children }: { children: ReactNode }) {
   );
 }
 
-/** Every installed app's Settings panel, in catalog order. */
-export function appSettingsPanels(): ReactNode[] {
-  return APPS.filter((a) => a.Settings).map((a) => {
-    const Panel = a.Settings!;
-    return <Panel key={a.id} />;
-  });
+/** The Settings panel this app declares, if it declares one.
+ *
+ *  It used to be `appSettingsPanels()`, returning only the panels and in
+ *  catalog order, which made Settings > Apps a list of PANELS rather than a
+ *  list of apps: one app declares a panel, so the page was that one app. The
+ *  caller now walks the platform's installed-app list and asks this per app,
+ *  so an app with no panel is a row that says so instead of a row that is
+ *  missing. */
+export function appSettingsPanel(id: string): ComponentType | undefined {
+  return APPS.find((a) => a.id === id)?.Settings;
 }
 
 /** The icon an app declared, if it declared one. A token/url string, never a

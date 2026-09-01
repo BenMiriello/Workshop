@@ -3220,6 +3220,10 @@ p.chat-workpanel__note { margin: 0; }
 .ws-claim__body { margin: 0; white-space: pre-wrap; }
 .ws-claim__note { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
 .ws-changes__filters { margin-bottom: var(--space-4); }
+/* An app's name in the Settings > Apps index, with its glyph beside it. */
+.ws-installed-app {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+}
 /* Two cells on /changes that must not break mid-phrase. The status cell held
    "ready to review" and wrapped it onto two lines, which made the row taller
    than every other row for no information. The branch cell is an id plus
