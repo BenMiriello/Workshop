@@ -24,10 +24,24 @@
 // nothing about scopes, notes or docs, and a second directory page later is a
 // second caller rather than a branch in this file. See `directory.tsx`.
 //
-// NO REF PILL. The mockup puts a branch picker on this title line for every
-// place. In this system a branch belongs to a project's repo, most places have
-// no repo, and the design agent's own handoff records that its pickers "open
-// nothing yet". Design doc section 8.2.
+// THE BRANCH PICKER SITS ON THIS TITLE LINE, right-aligned, wherever the place
+// has a branch (navigation-shell-2026-08-20.md section 3.2: "a ref pill sits
+// right-aligned on the same line where the place has a ref").
+//
+// THIS REVERSES WHAT THIS COMMENT USED TO SAY, on 2026-09-01, on the operator's
+// direct instruction. It used to read "NO REF PILL ... design doc section 8.2",
+// and the pill was drawn inside the body of every app tab page instead. His
+// report: the picker "is just on every page inside the page, which makes no
+// sense. It should be in the toolbar ... by the title", and putting it in every
+// page "requires more work and makes less sense". Section 8.2 is superseded on
+// the PLACEMENT and its objection is not restated here as an argument against
+// the code, because that is how this got re-litigated.
+//
+// The half of 8.2 that was right is kept, and it is a rule rather than a
+// paragraph: "a branch belongs to a project's repo, and most places have no
+// repo at all." So the control is drawn only where there IS a branch to name
+// (`branchSubject` in pageChrome.ts), and where there is not, nothing is drawn.
+// Not a disabled pill, not a placeholder, nothing.
 //
 // NO STATUS AFFORDANCES EITHER (design doc section 8, and rule 7 of it): no
 // counts, no activity dots, no health chrome on these rows. Nothing here is
@@ -35,11 +49,12 @@
 
 import { Link } from "react-router-dom";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import RefPill from "../holders/RefPill";
 import { useDirectory } from "./directory";
 import type { Shell } from "./useShell";
 
 export function PageColumn({ shell }: { shell: Shell }) {
-  const { place, page, columnOpen, animating } = shell;
+  const { place, page, columnOpen, animating, branch } = shell;
   const { registration, open, setOpen, setHost, setToolbarHost } = useDirectory();
 
   // A takeover only exists for the page you are ON. That is section 3.4's own
@@ -69,7 +84,21 @@ export function PageColumn({ shell }: { shell: Shell }) {
           className={"ws-pagecol__pages" + (takeover ? " is-out" : "")}
           aria-hidden={takeover ? true : undefined}
         >
-          <div className="ws-pagecol__title">{place.name}</div>
+          <div className="ws-pagecol__title">
+            <span className="ws-pagecol__titletext">{place.name}</span>
+            {/* Right-aligned on the title line, and absent entirely at every
+                place with no repo behind it. The name gives before the row
+                does: it ellipsizes, the column never widens. */}
+            {branch && (
+              <RefPill
+                state={branch.state}
+                projectSlug={branch.projectSlug}
+                className="ws-refpill ws-refpill--column"
+                labelMax={10}
+                tabIndex={rowsFocusable ? undefined : -1}
+              />
+            )}
+          </div>
           <nav className="ws-pagecol__list" aria-label={`${place.name} pages`}>
             {place.pages.map((p) => {
               const active = page?.id === p.id;
@@ -127,9 +156,9 @@ export function PageColumn({ shell }: { shell: Shell }) {
           {/* THE BACK HEADER, 46px and the whole row (mockup spec section 5).
               Not a page row: it is the panel's own header, so it spans the
               column and carries the hairline that separates it from the tree
-              rather than sitting inset as a pill. No ref beside the title:
-              design doc section 8.2 rejects the pill and there is no branch
-              here to name. */}
+              rather than sitting inset as a pill. No branch control here: this
+              header names the TREE you drilled into, and the place's branch is
+              already on the title row this panel slid in over. */}
           <button
             type="button"
             className="ws-pagecol__dirhead"

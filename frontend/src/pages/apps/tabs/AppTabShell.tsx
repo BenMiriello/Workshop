@@ -4,10 +4,9 @@
 // app-record loading/error states every tab needs before it can call any
 // nested /api/apps/{id}/... route.
 import type { ReactNode } from "react";
-import { PageHeader, StateBlock, Card, Stack, Skeleton, Button, Notice, Row } from "@workshop/ui";
+import { PageHeader, StateBlock, Card, Stack, Skeleton, Button, Notice } from "@workshop/ui";
 import { useApp, type AppRecord } from "../../../lib/apps";
 import { usePageChrome } from "../../../components/shell/takeover";
-import RefPill from "../../../components/holders/RefPill";
 import { useAppRef } from "../../../components/holders/useHolders";
 import { stalenessNote } from "../../../lib/holders";
 
@@ -21,9 +20,18 @@ export function AppTabPage({
   children: (app: AppRecord) => ReactNode;
 }) {
   const { app, err, reload } = useApp(slug);
-  // WHICH REF THIS SURFACE IS ON, AND WHO IS WRITING IT. One read for both: the
-  // pill in the header and the staleness line under it are two views of the
-  // same join, so they cannot disagree about who is here.
+  // WHO IS WRITING THIS APP'S TREE, for the staleness line below.
+  //
+  // THE BRANCH PICKER IS NOT HERE ANY MORE (moved 2026-09-01). It was in this
+  // page's `PageHeader` actions, which meant a branch control drawn inside the
+  // body of every app tab page, on every one of them. The operator: "it's just
+  // on every page inside the page, which makes no sense. It should be in the
+  // toolbar ... by the title." It is now in the shell's own chrome, once per
+  // viewport, off one read that `useShell` holds. Do not add it back here.
+  //
+  // What is left is the staleness join, which is about this PAGE's content
+  // rather than about the chrome: the rows on screen are still readable and one
+  // thing about them is no longer guaranteed current.
   const refState = useAppRef({ projectSlug: app?.project_slug, appId: app?.id });
   const stale = stalenessNote(refState.writers);
   // THE PAGE'S CONTENT OWNS THE SCREEN IN TWO CASES, and the tab declares which
@@ -92,15 +100,7 @@ export function AppTabPage({
           eyebrow={app.name}
           title={title}
           sub={sub}
-          actions={
-            // The ref pill goes in the header that is already here. It is the
-            // first action because it says WHERE you are reading from, which
-            // frames everything the tab's own actions then do.
-            <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-              <RefPill state={refState} projectSlug={app.project_slug} />
-              {actions?.(app)}
-            </Row>
-          }
+          actions={actions?.(app)}
         />
       )}
       {/* READER STALENESS (leases design section 11). A LINE, not a region: the

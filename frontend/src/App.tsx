@@ -1,7 +1,7 @@
 import { lazyPage, RouteSkeleton } from "./lib/lazyPage";
 import { runHref } from "./lib/jobs";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
-import Agents from "./pages/Agents";
+import Roles from "./pages/Roles";
 import Chats, { ChatsArchived } from "./pages/Chats";
 import Projects from "./pages/Projects";
 import Apps from "./pages/Apps";
@@ -23,7 +23,7 @@ import { useAppPlacesState } from "./apps/useAppPlaces";
 // visitor downloads before anything appears. Every route below already
 // renders inside <AppSuspense>, so this needs no new boundary.
 //
-// Keep Home, Work, Agents, Apps, Chats and FocusedChat EAGER: those are the
+// Keep Home, Work, Roles, Apps, Chats and FocusedChat EAGER: those are the
 // landing surfaces, and a suspense flash on the way into the chat is worse
 // than the bytes.
 const AgentDetail = lazyPage(() => import("./pages/AgentDetail"));
@@ -148,7 +148,15 @@ export default function App() {
         <AppSuspense>
         <Routes>
           <Route path="/" element={<Home />} />
-          <Route path="/agents" element={<Agents />} />
+          {/* ROLES REPLACED THE AGENTS ROSTER (threads-branches-and-pages-
+              2026-08-29.md sections 1, 2 and 6: "`/agents` as a roster.
+              Becomes Home > Roles, plus an armed filter on Chats"). A thread is
+              the one entity; "agent" is a description of a thread whose `armed`
+              is not `off`, so there is no roster of a second kind of object to
+              list. /agents keeps resolving, to the surface that answers what it
+              used to be opened for. */}
+          <Route path="/roles" element={<Roles />} />
+          <Route path="/agents" element={<Navigate to="/roles" replace />} />
           <Route path="/tickets" element={<Tickets />} />
           <Route path="/deploys" element={<Deploys />} />
           <Route path="/tickets/:scope/:id" element={<TicketDetail />} />

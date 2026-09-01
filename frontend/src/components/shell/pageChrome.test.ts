@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { directoryChrome } from "./pageChrome";
+import {
+  APP_PLACE_PREFIX, NO_BRANCH_LABEL, branchChipLabel, branchSubject, directoryChrome,
+} from "./pageChrome";
 
 describe("directoryChrome", () => {
   it("keeps the whole desktop header, and never pins a bottom bar there", () => {
@@ -56,5 +58,89 @@ describe("directoryChrome", () => {
         expect(chrome.header && chrome.actionBar).toBe(false);
       }
     }
+  });
+});
+
+describe("branchSubject", () => {
+  const apps = [
+    { id: "linked", projectSlug: "linked-tree" },
+    { id: "unlinked", projectSlug: null },
+    { id: "blank", projectSlug: "   " },
+    { id: "absent" },
+  ];
+
+  it("names the branch of an app that has a linked working tree", () => {
+    expect(branchSubject({ id: `${APP_PLACE_PREFIX}linked`, kind: "app" }, apps))
+      .toEqual({ appId: "linked", projectSlug: "linked-tree" });
+  });
+
+  it("draws nothing for an app with no linked tree", () => {
+    // The kernel of design doc section 8.2 that survived the override: most
+    // places have no repo, so most places get no control at all. Null, not a
+    // subject with an empty slug that the chrome would then have to special-case.
+    expect(branchSubject({ id: `${APP_PLACE_PREFIX}unlinked`, kind: "app" }, apps)).toBeNull();
+    expect(branchSubject({ id: `${APP_PLACE_PREFIX}absent`, kind: "app" }, apps)).toBeNull();
+  });
+
+  it("treats a whitespace-only slug as no tree", () => {
+    expect(branchSubject({ id: `${APP_PLACE_PREFIX}blank`, kind: "app" }, apps)).toBeNull();
+  });
+
+  it("draws nothing at any platform place", () => {
+    // Home has no ref. All chats has no ref. Settings has no ref.
+    for (const kind of ["home", "chats", "settings"]) {
+      expect(branchSubject({ id: kind, kind }, apps)).toBeNull();
+    }
+  });
+
+  it("draws nothing for an app the installation does not have", () => {
+    expect(branchSubject({ id: `${APP_PLACE_PREFIX}nope`, kind: "app" }, apps)).toBeNull();
+  });
+
+  it("pins the id format places.ts builds", () => {
+    // If `places.ts` ever stops prefixing an app place with `app:`, this fails
+    // here rather than silently emptying the branch control everywhere.
+    expect(APP_PLACE_PREFIX).toBe("app:");
+    expect(branchSubject({ id: "linked", kind: "app" }, apps)).toBeNull();
+  });
+});
+
+describe("branchChipLabel", () => {
+  it("says so, shortly, when there is no branch to name", () => {
+    // "branch", not "ref" and not "worktree"
+    // (threads-branches-and-pages-2026-08-29.md section 3).
+    expect(NO_BRANCH_LABEL).toBe("no branch");
+    expect(branchChipLabel(null)).toBe(NO_BRANCH_LABEL);
+    expect(branchChipLabel(undefined)).toBe(NO_BRANCH_LABEL);
+    expect(branchChipLabel("   ")).toBe(NO_BRANCH_LABEL);
+  });
+
+  it("leaves a name that already fits alone", () => {
+    expect(branchChipLabel("main")).toBe("main");
+    expect(branchChipLabel("main", 4)).toBe("main");
+  });
+
+  it("never exceeds the cap it was given", () => {
+    const long = "feat/client-state-consolidation";
+    for (const max of [2, 6, 10, 14, 20, 31]) {
+      expect(branchChipLabel(long, max).length).toBeLessThanOrEqual(max);
+    }
+  });
+
+  it("keeps both the head and the tail, because the tail is what identifies it", () => {
+    const label = branchChipLabel("feat/client-state-consolidation", 14);
+    expect(label).toBe("feat/cl…dation");
+    expect(label.startsWith("feat/")).toBe(true);
+    expect(label.endsWith("dation")).toBe(true);
+  });
+
+  it("distinguishes two branches that share a long prefix", () => {
+    const a = branchChipLabel("agent/2026-09-01/toolbar", 12);
+    const b = branchChipLabel("agent/2026-09-01/mobile", 12);
+    expect(a).not.toBe(b);
+  });
+
+  it("degrades to a single ellipsis rather than throwing at an absurd cap", () => {
+    expect(branchChipLabel("main", 1)).toBe("…");
   });
 });

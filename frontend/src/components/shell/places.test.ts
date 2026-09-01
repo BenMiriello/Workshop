@@ -76,10 +76,14 @@ describe("pageFor", () => {
   });
 
   it("keeps a row lit while you are on a record BELOW it", () => {
-    // You are still in Agents when you are reading one agent. A page column
-    // that goes dark on every detail page is a page column that tells you
-    // nothing exactly when you are deepest.
-    expect(pageFor(home, "/agents/reviewer")?.id).toBe("agents");
+    // A page column that goes dark on every detail page is a page column that
+    // tells you nothing exactly when you are deepest.
+    //
+    // /agents/:slug is NOT in this list any more, and that is the change rather
+    // than an omission: the Agents roster row was replaced by Roles on
+    // 2026-09-01, /agents redirects to /roles, and an agent DETAIL page is a
+    // record under a row that no longer exists. Asserting it stayed lit would
+    // be asserting the old nav.
     expect(pageFor(home, "/projects/workshop")?.id).toBe("projects");
     // A ticket record now does the same. It did not until ADR 0023: the list
     // was at /work while a record was at /tickets/:scope/:id, so reading a

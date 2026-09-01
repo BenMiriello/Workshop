@@ -200,7 +200,12 @@ export function buildPlaces(
       { id: "chats", label: "Chats", to: "/chats", Icon: icons.chats },
       { id: "projects", label: "Projects", to: "/projects", Icon: icons.projects },
       { id: "apps", label: "Apps", to: "/apps", Icon: icons.apps },
-      { id: "agents", label: "Agents", to: "/agents", Icon: icons.agents },
+      // ROLES, NOT AGENTS. The roster listed markdown files as if they were
+      // live entities; four of them had run once between them in six weeks.
+      // A thread is the one entity and "agent" is a description of a thread
+      // that is armed, so what is left to list is the DEFINITIONS
+      // (threads-branches-and-pages-2026-08-29.md sections 1, 2 and 6).
+      { id: "roles", label: "Roles", to: "/roles", Icon: icons.roles },
       { id: "tickets", label: "Tickets", to: "/tickets", Icon: icons.tickets },
       // The review surface. A row of its own rather than a tab under Tickets:
       // a change is a different record with a different lifecycle (design doc

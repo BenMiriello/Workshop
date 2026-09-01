@@ -62,3 +62,87 @@ export function directoryChrome({ wide, documentOpen }: DirectoryChromeInput): D
   if (wide) return { header: true, controls: true, actionBar: false };
   return { header: false, controls: false, actionBar: true };
 }
+
+// ---- The branch control on the title line -----------------------------------
+//
+// WHERE A BRANCH GETS NAMED, and — more often — where nothing is drawn at all.
+//
+// The shell mockup put a branch picker on the desktop title line of every place
+// and on every row of the phone's place menu, and
+// navigation-shell-2026-08-20.md §8.2 rejected all of it: "a branch belongs to
+// a project's repo, and most places have no repo at all. Home has no ref.
+// Activity has no ref." That objection was right about the places and wrong
+// about the control, and on 2026-09-01 the operator reversed the conclusion
+// directly: the picker belongs in the shell's own chrome beside the title, not
+// re-drawn inside the body of every app tab page.
+//
+// So the kernel of §8.2 is what these two rules keep. A place is asked whether
+// it HAS a branch, and a place that does not gets no control — not a disabled
+// one, not a placeholder, nothing at all.
+
+/** The minimum this rule needs to know about one installed app.
+ *
+ *  `projectSlug` is the app's linked working tree, resolved by the platform
+ *  (`backend/services/app_surface.py`, read in `apps/useAppPlaces.ts`). An app
+ *  with none has no repo and therefore no branch to name. */
+export type BranchApp = { id: string; projectSlug?: string | null };
+
+/** The place the shell is pointing at, reduced to the two fields this reads. */
+export type BranchPlace = { id: string; kind: string };
+
+/** The app whose branch the chrome should name. */
+export type BranchSubject = { appId: string; projectSlug: string };
+
+/** How `places.ts` builds an app place's id (`app:<app id>`). Restated here
+ *  rather than imported so this stays a pure rule with no place-building in it;
+ *  `branchSubject`'s tests pin the format so the two cannot drift silently. */
+export const APP_PLACE_PREFIX = "app:";
+
+/**
+ * The branch this place is on, or null when the place has no repo behind it.
+ *
+ * Null is the common answer and it is a real one: Home, All chats, Settings and
+ * every app with no linked working tree render no branch control whatsoever.
+ */
+export function branchSubject(
+  place: BranchPlace, apps: readonly BranchApp[],
+): BranchSubject | null {
+  if (place.kind !== "app") return null;
+  if (!place.id.startsWith(APP_PLACE_PREFIX)) return null;
+  const appId = place.id.slice(APP_PLACE_PREFIX.length);
+  const app = apps.find((a) => a.id === appId);
+  const projectSlug = (app?.projectSlug ?? "").trim();
+  if (!projectSlug) return null;
+  return { appId, projectSlug };
+}
+
+/** What the chip says when the branch could not be read. Short, because it sits
+ *  in a 252px column and a 52px phone bar.
+ *
+ *  THE WORD IS BRANCH (threads-branches-and-pages-2026-08-29.md section 3: "the
+ *  interface says branch", the worktree is the directory it lives in and is
+ *  never a name). Not "ref", which is the git term, and not "worktree". */
+export const NO_BRANCH_LABEL = "no branch";
+
+/**
+ * The branch name as it fits on a title line.
+ *
+ * TRUNCATED IN THE MIDDLE, and that is the point of it being a rule. Branch
+ * names in this system share their heads (`feat/`, `fix/`, a dated agent
+ * prefix) and are distinguished by their tails, so cutting either end alone
+ * throws away the half that identifies it. The bar must never grow to fit a
+ * name and must never wrap to a second row, so the name is what gives.
+ *
+ * The full name is still reachable: it is the control's `aria-label` and its
+ * hover title, and every row of the menu it opens is the unabbreviated name.
+ */
+export function branchChipLabel(ref: string | null | undefined, max = 14): string {
+  const name = (ref ?? "").trim();
+  if (!name) return NO_BRANCH_LABEL;
+  if (name.length <= max) return name;
+  if (max <= 1) return "…";
+  const keep = max - 1;
+  const head = Math.ceil(keep / 2);
+  const tail = keep - head;
+  return name.slice(0, head) + "…" + (tail > 0 ? name.slice(name.length - tail) : "");
+}

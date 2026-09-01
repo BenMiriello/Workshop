@@ -19,6 +19,24 @@
 // below". That is the one learnable element in this design and it was adopted
 // knowingly, with the caret carrying the state.
 //
+// THE BRANCH PICKER IS IN BAR ONE, right of the title and left of the avatar,
+// wherever the place has a branch. Added 2026-09-01 on the operator's direct
+// instruction, and it reverses navigation-shell-2026-08-20.md section 4.3,
+// which put the phone's only branch control on the rows of the place menu and
+// said it is "not in bar one" (two design iterations had put it there and both
+// were rejected). It is shipped, so this comment records the override rather
+// than arguing with the code.
+//
+// THE BAR DOES NOT GROW AND DOES NOT WRAP. The branch name is what gives: it is
+// truncated in the middle by `branchChipLabel` (pageChrome.ts) and capped in
+// width by `.ws-refpill--bar`, and the title ellipsizes before it is pushed
+// anywhere. The full name is the control's aria-label, its hover title, and
+// every row of the menu it opens.
+//
+// And where the place has NO branch -- Home, All chats, Settings, any app with
+// no linked working tree -- bar one is exactly what it was: nothing is drawn,
+// not a disabled control and not a placeholder. `branchSubject` is that rule.
+//
 // AN OPEN DOCUMENT COLLAPSES THE TOOLBAR TO ZERO (spec section 6: the editor is
 // a full content takeover, and section 1.1: "It force-collapses to 0 while a
 // document is open"). It collapses rather than unmounts, so the bar animates
@@ -31,6 +49,7 @@ import { Link } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
 import { monogram } from "../../lib/appIcon";
 import { useAuth } from "../../auth/AuthProvider";
+import RefPill from "../holders/RefPill";
 import { PlaceMenu } from "./PlaceMenu";
 import type { Shell } from "./useShell";
 
@@ -40,7 +59,7 @@ import type { Shell } from "./useShell";
 const initials = (name: string | null | undefined, email: string) => monogram(name || email || "");
 
 export function MobileBars({ shell }: { shell: Shell }) {
-  const { place, page, tabsOpen, fullScreen, hasPageList, documentOpen } = shell;
+  const { place, page, tabsOpen, fullScreen, hasPageList, documentOpen, branch } = shell;
   // No pages to switch between (an app with one screen), one conversation
   // taking the whole screen, or an open document taking it: the title is a
   // label, not a control. A caret is the toolbar's state (spec section 1.1), so
@@ -73,13 +92,26 @@ export function MobileBars({ shell }: { shell: Shell }) {
           </button>
         )}
 
-        <Link
-          to="/settings"
-          className="ws-bar1__avatar"
-          aria-label="Account and settings"
-        >
-          {initials(user?.name, user?.email ?? "")}
-        </Link>
+        {/* The right end of the bar, as one group, so the free space between
+            the title and it is a single gap rather than one split between two
+            auto margins. */}
+        <div className="ws-bar1__end">
+          {branch && (
+            <RefPill
+              state={branch.state}
+              projectSlug={branch.projectSlug}
+              className="ws-refpill ws-refpill--bar"
+              labelMax={10}
+            />
+          )}
+          <Link
+            to="/settings"
+            className="ws-bar1__avatar"
+            aria-label="Account and settings"
+          >
+            {initials(user?.name, user?.email ?? "")}
+          </Link>
+        </div>
       </div>
 
       {hasPageList && (

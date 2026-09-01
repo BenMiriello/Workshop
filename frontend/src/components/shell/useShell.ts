@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
+  Shapes,
   Archive,
   Blocks,
   Bot,
@@ -36,7 +37,9 @@ import {
   Wrench,
 } from "lucide-react";
 import { useAppPlaces } from "../../apps/useAppPlaces";
+import { useAppRef, type AppRefRead } from "../holders/useHolders";
 import { userStorage } from "../../lib/storage";
+import { branchSubject } from "./pageChrome";
 import { buildPlaces, pageFor, placeFor, type ShellPage, type ShellPlace } from "./places";
 import { useTakeover } from "./takeover";
 import {
@@ -60,11 +63,18 @@ import {
 const ICONS = {
   home: House,
   dashboard: LayoutDashboard,
+  // The app's first tab and what an app with a working tree opens on. It is
+  // tickets first, so it takes the tickets glyph: the lens switcher inside it
+  // is what names the other two, and a fourth abstract glyph in the dock would
+  // say less than the one the destination actually opens on.
+  work: ListChecks,
   chats: MessagesSquare,
   archived: Archive,
   projects: FolderGit2,
   apps: LayoutGrid,
   agents: Bot,
+  // A role is a DEFINITION picked from a list, not a robot.
+  roles: Shapes,
   tickets: ListChecks,
   changes: GitPullRequestArrow,
   branches: GitBranch,
@@ -85,6 +95,14 @@ const ICONS = {
   mcp: Blocks,
   access: KeyRound,
   tools: Wrench,
+};
+
+/** The branch the current place is on, and the read behind the control that
+ *  names it. Null at every place that has no repo, which is most of them. */
+export type ShellBranch = {
+  appId: string;
+  projectSlug: string;
+  state: AppRefRead;
 };
 
 export type Shell = {
@@ -108,6 +126,18 @@ export type Shell = {
    *  page toolbar is force-collapsed while it is, and the caret that toggles
    *  the toolbar is not drawn: a control that cannot move is worse than none. */
   documentOpen: boolean;
+  /** THE BRANCH THIS PLACE IS ON, or null when it is not on one.
+   *
+   *  Read ONCE here, for both viewports. The desktop draws the control on the
+   *  page column's title line and the phone draws it in bar one, and both are
+   *  mounted at every width (the breakpoint hides one in CSS), so a hook per
+   *  chrome would be two polls and two answers that could disagree about which
+   *  branch you are on.
+   *
+   *  Null is the common case and it is deliberate: `branchSubject` in
+   *  pageChrome.ts answers it, and the chrome draws NOTHING rather than an
+   *  empty or disabled control. See that rule for the history. */
+  branch: ShellBranch | null;
   /** Tapping a dock tile or a menu row. Switches place, or toggles the column
    *  when it is the place you are already in. */
   selectPlace: (place: ShellPlace) => void;
@@ -195,6 +225,21 @@ export function useShell(): Shell {
   // closing the document restores whatever the toolbar was before it opened.
   const documentOpen = useTakeover();
 
+  // Which app's working tree this place is, when it is one. `enabled` is what
+  // keeps every branchless place free: the reads behind it take no timer and
+  // make no request at Home, in All chats, in Settings, or in an app with no
+  // linked tree.
+  const subject = useMemo(() => branchSubject(place, apps), [place, apps]);
+  const refState = useAppRef({
+    projectSlug: subject?.projectSlug ?? null,
+    appId: subject?.appId ?? null,
+    enabled: subject !== null,
+  });
+  const branch = useMemo(
+    () => (subject ? { ...subject, state: refState } : null),
+    [subject, refState],
+  );
+
   const columnOpen = readColumnOpen(memory, place) && !fullScreen;
   const hasPageList = place.pages.length > 1;
   const key = tabsKey(place.id, page?.id ?? null);
@@ -245,6 +290,7 @@ export function useShell(): Shell {
     hasPageList,
     tabsOpen,
     documentOpen,
+    branch,
     selectPlace,
     hrefFor,
     selectPage,
