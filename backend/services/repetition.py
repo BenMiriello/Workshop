@@ -103,9 +103,18 @@ EMBED_CHARS = 1200
 # other score, because the count IS the finding.
 MIN_OCCASIONS = 2
 
-# How close a cluster must be to a topic query to be shown for it. The same
-# floor `semantic_index` admits a passage on, for the same reason.
-TOPIC_FLOOR = 0.65
+# How close a cluster must be to a topic query to be shown for it.
+#
+# NOT the 0.65 that `semantic_index` admits a passage on, and copying that
+# number was a real bug: this corpus is one person writing about one system, so
+# 0.65 admitted 26-43% of it and three completely different topic queries
+# returned an identical top three. The topic had become decorative.
+#
+# Measured against this log on 2026-09-01. A query about a subject the corpus
+# genuinely does not cover peaks at 0.656 and has a 99th percentile of 0.560;
+# an on-topic query reaches 0.80+ with a 90th percentile around 0.69. 0.70
+# separates them with room on both sides.
+TOPIC_FLOOR = 0.70
 
 _lock = threading.Lock()
 _rebuild_thread: threading.Thread | None = None
@@ -418,9 +427,23 @@ def repeats(*, query: str | None = None, since: str | None = None,
             summary["relevance"] = round(relevance, 4)
         out.append(summary)
 
-    # Occasions first, then total, then most recent. Recency breaks ties rather
-    # than driving the order: sorting by recency would just be the chat list.
-    out.sort(key=lambda s: (s["occasions"], s["total"], s["last_ts"]), reverse=True)
+    # WHAT THE CALLER ASKED FOR DECIDES THE ORDER.
+    #
+    # With a topic, this is a search and relevance orders it; the counts are
+    # what the answer ADDS, not what selects it. Ordering by occasions inside a
+    # topic filter is what made the topic decorative -- the most-repeated
+    # cluster in the corpus outranked everything for every query, so three
+    # unrelated questions got the same three answers.
+    #
+    # With no topic, there is nothing to be relevant to and the counts are the
+    # only ordering there is: occasions, then total, then most recent. Recency
+    # breaks ties rather than driving the order, because sorting a transcript
+    # by recency just reproduces the chat list.
+    if qv is not None:
+        out.sort(key=lambda s: (s["relevance"], s["occasions"]), reverse=True)
+    else:
+        out.sort(key=lambda s: (s["occasions"], s["total"], s["last_ts"]),
+                 reverse=True)
     return {"repeats": out[:max(1, limit)], "corpus": len(rows),
             "considered": int(len(idx)), "repeat_total": len(out),
             "since": floor, "mode": mode, "rebuilding": rebuilding}

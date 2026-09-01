@@ -123,6 +123,19 @@ class TestSummary:
 class TestOrdering:
     """The ordering rule, stated as a test because it is the whole finding."""
 
+    def test_a_topic_query_orders_by_relevance_not_by_repetition(self):
+        """With a topic this is a search, and the counts are what the answer
+        ADDS rather than what selects it. Ordering by occasions inside a topic
+        filter made the topic decorative: the most-repeated cluster in the
+        corpus outranked everything for every query, so three unrelated
+        questions got the same three answers."""
+        loud = {"relevance": 0.72, "occasions": 16}
+        on_topic = {"relevance": 0.81, "occasions": 3}
+        ordered = sorted([loud, on_topic],
+                         key=lambda s: (s["relevance"], s["occasions"]),
+                         reverse=True)
+        assert ordered[0] is on_topic
+
     def test_a_same_day_burst_does_not_outrank_a_long_running_restatement(self):
         burst = {"occasions": 1, "total": 11, "last_ts": "2026-08-30"}
         standing = {"occasions": 16, "total": 6, "last_ts": "2026-08-29"}
@@ -151,8 +164,14 @@ class TestThresholds:
     def test_a_single_mention_is_not_a_repetition(self):
         assert rep.MIN_OCCASIONS == 2
 
-    def test_the_topic_floor_matches_the_search_floor(self):
-        assert rep.TOPIC_FLOOR == si.MIN_SCORE
+    def test_the_topic_floor_is_stricter_than_the_passage_floor(self):
+        """Copying `search`'s 0.65 here was a real bug. This corpus is one
+        person writing about one system, so 0.65 admitted 26-43% of it and
+        three unrelated topic queries returned an identical top three -- the
+        topic had become decorative. A query about a genuinely uncovered
+        subject peaks at 0.656 against this log."""
+        assert rep.TOPIC_FLOOR > si.MIN_SCORE
+        assert rep.TOPIC_FLOOR >= 0.70
 
 
 class TestStorage:
