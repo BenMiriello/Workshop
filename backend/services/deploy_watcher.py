@@ -1,6 +1,6 @@
 """Auto-deploy watcher.
 
-Every WATCH_INTERVAL seconds, iterate every Deploy with autonomy="autonomous"
+On each tick, iterate every Deploy with autonomy="autonomous"
 and check whether the source branch has moved past the currently-deployed
 commit_sha. When it has, kick a deploy (trigger="event"). When either
 autonomy override (workshop or deploys-scope) is engaged, a detected change
@@ -19,7 +19,6 @@ Design decisions:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import subprocess
@@ -30,7 +29,6 @@ from typing import Any
 from . import autonomy_override, deploys, deploys_override, deploy_runner, jobs
 
 
-WATCH_INTERVAL = int(os.environ.get("WORKSHOP_DEPLOY_WATCH_INTERVAL", "300"))
 WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", str(Path(__file__).resolve().parents[2])))
 NOTICES_ROOT = WORKSHOP_ROOT / ".runtime" / "deploys"
 
@@ -184,24 +182,9 @@ def tick_all() -> list[dict]:
     return out
 
 
-async def watcher_loop() -> None:
-    """Background loop — sleep then tick_all, forever. Errors are logged and
-    swallowed so the loop never dies. Started from main.py lifespan."""
-    while True:
-        try:
-            await asyncio.sleep(WATCH_INTERVAL)
-            # Run the sync tick in a thread so a slow git ls-remote never blocks
-            # the event loop for other tasks.
-            await asyncio.to_thread(tick_all)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            # Best-effort: log via jobs (a diagnostic Job so a crash is visible
-            # in the feed rather than eaten silently).
-            try:
-                jobs.start(
-                    trigger="loop", kind="deploy-watcher-error", status="failed",
-                    binding={"phase": "loop"},
-                )
-            except Exception:
-                pass
+# THE WATCHER LOOP IS GONE, with the boot task that was its only caller
+# (backend/main.py, 2026-09-01). It slept 300s and called `tick_all`
+# forever, on every boot, for a subsystem that has never run once. `tick_all`
+# and `tick_one` stay: they are what routes/deploys.py calls for the manual
+# tick and the source webhook, so the capability is on demand rather than on a
+# timer. Do not reintroduce the loop without the schedule that justifies it.

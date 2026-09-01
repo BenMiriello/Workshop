@@ -57,10 +57,23 @@ async def lifespan(app: FastAPI):
     # kept alive by docker's restart policy, not by us.
     from services import port_registry
     app.state._bg_port_reconcile = asyncio.create_task(port_registry.reconcile_loop())
-    # Deploy watcher: auto-deploy autonomous Deploys when their source branch
-    # moves forward at the git remote. Respects both autonomy overrides.
-    from services import deploy_watcher
-    app.state._bg_deploy_watcher = asyncio.create_task(deploy_watcher.watcher_loop())
+    # THERE IS NO DEPLOY WATCHER HERE, and its absence is deliberate. This used
+    # to start `deploy_watcher.watcher_loop`, which every 300 seconds ran
+    # `git ls-remote` for every autonomous Deploy to see whether its source
+    # branch had moved. The deploy subsystem has never run once: zero deploy
+    # runs, and the 40 rows that were on /deploys turned out to be test
+    # fixtures the suite had written into the live store (c9c0e464). So the
+    # loop was a git network call on a timer, on every boot, for a feature
+    # nobody has used. Removed 2026-09-01.
+    #
+    # The CAPABILITY is untouched and still on demand: `tick_all` and
+    # `tick_one` are what `routes/deploys.py` calls for the manual tick and
+    # the source webhook. Only the unattended polling is gone.
+    #
+    # Whether the subsystem itself goes is a separate and larger decision
+    # (`hosting-apps-design-2026-08-24` section 5 says delete it,
+    # `threads-branches-and-pages-2026-08-29` section 6 lists it under retired,
+    # and ticket 726d75a9 is open on it). Not taken here.
     # Job liveness: close Jobs left `running` by a process that died. Its only
     # shell caller never fires (the dispatcher exits early while autonomy is
     # engaged), so a crashed run used to read `running` forever. The backend
@@ -196,7 +209,6 @@ async def lifespan(app: FastAPI):
         pass
     for t in [*getattr(app.state, "_app_bg", []),
               getattr(app.state, "_bg_port_reconcile", None),
-              getattr(app.state, "_bg_deploy_watcher", None),
               getattr(app.state, "_bg_job_reconcile", None),
               getattr(app.state, "_bg_queue_drain", None)]:
         if t:
