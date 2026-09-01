@@ -219,6 +219,62 @@ the *highest* scoring pages, because truncated titles are a lot of text.
 
 ---
 
+## 5.1 The measured shape of the work: we are almost only fixing ourselves
+
+A parallel audit measured the 1,435 commits by DIFF rather than by subject
+prefix (56% of subjects are prose, so prefixes undercount). Full notes:
+`scratch/plan-vs-reality-audit.md`.
+
+| measure | value |
+|---|---|
+| commits touching code never touched before in the window | **39 (3.3%)** |
+| commits touching only code already changed in the window | **704 (60%)** |
+| `fix:` commits modifying code written inside the same six weeks | **185 of 186** |
+| file additions vs deletions | 1,468 vs 208 |
+| insertions vs deletions | 374,363 vs 27,407 |
+| HEAD ahead of `origin/main` | **998 commits** (186 ahead of local `main`) |
+| new design docs in six weeks vs `feat:` commits | **223 vs 87** |
+| `TODO.md` | 200 -> 4,432 lines |
+
+**One of 186 fix commits touched code older than six weeks.** That is the
+operator's "spinning our wheels" as a number: essentially all repair is repair of
+our own recent work. And nothing has shipped anywhere — the branch is 998 commits
+ahead of its remote.
+
+**Five design generations are simultaneously routed**, roughly 13,600 lines:
+agents-as-roster (5,918 lines, still in nav, 24 legacy `/agents/build/{slug}`
+routes live); project-as-entity, retired on 2026-08-20 (`ProjectDetail.tsx` is
+1,803 lines and **grew by two while marked for deletion**); top-level
+Runs/Changes/Deploys (~4,135 lines, and the deploy subsystem **has never run
+once** while its watcher still starts on every boot); app-is-the-entity (built,
+added *beside* the other three, with its own orphans); and the settled model of
+record from 2026-08-29 — threads with `armed`/`role`, the Roles page, the Work
+tab — of which **zero lines exist**. Settings is still 12 rows, not the 9 the
+doc specifies.
+
+Built and dead: `services/triager.py` (1,004 lines, never executed),
+`services/token_usage.py` (declared the one central seam for every usage number,
+zero non-test importers), the leases subsystem (~950 lines, mounted and typed,
+zero frontend callers), `services/latitude.py` (null on 100% of tickets, ordered
+deleted 2026-08-25), `memory_keeper` (watermark frozen since 2026-07-18).
+
+**Of the retirement commitments in the four current surface docs, 1 of 22
+landed.** Re-checking the 2026-08-29 review's own 22-item TODO: 7 done in three
+days, 1 got worse, and zero of its seven Tier-1 items moved. The seven that
+landed are all infrastructure repair; the fifteen that did not are all deletion
+of a superseded surface. Deleting a module is invisible and safe. Deleting a
+page means deciding what replaces it, and that decision keeps getting written
+down instead of made.
+
+**The auditor's own conclusion is the sharpest sentence produced by any of
+today's work, and it dictates the next action:**
+
+> Every invariant in this repo that actually holds is enforced by something that
+> fails the build. That one is enforced by prose, and it is the only one that
+> has never held.
+
+---
+
 ## 6. What is actually missing from the application
 
 A Workshop chat's entire tool grant, from `_tool_list()` in
