@@ -405,29 +405,50 @@ export const ticketRef = (id: string): string => `workshop:ticket/${id}`;
 // ---- how a branch is written in a list --------------------------------------
 
 /**
+ * The ticket id inside a branch slug, with whatever short marker precedes it.
+ *
+ * A supervised run names its branch after the ticket it works, and WHAT OPENED
+ * THE BRANCH decides whether there is a prefix: this instance holds both
+ * `bc81b563...` and `t-537437c1...` for the same convention. So the id is
+ * matched at the END of the slug and the marker is kept, rather than requiring
+ * the slug to BE the id, which recognised one spelling and left the other as
+ * 34 raw characters.
+ *
+ * A long prefix means the branch was NAMED (`release/2026-08-…`), so it is not
+ * an id and is left alone.
+ */
+function branchTicketRef(slug: string): { prefix: string; hex: string } | null {
+  const m = /^(.*?)([0-9a-f]{32})$/i.exec(slug || "");
+  if (!m || m[1].length > 4) return null;
+  return { prefix: m[1], hex: m[2] };
+}
+
+/**
  * A branch id abbreviated for a table cell.
  *
- * A supervised run names its branch after the ticket it is working, so the
- * branch is a 32-character hex id: unreadable, unrecognisable, and wide enough
- * to take the widest column on `/changes`. An opaque id abbreviates like a sha
- * does; a branch someone NAMED (`feat/thing`) is words and stays whole.
+ * An unreadable, unrecognisable 32-character id is wide enough to take the
+ * widest column on `/changes`. An opaque id abbreviates like a sha does; a
+ * branch someone NAMED (`feat/thing`) is words and stays whole.
  */
 export function shortBranch(slug?: string | null): string {
   const s = slug || "";
-  return /^[0-9a-f]{32}$/i.test(s) ? s.slice(0, 7) : s;
+  const ref = branchTicketRef(s);
+  return ref ? `${ref.prefix}${ref.hex.slice(0, 7)}` : s;
 }
 
 /**
  * The ticket this change's BRANCH names, or null.
  *
- * Only when the branch slug is itself one of the change's ticket ids. A change
- * can carry tickets its branch is not named after, and linking an abbreviated
- * branch id to some other ticket would put a wrong destination under a correct
- * label. Null means "render it as text", never "guess".
+ * Only when the id the branch carries is one of the change's ticket ids. A
+ * change can carry tickets its branch is not named after, and linking an
+ * abbreviated branch id to some other ticket would put a wrong destination
+ * under a correct label. Null means "render it as text", never "guess".
  */
 export function branchTicketId(
   c: Pick<Change, "branch_slug" | "ticket_ids">,
 ): string | null {
   const ids = c.ticket_ids ?? [];
+  const ref = branchTicketRef(c.branch_slug || "");
+  if (ref && ids.includes(ref.hex)) return ref.hex;
   return c.branch_slug && ids.includes(c.branch_slug) ? c.branch_slug : null;
 }

@@ -261,16 +261,22 @@ describe("status vocabulary", () => {
 
 describe("how a branch is written in a list", () => {
   const HEX = "bc81b563abe14333be4e8626dc8182bd";
+  const PREFIXED = `t-${HEX}`;
 
-  it("abbreviates an opaque branch id and leaves a named branch whole", () => {
+  it("abbreviates an opaque branch id, prefix and all, and leaves a named branch whole", () => {
     expect(shortBranch(HEX)).toBe("bc81b56");
+    // Both spellings are in this instance's own change list.
+    expect(shortBranch(PREFIXED)).toBe("t-bc81b56");
     expect(shortBranch("feat/client-state-consolidation")).toBe("feat/client-state-consolidation");
+    // A NAME that happens to end in an id is not an id.
+    expect(shortBranch(`release/2026/${HEX}`)).toBe(`release/2026/${HEX}`);
     expect(shortBranch(null)).toBe("");
     expect(shortBranch("")).toBe("");
   });
 
   it("links a branch only to the ticket the branch is actually named after", () => {
     expect(branchTicketId({ branch_slug: HEX, ticket_ids: [HEX] })).toBe(HEX);
+    expect(branchTicketId({ branch_slug: PREFIXED, ticket_ids: [HEX] })).toBe(HEX);
     expect(branchTicketId({ branch_slug: HEX, ticket_ids: ["other-id"] })).toBe(null);
     expect(branchTicketId({ branch_slug: HEX, ticket_ids: [] })).toBe(null);
     expect(branchTicketId({ branch_slug: HEX })).toBe(null);
