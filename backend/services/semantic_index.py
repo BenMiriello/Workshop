@@ -1201,6 +1201,16 @@ def stat_fingerprint(root: Path, pattern: str) -> str:
 #
 # Cheap: chunk identity is content, not status, so every vector is reused. The
 # whole 12,918-chunk re-collect measured 2.4s.
+#
+# THE ACCEPTED COST, stated because it looks like a bug while it lasts. Only the
+# long-lived process rebuilds (see `owns_maintenance`), and until it restarts
+# onto this code it computes the fingerprint WITHOUT the version, so the two
+# disagree and each rebuild flips the baseline back. The index re-collects on
+# every maintenance pass for that window: 2.4s, zero embeddings, no wrong
+# answers, and it ends at the next restart. The alternative -- keeping the
+# version in its own key, which older code preserves untouched -- does not flap,
+# but it lets an older rebuild strip the statuses and then assert the index is
+# current, which is the failure this constant exists to make impossible.
 _RANK_SCHEMA = 2
 
 
