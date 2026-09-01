@@ -53,6 +53,25 @@ idiom this repo already uses for "a rule whose violations may only go down":
   * Adding a pin grows the baseline, which `check_ratchets_not_loosened.py`
     reads as a loosened ratchet and rejects inside a review.
 
+A `blocked_on_check` MUST BE A COMMAND THAT CAN ACTUALLY SUCCEED, and the
+author has to establish that, because nothing here can. Measured 2026-09-01,
+on this file's own first day: the pin for step 3 used
+
+    ! grep -rqE '"/runs"|"/changes"|"/deploys"|...' frontend/src
+
+as its unblock check, and `frontend/src/api/schema.gen.ts` carries "/changes"
+and "/deploys" as BACKEND ENDPOINT PATHS in the generated OpenAPI client. It
+matched before the work started and would have matched after it finished, so
+the check was unsatisfiable on every possible tree and the UNBLOCKED AND
+UNSTARTED alarm could never have fired for that step.
+
+That is the exact failure this file exists to prevent, wearing the costume of
+the mechanism meant to prevent it: a pin whose escape hatch cannot open is a
+permanent excuse with a command attached, which reads more diligent than a
+plain excuse and is worse. So: write the check against the thing that will
+actually change, exclude generated files by path, and satisfy yourself it would
+pass on the finished tree before you pin.
+
 Usage:
   python3 scripts/check_plan_landed.py            # full report, exits 1 on any pin
   python3 scripts/check_plan_landed.py --quiet    # reviewer gate: pins tolerated
