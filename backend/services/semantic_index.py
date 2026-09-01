@@ -1187,6 +1187,23 @@ def stat_fingerprint(root: Path, pattern: str) -> str:
     return _stat_fingerprint(root, pattern)
 
 
+# Bumped whenever the STATUS a doc chunk is stored with can change for an
+# unchanged file: new vocabulary, a fixed false positive, a new source of
+# authority. It rides in the doc fingerprint, so an index built by an older
+# build re-collects once and rewrites its meta.
+#
+# THIS IS NOT OPTIONAL BOOKKEEPING, it is the difference between the change
+# taking effect and appearing to do nothing. Statuses are stored per chunk at
+# BUILD time and read at SEARCH time, so a running process with the previous
+# module loaded rebuilds the index and silently strips them, and the next
+# search ranks as if the change had never shipped. That happened on 2026-09-01,
+# minutes after the change landed, and the ranking measured as unchanged.
+#
+# Cheap: chunk identity is content, not status, so every vector is reused. The
+# whole 12,918-chunk re-collect measured 2.4s.
+_RANK_SCHEMA = 2
+
+
 def _doc_fingerprint() -> str:
     """Drift in the doc corpus, INCLUDING the agent-instruction files.
 
@@ -1196,6 +1213,7 @@ def _doc_fingerprint() -> str:
     that edit would take effect only at the next unrelated doc write, which is
     the kind of "it did not take" that costs a session."""
     h = hashlib.sha1()
+    h.update(f"rank-schema={_RANK_SCHEMA}\n".encode())
     h.update(_stat_fingerprint(paths.workshop_root() / "docs", "*.md").encode())
     for f in _rules_files():
         try:
