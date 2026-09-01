@@ -649,3 +649,15 @@ thing that was actually asked for is still there the next morning. The cure is
 not more planning, more rigour, or more documents. It is to make the operator's
 asks the only durable unit of work in the system, give each one a finish line a
 machine can check, and keep them small enough to cross.
+
+And one thing that only became visible while writing this, because it happened
+four times inside a single day: **the recurring problem is much less often that a
+capability is missing than that nobody knows it is there.** A complete
+declared-tool mechanism with zero tools declared. A fresh-clone assertion built
+with the two halves that matter left unimplemented. An hour of transcript
+archaeology over an index that already covered transcripts. A procedure document
+named in bold in `CLAUDE.md`, rediscovered from first principles, and ranked
+fourth by our own search behind three conversations about it. Every one of those
+is a thing that was built, works, and was not found. That is a different disease
+from "we have not built it yet", it has a different cure, and until today nothing
+in this project was measuring it.
