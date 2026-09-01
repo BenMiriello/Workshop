@@ -1,7 +1,12 @@
 """What an app OPENS ON, and which of the platform's per-app tabs it has.
 
-The platform ships seven generic per-app tabs (chats, agents, memory, files,
-tickets, runs, deploys), each backed by a real `/api/apps/{id}/...` collection.
+The platform ships four generic per-app tabs (work, chats, memory, files), each
+backed by a real `/api/apps/{id}/...` collection. It shipped SEVEN until
+2026-09-01 (chats, agents, memory, files, tickets, runs, deploys); tickets, runs
+and deploys are now rows inside Work, and `agents` is retired as an object kind,
+per docs/platform-redesign/threads-branches-and-pages-2026-08-29.md sections 6
+and 7. Their ROUTES still resolve, because a bookmark is still a bookmark; what
+changed is which tabs an app is offered.
 Until now every app got all seven and opened on the first of them, so an app
 with no bundled UI landed on a chat list it never chose and carried tabs that
 could never hold anything for it. This module is the declaration side of the
@@ -51,30 +56,41 @@ import logging
 
 log = logging.getLogger("workshop.apps")
 
-__all__ = ["TAB_IDS", "REQUIRES_LINKED_PROJECT", "declared_surface",
+__all__ = ["TAB_IDS", "RETIRED_TAB_IDS", "REQUIRES_LINKED_PROJECT", "declared_surface",
            "available_tabs", "surface_for"]
 
 # The seven generic tabs, in the platform's own order. `frontend/src/pages/
 # apps/tabs/appTabState.ts` holds the same order with the labels and the route
 # suffixes; this list is the backend half and only ever answers "which ids
 # exist", never how they are drawn.
+# WORK IS FIRST, AND THAT IS THE POINT. `_resolve_home` opens an app on
+# `tabs[0]`, so an app with a working tree now opens on what is being BUILT in
+# it rather than on a chat list it never chose. The operator reported landing on
+# "the old chats page" on 2026-08-29, 2026-08-31 and 2026-09-01; the first two
+# rounds changed how that chat list renders, which was never the complaint.
 TAB_IDS: tuple[str, ...] = (
-    "chats", "agents", "memory", "files", "tickets", "runs", "deploys",
+    "work", "chats", "memory", "files",
 )
 
-# Mirrors `services/apps.py` collection by collection: tickets, runs, deploys
-# and agents resolve through `app_links.linked_project_slug`, so an app with no
-# linked tree can never have one of them. Chats and notes (memory) resolve
-# through the app's slug alone. Files is its own question -- an app may declare
-# its own root with a manifest instead (`app_files._app_declared_root`) -- so it
-# is answered by `_has_file_root` rather than by this map.
+# Tabs the platform used to offer and no longer draws. Kept as a NAMED set,
+# not deleted silently, because an app may still declare one in its manifest
+# and a declaration that names a retired tab must be dropped rather than
+# resolved into a dead landing (see `surface_for`).
+RETIRED_TAB_IDS: frozenset[str] = frozenset({
+    "agents", "tickets", "runs", "deploys",
+})
+
+# Mirrors `services/apps.py` collection by collection. Work is the branch,
+# ticket, run and change view, and every one of those resolves through
+# `app_links.linked_project_slug`, so an app with no linked tree can never have
+# it. Chats and notes (memory) resolve through the app's slug alone. Files is
+# its own question -- an app may declare its own root with a manifest instead
+# (`app_files._app_declared_root`) -- so it is answered by `_has_file_root`
+# rather than by this map.
 REQUIRES_LINKED_PROJECT: dict[str, bool] = {
+    "work": True,
     "chats": False,
     "memory": False,
-    "agents": True,
-    "tickets": True,
-    "runs": True,
-    "deploys": True,
 }
 
 
@@ -191,6 +207,17 @@ def surface_for(slug: str, *, own_route: str | None = None) -> dict:
         # names but cannot hold is dropped rather than rendered empty, which is
         # the whole point; a tab it does not name is not offered.
         tabs = [t for t in wanted if t in available]
+        # A DECLARATION THAT NAMES ONLY RETIRED TABS MUST NOT STRAND THE APP.
+        # Before Work absorbed tickets/runs/deploys, `{"tabs": ["tickets"]}` was
+        # a perfectly good declaration. Filtered against the current tab set it
+        # now yields [], and an empty list sends `_resolve_home` to the app's
+        # BASE path -- which is the redirect that lands back on itself, so the
+        # app would never open at all. An app whose whole declaration retired
+        # falls back to what the platform can serve it.
+        if not tabs and any(t in RETIRED_TAB_IDS for t in wanted):
+            log.info("app %s declares only retired tabs %s; using the platform set",
+                     slug, wanted)
+            tabs = available
     else:
         tabs = available
 

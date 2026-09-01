@@ -5,10 +5,22 @@ const LINKED = { projectSlug: "sample-app", hasFiles: true };
 const BARE = { projectSlug: null, hasFiles: false };
 
 describe("APP_TABS", () => {
-  it("is the operator's own order, verbatim", () => {
-    expect(APP_TABS.map((t) => t.id)).toEqual([
-      "chats", "agents", "memory", "files", "tickets", "runs", "deploys",
-    ]);
+  it("is Work, Chats, Memory, Files", () => {
+    expect(APP_TABS.map((t) => t.id)).toEqual(["work", "chats", "memory", "files"]);
+  });
+
+  it("opens an app on Work, not on a chat list", () => {
+    // The app opens on tabs[0] (backend/services/app_surface.py _resolve_home).
+    // This is the assertion behind the operator's report on 2026-08-29,
+    // 2026-08-31 and 2026-09-01 that an app "takes me to the chats page".
+    expect(tabsForApp(null, LINKED)[0]?.id).toBe("work");
+  });
+
+  it("offers no tab for a surface that Work absorbed", () => {
+    const ids = APP_TABS.map((t) => t.id) as string[];
+    for (const gone of ["tickets", "runs", "deploys", "agents"]) {
+      expect(ids).not.toContain(gone);
+    }
   });
 
   it("gives each tab a distinct route suffix", () => {
@@ -53,7 +65,7 @@ describe("canHaveContent", () => {
   });
 
   it("drops the project-backed collections on an app with no tree", () => {
-    for (const tab of ["tickets", "runs", "deploys", "agents"] as const) {
+    for (const tab of ["work", "tickets", "runs", "deploys", "agents"] as const) {
       expect(canHaveContent(tab, BARE)).toBe(false);
       expect(canHaveContent(tab, LINKED)).toBe(true);
     }
@@ -81,13 +93,21 @@ describe("tabsForApp", () => {
   });
 
   it("takes the app's order when it declares one", () => {
-    expect(tabsForApp(["tickets", "chats"], LINKED).map((t) => t.id)).toEqual(["tickets", "chats"]);
+    expect(tabsForApp(["chats", "work"], LINKED).map((t) => t.id)).toEqual(["chats", "work"]);
+  });
+
+  it("drops a declared tab that has been retired as a tab", () => {
+    // `{"tabs": ["tickets", "chats"]}` was a valid declaration before Work
+    // absorbed Tickets. It resolves to Chats alone now, and the backend
+    // (app_surface.surface_for) falls back to the platform set rather than
+    // leaving an app whose whole declaration retired with nowhere to open.
+    expect(tabsForApp(["tickets", "chats"], LINKED).map((t) => t.id)).toEqual(["chats"]);
   });
 
   it("still drops a declared tab the app cannot hold", () => {
-    // Declaring is narrowing, not conjuring: an app that asks for Deploys with
+    // Declaring is narrowing, not conjuring: an app that asks for Work with
     // no working tree would get the empty row this whole rule exists to remove.
-    expect(tabsForApp(["chats", "deploys"], BARE).map((t) => t.id)).toEqual(["chats"]);
+    expect(tabsForApp(["chats", "work"], BARE).map((t) => t.id)).toEqual(["chats"]);
   });
 
   it("ignores a tab id it has never heard of, and never repeats one", () => {

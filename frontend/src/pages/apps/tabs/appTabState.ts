@@ -16,26 +16,41 @@
 // list with seven tabs" including "a Memory tab nobody asked for". Three
 // previous rounds improved how those tabs RENDER, which was never the
 // complaint.
-export type AppTabId = "app" | "chats" | "agents" | "memory" | "files" | "tickets" | "runs" | "deploys";
+export type AppTabId = "app" | "work" | "chats" | "agents" | "memory" | "files" | "tickets" | "runs" | "deploys";
 
 export type AppTabDef = { id: Exclude<AppTabId, "app">; label: string; suffix: string };
 
-// Suffix order matches the operator's own list, verbatim: "chats agents
-// memory files and everything ... tickets runs deploys". This is the one
-// place that order is written down; the page column and the route table both
-// read it from here rather than each spelling it out again. An app that
-// declares its own `tabs` supplies its own order instead.
+// FOUR TABS, AND WORK IS FIRST.
+//
+// It was seven (chats, agents, memory, files, tickets, runs, deploys) until
+// 2026-09-01. threads-branches-and-pages-2026-08-29.md section 6 makes Work the
+// app-level view and has it absorb tickets, runs, changes and deploys: "A
+// branch is a row. Collapsed it shows the name, the ticket, and the holder."
+// Section 1 retires `agents` as a kind of object entirely -- an agent is a
+// thread that is armed, so it is a filter on Chats, not a tab.
+//
+// An app opens on the FIRST tab it can have (backend/services/app_surface.py,
+// `_resolve_home`), so putting Work first is also what stops an app with a
+// working tree from opening on a chat list. That is the 2026-08-29 / 08-31 /
+// 09-01 report, three rounds of which changed how the chat list renders rather
+// than where the app lands.
+//
+// The retired ids stay in `AppTabId` and keep their routes: a bookmark and a
+// deep link are still real. What changed is which tabs are OFFERED.
 export const APP_TABS: AppTabDef[] = [
+  { id: "work", label: "Work", suffix: "/work" },
   { id: "chats", label: "Chats", suffix: "/chats" },
-  { id: "agents", label: "Agents", suffix: "/agents" },
   { id: "memory", label: "Memory", suffix: "/memory" },
   { id: "files", label: "Files", suffix: "/files" },
-  { id: "tickets", label: "Tickets", suffix: "/tickets" },
-  { id: "runs", label: "Runs", suffix: "/runs" },
-  { id: "deploys", label: "Deploys", suffix: "/deploys" },
 ];
 
-export type CollectionTabId = "chats" | "memory" | "tickets" | "runs" | "deploys" | "agents";
+// Every tab that draws a COLLECTION and can therefore be empty for a reason
+// worth stating. Wider than `APP_TABS` on purpose: tickets, runs, deploys and
+// agents are no longer offered as tabs but their routes still resolve, and a
+// deep link that lands on one must still say why it is empty rather than look
+// broken.
+export type CollectionTabId =
+  | "work" | "chats" | "memory" | "tickets" | "runs" | "deploys" | "agents";
 
 // Mirrors services/apps.py collection by collection: tickets/runs/deploys/
 // agents resolve through `app_links.linked_project_slug`; chats and notes
@@ -44,6 +59,9 @@ export type CollectionTabId = "chats" | "memory" | "tickets" | "runs" | "deploys
 // of a project link (services/app_files.py) -- so it is carried by `hasFiles`
 // rather than derived here.
 const REQUIRES_LINKED_PROJECT: Record<CollectionTabId, boolean> = {
+  // Work is branches, tickets, runs and changes. Every one of those resolves
+  // through the linked tree, so an app without one can never fill it.
+  work: true,
   chats: false,
   memory: false,
   tickets: true,
@@ -53,6 +71,7 @@ const REQUIRES_LINKED_PROJECT: Record<CollectionTabId, boolean> = {
 };
 
 const COLLECTION_NOUN: Record<CollectionTabId, string> = {
+  work: "branches",
   chats: "chats",
   memory: "notes",
   tickets: "tickets",
