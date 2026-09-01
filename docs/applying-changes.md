@@ -59,6 +59,36 @@ moment.
 An agent reasoning about other agents' in-flight work is inventing a problem the
 tooling already owns.
 
+### Why the backend restart in particular is deferred
+
+Because in a self-hosting checkout **the agent is a child process of the backend
+it is editing**. Measured 2026-09-01:
+
+    uvicorn main:app (:8000)
+      -> bwrap
+        -> claude
+          -> the agent's own shell
+
+Restarting in-turn would kill the session making the change, and every subagent
+under it. `restart_backend.sh` refuses while a turn it hosts is live, and that is
+correct rather than an obstacle to route around. Do not force it, do not reach
+for `--publish-wip` to get past it, and do not try to restart out of band.
+
+**The consequence to plan for: within the turn that makes a backend change, you
+cannot see that change running.** Anything you `curl` or screenshot is the old
+code. So:
+
+- **Frontend changes CAN be closed in-turn.** The bundle rebuilds and the
+  operator's origin serves it immediately; no restart is involved. Screenshot it
+  and be done.
+- **Backend changes CANNOT.** Either say **"unverified-live"** and mean it, or —
+  better, and this is the technique that works — stand up a second backend on
+  another port against the same tree and drive that. It costs a minute and it
+  turns a claim into evidence.
+
+Reporting a backend change as verified in the same turn you made it is either a
+mistake or a different verification than the one it sounds like. Say which.
+
 ## What it costs
 
 Measured 2026-08-13, so nobody has to guess again:

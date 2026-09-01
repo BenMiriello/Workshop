@@ -291,40 +291,37 @@ today's work, and it dictates the next action:**
 
 ---
 
-## 5.2 A self-hosting agent cannot verify its own backend change
+## 5.2 I documented a thing that was already documented
 
-Measured today, and it explains a whole class of "you said it worked and it did
-not" that has been read as carelessness:
+Retained as an entry in the ledger of this failure mode rather than deleted,
+because it happened while writing the section above it.
 
-    backend pid 1512991  (uvicorn main:app on :8000)
-      -> 1526224 bwrap
-        -> 1526226 claude
-          -> this session
+I measured the process tree (`uvicorn` -> `bwrap` -> `claude` -> this session),
+concluded that a self-hosting agent cannot verify its own backend change in-turn,
+and wrote it up as a finding. **It was already written down.**
+`docs/applying-changes.md` §"You do not need to coordinate" says the backend
+restart is deferred until your own turn finishes, that an interrupted turn is
+paused rather than lost, and — verbatim — *"An agent reasoning about other
+agents' in-flight work is inventing a problem the tooling already owns."* That
+last sentence describes a real amount of this session's effort.
 
-**The agent editing the backend is a child process of the backend it is
-editing.** `restart_backend.sh` correctly refuses to restart while a turn it
-hosts is live, and `apply.sh` therefore defers the restart until after the turn
-ends. So within the turn that makes a backend change, the agent is structurally
-unable to see that change running. Everything it can screenshot or `curl` is the
-OLD code.
+`CLAUDE.md` names that file as **the ONLY current source for how to apply a
+change**, in bold, above the fold. The pointer was there and was not followed.
 
-This is not a discipline problem and no amount of "test it properly" fixes it.
-It has three consequences worth stating:
+The operator's question was "why were you not aware, and why is everything so
+hard to find?" The first half has no excuse: the file is named, I did not read
+it. The second half is real and is §6 item 5's problem — an installation with
+153 design docs, a 155-line procedure doc and a long `CLAUDE.md` has no mechanism
+that routes an agent to the right one at the moment it matters; it relies on the
+agent having read everything. The one genuinely new fact — that the agent is a
+*child process* of the backend, which is WHY the deferral exists — belongs in
+that procedure doc, and has been added there rather than here.
 
-1. A backend change reported as verified in the same turn is either verified
-   against something other than the live backend, or it is not verified. Both
-   happened today; the honest ones said which. The correct phrasing is
-   **"unverified-live"**, and it should be used rather than avoided.
-2. The workaround that works is standing up a separate backend on another port
-   against the same tree, which one agent did today to answer the app-landing
-   question. That is the right technique and it should be the norm for any
-   backend change whose effect is visible.
-3. Frontend changes do NOT have this problem: the bundle rebuilds and the
-   operator's origin serves it inside the turn. The asymmetry is worth knowing —
-   UI work can be closed in-turn, backend work cannot.
-
-The deferred restart is the correct design and must not be "fixed" by forcing a
-restart mid-turn: that kills the session and every subagent in it.
+**A document that is not found is not documentation.** That is the same finding
+as §3 (mechanisms built and never used), §6 (`.runtime/tools.json` empty) and
+§6.1 (an hour of archaeology over an index that already existed). Four instances,
+one shape: this project's problem is much less often that a thing is missing than
+that nobody knows the thing is there.
 
 ---
 
