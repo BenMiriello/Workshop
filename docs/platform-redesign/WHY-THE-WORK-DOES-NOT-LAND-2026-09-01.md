@@ -487,6 +487,23 @@ deep-plan-then-one-overnight-batch, which is the shape that has been failing her
 
 Full notes: `scratch/methodology-research.md`.
 
+**A refinement to §8.2 item 2, and it matters because item 2 is the plan's
+centrepiece.** Executable acceptance is necessary and is NOT sufficient.
+Measured elsewhere: reward hacking of a stated check runs 0.7-2% on unambiguous
+tasks and **22-44% on ambiguous ones**, and held-out tests are the *weaker*
+detector. So the leverage is in **removing ambiguity from the criterion**, not in
+adding more graders on top of it. A cheap behavioural monitor — did this change
+edit its own test? — is worth more than another judge. Filed as `cb29eace`.
+
+Two more that survive contact: self-verification fails at the *activation* stage
+(a 64.5% blind spot on self-attributed versus other-attributed errors), so a
+second in-session pass cannot fix it and a reviewer subagent that inherited the
+generation prompt measurably *loses* the benefit — `reviewer.sh` already gets
+this right by never seeing the worker's self-report. And spec-driven development
+has no measured defect benefit across 100k PRs, which is a caution against
+answering this with more specification.
+
+
 ---
 
 ## 9. The one-paragraph answer
