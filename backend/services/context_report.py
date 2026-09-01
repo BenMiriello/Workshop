@@ -223,6 +223,38 @@ def parse_context_report(md: str) -> dict:
     }
 
 
+# Whether this CLI build accepts `--fork-session`. Resolved once, by trying it,
+# because there is no version to ask and a `claude --help` grep is a second
+# thing that can be wrong. None = not yet determined.
+_FORK_SUPPORTED: bool | None = None
+
+
+async def _spawn_report(session_id: str | None, cwd: str, model: str | None,
+                        *, fork: bool):
+    cmd = [CLAUDE_CLI, "-p", "--output-format", "json"]
+    if model:
+        cmd += ["--model", model]
+    if session_id:
+        cmd += ["--resume", session_id]
+        # A COPY OF THE SESSION, NOT THE SESSION. Without this, `--resume`
+        # RESUMES: the /context turn appends to the very window it is
+        # measuring. Measured 2026-09-01 on the operator's own thread: eight
+        # `/context` records injected in one day, and the 19:55:54 compaction
+        # preserved one of them as a `tailUuid`, so a table ABOUT the context
+        # window became one of the two messages that survived into the new
+        # one. Opening the panel was spending the post-compaction window on a
+        # report about the window.
+        if fork:
+            cmd.append("--fork-session")
+    cmd.append("/context")
+    return await asyncio.create_subprocess_exec(
+        *cmd, cwd=cwd, env=llm_router._claude_env(),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+
 async def run_context_report(session_id: str | None, cwd: str,
                              model: str | None = None) -> dict | None:
     """Ask the CLI what is in this session's window. None when it cannot answer.
@@ -230,23 +262,38 @@ async def run_context_report(session_id: str | None, cwd: str,
     A SIDE QUERY, NOT A TURN. It must never claim the thread, write a run event,
     or append a message: the operator opening a panel is not a thing that
     belongs in the transcript, and a `/context` that took the thread's run claim
-    would block the next message they typed."""
-    cmd = [CLAUDE_CLI, "-p", "--output-format", "json"]
-    if model:
-        cmd += ["--model", model]
-    if session_id:
-        cmd += ["--resume", session_id]
-    cmd.append("/context")
+    would block the next message they typed.
+
+    That promise was not kept between the docstring and the process: `--resume`
+    without `--fork-session` writes into the session. It forks now, and falls
+    back on a CLI build that does not know the flag, on the same terms as the
+    parser below -- a vendor CLI's flag set must degrade this panel, not break
+    the chat it hangs off.
+    """
+    global _FORK_SUPPORTED
+    fork = session_id is not None and _FORK_SUPPORTED is not False
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, cwd=cwd, env=llm_router._claude_env(),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        proc = await _spawn_report(session_id, cwd, model, fork=fork)
     except (OSError, FileNotFoundError) as e:
         log.warning("context report: could not start the CLI: %s", e)
         return None
+    if fork and _FORK_SUPPORTED is None:
+        # First fork attempt. A build that does not know the flag exits fast
+        # with a usage error; anything else means it took it.
+        out, err = await proc.communicate()
+        blob = ((err or b"") + (out or b"")).decode(errors="replace")
+        if proc.returncode != 0 and "fork-session" in blob:
+            _FORK_SUPPORTED = False
+            log.info("context report: this CLI has no --fork-session; "
+                     "the report will resume the session instead")
+            try:
+                proc = await _spawn_report(session_id, cwd, model, fork=False)
+            except (OSError, FileNotFoundError) as e:
+                log.warning("context report: could not start the CLI: %s", e)
+                return None
+        else:
+            _FORK_SUPPORTED = True
+            return _parse_report_output(proc.returncode, out, err)
     try:
         out, err = await asyncio.wait_for(proc.communicate(), REPORT_TIMEOUT_S)
     except asyncio.TimeoutError:
@@ -258,13 +305,19 @@ async def run_context_report(session_id: str | None, cwd: str,
             pass
         log.warning("context report: timed out after %.0fs", REPORT_TIMEOUT_S)
         return None
-    if proc.returncode != 0:
+    return _parse_report_output(proc.returncode, out, err)
+
+
+def _parse_report_output(returncode: int | None, out: bytes | None,
+                         err: bytes | None) -> dict | None:
+    """One reading of the CLI's answer, for both the forked and plain spawns."""
+    if returncode != 0:
         log.warning("context report: CLI exited %s: %s",
-                    proc.returncode, (err or b"")[:400].decode(errors="replace"))
+                    returncode, (err or b"")[:400].decode(errors="replace"))
         return None
     import json
     try:
-        payload = json.loads(out.decode(errors="replace"))
+        payload = json.loads((out or b"").decode(errors="replace"))
     except (ValueError, AttributeError):
         log.warning("context report: unparseable CLI response")
         return None
