@@ -39,50 +39,58 @@ filed by an agent, 34 by him. Zero of 195 have acceptance criteria.
   "delete the surface you replace" commitments, 1 landed.
 - 18% of the operator's 954 chat messages are repeat complaints.
 
-## Landed this session
+## Landed this session — 47 commits, 19 work streams
 
-`3d8b849b` `991a9240` `cde7ea54` `ceef5784` the report and its corrections ·
-`d6dfebde` `61992acc` `f4052fc6` the branch/worktree vocabulary, verified in a
-real browser · `a308dfae` durable wakeup + clock + notify (49 tests pass) ·
-`a9480f2b` app declares its home and tabs · `b52cb5d1` app-source classifier
-names files · `412b5f09` response-shape gate (100 hand-written, 156 untyped,
-140 reading a collection — pinned) · `15883681`+`c30c349d` the thread keystone,
-built then reverted (see below) · `ef21585f` run lists name their envelope ·
-`26934781` fixtures name invented apps · `19aeaf2c` the two fresh-clone assertions
-now RUN and fail honestly, plus the instance-vs-baseline section in CLAUDE.md.
+**Gates that did not exist this morning.** `check_dead_surface.py` (knip +
+backend, 4 counts pinned) makes "a change deletes the surface it replaces" fail
+the build — the audit's finding was that this was the ONE invariant enforced by
+prose and the only one that never held. `check_ticket_acceptance.py` (202 pinned)
+plus refusal at every filing door. `check_response_types.py` (92/143/120, down
+from 100/156/140). `scripts/done.sh` + a Stop hook: done is a machine decision
+with evidence, never a summary. `apply.sh` now reports and BLOCKS on schema
+drift. `check_fresh_clone.sh`'s last two assertions now actually run.
 
-## The instance-vs-baseline answer, now executable
+**Capabilities.** Durable wakeup + clock + notify (`a308dfae`), proven live: the
+alarm survived its process being killed, fired at its time, and the woken turn
+answered. Images survive compaction (`d44690bc`) — settled by a 5-turn experiment
+with randomly-chosen colours, and the recorded "survives one turn" diagnosis was
+wrong. Repetition counting over the corpus (`69539eb7`, `2a679ead`).
 
-`bash scripts/check_fresh_clone.sh` is the single authority and it is no longer
-half-built. Both remaining assertions run for real: it clones HEAD, DELETES the
-app source, and tries to build and boot. Both fail, and the 2026-08-24 doc's
-prediction is confirmed exactly — frontend `20x TS2307` from literal module
-specifiers inside `lazyPage(() => import(...))` in `frontend/src/apps/registry.tsx`,
-and backend `ImportError: cannot import name 'location' from 'services'` from
-`routes/owntracks.py`. **So driving `no_app_source` to zero would still not make a
-stranger's clone build**, which is the whole argument for measuring by clone
-rather than by count. Pinned failures print `NOT YET`, never `PASS`, and never
-make the run green.
+**The runner can read its ticket store again** (`12ee2d9d`) — verified
+independently in a cron-like env; it had been broken since 2026-08-25.
 
-## Open, and how it must be verified
+**Operator-facing.** App declares its home and tabs (`a9480f2b`). Branch/revert
+vocabulary, browser-verified (`d6dfebde`, `61992acc`, `f4052fc6`). Settings Apps
+now lists 11 apps, screenshot-verified on the built origin (`6fb72f52`,
+`e29cdecf`). Phone tab bar says it scrolls (`d54a6676`). Trackers form
+(`ab1a772f`, `8eeaa4b6`). App Runs rows (`a72157d7`).
 
-- **RESOLVED: the Development app.** It now declares
-  `surface: {home: "tickets", tabs: [tickets, runs, files, agents, chats]}` in
-  `.runtime/projects.json` and lands on `/apps/development/tickets` with no Memory
-  tab. Verified by the building agent against a standalone backend serving the real
-  `dist`, because the live backend was still on old code. **Caveat that matters:
-  the declaration lives in gitignored `.runtime/projects.json`, so the fix for THIS
-  installation is data, not code, and a fresh clone still gets the chat fallback.**
-- **RESOLVED: `check_no_app_names.py` literal_sites** went 482 -> **462** against
-  the 479 pin, fixed by renaming fixtures to invented app ids, not by re-pinning.
-- The public bundle goes stale as agents commit. **A final `bash scripts/apply.sh`
-  is required** after all agents finish, or the operator is looking at old code.
-- **`check_fresh_clone.sh` had been failing every worker.** Both clones were named
-  after their rev, so `--since HEAD` (what `reviewer.sh` passes by default) collided
-  on one directory, git refused, the script exited 2, and `_delta_check` read that
-  as `fail` — so the reviewer gate has been reporting `fresh_clone_regression`
-  against unrelated work for a collision in its own scratch directory. Fixed with
-  `mktemp`. Worth knowing how long that was rejecting honest work.
+**Health:** backend 4173 passed / 19 known failures (was 4036). typecheck 0.
+frontend 1517 passed. design clean. app-name literals 479 -> 468. prompt layers 0.
+
+## The one thing that needs the operator
+
+**Thread `armed`+`role` is built (`15883681`) and reverted (`c30c349d`).** It
+needs `alembic upgrade head`, which the permission classifier blocked for two
+different agents. Re-land, in his own terminal:
+
+    git cherry-pick 15883681
+    cd backend && set -a && . ~/.config/workshop/db-admin.env && set +a \
+      && .venv/bin/alembic upgrade head
+    bash scripts/apply.sh
+
+Everything downstream is blocked on it: Roles page `9fc4ce67`, Work view
+`130ef15e`, Branches lens `427a86fe`, deleting `/projects` `d12a0332`, Settings
+12 rows -> 9 `85a51a32`.
+
+## Owed next turn
+
+- **Verify live after the restart, then move the tickets.** Six of the operator's
+  tickets have code landed and status still `todo`: `02933169` `17f0e21d`
+  `49e5ea37` `d6696cd3` `f8906d50` `7d8d733a`. Backend-dependent ones could not be
+  verified in-turn (see below) and must not be marked done on a claim.
+- `/apps/development` still redirected to `/chats` in the last screenshot because
+  the backend was still on old code. Confirm it lands on `tickets` after restart.
 
 ## Rules this session established, all paid for
 
