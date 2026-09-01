@@ -30,6 +30,44 @@ set -u
 
 WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 export WORKSHOP
+
+# THE INTERPRETER AND THE DATABASE, resolved ONCE, before anything below shells
+# into python. Same two lines, same order and the same reasons as
+# scripts/queue_runner.sh and scripts/root_task_counts.sh; read either header.
+#
+# instance.sh prepends backend/.venv/bin to PATH, so every bare `python3` in
+# this file resolves to the backend interpreter rather than PATH's. Without it
+# `services.tasks` imports no sqlalchemy, `tenancy.available()` answers False
+# while `tenancy.configured()` still answers True, and the read fails as
+#
+#   services.tasks.RelationalStoreUnavailable: <root>: a database is configured
+#   but did not answer
+#
+# which blames Postgres for a missing import. That is 18 of the tracebacks in
+# .runtime/ralph.log; the ModuleNotFoundError on sqlalchemy that killed every
+# alloc_task_worktree below is the same cause one import deeper. Prepending PATH
+# here fixes all ~50 call sites at once, which is the point: the fix used to be
+# applied per helper (`WT_PY`, two local `gate_py`s) and reached seven of them.
+#
+# secrets.env carries WORKSHOP_DATABASE_URL, and only systemd UNITS read it. The
+# venv interpreter WITHOUT it fails the other way, silently: `configured()`
+# answers False, `next-ready` prints `{}` and the sweep reports "no ready tasks"
+# and exits 0. An armed scope with a resident runner, quietly doing nothing
+# forever, is the shape this half of the bug has. Existing environment wins in
+# both files, so a caller that pinned either keeps it.
+#
+# It also supplies WORKSHOP_DEV_MODE to the dev-mode gate further down, which is
+# what queue_runner.sh sources it for. That is the deployment's own declared
+# value out of instance.env rather than a new permission: launched from a bare
+# shell the gate was reading an unset variable and refusing the platform repo,
+# while the same sweep launched through queue_runner.sh (which already sources
+# this) was allowed.
+source "$WORKSHOP/scripts/lib/instance.sh"
+SECRETS="${WORKSHOP_CONFIG_DIR:-$HOME/.config/workshop}/secrets.env"
+if [[ -z "${WORKSHOP_DATABASE_URL:-}" && -r "$SECRETS" ]]; then
+  set -a; source "$SECRETS"; set +a
+fi
+
 AUTH_ENV="${WORKSHOP_AUTH_ENV:-$HOME/.config/workshop/auth.env}"
 # One switch, read through services/autonomy_override. Fails closed.
 source "$WORKSHOP/scripts/autonomy_gate.sh"
@@ -331,16 +369,20 @@ build_receipt_evidence() {  # $1=receipt_file $2=baseline $3=head $4=commits(new
 # with `ModuleNotFoundError: No module named 'sqlalchemy'` before it ran a line,
 # the caller read the empty stdout as "allocation failed", and EVERY unattended
 # run since then worked in the SHARED project tree -- which is precisely the
-# collision worktree mode exists to end. `record_change_gates` below already
-# resolved the venv for the same reason; this hoists that answer so there is one
-# of it rather than one per helper.
-WT_PY="$WORKSHOP/backend/.venv/bin/python"
-[[ -x "$WT_PY" ]] || WT_PY=python3
+# collision worktree mode exists to end.
+#
+# There used to be a `WT_PY` here doing that resolution for these five helpers,
+# and a second copy of it inside each of the two gate recorders below. Three
+# copies covered seven of this file's fifty python call sites and the other
+# forty-three kept the bug. The resolution now happens ONCE, at the top of the
+# file, by putting the venv on PATH -- so the plain `python3` below IS the
+# backend interpreter, and every call site is covered rather than the ones
+# somebody remembered.
 
 # Allocate an isolated, locked worktree for one task. Echoes "<dir>\t<branch_slug>"
 # on success, nothing on failure (caller falls back to the project dir).
 alloc_task_worktree() {  # $1=task_id $2=task_title
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$WT_PY" - "$WT_SLUG" "$1" "$2" <<'PYEOF' 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" "$2" <<'PYEOF' 2>>"$LOG"
 import sys
 from services import worktrees
 try:
@@ -363,7 +405,7 @@ PYEOF
 #   ok\t<pr_url>\t<pr_number> -> published
 #   error: <msg>             -> transient/other failure; caller logs, still done
 publish_task_worktree() {  # $1=branch_slug $2=title $3=body
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$WT_PY" - "$WT_SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
 import sys
 from services import worktrees
 slug, branch_slug, title, body = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
@@ -390,7 +432,7 @@ PYEOF
 #   ok\t<commit>             -> merged successfully
 #   error: <msg>             -> other failure; caller logs, still done
 merge_task_worktree_local() {  # $1=branch_slug
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$WT_PY" - "$WT_SLUG" "$1" <<'PYEOF' 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" <<'PYEOF' 2>>"$LOG"
 import sys
 from services import worktrees
 slug, branch_slug = sys.argv[1], sys.argv[2]
@@ -416,7 +458,7 @@ PYEOF
 # is committed on the branch either way, so a bookkeeping failure must never cost
 # it. See backend/services/work_review.py.
 open_change_for_task() {  # $1=branch_slug $2=task_id $3=title
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$WT_PY" - "$WT_SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
 import sys
 from services import ownership, work_review
 # Pin the data owner before any relational read/write. Without this the call
@@ -446,12 +488,11 @@ PYEOF
 # rather than raising, and pins the data owner before it touches the store.
 record_change_gates() {  # $1=change_id
   [[ -n "${1:-}" && -f "$RECEIPT_FILE" ]] || return 0
-  # The backend venv where sqlalchemy lives, in preference to PATH's python3:
-  # the store is unreachable from the bare interpreter, so a bare call would
-  # log an import error forever rather than writing anything.
-  local gate_py=$WORKSHOP/backend/.venv/bin/python
-  [[ -x "$gate_py" ]] || gate_py=python3
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$gate_py" -m services.change_gates \
+  # `python3` here is the backend venv, where sqlalchemy lives, because PATH was
+  # resolved at the top of this file: the store is unreachable from the bare
+  # system interpreter, so this would log an import error forever rather than
+  # writing anything.
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.change_gates \
      --change-id "$1" --input "$RECEIPT_FILE") >>"$LOG" 2>&1 || true
 }
 
@@ -464,19 +505,17 @@ record_change_gates() {  # $1=change_id
 #
 # --model is NOT passed: the mechanical layer costs a millisecond and runs on
 # every change, and the sweep's own summary names nothing checkable anyway, so a
-# claude -p call here would buy nothing. Same best-effort contract and same venv
-# resolution as record_change_gates above.
+# claude -p call here would buy nothing. Same best-effort contract as
+# record_change_gates above, and the same interpreter, for the same reason.
 record_claim_check() {  # $1=change_id
   [[ -n "${1:-}" ]] || return 0
-  local gate_py=$WORKSHOP/backend/.venv/bin/python
-  [[ -x "$gate_py" ]] || gate_py=python3
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$gate_py" -m services.claim_check \
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.claim_check \
      --change-id "$1") >>"$LOG" 2>&1 || true
 }
 
 # Reap worktrees whose branch already merged into the canonical base. Best-effort.
 cleanup_merged_worktrees() {
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$WT_PY" - "$WT_SLUG" <<'PYEOF' >/dev/null 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" <<'PYEOF' >/dev/null 2>>"$LOG"
 import sys
 from services import worktrees
 try:

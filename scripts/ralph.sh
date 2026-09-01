@@ -44,6 +44,43 @@
 set -u
 
 WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+export WORKSHOP
+
+# THE INTERPRETER AND THE DATABASE, resolved ONCE, before anything below shells
+# into python. Same two lines, same order and the same reasons as
+# scripts/queue_runner.sh and scripts/root_task_counts.sh; read either header.
+#
+# instance.sh prepends backend/.venv/bin to PATH, so every bare `python3` in
+# this file resolves to the backend interpreter rather than PATH's. Without it
+# `services.tasks` imports no sqlalchemy, `tenancy.available()` answers False
+# while `tenancy.configured()` still answers True, and the read fails as
+#
+#   services.tasks.RelationalStoreUnavailable: <root>: a database is configured
+#   but did not answer
+#
+# which blames Postgres for a missing import. That is 18 of the tracebacks in
+# .runtime/ralph.log; `services/worktrees.py`'s ModuleNotFoundError on
+# sqlalchemy is the same cause one import deeper. Prepending PATH here fixes
+# every call site at once, which is the point: the per-helper `WT_PY` /
+# `MAKER_PY` / `gate_py` resolutions that used to sit beside a handful of them
+# are gone, because seven correct call sites out of fifty is the shape the bug
+# had.
+#
+# secrets.env carries WORKSHOP_DATABASE_URL, and only systemd UNITS read it. The
+# venv interpreter WITHOUT it fails the other way: `configured()` answers False,
+# the store reports no tickets and the run exits 0 having read nothing. Existing
+# environment wins in both files, so a caller that pinned either keeps it.
+#
+# instance.sh also supplies WORKSHOP_DEV_MODE to the dev-mode gate below — the
+# deployment's own declared value out of instance.env, not a new permission.
+# Launched from a bare shell the gate was reading an unset variable; launched
+# through queue_runner.sh (which already sources this) it was not.
+source "$WORKSHOP/scripts/lib/instance.sh"
+SECRETS="${WORKSHOP_CONFIG_DIR:-$HOME/.config/workshop}/secrets.env"
+if [[ -z "${WORKSHOP_DATABASE_URL:-}" && -r "$SECRETS" ]]; then
+  set -a; source "$SECRETS"; set +a
+fi
+
 # Resolve the claude CLI to a real EXECUTABLE. A pinned nvm node-version path is
 # fragile: a node upgrade moves it, and a reinstall while the disk is full can
 # leave a truncated, non-executable stub (observed 2026-07-16: a 500-byte
@@ -751,14 +788,12 @@ fi
 # except the injection itself.
 #
 # `services.makers` needs the backend's dependencies (it parses agent
-# frontmatter), so it runs on the backend venv's interpreter when one is there,
-# the same way scripts/log_learning.sh does, and simply produces nothing if it
-# is not.
-MAKER_PY="$WORKSHOP/backend/.venv/bin/python"
-[[ -x "$MAKER_PY" ]] || MAKER_PY="python3"
+# frontmatter), so it runs on the backend venv's interpreter — which `python3`
+# now IS, from the PATH resolved at the top of this file, and which still falls
+# back to the system interpreter (producing nothing) on a checkout with no venv.
 maker_block() {   # $1 = the scope key
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" \
-     "$MAKER_PY" -m services.makers prompt --scope "$1" 2>/dev/null) || true
+     python3 -m services.makers prompt --scope "$1" 2>/dev/null) || true
 }
 MAKER_BLOCK=""
 if [[ -n "$LEARN_SCOPE" ]]; then
@@ -945,6 +980,12 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
   # session identity, `tree_access.decide` correctly answers "this turn holds
   # nothing", and the worker would be read-only inside its own worktree. Free
   # while the flag is off: the argv is byte-identical either way.
+  #
+  # THE ONE ABSOLUTE INTERPRETER PATH LEFT IN THIS FILE, deliberately. Every
+  # other `python3` here resolves through the PATH set at the top; this one is
+  # the launcher of a fail-closed sandbox, and it must not be able to become a
+  # different interpreter because something downstream edited PATH. It was
+  # already correct and is not part of the bug the top of this file describes.
   SCOPED_EXEC=("$WORKSHOP/backend/.venv/bin/python" -m services.scoped_exec exec --workdir "$DIR" --session-id "$PRESENCE_ID" --)
   PYTHONPATH="$WORKSHOP/backend" timeout "$PER_ITER_TIMEOUT" \
     "${SCOPED_EXEC[@]}" \

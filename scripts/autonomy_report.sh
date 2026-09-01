@@ -20,6 +20,20 @@ set -u
 
 WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 export WORKSHOP
+
+# THE DATABASE, because this is a cron script and cron reads no EnvironmentFile.
+# Same idiom and same reason as scripts/root_task_counts.sh, which this file
+# already shells out to for its queue counts: the root's tickets live in
+# Postgres and WORKSHOP_DATABASE_URL lives in secrets.env, which only systemd
+# UNITS read. Without it the "Latest activity" read below sees an installation
+# with no database, returns nothing, and is swallowed by its own `except: pass`
+# -- so the line has silently never appeared. The interpreter is already pinned
+# to the venv at that call site. Existing environment wins.
+SECRETS="${WORKSHOP_CONFIG_DIR:-$HOME/.config/workshop}/secrets.env"
+if [[ -z "${WORKSHOP_DATABASE_URL:-}" && -r "$SECRETS" ]]; then
+  set -a; source "$SECRETS"; set +a
+fi
+
 NOTIFY="${WORKSHOP_NOTIFY_FILE:-$WORKSHOP/.runtime/notify.txt}"
 mkdir -p "$(dirname "$NOTIFY")"
 

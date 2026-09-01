@@ -172,7 +172,40 @@ class TestBothCallersAreWired:
     def test_the_worktree_shells_use_the_backend_venv(self):
         """`services.worktrees` imports sqlalchemy, which the python3 a sweep
         runs with does not have. Measured: from 2026-08-25 every allocation
-        died at import and every unattended run fell back to the SHARED tree."""
-        src = (REPO / "scripts" / "project_ralph.sh").read_text()
-        assert 'WT_PY="$WORKSHOP/backend/.venv/bin/python"' in src
-        assert 'PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG"' not in src
+        died at import and every unattended run fell back to the SHARED tree.
+
+        This used to assert a `WT_PY=` variable beside those five helpers. That
+        fixed the five and left the other forty-five `python3` calls in the file
+        on the wrong interpreter -- including the ticket read, which failed as
+        `RelationalStoreUnavailable: a database is configured but did not
+        answer`. So the property under test is not "these helpers name the venv"
+        but "this script resolves the interpreter ONCE, for all of them", which
+        is what putting the venv on PATH does.
+        """
+        for name in ("project_ralph.sh", "ralph.sh"):
+            src = (REPO / "scripts" / name).read_text()
+            assert 'source "$WORKSHOP/scripts/lib/instance.sh"' in src, name
+            # ...and none of the per-helper copies of that resolution, which is
+            # how it came to cover seven call sites out of fifty. (The one
+            # remaining absolute venv path, ralph.sh's scoped_exec launcher, is
+            # deliberate and commented there: it launches the sandbox and must
+            # not follow PATH.)
+            for retired in ('WT_PY=', 'MAKER_PY=', 'local gate_py='):
+                assert retired not in src, (
+                    f"{name}: {retired!r} is a second answer to an interpreter "
+                    "already resolved once on PATH; it will only ever cover the "
+                    "call sites written beside it")
+
+    def test_the_sweep_brings_the_database_url_it_needs(self):
+        """The other half of the same bug, and the silent one.
+
+        `WORKSHOP_DATABASE_URL` lives in secrets.env, which only systemd UNITS
+        read. On the venv interpreter WITHOUT it, `tenancy.configured()` answers
+        False, the ticket read reports no tickets and the sweep exits 0 -- an
+        armed scope with a resident runner, quietly doing nothing. Same idiom as
+        scripts/root_task_counts.sh and scripts/queue_runner.sh.
+        """
+        for name in ("project_ralph.sh", "ralph.sh"):
+            src = (REPO / "scripts" / name).read_text()
+            assert 'SECRETS="${WORKSHOP_CONFIG_DIR:-$HOME/.config/workshop}/secrets.env"' in src, name
+            assert 'if [[ -z "${WORKSHOP_DATABASE_URL:-}" && -r "$SECRETS" ]]; then' in src, name
