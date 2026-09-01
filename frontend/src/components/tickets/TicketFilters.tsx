@@ -30,7 +30,8 @@ type Props = {
   scopes: string[];
   labels: LabelCount[];
   assignees: LabelCount[];
-  count: number;
+  /** null when the surface does not know its total (see the board). */
+  count: number | null;
   onFilters: (next: Filters) => void;
   onSort: (next: TicketSort) => void;
   onNew: () => void;
@@ -177,7 +178,12 @@ export function TicketFilterBar({
           <input
             value={filters.q}
             onChange={(e) => onFilters({ ...filters, q: e.target.value })}
-            placeholder={`Search ${count} ticket${count === 1 ? "" : "s"}`}
+            // A COUNT ONLY WHEN THERE IS ONE. The board fetches per lane and
+            // owns its own totals, so the page-level query is disabled there and
+            // `count` is null -- it said "Search 0 tickets" over a full board.
+            placeholder={count === null
+              ? "Search tickets"
+              : `Search ${count} ticket${count === 1 ? "" : "s"}`}
             aria-label="Search tickets"
           />
         </label>
@@ -275,7 +281,8 @@ export function TicketFilterSheet({
   open: boolean; onClose: () => void;
   filters: Filters; sort: TicketSort; scopes: string[]; labels: LabelCount[];
   assignees: LabelCount[];
-  count: number;
+  /** null when the surface does not know its total (see the board). */
+  count: number | null;
   onFilters: (next: Filters) => void;
   onSort: (next: TicketSort) => void;
   onReset: () => void;

@@ -4,6 +4,7 @@
 // ticket looks like.
 import { Tag, catFor, timeAgo } from "@workshop/ui";
 import { ticketKey, type Task } from "../../lib/tasks";
+import { priorityLabel } from "../../lib/priority";
 
 // Relative time, the unit every tracker's list column uses. An absolute
 // timestamp in a list is precision nobody reads; the ticket page has the full
@@ -33,16 +34,25 @@ export function TagStrip({ labels }: { labels?: string[] | null }) {
   );
 }
 
-// Priority and effort as one mono fact, the way the design draws it ("60 · deep").
+// Priority and effort as one mono fact, the way the design draws it
+// ("high · deep").
 //
 // Both are frequently unset (priority on 45% of live tickets, effort on 70%),
 // so this renders only what exists and nothing when neither does. A zero
 // priority is "no priority": it is the store's default, carried by 79 tickets
 // that never set one, so printing it would put a number nobody chose on most
 // rows.
+//
+// THE BAND, NOT THE INTEGER. `lib/priority` exists because the stored number is
+// the floor of a five-name band, so 80 and 99 are the same priority written two
+// ways -- see its header for the day five agents filed carefully graded numbers
+// and every distinction collapsed. The table converted at the edge and this did
+// not, so the same ticket read "high" in one view of this page and "80" in the
+// other. `priorityLabel` returns "" for none, which drops the bit entirely.
 export function ticketMeta(task: Task): string {
   const bits: string[] = [];
-  if (typeof task.priority === "number" && task.priority !== 0) bits.push(String(task.priority));
+  const band = priorityLabel(task.priority);
+  if (band) bits.push(band);
   if (task.effort) bits.push(task.effort);
   return bits.join(" · ");
 }

@@ -205,6 +205,10 @@ export default function Tickets() {
   const rows = (data?.items ?? []) as Task[];
   const total = data?.page?.total ?? 0;
   const pages = pageCount(total);
+  // What the search box may claim. The board pages PER LANE and this query is
+  // disabled there, so the page-level total is not merely 0, it is unknown --
+  // and it read "Search 0 tickets" above a board holding 176.
+  const searchCount = view === "board" ? null : total;
   const narrowed = isNarrowed(urlFilters, view);
   // The board draws its own scope-spanning rows; the table only shows the scope
   // column when the list actually spans more than one.
@@ -289,7 +293,7 @@ export default function Tickets() {
             scopes={scopes}
             labels={labels}
             assignees={assignees}
-            count={total}
+            count={searchCount}
             onFilters={applyFilters}
             onSort={applySort}
             onNew={() => setCreating(true)}
@@ -375,7 +379,7 @@ export default function Tickets() {
         scopes={scopes}
         labels={labels}
         assignees={assignees}
-        count={total}
+        count={searchCount}
         onFilters={applyFilters}
         onSort={applySort}
         onReset={clearAll}
