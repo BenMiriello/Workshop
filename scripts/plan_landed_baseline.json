@@ -1,0 +1,18 @@
+{
+  "_comment": "Steps of the plan that have NOT landed. An entry here means the step is known not to be done. It is never a pass and it never makes the absolute run green: `python3 scripts/check_plan_landed.py` with no arguments still exits 1 while any pin remains. A pin buys exactly one thing, which is that a reviewer does not reject a worker for debt the worker inherited (`--quiet`). A pinned step that starts passing is a failure (PIN STALE). A pinned step whose `blocked_on_check` command SUCCEEDS is a failure (UNBLOCKED AND UNSTARTED) even under --quiet, because that is the exact condition that cost 2026-08-29 to 2026-09-01: the plan named a blocker, the blocker cleared, nobody re-ran it, and three sessions treated a stale sentence as a live constraint. Adding an entry grows this file, which check_ratchets_not_loosened.py reads as a loosened ratchet and rejects inside a review.",
+  "_measured": "2026-09-01, by running the checker against the tree.",
+  "not_yet": {
+    "4-projects-deleted": {
+      "pinned": "2026-09-01",
+      "because": "Projects.tsx and ProjectDetail.tsx are 1801 lines between them and are still routed. Step 4 of section 7 is explicitly ordered AFTER step 3, and the app Overview that is supposed to absorb them does not exist yet: the app-level surface built on 2026-09-01 is Work, Chats, Memory, Files, with no Overview tab. Deleting the pages before their replacement exists would remove a reachable surface and put nothing in its place, which is the opposite of the rule this plan is enforcing.",
+      "blocked_on": "An app Overview tab, which section 6 lists as the first per-app page and which nothing has built.",
+      "blocked_on_check": "test -f frontend/src/pages/apps/tabs/AppOverviewTab.tsx"
+    },
+    "5-settings-nine-rows": {
+      "pinned": "2026-09-01",
+      "because": "Twelve rows today. The collapse needs Roles to exist as a page (it is one of the nine), and Roles comes from step 1's retirement of the agent roster, so this is ordered behind it. Trackers folding into Apps and Tools merging with MCP are each a real page edit, not a nav-list edit.",
+      "blocked_on": "step 1: a Roles page, which is one of the nine rows.",
+      "blocked_on_check": "ls frontend/src/pages/Roles.tsx >/dev/null 2>&1"
+    }
+  }
+}

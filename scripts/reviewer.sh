@@ -658,6 +658,38 @@ else
   AMBIGUOUS+=("prompt_layers_check_unavailable")
 fi
 
+# 4.6c-iiie THE PLAN WE ALREADY WROTE, AS A GATE.
+#
+# `docs/platform-redesign/threads-branches-and-pages-2026-08-29.md` section 7 is
+# a numbered five-step plan. Three sessions read it and none executed it, and on
+# 2026-09-01 the operator reported the same defects it closes for the third time
+# in three days. A plan in markdown has no failure mode: a session can read it,
+# feel oriented, and leave the tree unchanged, and afterwards that tree is
+# indistinguishable from one where the plan was done.
+#
+# So the plan is assertions now (scripts/plan_landed.json), and this is the gate.
+#
+# --quiet, so a step that is honestly pinned as not-yet-done does not reject a
+# worker for debt it inherited. But the checker still exits non-zero under
+# --quiet for two conditions, and both are deliberate:
+#   PIN STALE               a pinned step now passes; the bookkeeping is owed.
+#   UNBLOCKED AND UNSTARTED a pinned step's stated blocker is verifiably GONE.
+# The second is the one that matters. Section 7 named a blocker ("the dev_only
+# migration was never applied and sits on one of six alembic heads") that had
+# already cleared, and three sessions took the sentence rather than re-running
+# the command. A stale blocker is a permanent excuse and it is worse than no
+# plan, because it makes inaction look like diligence.
+PLAN_LANDED_CHECK="skipped"
+if [[ -f "$WORKSHOP/scripts/check_plan_landed.py" && -f "$WORKSHOP/scripts/plan_landed.json" ]]; then
+  if python3 "$WORKSHOP/scripts/check_plan_landed.py" --quiet >/dev/null 2>&1; then
+    PLAN_LANDED_CHECK="ok"
+  else
+    PLAN_LANDED_CHECK="fail"
+  fi
+else
+  AMBIGUOUS+=("plan_landed_check_unavailable")
+fi
+
 # 4.6c-iiid A ticket without an EXECUTABLE finish line is not a ticket, and the
 # count of open tickets that have none may only go down. Measured 2026-09-01:
 # 208 open tickets, `acceptance` null on all 208, a field that had existed since
@@ -1126,6 +1158,11 @@ if [[ "$TICKET_ACCEPTANCE_CHECK" == "fail" ]]; then
   REASONS+=("ticket_without_executable_acceptance")
   COMPLETE="false"
 fi
+# Only the two hard conditions reach here; an honest not-yet pin passes --quiet.
+if [[ "$PLAN_LANDED_CHECK" == "fail" ]]; then
+  REASONS+=("planned_step_unblocked_and_unstarted")
+  COMPLETE="false"
+fi
 if [[ "$EXPLAINER_CHECK" == "fail" ]]; then
   REASONS+=("explainer_text_in_the_application")
   COMPLETE="false"
@@ -1238,7 +1275,7 @@ export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK AP
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
 export DEAD_SURFACE_CHECK
-export TICKET_ACCEPTANCE_CHECK FRESH_CLONE_CHECK DEV_MODE_OFF_CHECK FRONTEND_STATE_CHECK RESPONSE_TYPES_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK
+export PLAN_LANDED_CHECK TICKET_ACCEPTANCE_CHECK FRESH_CLONE_CHECK DEV_MODE_OFF_CHECK FRONTEND_STATE_CHECK RESPONSE_TYPES_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK
 RESULT_JSON=$(python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -1294,6 +1331,7 @@ out = {
     # it is a fact about this checkout shipped to every installation.
     "prompt_layers": os.environ.get("PROMPT_LAYERS_CHECK", "skipped"),
     "ticket_acceptance": os.environ.get("TICKET_ACCEPTANCE_CHECK", "skipped"),
+    "plan_landed": os.environ.get("PLAN_LANDED_CHECK", "skipped"),
     "explainer_text": os.environ.get("EXPLAINER_CHECK", "skipped"),
     "frontend_state": os.environ.get("FRONTEND_STATE_CHECK", "skipped"),
     # Ratcheted per item: surface nothing reaches. The rule it enforces is
@@ -1342,7 +1380,7 @@ PYEOF
 printf '%s\n' "$RESULT_JSON"
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK backend_tests=$BACKEND_TESTS_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK ticket_acceptance=$TICKET_ACCEPTANCE_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK dead_surface=$DEAD_SURFACE_CHECK response_types=$RESPONSE_TYPES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK dev_mode_off=$DEV_MODE_OFF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK backend_tests=$BACKEND_TESTS_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK ticket_acceptance=$TICKET_ACCEPTANCE_CHECK plan_landed=$PLAN_LANDED_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK dead_surface=$DEAD_SURFACE_CHECK response_types=$RESPONSE_TYPES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK dev_mode_off=$DEV_MODE_OFF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi

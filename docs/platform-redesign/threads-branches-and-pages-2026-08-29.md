@@ -237,6 +237,18 @@ heads, so the app table has no such column. Until that lands, `development` has
 no app place and therefore no Work, Chats or Memory tab, which is the whole
 reason its memory does not appear inside it.
 
+> **CORRECTION, 2026-09-01. The paragraph above is out of date and was already
+> out of date when it blocked people.** Measured on 2026-09-01: `alembic heads`
+> prints exactly one head, the live database is at it, and `app.dev_only`
+> exists. Nothing in steps 1 to 5 was blocked. Three sessions read this
+> paragraph, took it as a live constraint, and did other work.
+>
+> This is why the plan is now also `scripts/plan_landed.json`, checked by
+> `python3 scripts/check_plan_landed.py` and gated in `reviewer.sh`. Step 0 of
+> that file is this prerequisite restated as a COMMAND rather than a sentence,
+> so the next reader gets the state instead of the claim. If you are about to
+> treat a stated blocker here as a reason not to work: run the command.
+
 ---
 
 # Addendum: what organizes what (2026-08-29, later)

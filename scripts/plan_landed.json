@@ -1,0 +1,134 @@
+{
+  "_comment": "The plan, as assertions. Read scripts/check_plan_landed.py's module docstring first: this file exists because a five-step plan written on 2026-08-29 was read by three sessions and executed by none, and a markdown plan has no failure mode. Each step below is one numbered step of that document's section 7, restated as something the tree either satisfies or does not. Do NOT add a step here that is not in a design document of record, and do NOT soften an assertion to make a run green: the assertion is the claim, and weakening it is how the last five design generations left their pages in the tree.",
+  "source": "docs/platform-redesign/threads-branches-and-pages-2026-08-29.md section 7 (Order of work), with the prerequisite that section states.",
+  "steps": [
+    {
+      "id": "0-prerequisite-single-head",
+      "title": "The migration chain has one head",
+      "source": "section 7, 'Prerequisite for any of it, and currently blocking'",
+      "_note": "The document states this as blocking: 'The dev_only migration was never applied and sits on one of six alembic heads.' That was measured false on 2026-09-01 (one head, live database at it), three days after it was written, having blocked nothing in reality and everything in practice. It stays here as a COMMAND rather than a sentence, so the next session reads the state instead of the claim.",
+      "assertions": [
+        {
+          "kind": "command_succeeds",
+          "says": "alembic reports exactly one head",
+          "command": "cd backend && .venv/bin/python -m alembic heads 2>/dev/null | grep -c '(head)' | grep -qx 1"
+        },
+        {
+          "kind": "regex_present",
+          "says": "the app table carries dev_only",
+          "path": "backend/db/models.py",
+          "regex": "dev_only"
+        }
+      ]
+    },
+    {
+      "id": "1-thread-fields-and-roster-retired",
+      "title": "Thread carries armed and role; the file-agent roster is gone",
+      "source": "section 7 step 1, with sections 1 and 6",
+      "_note": "'Thread fields (armed, role) land AND the file-agent roster is retired, in one change. Not one, then the other.' Both halves are asserted together on purpose, because doing the first alone is what leaves two systems.",
+      "assertions": [
+        {
+          "kind": "regex_present",
+          "says": "chat_thread declares armed",
+          "path": "backend/db/models.py",
+          "regex": "armed"
+        },
+        {
+          "kind": "absent",
+          "says": "the Agents roster page is deleted",
+          "path": "frontend/src/pages/Agents.tsx"
+        },
+        {
+          "kind": "absent",
+          "says": "the inert agent definition files are retired",
+          "path": "agents/*.md"
+        }
+      ]
+    },
+    {
+      "id": "2-branch-vocabulary-and-row",
+      "title": "Branch is the word, and a branch is a row",
+      "source": "section 7 step 2, with section 3",
+      "_note": "'The word is branch. Worktree is an implementation detail.' The row component is what step 3 then places.",
+      "assertions": [
+        {
+          "kind": "present",
+          "says": "the branch row logic exists and is testable",
+          "path": "frontend/src/lib/workView.ts"
+        },
+        {
+          "kind": "present",
+          "says": "the branch row logic is tested",
+          "path": "frontend/src/lib/workView.test.ts"
+        }
+      ]
+    },
+    {
+      "id": "3-work-view-absorbs-the-top-level-pages",
+      "title": "The app Work view exists and the pages it absorbed are deleted",
+      "source": "section 7 step 3, with section 6 'Retired, each in the commit that replaces it'",
+      "_note": "'The app Work view absorbs Tickets, Runs, Changes; the top-level pages are deleted IN THAT CHANGE.' The deletions are the assertion that matters. Adding the Work view while leaving /runs, /changes and /deploys standing is the exact move section 6 was written to stop.",
+      "assertions": [
+        {
+          "kind": "present",
+          "says": "the app Work tab exists",
+          "path": "frontend/src/pages/apps/tabs/AppWorkTab.tsx"
+        },
+        {
+          "kind": "regex_present",
+          "says": "Work is the app's first tab, so an app opens on it",
+          "path": "frontend/src/pages/apps/tabs/appTabState.ts",
+          "regex": "\\{ id: \"work\""
+        },
+        {
+          "kind": "absent",
+          "says": "the top-level Runs page is deleted",
+          "path": "frontend/src/pages/Runs.tsx"
+        },
+        {
+          "kind": "absent",
+          "says": "the top-level Changes page is deleted",
+          "path": "frontend/src/pages/Changes.tsx"
+        },
+        {
+          "kind": "absent",
+          "says": "the top-level Deploys page is deleted",
+          "path": "frontend/src/pages/Deploys.tsx"
+        }
+      ]
+    },
+    {
+      "id": "4-projects-deleted",
+      "title": "/projects is deleted; app Overview absorbs it",
+      "source": "section 7 step 4, with section 6 and app-is-the-entity-2026-08-20.md",
+      "_note": "'Project is not an entity; that was settled on 2026-08-20.' 1801 lines.",
+      "assertions": [
+        {
+          "kind": "absent",
+          "says": "the Projects list page is deleted",
+          "path": "frontend/src/pages/Projects.tsx"
+        },
+        {
+          "kind": "absent",
+          "says": "the Project detail page is deleted",
+          "path": "frontend/src/pages/ProjectDetail.tsx"
+        }
+      ]
+    },
+    {
+      "id": "5-settings-nine-rows",
+      "title": "Settings is nine rows, not twelve",
+      "source": "section 6, 'Settings: 12 rows to 9'",
+      "_note": "Account, Appearance, Chat, Memory, Roles, Access, Models, Tools-and-MCP-as-one-page, Apps. Trackers folds into Apps.",
+      "assertions": [
+        {
+          "kind": "count_at_most",
+          "says": "the settings place draws at most nine rows",
+          "path": "frontend/src/components/shell/places.ts",
+          "regex": "to: \"/settings",
+          "max": 9
+        }
+      ]
+    }
+  ]
+}

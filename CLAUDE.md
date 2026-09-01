@@ -82,6 +82,36 @@ one person and it now belongs in the operator's own custom instructions at
 (`WORKSHOP_OPERATOR_NAME`) and still asks every assistant to be direct and brief,
 which is product doctrine and true for everyone.
 
+### Before you plan anything: `python3 scripts/check_plan_landed.py`
+
+It prints, per step, which parts of the plan this repo already agreed on are
+actually in the tree. Run it FIRST, before writing a design, opening a doc, or
+deciding what to work on. If it prints `FAIL` or `NOT YET`, that is your work,
+and it is already specified: do not design it again.
+
+This exists because of a measured failure, not a preference. `docs/platform-
+redesign/threads-branches-and-pages-2026-08-29.md` section 7 is a numbered
+five-step plan. Three consecutive sessions read it, agreed with it, summarised
+it, and wrote further documents about it; none executed a step. On 2026-08-29,
+2026-08-31 and 2026-09-01 the operator reported the same defects that plan
+closes, in the same words. **A plan in a markdown file has no failure mode.** A
+session can read it, feel oriented, and leave the tree unchanged, and afterwards
+that tree is indistinguishable from one where the plan was done.
+
+The second half matters as much. Section 7 named a prerequisite it called
+"currently blocking": the `dev_only` migration unapplied, on one of six alembic
+heads. By 2026-09-01 that was false, one head and the live database at it, and
+nobody re-ran the command. **A stale blocker in a plan is a permanent excuse**,
+and it is worse than no plan, because it makes inaction look like diligence. So
+a pin in `scripts/plan_landed_baseline.json` may carry `blocked_on_check`, a
+command whose success means the blocker is gone, and the checker fails with
+`UNBLOCKED AND UNSTARTED` when it succeeds. That failure reaches `reviewer.sh`
+as `planned_step_unblocked_and_unstarted`.
+
+Same ratchet rules as every other gate here: a pin is never a pass, a pin that
+starts passing is a failure, and `--quiet` (what the reviewer runs) forgives an
+honest not-yet but not an expired excuse.
+
 ### Two things are being built here, and confusing them is the recurring defect
 
 This checkout is **the operator's own installation** — his apps, his data, his
