@@ -51,15 +51,28 @@ function ChatsBody({ app }: { app: AppRecord }) {
         overflowHint={<>Browse them all on <Link className="ws-link" to="/chats">Chats</Link>.</>}
         render={(rows) => (
           <Stack gap="sm">
-            {rows.map((c) => (
-              <ChatRow
-                key={c.id}
-                thread={c as unknown as ThreadSummary}
-                onOpen={() =>
-                  nav(`/chat/${encodeURIComponent(c.context_key || app.slug)}?thread=${encodeURIComponent(c.id)}`)
-                }
-              />
-            ))}
+            {rows.map((c) => {
+              // THE SAME OBJECT FROM BOTH PAGES. The row tags a thread with its
+              // scope, its role and its branch (`chatTags`), and the scope tag
+              // reads `context_key`, so a row whose key did not come back would
+              // be tagged with the unnamed root instead of this app. The
+              // fallback is the app's own slug, which is exactly what the link
+              // below already falls back to; doing it once here keeps the tag
+              // and the destination from being able to disagree.
+              const thread = {
+                ...c,
+                context_key: c.context_key || app.slug,
+              } as unknown as ThreadSummary;
+              return (
+                <ChatRow
+                  key={c.id}
+                  thread={thread}
+                  onOpen={() =>
+                    nav(`/chat/${encodeURIComponent(thread.context_key)}?thread=${encodeURIComponent(c.id)}`)
+                  }
+                />
+              );
+            })}
           </Stack>
         )}
       />

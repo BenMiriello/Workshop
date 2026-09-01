@@ -15,8 +15,7 @@ import {
   MenuSeparator,
   Notice,
   PageHeader,
-  SectionLabel,
-  Select,
+  Segmented,
   Skeleton,
   StateBlock,
 } from "@workshop/ui";
@@ -25,6 +24,7 @@ import ChatRow, { ChatScopeGlyph, shortModel } from "../components/chat/ChatRow"
 import { queryKeys } from "../lib/queryKeys";
 import { newChatHref } from "../lib/chatSelection";
 import { scopeLabel, scopeName } from "../components/chat/chatScope";
+import { visibleThreads, type ArmedFilter } from "./chatList";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
 // its own object with an optional context binding (general / project / app /
@@ -36,27 +36,20 @@ import { scopeLabel, scopeName } from "../components/chat/chatScope";
 // here, which meant the list and the picker could name the same scope
 // differently and neither would be wrong.
 
-// How the list is ordered. Recent groups the rows by date; the other two are a
-// single flat list. Commits on change (a view preference).
-type Sort = "recent" | "oldest" | "messages";
-
-// Recency buckets, the mockup's date headings. A chat's bucket comes from the
-// same field the Recent sort orders by (updated_at), so a row's heading and its
-// position always agree.
-const BUCKET_ORDER = ["today", "yesterday", "week", "month", "older"] as const;
-function bucketFor(iso?: string | null): { key: string; label: string } {
-  const t = iso ? new Date(iso) : null;
-  if (!t || Number.isNaN(t.getTime())) return { key: "older", label: "Earlier" };
-  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const today = startOfDay(new Date());
-  const day = 86_400_000;
-  const ts = startOfDay(t);
-  if (ts >= today) return { key: "today", label: "Today" };
-  if (ts >= today - day) return { key: "yesterday", label: "Yesterday" };
-  if (ts >= today - 7 * day) return { key: "week", label: "Earlier this week" };
-  if (ts >= today - 30 * day) return { key: "month", label: "Earlier this month" };
-  return { key: "older", label: "Earlier" };
-}
+// ONE FLAT LIST, NEWEST FIRST, AND NO ORDERING CONTROL.
+// `threads-branches-and-pages-2026-08-29.md` §6: "Chats is a flat list of
+// threads, newest first. It is the quick-jump surface. No branch headings, no
+// grouping. (Reverted once already; it stays reverted.)"
+//
+// What was here: a three-value sort (Recent / Oldest / Most messages) and the
+// date headings Recent produced (Today, Yesterday, Earlier this week...). The
+// headings are the grouping §6 names, and the control existed to switch them on
+// and off, so both are deleted together. The order and the filter now live in
+// `./chatList`, where they can be executed by a test.
+//
+// The one control left is the armed filter, which is not an ordering: §1 makes
+// `armed` the field that decides whether a thread advances without a person,
+// and §6 retires the Agents roster in favour of "an armed filter on Chats".
 
 // One page of rows. The list renders a page at a time and loads the next when
 // the foot scrolls into view (see the observer below), so a long history never
@@ -104,14 +97,16 @@ function matches(t: ThreadSummary, needle: string): boolean {
 export default function Chats() {
   const nav = useNavigate();
   const qc = useQueryClient();
-  const [sort, setSort] = useState<Sort>("recent");
+  // All threads, or only the ones that advance on their own. A view preference,
+  // so it commits on change and is not persisted.
+  const [armed, setArmed] = useState<ArmedFilter>("all");
   // A delete waiting on its confirm dialog, and a one-off action failure that
   // leaves the list on screen (a Notice, not a whole-page error block).
   const [pending, setPending] = useState<{ id: string; title: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<{ text: string; endpoint: string } | null>(null);
   // How many rows are mounted. Grows a page at a time as the foot scrolls into
-  // view; reset on a re-sort so the new order starts at the top.
+  // view; reset when the filter changes so a re-narrowed list starts at the top.
   const [shown, setShown] = useState(PAGE);
 
   // The list live-updates by polling the shared TanStack client the rest of the
@@ -150,20 +145,17 @@ export default function Chats() {
 
   const newChat = () => nav(newChatHref("general"));
 
-  const sorted = useMemo(() => {
-    const list = threads ? [...threads] : [];
-    if (sort === "oldest") list.sort((a, b) => (a.updated_at || "").localeCompare(b.updated_at || ""));
-    else if (sort === "messages") list.sort((a, b) => (b.message_count || 0) - (a.message_count || 0));
-    else list.sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
-    return list;
-  }, [threads, sort]);
+  // The list: narrowed by the filter, then newest first. Both rules live in
+  // ./chatList so this page holds no ordering logic of its own.
+  const rows = useMemo(() => visibleThreads(threads, armed), [threads, armed]);
 
-  // Reset only on a re-sort, NOT on every poll: a refetch returns a new array
-  // each tick, and resetting on that would snap the list back to the first page.
-  useEffect(() => { setShown(PAGE); }, [sort]);
+  // Reset only when the filter changes, NOT on every poll: a refetch returns a
+  // new array each tick, and resetting on that would snap the list back to the
+  // first page.
+  useEffect(() => { setShown(PAGE); }, [armed]);
 
-  const visible = sorted.slice(0, shown);
-  const more = shown < sorted.length;
+  const visible = rows.slice(0, shown);
+  const more = shown < rows.length;
 
   // Load the next page when the foot of the list nears the viewport. rootMargin
   // starts the next page early so the scroll never actually stops at the seam.
@@ -177,20 +169,7 @@ export default function Chats() {
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [more, sorted.length]);
-
-  // Recent groups the rows under date headings; the other sorts are one flat
-  // list, because "most messages" under "Today" would be a heading that lies.
-  const groups = useMemo(() => {
-    if (sort !== "recent") return [{ key: "all", label: "", items: visible }];
-    const byKey = new Map<string, { key: string; label: string; items: ThreadSummary[] }>();
-    for (const t of visible) {
-      const b = bucketFor(t.updated_at);
-      if (!byKey.has(b.key)) byKey.set(b.key, { key: b.key, label: b.label, items: [] });
-      byKey.get(b.key)!.items.push(t);
-    }
-    return BUCKET_ORDER.filter((k) => byKey.has(k)).map((k) => byKey.get(k)!);
-  }, [visible, sort]);
+  }, [more, rows.length]);
 
   // Each running dot's position among the running dots, top to bottom. It feeds
   // the 1/6 pulse offset, and is read only at the instant a dot goes live (see
@@ -198,9 +177,9 @@ export default function Chats() {
   const runningOrdinals = useMemo(() => {
     const m = new Map<string, number>();
     let n = 0;
-    for (const g of groups) for (const t of g.items) if (t.running) m.set(t.id, n++);
+    for (const t of visible) if (t.running) m.set(t.id, n++);
     return m;
-  }, [groups]);
+  }, [visible]);
 
   const open = (t: ThreadSummary) =>
     nav(`/chat/${encodeURIComponent(t.context_key)}?thread=${encodeURIComponent(t.id)}`);
@@ -245,19 +224,20 @@ export default function Chats() {
         title="Chats"
         actions={
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-            {/* Sort, not a scope filter: this is the workshop's own chats page,
-                and the page column already says which place you are in. A bare
-                Select (it carries its own chevron); commits on change. */}
-            <Select
-              aria-label="Sort chats"
-              value={sort}
-              onChange={(e) => setSort(e.target.value as Sort)}
-              style={{ width: "auto" }}
-            >
-              <option value="recent">Recent</option>
-              <option value="oldest">Oldest</option>
-              <option value="messages">Most messages</option>
-            </Select>
+            {/* The armed filter, and the only control on the list. §6 retires
+                the Agents roster into it: a thread that is armed is what used
+                to be called an agent, so "Armed" is that page's list without a
+                second entity behind it. A view preference, so it commits on
+                change. */}
+            <Segmented
+              ariaLabel="Filter chats"
+              value={armed}
+              onChange={setArmed}
+              options={[
+                { value: "all", label: "All" },
+                { value: "armed", label: "Armed" },
+              ]}
+            />
             <Button variant="primary" onClick={newChat}>
               <Plus aria-hidden /> New chat
             </Button>
@@ -300,28 +280,28 @@ export default function Chats() {
             </Button>
           }
         />
+      ) : rows.length === 0 ? (
+        <StateBlock
+          title="No armed chats"
+          hint="An armed chat advances without you: on a new message, on a schedule, or when a ticket is ready. None of these chats is armed."
+          action={<Button size="sm" onClick={() => setArmed("all")}>Show all chats</Button>}
+        />
       ) : (
         <>
-          {groups.map((g) => (
-            <div key={g.key} className="ws-chatgroup" style={{ display: "grid", gap: "var(--space-2)" }}>
-              {g.label && (
-                <div className="ws-chatgroup__head">
-                  <SectionLabel>{g.label}</SectionLabel>
-                  <span className="ws-card__meta">{g.items.length}</span>
-                </div>
-              )}
-              {g.items.map((t) => (
-                <ChatRow
-                  key={t.id}
-                  thread={t}
-                  ordinal={runningOrdinals.get(t.id) ?? 0}
-                  onOpen={open}
-                  onArchive={(x) => { void archiveOne(x); }}
-                  onDelete={(x) => setPending({ id: x.id, title: x.title || "this chat" })}
-                />
-              ))}
-            </div>
-          ))}
+          {/* ONE LIST, NEWEST FIRST. No headings and no grouping: see the note
+              at the top of this file, and §6. */}
+          <div style={{ display: "grid", gap: "var(--space-2)" }}>
+            {visible.map((t) => (
+              <ChatRow
+                key={t.id}
+                thread={t}
+                ordinal={runningOrdinals.get(t.id) ?? 0}
+                onOpen={open}
+                onArchive={(x) => { void archiveOne(x); }}
+                onDelete={(x) => setPending({ id: x.id, title: x.title || "this chat" })}
+              />
+            ))}
+          </div>
           {more && <div ref={sentinel} aria-hidden style={{ height: 1 }} />}
         </>
       )}

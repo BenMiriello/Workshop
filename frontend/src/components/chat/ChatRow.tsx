@@ -1,9 +1,9 @@
 import { useRef } from "react";
 import { Archive, GitBranch, MoreVertical, Trash2 } from "lucide-react";
-import { Card, Menu, MenuItem, MenuSeparator } from "@workshop/ui";
+import { Card, Menu, MenuItem, MenuSeparator, Tag, catFor } from "@workshop/ui";
 import type { ThreadSummary } from "../../lib/chat";
-import { branchName } from "./chatBranch";
 import { scopeKind, scopeLabel, scopeName } from "./chatScope";
+import { chatTags } from "../../pages/chatList";
 import { pulseDelay } from "../../pages/chatPulse";
 import ScopeIcon from "./ScopeIcon";
 import { appIcon } from "../../apps/registry";
@@ -104,6 +104,7 @@ export default function ChatRow({
   onDelete?: (t: ThreadSummary) => void;
 }) {
   const t = thread;
+  const tags = chatTags(t);
   return (
     <Card
       interactive
@@ -143,27 +144,13 @@ export default function ChatRow({
             </>
           )}
           <span className="ws-card__meta ws-chat-row__when">{relTime(t.updated_at)}</span>
-          {/* THE WORD IS BRANCH. This said "In a worktree", which is the one
-              string `REVIEW-plan-vs-reality-2026-08-29.md` §7.3 cited by name
-              as drift from `threads-branches-and-pages-2026-08-29.md` §3 ("the
-              interface says branch"). It was also the only place a person could
-              read it here, because the tag is an icon and the label is what a
-              screen reader gets. The hover text was the raw slug, which is 32
-              characters of hex on half the branches this install serves;
-              `branchName` is the same rule the toolbar's pill and its move list
-              use. */}
-          {t.branch_slug && (
-            <>
-              <span className="ws-chat-row__sep" aria-hidden>·</span>
-              <span
-                className="ws-card__meta"
-                title={branchName(t)}
-                aria-label={`Branch: ${branchName(t)}`}
-              >
-                <GitBranch size={12} aria-hidden />
-              </span>
-            </>
-          )}
+          {/* THE BRANCH IS A TAG NOW, on the line below with scope and role
+              (`threads-branches-and-pages-2026-08-29.md` §6: "A branch is a
+              small tag on the row, next to scope and role"). It was an icon
+              here, with the name only on the title attribute, so on a phone
+              there was no hover and the row could not answer which branch at
+              all. §3 is the reason it is a name and not a glyph: the interface
+              says branch, and a branch has one. */}
           {onArchive && (
             <button
               type="button"
@@ -207,7 +194,38 @@ export default function ChatRow({
           )}
         </div>
       </div>
-      <p className="ws-muted ws-chat-row__snippet">{t.last_message || " "}</p>
+      {/* Line two: the last message, and the row's tags trailing it.
+          WHAT A THREAD IS, IN THREE TAGS: its scope, its role, its branch, in
+          that order, each omitted when the thread does not have one (§6, and
+          §1 for why a null role prints nothing rather than a default). The
+          derivation is `chatTags`, so both chat lists tag a thread identically
+          and the rule can be executed in a test.
+          `ws-tagstrip` is the kit's row-of-tags container and it is what keeps
+          the narrow column safe: one line that scrolls, never a wrap, so a row
+          cannot change height or overflow because a branch has a long name.
+          The snippet keeps a floor and gives up the rest (see below); it
+          ellipsizes as it always did. */}
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0 }}>
+        {/* `1 1 8rem`, and the basis is the whole point: at `auto` the flex
+            basis is the message's own length, which on a 390px phone is far
+            longer than the line, so the snippet claimed the width and the tags
+            were shrunk to a clipped dot. A fixed basis makes the snippet ASK
+            for 8rem and take the rest only when there is a rest. Measured in a
+            390px shot, which is the only thing that catches this. */}
+        <p className="ws-muted ws-chat-row__snippet" style={{ flex: "1 1 8rem", width: "auto" }}>
+          {t.last_message || " "}
+        </p>
+        {tags.length > 0 && (
+          <span className="ws-tagstrip" style={{ flex: "0 1 auto" }}>
+            {tags.map((tag) => (
+              <Tag key={`${tag.kind}:${tag.label}`} hue={catFor(tag.label)} variant="neutral">
+                {tag.kind === "branch" && <GitBranch size={11} aria-hidden />}
+                {tag.label}
+              </Tag>
+            ))}
+          </span>
+        )}
+      </div>
     </Card>
   );
 }

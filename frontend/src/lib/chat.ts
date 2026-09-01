@@ -294,7 +294,40 @@ export type ChatMsg = {
  *  `scope` is derived server-side from `context_key` on every read and stored
  *  by nobody, so it cannot go stale after a rescope. `last_user_at` is when the
  *  OPERATOR last spoke, which is what the list orders by. */
-export type ThreadSummary = components["schemas"]["ThreadSummary"];
+export type ThreadSummary = components["schemas"]["ThreadSummary"] & ThreadIdentity;
+
+/** What advances a thread without a person.
+ *
+ *  `threads-branches-and-pages-2026-08-29.md` section 1: "This is the ONLY
+ *  field that decides whether a thread works unasked", and a thread that is
+ *  armed is what used to be called an agent. */
+export type ThreadArmed = "off" | "on-message" | "schedule" | "on-ready-ticket";
+
+/**
+ * The two fields section 1 puts on every thread, READ ONLY and both optional,
+ * because the client is ahead of the server on them.
+ *
+ * They are hand-written, which every other shape in this file is not, and that
+ * is deliberate rather than sloppy: neither field is in `schema.gen.ts` as of
+ * 2026-09-01, and the chat list is the surface section 1 asks for them on. So
+ * both are optional and both are nullable, which is the whole accommodation:
+ * `armed` missing reads as `off` through `armedOf` (pages/chatList), and a
+ * missing or null `role` renders no tag at all rather than a default or the
+ * word "none". Nothing here writes either field.
+ *
+ * THIS IS A BRIDGE, AND IT HAS AN END. Take both from the schema and delete
+ * this the next time `npm run gen:api-types` runs against a backend whose
+ * `ThreadSummary` declares them. The intersection is not load-bearing once it
+ * does. Do not add a third field here in the meantime: one narrow, dated
+ * exception is a gap that closes, a habit is how a hand-written type diverges
+ * from the wire in both directions, which is what the note at the top of this
+ * file is about.
+ */
+type ThreadIdentity = {
+  armed?: ThreadArmed | null;
+  /** Names a role definition. Nullable, and null is a good value. */
+  role?: string | null;
+};
 
 /**
  * The agent this chat is with, or null.
