@@ -14,7 +14,7 @@ import {
   Pencil,
   Library,
 } from "lucide-react";
-import { ActionBar, Button, ConfirmDialog, PageHeader, ReadOnly, Segmented, Select, StatusDot, useEditMode, useTheme, usePalette, useResolvedMode, PalettePicker, PALETTE_META, StatusPill, Input, Skeleton, StateBlock, Notice, type SegmentedOption, type ThemeMode, SettingsSection as Section, SettingsRow as Row, timeAgo, native, startDeviceTracking, stopDeviceTracking, useNative, useTrackingStatus } from "@workshop/ui";
+import { ActionBar, Button, ConfirmDialog, PageHeader, ReadOnly, Segmented, Select, StatusDot, useEditMode, useTheme, usePalette, useResolvedMode, PalettePicker, StatusPill, Input, Skeleton, StateBlock, Notice, type SegmentedOption, type ThemeMode, SettingsSection as Section, SettingsRow as Row, timeAgo, native, startDeviceTracking, stopDeviceTracking, useNative, useTrackingStatus } from "@workshop/ui";
 import { chatApi, type ChatPrefs } from "../lib/chat";
 import { CHAT_MODES, chatModeDef, type ChatModeId } from "../components/chat/chatModes";
 import { effortLabel } from "../components/chat/effort";
@@ -688,13 +688,16 @@ function AppearanceSection() {
   const [theme, setTheme] = useTheme();
   const [palette, setPalette] = usePalette();
   const mode = useResolvedMode(theme);
-  const current = PALETTE_META.find((p) => p.id === palette);
   return (
     <Section icon={Palette}>
       <Row label="theme">
         <Segmented options={THEME_OPTIONS} value={theme} onChange={setTheme} ariaLabel="Theme" />
       </Row>
-      <Row label="color scheme" hint={current?.blurb}>
+      {/* No `hint` here: the field's hint renders below the WHOLE control, so
+          the selected scheme's description captioned whichever group happened
+          to be last. The picker places it under the group holding the
+          selection. */}
+      <Row label="color scheme">
         <PalettePicker value={palette} onChange={setPalette} mode={mode} />
       </Row>
     </Section>

@@ -2737,6 +2737,10 @@ span.ws-filterchip__open { cursor: default; }
 }
 .ws-palette-group__label::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--border); }
 .ws-palettes { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+/* One sentence about the SELECTED scheme, under the group that holds it. */
+.ws-palette-group__blurb {
+  margin: var(--space-3) 0 0; font-size: var(--fs-sm); color: var(--muted);
+}
 .ws-palette {
   appearance: none; border: none; background: transparent; padding: 0; cursor: pointer;
   display: inline-flex; flex-direction: column; align-items: center; gap: var(--space-2);

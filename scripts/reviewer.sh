@@ -723,18 +723,30 @@ _delta_check RESPONSE_TYPES_CHECK "check_response_types.py" "response_types_base
 # question no in-tree grep can answer: from inside an install, an untracked
 # file, a gitignored directory and a tracked one all look the same.
 #
-# Three of the five assertions in the design doc are implemented (no app
-# source, no personal data, no hardcoded identity INCLUDING docs); the two that
-# need a build and a database are not, and the script prints them as NOT
-# IMPLEMENTED on every run rather than letting an exit code imply them.
+# ALL FIVE assertions in the design doc are implemented as of 2026-09-01: the
+# three tree counts (no app source, no personal data, no hardcoded identity
+# INCLUDING docs) plus the two that actually run the thing -- build the clone
+# with the app source DELETED, and boot it against a throwaway Postgres cluster
+# with an empty catalog. Until then those two printed as NOT IMPLEMENTED, and a
+# check that has never run reads, to every agent after it, exactly like a check
+# that passed.
 #
 # `--since` because absolute mode fails today on 106 inherited app-source files
 # and 210 inherited doc references -- gating a worker on that is the documented
 # cause of 2,066 loop jobs with tasks_done: 0. Absolute mode is what a human
 # runs before claiming separation is done: `bash scripts/check_fresh_clone.sh`.
-# Costs ~14s (two clones); see the script's header.
+#
+# COST HERE IS ~14s, NOT ~80s, and the reason is the pin file rather than a
+# policy someone has to remember: both run-it assertions are recorded in
+# scripts/fresh_clone_baseline.json as expected failures, so review mode prints
+# NOT YET and does not re-execute them. The pin file IS the recorded base state
+# -- it is committed, it says the assertion did not hold as of a date, and
+# check_ratchets_not_loosened.py rejects growing it inside a review -- so a diff
+# cannot regress a pinned assertion without first deleting a pin, which is a
+# visible edit. The 80 seconds arrive on the day the pin is deleted, which is
+# the day this starts being able to catch something.
 FRESH_CLONE_CHECK="skipped"
-_delta_check FRESH_CLONE_CHECK "check_fresh_clone.sh"
+_delta_check FRESH_CLONE_CHECK "check_fresh_clone.sh" "fresh_clone_baseline.json"
 
 # 4.6b-iv dev_only catalog gate — the development app is absent from GET /apps
 # when WORKSHOP_DEV_MODE is not '1'. Proven by check_dev_mode_off.sh, which

@@ -1,0 +1,18 @@
+{
+  "_comment": "Expected failures for scripts/check_fresh_clone.sh. AN ENTRY HERE MEANS THE ASSERTION DOES NOT HOLD AND IS KNOWN NOT TO HOLD. It is never a pass and it never makes the absolute run green: `bash scripts/check_fresh_clone.sh` with no arguments re-runs a pinned assertion and still exits 1 on it. A pin buys exactly one thing, and it is the thing this repo has been burned by three times: a review does not reject a worker for debt the worker inherited. Only the two assertions named in PINNABLE, which lives in check_fresh_clone.sh's CODE and not here, may appear; any other key exits 2. A pinned assertion that starts PASSING is a failure (PIN STALE) and a pinned assertion that fails for a reason its `signature` does not match is a failure (PIN MISMATCH), so a pin cannot outlive its problem and cannot mute an area. Adding an entry grows this dict, which check_ratchets_not_loosened.py reads as a loosened ratchet and rejects inside a review.",
+  "_measured": "2026-09-01, by running it: clone HEAD, delete the 106 files check_no_app_names.py calls app source, npm ci, build the kit and the bundle, venv + requirements, import main.",
+  "expected_failures": {
+    "build_with_zero_apps": {
+      "pinned": "2026-09-01",
+      "because": "Both halves fail, independently. FRONTEND: frontend/src/apps/registry.tsx names app pages with literal module specifiers inside lazyPage(() => import(...)), which defers loading and not building, so removing the app source gives 20x TS2307 plus 5 knock-on type errors and tsc -b refuses. BACKEND: platform routes import app services (routes/owntracks.py -> services/owntracks.py -> services.location), and `import main` dies with ImportError: cannot import name 'location' from 'services'. The backend half is NOT covered by assertion 1: routes/owntracks.py is platform code by every current measure, so driving no_app_source to zero would not by itself make this pass.",
+      "blocked_on": "docs/platform-redesign/app-separation-and-github-2026-08-20.md section 2, the app loader (import maps + dynamic import of a built ESM bundle), which is stage 5 of the handoff. The backend half additionally needs the platform routes that import app services to go through the AppSpec seam.",
+      "signature": "TS2307|cannot import name 'location' from 'services'"
+    },
+    "shell_boots_with_empty_catalog": {
+      "pinned": "2026-09-01",
+      "because": "Unreachable while build_with_zero_apps fails: with the app source removed there is no bundle to check and no importable backend to boot. The boot path itself is PROVEN WORKING and is re-proven on demand by `bash scripts/check_fresh_clone.sh --harness-selftest`, which builds and boots the same clone with its app source left in place: throwaway cluster up, migrations applied, first user seeded, GET /apps {\"apps\":[]}, GET /agents [], GET /chat/threads [], zero mounted app routers, bundle chunks all present.",
+      "blocked_on": "build_with_zero_apps",
+      "signature": "prerequisite build_with_zero_apps did not hold"
+    }
+  }
+}

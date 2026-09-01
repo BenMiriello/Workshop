@@ -4,16 +4,14 @@ import { Database, RefreshCw } from "lucide-react";
 import { Button, Card, Row, Stack, PageHeader, StateBlock, StatusDot, Badge, Tag, Skeleton, Field, Input, Select, catFor, TableScroll, Table, shortHttpError } from "@workshop/ui";
 
 import { tierKind } from "../lib/stores";
+import type { components } from "../api/schema.gen";
 
-type Store = {
-  uri: string;
-  owner_app: string;
-  name: string;
-  type?: string | null;
-  path?: string;
-  host_project?: string | null;
-  tier?: string;
-};
+// The row and the whole catalog, both named from the generated client. The
+// hand-written copy had `path?` and `tier?` optional where the route declares
+// both required, so this page was written to render a store with no tier that
+// the server cannot send.
+type Store = components["schemas"]["StoreRow"];
+type StoreCatalog = components["schemas"]["StoreCatalog"];
 
 // /stores — cross-app catalog. Every declared Store, filterable by type and
 // tier. Each row links to the store's detail page.
@@ -32,10 +30,10 @@ export default function Stores() {
     try {
       const r = await fetch("/api/stores");
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = await r.json();
-      setStores(j.stores || []);
-      setTypes(j.types || []);
-      setTiers(j.tiers || []);
+      const j: StoreCatalog = await r.json();
+      setStores(j.stores ?? []);
+      setTypes(j.types ?? []);
+      setTiers(j.tiers ?? []);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {

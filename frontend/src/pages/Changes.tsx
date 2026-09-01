@@ -7,10 +7,12 @@ import {
 } from "@workshop/ui";
 
 import { shortSha } from "../lib/sha";
+import type { components } from "../api/schema.gen";
 import {
-  changeStatusKind, changeStatusLabel, changesUnavailable, isOpenChange,
-  type Change,
+  branchTicketId, changeStatusKind, changeStatusLabel, changesUnavailable,
+  isOpenChange, shortBranch, type Change,
 } from "../lib/changeReview";
+import { ticketHref } from "../lib/tasks";
 
 // /changes — every change, open ones first.
 //
@@ -44,8 +46,9 @@ export default function Changes() {
       const r = await fetch(`/api/changes?limit=${PAGE + 1}`);
       if (changesUnavailable(r.status)) { setAbsent(true); setChanges([]); return; }
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = await r.json();
-      setChanges(j.changes || []);
+      // ChangeCollection, named from the generated client.
+      const j: components["schemas"]["ChangeCollection"] = await r.json();
+      setChanges(j.changes ?? []);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -131,7 +134,7 @@ export default function Changes() {
                         {c.title || c.branch_slug}
                       </Link>
                     </td>
-                    <td>
+                    <td className="ws-changes__status">
                       <StatusPill status={changeStatusKind(c.status)}>
                         {changeStatusLabel(c.status)}
                       </StatusPill>
@@ -141,7 +144,25 @@ export default function Changes() {
                         {c.project_slug}
                       </Link>
                     </td>
-                    <td className="ws-mono">{c.branch_slug} into {c.base_ref}</td>
+                    {/* A BRANCH ID IS AN ADDRESS, NOT A LABEL. A supervised
+                        run names its branch after the ticket it is working, so
+                        this column was 32 hex characters wide, was the widest
+                        column on the page, and said the same thing the Change
+                        column already says in words. Abbreviated like a sha
+                        (the full value is on the cell), and where it IS a
+                        ticket it links to that ticket rather than sitting
+                        there as text nobody can read. */}
+                    <td className="ws-changes__branch" title={c.branch_slug}>
+                      {branchTicketId(c) ? (
+                        <Link className="ws-mono" to={ticketHref(c.project_slug, branchTicketId(c)!)}>
+                          {shortBranch(c.branch_slug)}
+                        </Link>
+                      ) : (
+                        <span className="ws-mono">{shortBranch(c.branch_slug)}</span>
+                      )}
+                      <span className="ws-muted"> into </span>
+                      <span className="ws-mono">{c.base_ref}</span>
+                    </td>
                     <td className="ws-mono ws-muted">{shortSha(c.head_sha)}</td>
                     <td className="ws-muted">{c.updated_at ? timeAgo(c.updated_at) : ""}</td>
                   </tr>

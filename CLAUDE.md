@@ -73,6 +73,26 @@ one person and it now belongs in the operator's own custom instructions at
 (`WORKSHOP_OPERATOR_NAME`) and still asks every assistant to be direct and brief,
 which is product doctrine and true for everyone.
 
+### Two things are being built here, and confusing them is the recurring defect
+
+This checkout is **the operator's own installation** — his apps, his data, his
+machine — and it is also **the baseline product**, what a stranger gets when
+they clone the repo. Every few weeks an agent commits something true of the
+first into the second, reports "app separation" done, and a later agent
+rediscovers that it was not. Anything true of this INSTALLATION stays out of
+tracked source; anything true of every installation is what the repo ships.
+That is the same rule the prompt-layer section below applies to prompt text.
+
+**`bash scripts/check_fresh_clone.sh` is the single executable authority on
+which is which**, and it is deliberately not a document: it clones HEAD and
+measures what a stranger actually receives — no app source, no personal data,
+no operator identity, builds with the app source deleted, boots with an empty
+catalog. It fails today and prints exactly where. Two assertions are recorded
+as expected failures in `scripts/fresh_clone_baseline.json`; a pin there prints
+`NOT YET`, never `PASS`, and never makes the absolute run green. **No document,
+status line or agent summary may claim app separation is done.** The claim is
+that command's exit code and nothing else.
+
 ## Platform design (current: 2026-08-20)
 
 The authoritative model lives in [`docs/platform-redesign/entity-model-2026-07-18.md`](docs/platform-redesign/entity-model-2026-07-18.md) (start there) with the phase docs riding on top of it: `autonomy-model-*`, `latitude-model-*`, `primitive-roles-*`, `chat-scope-design-*`, `chat-work-linkage-*`, `resource-access-interface-spec-*`, and the sequenced `final-plan-agent-generalize-and-bridge-fold-2026-07-16.md` + `coherence-migration-plan-2026-07-18.md`. Agents are keyed by `role` (closed enum: maker/reviewer/triager/keeper/broker). The older `runtime` axis (builder/assistant) is GONE (verified 2026-08-20): there is no `runtime` field (`agents_registry.py`, "THERE IS NO `runtime` FIELD"; `AgentDetail.tsx`, "typed by ROLE, there is no `runtime` field"), dispatch is by role (`isMaker`), and `_role_for_runtime` no longer exists in the tree. Do not write new code against `runtime`. NOTE: `is_build_provider` in `chat_context.py` is a SEPARATE, still-live concept, not the retired axis: it means "this chat runs the full agentic toolset" (a maker/project chat) versus a narrow data chat. The genuinely stale "build" leftovers are the dead `build` branch in `frontend/src/lib/scope.ts` and the legacy `/agents/build/{slug}` routes (retire per `app-is-the-entity-2026-08-20.md` §5). Read the phase docs before touching the agents/projects/chat/apps systems.

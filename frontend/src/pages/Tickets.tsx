@@ -24,6 +24,7 @@ import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button, Card, Field, Input, Modal, PageActionBar, Row, Select, Skeleton, Stack, StateBlock, Textarea, shortHttpError } from "@workshop/ui";
 import { type Task, cleanTitle, scopeLabel, ticketHref } from "../lib/tasks";
 import type { components } from "../api/schema.gen";
+import { rowTotal } from "../lib/pageTotal";
 import { queryKeys } from "../lib/queryKeys";
 import {
   PAGE_SIZE, apiQuery, clampPage, defaultFilters, isNarrowed, pageCount,
@@ -194,7 +195,7 @@ export default function Tickets() {
   // corrected rather than shown empty.
   useEffect(() => {
     if (!data) return;
-    const safe = clampPage(page, data.page?.total ?? 0);
+    const safe = clampPage(page, rowTotal(data.page?.total, data.items?.length ?? 0));
     if (safe !== page) goToPage(safe);
   }, [data, page, goToPage]);
 
@@ -203,7 +204,10 @@ export default function Tickets() {
   // set the UI actually switches on. Same strings either way -- the field NAMES
   // above are what the generated type is being relied on for.
   const rows = (data?.items ?? []) as Task[];
-  const total = data?.page?.total ?? 0;
+  // `?? 0` here would print 0 over a full list the moment this route stopped
+  // counting, which is what GET /api/jobs already does by design. See
+  // lib/pageTotal.ts.
+  const total = rowTotal(data?.page?.total, rows.length);
   const pages = pageCount(total);
   // What the search box may claim. The board pages PER LANE and this query is
   // disabled there, so the page-level total is not merely 0, it is unknown --

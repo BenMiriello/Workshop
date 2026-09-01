@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Workflow } from "lucide-react";
 import { Badge, Card, CardGrid, Row, SectionLabel, Skeleton, Stack, StateBlock, Tag, catFor, shortHttpError } from "@workshop/ui";
+import type { components } from "../api/schema.gen";
 
 // Who can be CALLED, as opposed to who runs.
 //
@@ -16,19 +17,15 @@ import { Badge, Card, CardGrid, Row, SectionLabel, Skeleton, Stack, StateBlock, 
 // merging the two lists would put rows in the roster with every control
 // permanently inert. Hence its own section, stating what it is.
 
-export type Delegate = {
-  slug: string;
-  name: string;
-  description: string;
-  purpose: string;
-  role: string | null;
-  scope: string;
-  tools: string[];
-  unrestricted_tools: boolean;
-  foreign: string | null;
-  dispatch: string;
-  definition_path: string;
-};
+// The delegate row, named from the generated client (routes/agents.NativeSubagent).
+//
+// The hand-written copy declared `description`, `purpose`, `scope`, `tools`,
+// `unrestricted_tools` and `definition_path` as REQUIRED. The route serves this
+// with `response_model_exclude_unset=True`, so a field the service never set is
+// dropped from the wire entirely -- only `slug`, `name`, `dispatch` and `source`
+// are promised. Everything else is optional here now because it is optional
+// there, and `definition_path` can also be null.
+export type Delegate = components["schemas"]["NativeSubagent"];
 
 export default function DelegatesSection() {
   const [items, setItems] = useState<Delegate[] | null>(null);
@@ -41,7 +38,7 @@ export default function DelegatesSection() {
         if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         return r.json();
       })
-      .then((d) => { if (live) setItems(d.delegates || []); })
+      .then((d: components["schemas"]["DelegatesOut"]) => { if (live) setItems(d.delegates ?? []); })
       .catch((e) => { if (live) setErr(String(e)); });
     return () => { live = false; };
   }, []);
@@ -51,7 +48,10 @@ export default function DelegatesSection() {
       <SectionLabel>
         <Workflow size={14} strokeWidth={1.8} aria-hidden
                   style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
-        Delegates
+        {/* Counted here, because the page header counts only what it
+            dispatches and these are loaded separately. Between the two every
+            card on the page is accounted for. */}
+        Delegates{items ? ` · ${items.length}` : ""}
       </SectionLabel>
       <p className="ws-muted" style={{ marginTop: "var(--space-1)", marginBottom: "var(--space-3)" }}>
         Invoked by another agent, never on a schedule, so they have no triggers
@@ -75,9 +75,10 @@ export default function DelegatesSection() {
               <Card>
                 <Row between>
                   <h2 className="ws-card__title">{d.name}</h2>
-                  {d.role
-                    ? <Tag hue={catFor(`role:${d.role}`)}>{d.role}</Tag>
-                    : <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>no role</span>}
+                  {/* An absence renders as nothing. A "no role" label is a
+                      mark for a thing that is not there, and beside real role
+                      tags it reads as a role called "no role". */}
+                  {d.role && <Tag hue={catFor(`role:${d.role}`)}>{d.role}</Tag>}
                 </Row>
                 <p className="ws-card__meta">{d.purpose || d.description}</p>
                 <Stack gap="sm" style={{ marginTop: "var(--space-2)" }}>

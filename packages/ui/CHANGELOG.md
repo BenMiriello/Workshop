@@ -12,6 +12,24 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.7.7 - 2026-09-01 - the scheme's description sits under the scheme
+
+**Patch, additive.** No API change: no prop added, removed or altered.
+
+### Changed
+
+- **`PalettePicker` now places the selected scheme's blurb itself**, in the
+  group that holds the selection, as `.ws-palette-group__blurb`.
+
+  Consumers passed the blurb in as the surrounding field's hint, which renders
+  below the whole control. With the schemes split into two groups, an
+  Expressive scheme's description captioned the Quiet row, so the sentence read
+  as a caption for the wrong swatches. The picker is the only thing that knows
+  which tile is selected, so it is the only thing that can place the sentence.
+
+  A consumer still passing a blurb as a field hint will now show it twice.
+  Drop the hint.
+
 ## 0.7.6 - 2026-08-31 - a page can say whose it is
 
 **Patch, additive.** One new optional prop.

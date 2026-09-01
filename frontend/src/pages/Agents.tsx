@@ -370,7 +370,11 @@ export default function Agents() {
         title="Agents"
         sub={
           <Row wrap style={{ gap: "var(--space-3)" }}>
-            <span>{total} agent{total === 1 ? "" : "s"}</span>
+            {/* DISPATCHABLE, not "agents". The roster below is what this
+                workshop dispatches; the Delegates section under it loads its
+                own list and is not counted here, so "5 agents" sat above seven
+                cards. The count names what it counted. */}
+            <span>{total} dispatchable</span>
             {/* Read-only autonomy status pill (C6). The canonical toggle
                 lives on /settings; showing it here so the operator on the
                 roster page knows at a glance whether the workshop is
@@ -519,11 +523,11 @@ export default function Agents() {
                 </h2>
                 {/* Role is the type, and the only one: the `runtime`
                     tag that used to sit here is deleted. An agent may
-                    genuinely have no role, and "no role" is the honest
-                    label for that. */}
-                {a.role
-                  ? <Tag hue={catFor(`role:${a.role}`)}>{a.role}</Tag>
-                  : <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>no role</span>}
+                    genuinely have no role, and an absence is rendered as
+                    NOTHING, the same rule the latitude chip above follows: a
+                    "no role" label is a mark for a thing that is not there,
+                    and it reads as a value the agent was given. */}
+                {a.role && <Tag hue={catFor(`role:${a.role}`)}>{a.role}</Tag>}
               </Row>
             );
             const body = (

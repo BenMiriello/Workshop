@@ -401,3 +401,33 @@ export function ticketTargetFromHref(href?: string | null): TicketTarget | null 
 
 /** The ref string for a ticket id, in the one managed format. */
 export const ticketRef = (id: string): string => `workshop:ticket/${id}`;
+
+// ---- how a branch is written in a list --------------------------------------
+
+/**
+ * A branch id abbreviated for a table cell.
+ *
+ * A supervised run names its branch after the ticket it is working, so the
+ * branch is a 32-character hex id: unreadable, unrecognisable, and wide enough
+ * to take the widest column on `/changes`. An opaque id abbreviates like a sha
+ * does; a branch someone NAMED (`feat/thing`) is words and stays whole.
+ */
+export function shortBranch(slug?: string | null): string {
+  const s = slug || "";
+  return /^[0-9a-f]{32}$/i.test(s) ? s.slice(0, 7) : s;
+}
+
+/**
+ * The ticket this change's BRANCH names, or null.
+ *
+ * Only when the branch slug is itself one of the change's ticket ids. A change
+ * can carry tickets its branch is not named after, and linking an abbreviated
+ * branch id to some other ticket would put a wrong destination under a correct
+ * label. Null means "render it as text", never "guess".
+ */
+export function branchTicketId(
+  c: Pick<Change, "branch_slug" | "ticket_ids">,
+): string | null {
+  const ids = c.ticket_ids ?? [];
+  return c.branch_slug && ids.includes(c.branch_slug) ? c.branch_slug : null;
+}

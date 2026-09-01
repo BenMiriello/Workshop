@@ -39,6 +39,7 @@ export function PalettePicker({
       {GROUPS.map((g) => {
         const items = PALETTE_META.filter((p) => p.group === g.id);
         if (!items.length) return null;
+        const chosen = items.find((p) => p.id === value);
         return (
           <div key={g.id} className="ws-palette-group">
             <div className="ws-palette-group__label">{g.label}</div>
@@ -47,6 +48,12 @@ export function PalettePicker({
                 <PaletteTile key={p.id} p={p} mode={mode} selected={p.id === value} onChange={onChange} />
               ))}
             </div>
+            {/* THE BLURB DESCRIBES ONE SCHEME, so it sits under the row that
+                holds that scheme. It used to be passed in as the field's hint,
+                which put it below the whole picker: an Expressive scheme's
+                description captioned the Quiet row. The picker knows which tile
+                is selected, so it is the thing that can place the sentence. */}
+            {chosen && <p className="ws-palette-group__blurb">{chosen.blurb}</p>}
           </div>
         );
       })}

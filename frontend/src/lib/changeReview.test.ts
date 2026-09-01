@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DIFF_LINE_CAP,
+  branchTicketId,
   changeStatusKind,
   changeStatusLabel,
   changesUnavailable,
@@ -14,6 +15,7 @@ import {
   isDeletedFile,
   isOpenChange,
   riskSignals,
+  shortBranch,
   sizeBand,
   startsExpanded,
   ticketRef,
@@ -254,5 +256,23 @@ describe("status vocabulary", () => {
     expect(fileStatusLabel("D")).toBe("deleted");
     expect(isDeletedFile("D")).toBe(true);
     expect(isDeletedFile("M")).toBe(false);
+  });
+});
+
+describe("how a branch is written in a list", () => {
+  const HEX = "bc81b563abe14333be4e8626dc8182bd";
+
+  it("abbreviates an opaque branch id and leaves a named branch whole", () => {
+    expect(shortBranch(HEX)).toBe("bc81b56");
+    expect(shortBranch("feat/client-state-consolidation")).toBe("feat/client-state-consolidation");
+    expect(shortBranch(null)).toBe("");
+    expect(shortBranch("")).toBe("");
+  });
+
+  it("links a branch only to the ticket the branch is actually named after", () => {
+    expect(branchTicketId({ branch_slug: HEX, ticket_ids: [HEX] })).toBe(HEX);
+    expect(branchTicketId({ branch_slug: HEX, ticket_ids: ["other-id"] })).toBe(null);
+    expect(branchTicketId({ branch_slug: HEX, ticket_ids: [] })).toBe(null);
+    expect(branchTicketId({ branch_slug: HEX })).toBe(null);
   });
 });

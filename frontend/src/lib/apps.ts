@@ -18,7 +18,9 @@ function fetchAppList(): Promise<AppRecord[]> {
   if (!listPromise) {
     listPromise = fetch("/api/apps")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status} ${r.statusText}`))))
-      .then((d: { apps?: AppRecord[] }) => d.apps ?? [])
+      // AppCollection, named rather than re-described: this one list backs every
+      // per-app tab, so an envelope rename here empties all seven at once.
+      .then((d: components["schemas"]["AppCollection"]) => d.apps ?? [])
       .catch((e) => {
         listPromise = null;
         throw e;

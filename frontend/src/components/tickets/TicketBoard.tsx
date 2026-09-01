@@ -25,6 +25,7 @@ import {
 } from "../../lib/ticketFilters";
 import { TagStrip, TicketKey, TicketMeta } from "./bits";
 import type { components } from "../../api/schema.gen";
+import { rowTotal } from "../../lib/pageTotal";
 
 type LaneState = {
   rows: Task[];
@@ -56,7 +57,8 @@ function Lane({
       // since 7e4aacbf. Reading the pre-rename `tasks` / `total` here left every
       // lane permanently empty; see the note on `TasksResp` in pages/Tickets.tsx.
       const j: components["schemas"]["Page_Task_"] = await r.json();
-      setState({ rows: (j.items ?? []) as Task[], total: j.page?.total ?? 0, loading: false, err: null });
+      const rows = (j.items ?? []) as Task[];
+      setState({ rows, total: rowTotal(j.page?.total, rows.length), loading: false, err: null });
     } catch (e) {
       setState((s) => ({
         ...s, loading: false, err: e instanceof Error ? e.message : String(e),

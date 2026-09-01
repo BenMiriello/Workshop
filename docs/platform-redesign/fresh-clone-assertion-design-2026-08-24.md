@@ -1,17 +1,26 @@
 # `scripts/check_fresh_clone.sh`: the executable definition of "app separation is done"
 
-**Status: design, PARTLY BUILT 2026-08-27.** `scripts/check_fresh_clone.sh`
-exists and is wired into `reviewer.sh`. Implemented: assertion 1 (no app
-source), assertion 4 (no hardcoded identity, `--all` so docs are in scope, via
-the `--tree` option this document asks for in section 4.2, which was added at
-the same time), plus one assertion this document does not have -- a maintained
-list of personal-data path patterns that must be absent, which is what caught
-the five tracked screenshots, the yard recording and the committed ticket
-directory. NOT implemented: assertions 2 and 3, the build and the boot; they
-print as NOT IMPLEMENTED on every run rather than being pinned as expected
-failures, because an unwritten check is a different claim from a failing one.
-The pin mechanism in section 5 is therefore also unbuilt. Everything below is
-the original 2026-08-24 design text.
+**Status: design, BUILT 2026-09-01.** `scripts/check_fresh_clone.sh` implements
+all five assertions and is wired into `reviewer.sh`. Assertions 1 and 4 plus the
+personal-data path list landed 2026-08-27; assertions 2 and 3 -- the build and
+the boot, the half that actually runs the thing -- landed 2026-09-01 along with
+the section 5 pin mechanism (`scripts/fresh_clone_baseline.json`) and the
+`--list-content` addition to `check_no_app_names.py` that lets the build
+assertion delete exactly what the existing classifier calls app source.
+
+BEING BUILT IS NOT BEING GREEN, and that is the point. Measured 2026-09-01:
+assertion 2 fails in BOTH halves (20x TS2307 in `frontend/src/apps/registry.tsx`
+plus 5 knock-on errors; `ImportError: cannot import name 'location' from
+'services'` on the backend), assertion 3 is BLOCKED behind it, and assertions 1
+and 4 still fail at 106 and 3. Assertion 3's own machinery is proven by
+`--harness-selftest`, which builds and boots the same clone with its app source
+left in place and passes in 45s. Two departures from the text below, both
+recorded rather than quietly adopted: the build assertion measures the frontend
+and backend halves INDEPENDENTLY instead of stopping at the first (they fail for
+unrelated reasons and only one of them is visible to any other gate), and an
+assertion that cannot be measured in the environment exits **3**, not 0, because
+"does not know" must not be reachable from a caller that only tests for zero.
+Everything below is the original 2026-08-24 design text.
 
 Specifies the command named in
 [`app-separation-why-it-recurs-2026-08-24.md`](app-separation-why-it-recurs-2026-08-24.md)

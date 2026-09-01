@@ -3220,6 +3220,12 @@ p.chat-workpanel__note { margin: 0; }
 .ws-claim__body { margin: 0; white-space: pre-wrap; }
 .ws-claim__note { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
 .ws-changes__filters { margin-bottom: var(--space-4); }
+/* Two cells on /changes that must not break mid-phrase. The status cell held
+   "ready to review" and wrapped it onto two lines, which made the row taller
+   than every other row for no information. The branch cell is an id plus
+   "into <base>": one atom. */
+.ws-changes__status,
+.ws-changes__branch { white-space: nowrap; }
 
 /* ---- The directory takeover ----------------------------------------------
    navigation-shell-2026-08-20.md section 3.4, built for Memory (section 8.1:
