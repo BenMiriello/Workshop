@@ -61,7 +61,23 @@ those claims and his experience of the app disagree. Baseline image kept at
     operator    34
     chat        29
 
-**Two thirds of open work was decided by an agent, not asked for by a person.**
+**CORRECTION, 2026-09-01, and it is the operator's.** He read this and said he
+did not file these tickets, "maybe one or two." He is right, and the split above
+does not mean what it says. Checked: the 34 marked `operator` are 12 filed by an
+AGENT in the last two days writing up his complaints (`ref: None`, all created
+2026-09-01) and 22 batch audit imports (`work-ui`, `security-audit-2026-07-18*`).
+The mechanism is worse than a mislabel: `tasks.py:776` returns `operator` for any
+missing or malformed source, `tasks.py:2129` defaults the API path to `operator`,
+and `scripts/project_tasks.py:326` defaults the CLI path to `agent`. So the same
+ticket gets a different provenance depending on which door it came through, and
+`operator` doubles as the value for "nobody recorded anything" — there is no
+`unknown` in `SOURCE_KINDS`.
+
+**This strengthens the section rather than weakening it.** The claim is not that
+an agent decided two thirds of the work; it is that **there is no trustworthy
+record of what the operator asked for anywhere in this system**, and the one
+field that purports to hold it turns out to be a default value. A filter built on
+it would have been a lie with a UI on it. Being fixed before it is surfaced.
 Every ticket is `assignee: operator`, every one has `attempts: 0`, and not one
 of the 195 has anything in its `acceptance` field. The field exists on the
 schema. It is null on every ticket in the store.
