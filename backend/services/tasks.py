@@ -367,13 +367,25 @@ def _require_store_root(root: Path) -> Path:
     Refusing is therefore always right, and it names the bad root instead of
     silently materialising it."""
     p = Path(root)
-    if not p.is_absolute():
-        raise ValueError(
-            f"a task store root must be an absolute path, got {str(p)!r}. "
-            "Resolve it through services.task_scope.root_for_context (or the "
-            "project/agent registry) rather than passing a bare id or a path "
-            "relative to the current directory.")
-    return p
+    if p.is_absolute():
+        return p
+    # A RELATIVE PATH THAT ALREADY EXISTS IS A REAL DIRECTORY, so resolve it.
+    #
+    # The first version of this guard refused every relative root, and that broke
+    # the documented shell interface (`project_tasks.py <verb> .`), which is how
+    # the operator and every agent edit task state. `.` is not the failure this
+    # exists to stop: the junk directories were named after TICKET IDS, which by
+    # definition do not exist on disk, and `mkdir` inside `_locked` is what
+    # created them. So the test is existence, not absoluteness -- a path that is
+    # already a directory is resolved, and a name that is not is refused before
+    # anything can materialise it.
+    if p.is_dir():
+        return p.resolve()
+    raise ValueError(
+        f"a task store root must be an existing directory, got {str(p)!r}. "
+        "Resolve it through services.task_scope.root_for_context (or the "
+        "project/agent registry) rather than passing a bare id or a path "
+        "relative to the current directory.")
 
 
 @contextmanager
