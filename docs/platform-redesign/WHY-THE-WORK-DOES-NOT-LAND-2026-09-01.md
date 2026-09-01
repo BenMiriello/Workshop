@@ -439,6 +439,40 @@ quietly fixing.
 
 ---
 
+## 6.2 The first real query found the loudest complaint, and it is not in this document
+
+The repetition capability shipped this afternoon. The first substantive query
+against it returned, ahead of everything else:
+
+    16 occasions, 25 messages
+      "the chat message ordering is still fucked up! i just sent that last
+       message and it still shows unread even though it shows ABOVE your ..."
+
+    3 occasions
+      "when I send a message to a new chat, my message shows at the very bottom
+       of the chat area at first, and then after some change or some event ..."
+
+**Sixteen occasions.** The app-landing complaint — the one this whole session
+treated as the most-repeated thing in the record, the one four separate audits
+named, the one three rounds of work went into — has **three**.
+
+So the loudest signal in the corpus was never the one being worked on. Not
+because anyone ignored it, but because **nobody had ever counted**, and without
+counting, "most repeated" was a thing agents inferred from whichever complaint
+was most recent or most vividly worded. A ranked search cannot produce this
+number: six restatements are six passages competing for one slot, and the
+per-source cap suppresses them by design.
+
+This is §1 restated with a sharper edge. It is not only that the operator's asks
+were not durable — it is that **the system could not tell us which ask he had
+made most often**, so the prioritisation every session performed was guesswork
+wearing the clothes of judgement. The capability that fixes it took an afternoon
+and paid for itself in one query.
+
+Dispatched the moment it surfaced.
+
+---
+
 ## 7. Instance versus baseline product, and where it belongs
 
 The operator asked that this distinction be stated and remembered in the right
