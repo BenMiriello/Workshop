@@ -317,6 +317,31 @@ agent having read everything. The one genuinely new fact — that the agent is a
 *child process* of the backend, which is WHY the deferral exists — belongs in
 that procedure doc, and has been added there rather than here.
 
+### And the retrieval measured, because "hard to find" is testable
+
+The operator asked whether this is being fixed. It is, and here is the defect,
+measured rather than asserted. `semantic_index.search`, owner pinned:
+
+    "how do I restart the backend"
+      -> chat, chat, chat, then doc | docs/applying-changes.md   AT RANK 4
+
+    "why is the backend restart deferred"
+      -> chat, chat, chat, doc | docs/platform-redesign/continuation-2026-07-31.md
+         applying-changes.md DOES NOT APPEAR
+
+**Three conversations *discussing* the procedure outrank the document that *is*
+the procedure**, and on the second query the authoritative doc loses to a
+five-week-old design note. Search is not broken — it returns the right file. It
+ranks it fourth, behind chatter, because **authority is not a ranking signal and
+staleness is not a penalty.** In a tree with 153 design docs, many explicitly
+superseded, that is how a retired model gets rediscovered as if it were current.
+
+Being fixed: authority and recency become ranking signals, superseded and
+HISTORICAL docs get demoted or labelled rather than returned as current, and —
+the cheaper half, because retrieval only helps an agent that thinks to search —
+the tooling names the relevant doc at the moment it refuses, so
+`restart_backend.sh` declining says why and where that is written down.
+
 **A document that is not found is not documentation.** That is the same finding
 as §3 (mechanisms built and never used), §6 (`.runtime/tools.json` empty) and
 §6.1 (an hour of archaeology over an index that already existed). Four instances,
