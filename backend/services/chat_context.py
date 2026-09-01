@@ -528,12 +528,6 @@ DELEGATION_RULE = (
     "subagent reports into THIS reply, not a later one, so \"I will report back "
     "when it is done\" is never true of a subagent. Launch it, carry on or wait, "
     "and answer with its result when it lands.\n\n"
-    "FOR WORK THAT SHOULD OUTLIVE THIS TURN ENTIRELY -- something to start now "
-    "and have reported into the chat as a LATER turn, so the operator gets an "
-    "answer from you immediately -- use the spawn_background tool if it is "
-    "available. That is a different thing from a background subagent: it is its "
-    "own durable process, it survives a restart, and it comes back as its own "
-    "turn. A subagent, background or not, ends with this reply.\n\n"
     "USE ONE WHEN the work is a bounded read or check whose intermediate output "
     "would crowd out the conversation: searching a large tree, reading many files "
     "to answer one question, digesting logs or a long document, running a "
@@ -548,24 +542,62 @@ DELEGATION_RULE = (
     "survives the turn). A subagent is context isolation for THIS reply; a Ticket "
     "or a Workshop agent is durability. Size is not the test.\n\n"
     "NEVER file a ticket merely to get an isolated context, and never delegate "
-    "work whose result you will not check.\n\n"
+    "work whose result you will not check."
+)
+
+
+# WAITING, WATCHING AND BEING WOKEN. Held apart from the rule above because it
+# names Bash, Monitor and ToolSearch, and a narrow data chat is granted NONE of
+# them: its whole toolset is the Agent tool, web fetch and the read-only
+# platform tools. Appending this to every tools-active chat told the root chat
+# and every data chat that they had four capabilities they could not call.
+# Measured 2026-09-01 by generating the real preamble for the narrow provider
+# and diffing it against that provider's own computed allowlist. This is the
+# told-but-absent class, which is the most expensive kind of prompt error here:
+# the model spends a turn reaching for a tool that was never there.
+# THE DURABLE-WORK PARAGRAPH, stated only where the tool exists.
+#
+# It used to sit in DELEGATION_RULE reading "use the spawn_background tool if it
+# is available", and every chat got it. A hedge is the worst of both: it spends
+# the tokens of naming a capability and still makes the reader find out whether
+# it is real. The grant is computable here, so the sentence is either true for
+# this chat or absent from it. Operator, 2026-09-01: "just tell it it's
+# available if it's available. If not, then don't tell it it's available."
+_BACKGROUND_RULE = (
+    "FOR WORK THAT SHOULD OUTLIVE THIS TURN ENTIRELY -- something to start now "
+    "and have reported into the chat as a LATER turn, so the operator gets an "
+    "answer from you immediately -- use the spawn_background tool. That is a "
+    "different thing from a background subagent: it is its own durable process, "
+    "it survives a restart, and it comes back as its own turn. A subagent, "
+    "background or not, ends with this reply."
+)
+
+
+_WAITING_RULE = (
     "WAITING, WATCHING AND BEING WOKEN. You do not have to block a turn on a "
     "slow thing, and you must never promise to come back later in a reply that "
     "is about to end. Pick by what you are waiting for: ONE outcome (a build, a "
     "deploy, a long command) is Bash with run_in_background true, which "
     "re-invokes you when it exits, so do NOT poll or sleep for it; ONE EVENT PER "
-    "OCCURRENCE (a log line, a file change, a queue moving) is the Monitor tool; "
-    "a prompt at a wall-clock time is CronCreate, which is SESSION-ONLY and dies "
-    "with this session, so anything that must genuinely outlive it is a Ticket "
-    "or the Workshop's own scheduler instead. Most of these are DEFERRED tools: "
-    "only their names are in your prompt, and ToolSearch fetches a schema on "
-    "demand (`select:Monitor,CronCreate`). Fetch the one you need when you need "
-    "it rather than up front; a search with no filter lists what this session "
-    "actually has."
+    "OCCURRENCE (a log line, a file change, a queue moving) is the Monitor tool. "
+    "Most of these are DEFERRED tools: only their names are in your prompt, and "
+    "ToolSearch fetches a schema on demand (`select:Monitor`). Fetch the one you "
+    "need when you need it rather than up front; a search with no filter lists "
+    "what this session actually has.\n\n"
+    "THERE IS NO TIMER THAT OUTLIVES A TURN. A turn's process is retired when "
+    "the turn ends, so an in-session scheduler (CronCreate) loses its jobs at "
+    "that moment: it cannot wake you in ten minutes, because nothing of this "
+    "turn is left in ten minutes. Anything that must fire later is a Ticket, a "
+    "Workshop agent with a trigger, or spawn_background, all of which are their "
+    "own processes and survive. Do not tell the operator you will check back "
+    "unless you are using one of those.\n\n"
+    "WHAT TIME IS IT is not in this prompt beyond the date. If a decision "
+    "depends on the clock, read it (`date`) rather than assuming."
 )
 
 
-def delegation_block(tools_active: bool) -> str:
+def delegation_block(tools_active: bool, is_build: bool = False,
+                     background: bool = False) -> str:
     """The subagent rule plus the named delegates this instance can call.
 
     Named subagents come from the same registry the Agents page reads
@@ -598,7 +630,9 @@ def delegation_block(tools_active: bool) -> str:
         "\n\nNo named subagents are installed; the general-purpose worker is the "
         "only delegate."
     )
-    return DELEGATION_RULE + named
+    tail = ("\n\n" + _BACKGROUND_RULE) if background else ""
+    tail += ("\n\n" + _WAITING_RULE) if is_build else ""
+    return DELEGATION_RULE + named + tail
 
 
 # Platform-wide reply style. The operator's standing rule: no em-dashes and no
@@ -661,6 +695,19 @@ def platform_kernel() -> str:
     return PLATFORM_KERNEL
 
 
+def _grants_background(provider: "ContextProvider") -> bool:
+    """Does this chat actually have `spawn_background`?
+
+    Computed from the same allowlist the CLI is launched with, so the prompt and
+    the grant cannot disagree. Any failure answers False: not mentioning a tool
+    that exists costs a search, while promising one that does not costs a turn.
+    """
+    try:
+        return any("spawn_background" in t for t in effective_allowed_tools(provider))
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------- role preamble
 
 
@@ -670,6 +717,7 @@ def role_preamble(
     tool_summary: str = "",
     cwd: str | None = None,
     is_build: bool = False,
+    background: bool = False,
 ) -> str:
     """Platform-owned layer-1 system facts, generated from the ACTUAL run config
     (tools_active is computed in routes/chat.py from the same branch that decides
@@ -740,7 +788,7 @@ def role_preamble(
         # Stated here, with the rest of what this session can actually do, so the
         # rule and the granted tool are computed from the same tools_active flag
         # and cannot disagree.
-        + "\n\n" + delegation_block(True)
+        + "\n\n" + delegation_block(True, is_build, background)
         + "\n\n" + UI_CARD_PROTOCOL
         + "\n\n" + _STYLE_RULE
     )
@@ -1422,7 +1470,12 @@ def orientation_manifest(provider: "ContextProvider") -> str:
     active, since it points at tools the chat would not otherwise have."""
     try:
         from services import orientation
-        return orientation.manifest_text(provider.knowledge_scope())
+        # Only claim the background tool when this chat is actually granted it.
+        try:
+            bg = any("spawn_background" in t for t in effective_allowed_tools(provider))
+        except Exception:
+            bg = False
+        return orientation.manifest_text(provider.knowledge_scope(), background=bg)
     except Exception:
         return ""
 
@@ -2576,6 +2629,10 @@ def instruction_contract(provider: ContextProvider, *, enable_chat_tools: bool) 
             tool_summary=tool_summary,
             cwd=(str(provider.dir) if is_build else None),
             is_build=is_build,
+            # Off this chat's REAL grant, so the durable-work paragraph is
+            # stated where the tool exists and absent where it does not. It
+            # used to be unconditional and hedged with "if it is available".
+            background=_grants_background(provider),
         )
         + "\n\n"
         + provider.persona()

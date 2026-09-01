@@ -38,9 +38,13 @@ def _scope_line(scope_key: str | None) -> str:
     return f"This chat's scope is {key}."
 
 
-def manifest_text(scope_key: str | None = None) -> str:
+def manifest_text(scope_key: str | None = None, *, background: bool = True) -> str:
     """The orientation block. `scope_key` is the chat's knowledge scope
-    ("workshop", "development", "project:<slug>", "app:<name>", "agent:<id>")."""
+    ("workshop", "development", "project:<slug>", "app:<name>", "agent:<id>").
+
+    `background` says whether this chat is actually granted `spawn_background`.
+    A narrow data chat is not, and naming a tool it cannot call is the
+    told-but-absent error this manifest exists to prevent, not commit."""
     return (
         "=== WHERE THINGS ARE (orientation; reach by tool, don't grep) ===\n"
         + _scope_line(scope_key) + "\n"
@@ -65,9 +69,13 @@ def manifest_text(scope_key: str | None = None) -> str:
         # provides it -- so a caller who wanted out-of-band work read a refusal
         # instead of a redirect. This manifest exists so nothing has to
         # rediscover where a capability lives; the capability was missing from it.
-        "- Work that should outlive this turn and come back as a LATER turn: "
-        "`spawn_background`. A subagent (the Agent tool) belongs to THIS turn "
-        "instead, foreground or background, and the turn stays open until it "
-        "reports.\n"
+        + ("- Work that should outlive this turn and come back as a LATER turn: "
+           "`spawn_background`. A subagent (the Agent tool) belongs to THIS turn "
+           "instead, foreground or background, and the turn stays open until it "
+           "reports.\n" if background else
+           "- A subagent (the Agent tool) belongs to THIS turn, foreground or "
+           "background, and the turn stays open until it reports. Nothing here "
+           "outlives the turn.\n")
+        +
         "- `where_is` restates this map any time you need it."
     )
