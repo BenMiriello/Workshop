@@ -101,8 +101,31 @@ SEARCH_TOOL_SCHEMA = {
             "type": "integer",
             "description": "How many passages to return. Default 6, max 20.",
         },
+        "since": {
+            "type": "string",
+            "description": (
+                "Only consider material from this point on. A relative window "
+                "like '30d', '2w', '3m', or a date like '2026-08-01'. Use it "
+                "for 'lately' or 'recently' questions; leave it off to search "
+                "the whole record."
+            ),
+        },
+        "repeats": {
+            "type": "boolean",
+            "description": (
+                "Count instead of rank. Returns the things the operator said "
+                "MORE THAN ONCE in past chats, grouped, each with how many "
+                "separate occasions it was said on, when it was first and last "
+                "said, and every message it was said in. Ordinary search "
+                "cannot answer this: six restatements of one thing are six "
+                "passages competing for one slot. Use it for 'what has come up "
+                "repeatedly', 'what keeps getting raised', 'what did the "
+                "operator say again'. `query` is optional here and narrows to "
+                "a topic; with no query you get the whole list."
+            ),
+        },
     },
-    "required": ["query"],
+    "required": [],
     "additionalProperties": False,
 }
 
@@ -349,10 +372,12 @@ def _run_search(args: dict) -> str:
     from services import semantic_index
 
     query = (args.get("query") or "").strip()
-    if not query:
+    want_repeats = bool(args.get("repeats"))
+    if not query and not want_repeats:
         return "error: a query is required"
     kinds = args.get("kinds") or list(semantic_index.DEFAULT_KINDS)
     limit = max(1, min(int(args.get("limit") or 6), 20))
+    since = (args.get("since") or "").strip()
 
     # The default candidate set is what THIS chat's scope can reach, not
     # everything: a workshop chat searches every project and app but not
@@ -373,9 +398,17 @@ def _run_search(args: dict) -> str:
     # The `share` field (Phase 5) needs it: a `private` item is found only from
     # inside its own scope, and "which scope am I" is not recoverable from a set
     # of scopes I am allowed to see.
+    from_scope = _caller_scope_key(caller_raw)
+
+    # COUNTING IS A DIFFERENT OPERATION FROM RANKING, and it rides the same
+    # tool rather than a second one: a caller who wants "what came up
+    # repeatedly" should not have to know it is a different subsystem.
+    if want_repeats:
+        return _render_repeats(query, since, limit, scopes, from_scope)
+
     result = semantic_index.search(query, limit=limit, kinds=tuple(kinds),
-                                   scope=scopes,
-                                   from_scope=_caller_scope_key(caller_raw))
+                                   scope=scopes, since=since,
+                                   from_scope=from_scope)
     hits, mode, rebuilding = result["hits"], result["mode"], result["rebuilding"]
     # What the scope and `share` filters actually left in play, NOT the index
     # total. A tool that reports the total overstates its own coverage: on
@@ -428,6 +461,59 @@ def _run_search(args: dict) -> str:
         out.append(f"--- [{h['score']:.2f}] {h['kind']}: {h['title']} ({where}{scope}"
                    + (f" · {stamp}" if stamp else "") + flag + ")")
         out.append(h["text"])
+        out.append("")
+    return "\n".join(out)
+
+
+def _render_repeats(query: str, since: str, limit: int,
+                    scopes: set | None, from_scope: str) -> str:
+    """What was said more than once, rendered for a model to read.
+
+    Every number here is a count over the transcript -- occasions, totals,
+    threads, dates. None of it is a judgment about what a repetition means;
+    that reading is the reader's to make, and the provenance is carried so the
+    reader can make it from the messages themselves rather than from this
+    summary."""
+    from services import repetition
+
+    result = repetition.repeats(query=query or None, since=since or None,
+                                limit=limit, scope=scopes)
+    rows = result["repeats"]
+    window = f" since {result['since']}" if result["since"] else ""
+    if result.get("rebuilding") and not rows:
+        return ("The repetition store is still being built from the chat log; "
+                "nothing to report from it yet. Ordinary search still works.")
+    if not rows:
+        topic = f" about that{window}" if query else window
+        return (f"Nothing was said more than once{topic} "
+                f"({result['considered']} messages considered).")
+
+    note = ("\n(the store is catching up with the newest messages)"
+            if result.get("rebuilding") else "")
+    head = (f"{len(rows)} of {result['repeat_total']} repeated statement(s)"
+            f"{window}, most-repeated first "
+            f"[{result['considered']} messages considered]{note}")
+    out = [head, ""]
+    for r in rows:
+        first, last = (r["first_ts"] or "")[:10], (r["last_ts"] or "")[:10]
+        span = f"{first} to {last}" if first != last else first
+        out.append(f"--- said {r['total']}x on {r['occasions']} occasion(s) "
+                   f"across {r['threads']} chat(s), {span}")
+        out.append(r["text"])
+        # Every occurrence, so the reader can go read them rather than take
+        # this count on trust.
+        out.append("  occurrences:")
+        for p in r["provenance"]:
+            out.append(f"  - {(p['ts'] or '')[:16]}  {p['ref']}  ({p['title']})")
+        # The cross-source half: the same thing already written down elsewhere.
+        # Without it, "said six times" cannot be told apart from "said six
+        # times and filed as a ticket after the second".
+        ech = repetition.echoes(r["text"], scope=scopes, from_scope=from_scope)
+        if ech:
+            out.append("  also written down as:")
+            for e in ech:
+                flag = " · SUPERSEDED, historical" if e["status"] == "superseded" else ""
+                out.append(f"  - {e['kind']}: {e['title']} ({e['ref']}){flag}")
         out.append("")
     return "\n".join(out)
 

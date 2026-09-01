@@ -59,7 +59,21 @@ def manifest_text(scope_key: str | None = None, *, background: bool = True,
         "upload, and don't assume where it lives.\n"
         "- Past decisions, notes, docs, and prior chats: `search` finds them by "
         "meaning. An empty result means there is genuinely no prior art, not that "
-        "the search failed.\n"
+        "the search failed. Narrow it to a window with `since` ('30d', '2w', a "
+        "date) when the question is about lately rather than ever.\n"
+        # COUNTING, WHICH RANKING CANNOT DO. A thing said six times is six
+        # ordinary passages competing for one result slot, and the per-source
+        # cap actively suppresses the repetition -- so an agent that only ever
+        # ranks will read a standing complaint as a passing remark. This line
+        # is unconditional because it rides on `search`, which every chat has.
+        "- What has been said MORE THAN ONCE: `search` with `repeats: true` "
+        "counts instead of ranking. It returns the operator's own repeated "
+        "statements, each with how many separate occasions it was said on, when "
+        "it was first and last said, every message it was said in, and where the "
+        "same thing is already written down as a doc, note or ticket. Use it "
+        "before treating something as newly raised, and whenever the question is "
+        "what keeps coming up. It reports counts and dates; what a repetition "
+        "means is yours to judge from the messages it cites.\n"
         "- What is going on now (open tickets, running and recent runs, the note "
         "titles in scope): `query`.\n"
         "- When you cite a doc, note or ticket, write it as a managed link "

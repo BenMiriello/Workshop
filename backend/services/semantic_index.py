@@ -890,6 +890,13 @@ def _stat_fingerprint(root: Path, pattern: str) -> str:
     return h.hexdigest()
 
 
+def stat_fingerprint(root: Path, pattern: str) -> str:
+    """Public seam for `_stat_fingerprint`, so another store over the same
+    files can share one definition of "this tree changed" instead of guessing
+    at a second one that drifts."""
+    return _stat_fingerprint(root, pattern)
+
+
 def _doc_fingerprint() -> str:
     return _stat_fingerprint(paths.workshop_root() / "docs", "*.md")
 
@@ -1066,6 +1073,15 @@ def _maintenance_pass() -> None:
     res = rebuild_if_stale()
     if res is not None:
         log.info("semantic index rebuilt: %s", res)
+    # The repetition store rides this timer rather than starting a second loop.
+    # It reads the same chat log off the same stat fingerprint, so a pass that
+    # found the log unchanged has already proved this store fresh too, and one
+    # that rebuilt the index is exactly when this one is stale.
+    try:
+        from services import repetition
+        repetition.maintenance_pass()
+    except Exception:
+        log.warning("repetition maintenance pass failed", exc_info=True)
 
 
 def _background_rebuild_if_stale() -> bool:
@@ -1302,6 +1318,39 @@ def _resolve_chunk_scope(kind: str, raw_scope: str) -> str:
         return raw_scope
 
 
+_SINCE_RELATIVE = re.compile(r"^\s*(\d+)\s*([dwmy])\s*$", re.I)
+
+
+def parse_since(value: str | None) -> str:
+    """A `since` window to an ISO date. Accepts `30d`, `2w`, `3m`, `1y`, or a
+    plain `YYYY-MM-DD`.
+
+    Anything unreadable returns "", meaning NO lower bound. A malformed date
+    should widen the answer, never silently empty it: a filter that fails
+    closed turns a typo into "the workshop has never written about this",
+    which is the one wrong answer this corpus must not give."""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    m = _SINCE_RELATIVE.match(raw)
+    if m:
+        days = int(m.group(1)) * {"d": 1, "w": 7, "m": 30, "y": 365}[m.group(2).lower()]
+        import datetime as _dt
+        return (_dt.datetime.now(_dt.timezone.utc)
+                - _dt.timedelta(days=days)).date().isoformat()
+    if re.match(r"^\d{4}-\d{2}-\d{2}", raw):
+        return raw[:10]
+    return ""
+
+
+def resolve_chunk_scope(kind: str, raw_scope: str) -> str:
+    """Public seam for `_resolve_chunk_scope`. A chat's stored `context_key` is
+    not a `scope_tree` key, and anything that filters chat rows by reach has to
+    apply the same translation this module does -- reimplementing it is how two
+    filters drift into disagreeing about what a scope contains."""
+    return _resolve_chunk_scope(kind, raw_scope)
+
+
 def _scope_set(scope: str | tuple | list | set | frozenset | None) -> set[str] | None:
     """Normalise the `scope=` argument to a set, or None for "no filter".
     `search()` takes a set of allowed scopes; a bare string is still accepted
@@ -1386,6 +1435,7 @@ def search(query: str, *, limit: int = 8,
            kinds: tuple[str, ...] | list[str] | None = None,
            scope: str | tuple | list | set | frozenset | None = None,
            from_scope: str | None = None,
+           since: str | None = None,
            min_score: float = MIN_SCORE) -> dict:
     """Ranked passages for a query, hybrid: vector when the embedder answers,
     BM25 lexical always available so a search degrades instead of raising.
@@ -1433,6 +1483,18 @@ def search(query: str, *, limit: int = 8,
 
     scopes = _scope_set(scope)
     mask = _keep_mask(meta, kinds, scopes, from_scope)
+
+    # RECENCY IS A FILTER, NEVER A RANKING TERM. The retrieval design is
+    # explicit that ranking is cosine plus the supersession penalty and nothing
+    # else, and that is right: a scoring bonus for newness would quietly bury
+    # the decision that settled a question under the most recent chatter about
+    # it. A caller asking "lately" is narrowing the corpus, which is a
+    # different act, and it is stated in `searched` like every other filter.
+    floor_day = parse_since(since)
+    if floor_day:
+        recent = np.array([(m.get("ts") or "")[:10] >= floor_day for m in meta])
+        mask = mask & recent
+
     searched = int(mask.sum())
     if not searched:
         return {"hits": [], "mode": "semantic", "rebuilding": rebuilding,
