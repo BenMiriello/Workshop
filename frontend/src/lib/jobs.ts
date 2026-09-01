@@ -92,6 +92,25 @@ export function runOutcome(
   return { label: (status || "unknown").replace(/_/g, " "), kind: jobStatusKind(status) };
 }
 
+/** What a sweep worked ("3 done", "3 done, 1 failed"), or null when it worked
+ *  nothing.
+ *
+ *  ZERO IS NOT PRINTED, and that is frontend/CLAUDE.md's "a constant is not a
+ *  signal" rather than a shortcut. Measured 2026-09-01: 66 of the 100 most
+ *  recent runs carry `0 done, 0 failed`, so printing it would add the same four
+ *  characters to two thirds of every runs list and tell the reader nothing. A
+ *  sweep that actually moved tickets is the exception, so it is what gets said.
+ *  A run's own PAGE still states the zero, because there one record is the
+ *  subject and "it did nothing" is the answer to the question being asked. */
+export function sweepCounts(job: Pick<Job, "tasks_done" | "tasks_failed">): string | null {
+  const done = typeof job.tasks_done === "number" ? job.tasks_done : 0;
+  const failed = typeof job.tasks_failed === "number" ? job.tasks_failed : 0;
+  const bits: string[] = [];
+  if (done) bits.push(`${done} done`);
+  if (failed) bits.push(`${failed} failed`);
+  return bits.length ? bits.join(", ") : null;
+}
+
 /** When the rolling window next lets a run in, in the reader's own clock.
  *
  *  The SENTENCE is composed on the server (one wording, one set of numbers);

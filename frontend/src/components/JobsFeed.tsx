@@ -1,11 +1,10 @@
 import { useCallback, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { formatDuration, timeAgo, shortHttpError, Button, Card, Row, Stack, Skeleton, StateBlock, StatusDot, Segmented, agencyFor, type SegmentedOption } from "@workshop/ui";
-import { Link } from "react-router-dom";
-import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronRight, ChevronDown } from "lucide-react";
+import { shortHttpError, Button, Card, Row, Stack, Skeleton, StateBlock, Segmented, type SegmentedOption } from "@workshop/ui";
+import { RefreshCw, ChevronRight, ChevronDown } from "lucide-react";
 
-import { type Job, jobStatusKind as statusKind, runHref } from "../lib/jobs";
-import { runTicketScope, ticketHref } from "../lib/tasks";
+import { type Job } from "../lib/jobs";
+import { RunRow } from "./runs/RunRow";
 import { queryKeys } from "../lib/queryKeys";
 import type { components } from "../api/schema.gen";
 
@@ -14,9 +13,9 @@ import type { components } from "../api/schema.gen";
 // (services.jobs). Interactive chat turns are NOT Jobs and never appear here.
 //
 // Extracted from the Jobs page so both the /jobs route (thin wrapper) and the
-// Work page's Runs tab render the same feed. `hideHeader` drops the page-level
-// PageHeader (the Work tab supplies its own) and moves Refresh inline with the
-// filter.
+// Runs page render the same feed. The ROW is extracted one level further, into
+// components/runs/RunRow.tsx, because the per-app Runs tab lists the same
+// record and had drawn its own weaker copy of it.
 
 // GET /api/jobs answers Page[Job], NAMED from the generated client rather than
 // re-described here. The hand-written copy this replaces was already the second
@@ -35,65 +34,6 @@ const FILTERS: SegmentedOption<StatusFilter>[] = [
   { value: "done", label: "Done" },
   { value: "failed", label: "Failed" },
 ];
-
-// The row's own link takes the row's ink and no underline, the way every other
-// whole-row link in the kit does (`.ws-listrow`, `.ws-runrow`, `.ws-ticketrow`):
-// the row shape is the affordance. Only the secondary links in the meta line
-// read as links. This is two declarations rather than a kit class because
-// `.ws-listrow` carried them while the link WAS the row.
-const ROW_LINK = { color: "inherit", textDecoration: "none" } as const;
-
-// Relative time for the meta line, matching the ticket list: no suffix, the
-// row's position already reads as relative. lib/time is the one formatter.
-const ago = (iso?: string | null): string => timeAgo(iso, { suffix: false });
-
-const duration = (job: Job): string => formatDuration(job.started_at, job.ended_at);
-
-// Icon + human name for the job's binding. Prefers the enriched agent_name over
-// the raw UUID; the ticket title (job.title) carries the primary label.
-function bindingLabel(job: Job): { icon: JSX.Element; text: string } {
-  // Prefer the joined "where/who/from" subtitle (scope + chat) when present.
-  if (job.context_label) {
-    const icon = job.project_slug ? <FolderGit2 aria-hidden /> : job.chat_id ? <MessageSquare aria-hidden /> : <Bot aria-hidden />;
-    return { icon, text: job.context_label };
-  }
-  if (job.project_slug) return { icon: <FolderGit2 aria-hidden />, text: job.project_slug };
-  if (job.agent_id) return { icon: <Bot aria-hidden />, text: job.agent_name || job.agent_id };
-  if (job.chat_id) return { icon: <MessageSquare aria-hidden />, text: job.chat_title || job.chat_id };
-  return { icon: <Bot aria-hidden />, text: "unbound" };
-}
-
-// The two links a row already has the data for and used to throw away: the
-// ticket this run is working (`task_id`) and the chat that launched it
-// (`chat_context_key` + `chat_id`, which only picked an icon before).
-//
-// They are secondary: the row's own target is the run, so they render in the
-// meta line as siblings of the row's title link. Nesting them inside it would
-// be an <a> inside an <a>, which the browser silently unpicks. `ws-muted` is
-// what keeps them the meta line's own ink: an <a> with no class takes the
-// browser's link colour, and a link is underlined, never tinted.
-function crossLinks(job: Job): JSX.Element[] {
-  const out: JSX.Element[] = [];
-  if (job.task_id) {
-    out.push(
-      <Link key="ticket" className="ws-muted" to={ticketHref(runTicketScope(job), job.task_id)}>
-        Ticket
-      </Link>,
-    );
-  }
-  if (job.chat_context_key && job.chat_id) {
-    out.push(
-      <Link
-        key="chat"
-        className="ws-muted"
-        to={`/chat/${encodeURIComponent(job.chat_context_key)}?thread=${encodeURIComponent(job.chat_id)}`}
-      >
-        Chat
-      </Link>,
-    );
-  }
-  return out;
-}
 
 // Always embedded, never a page of its own. `hideHeader` used to gate a
 // PageHeader branch that nothing could reach: the Runs tab is the only caller
@@ -217,77 +157,20 @@ export default function JobsFeed() {
     }
     const topLevel = jobs.filter((j) => !(j.parent_id && parentIds.has(j.parent_id)));
 
-    const childRow = (child: Job) => (
-      <li
-        key={child.id}
-        className="ws-listrow"
-        data-agency={agencyFor(child.trigger) ?? undefined}
-      >
-        <span
-          className="ws-listrow__mark"
-          title={child.status ?? "unknown"}
-          aria-label={child.status ?? "unknown"}
-        >
-          <StatusDot status={statusKind(child.status)}>{null}</StatusDot>
-        </span>
-        <Link className="ws-listrow__title" style={ROW_LINK} to={runHref(child.id)}>
-          {child.title || child.task_text || child.id}
-        </Link>
-        <span className="ws-listrow__meta">
-          {crossLinks(child)}
-          <span className="ws-listrow__time">{ago(child.started_at)}</span>
-        </span>
-      </li>
-    );
-
     body = (
       <Card pad0>
         <ul className="ws-list">
           {topLevel.map((job) => {
-            const bind = bindingLabel(job);
-            const dur = duration(job);
             const kids = childrenByParent.get(job.id);
             const isOpen = expanded.has(job.id);
             return (
               <li key={job.id}>
-                {/* One row per run, the same shape the ticket list uses. This
-                    was a card with four bands and three chips: a StatusPill, an
-                    AgencyChip repeating the trigger the AgencyDot already
-                    marked, and a child-runs button. Provenance is still here,
-                    as the trigger WORD in the meta line: it is a fact you read,
-                    not one you scan a list for.
-
-                    The row grid is the <div>, not the link. The link used to BE
-                    the row, and that left nowhere to put the ticket and chat
-                    links: an <a> cannot hold another one. The title is the run's
-                    link now, and as a grid item it is blockified, so it still
-                    fills the row's whole title column. */}
-                <div
-                  className="ws-listrow"
-                  data-agency={agencyFor(job.trigger) ?? undefined}
-                >
-                  <span
-                    className="ws-listrow__mark"
-                    title={job.status ?? "unknown"}
-                    aria-label={job.status ?? "unknown"}
-                  >
-                    <StatusDot status={statusKind(job.status)}>{null}</StatusDot>
-                  </span>
-                  <Link className="ws-listrow__title" style={ROW_LINK} to={runHref(job.id)}>
-                    {job.title || bind.text}
-                  </Link>
-                  <span className="ws-listrow__meta">
-                    {(job.trigger_label || job.trigger) && (
-                      <span>{job.trigger_label || job.trigger}</span>
-                    )}
-                    {(job.project_slug || job.agent_name) && (
-                      <span>{job.project_slug || job.agent_name}</span>
-                    )}
-                    {dur && <span>{dur}</span>}
-                    {crossLinks(job)}
-                    <span className="ws-listrow__time">{ago(job.started_at)}</span>
-                  </span>
-                </div>
+                {/* One row per run, the same shape the ticket list uses, and
+                    the SAME component the per-app Runs tab draws
+                    (components/runs/RunRow.tsx). This used to be a copy of that
+                    row written out here, and the copies diverged: the app tab's
+                    read four of the record's fields and this one read nine. */}
+                <RunRow job={job} />
                 {kids && (
                   <>
                     <Button
@@ -301,7 +184,9 @@ export default function JobsFeed() {
                     </Button>
                     {isOpen && (
                       <ul className="ws-list ws-list__children">
-                        {kids.map((child) => childRow(child))}
+                        {kids.map((child) => (
+                          <li key={child.id}><RunRow job={child} /></li>
+                        ))}
                       </ul>
                     )}
                   </>

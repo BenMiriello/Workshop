@@ -1,12 +1,23 @@
 // The Runs tab: this app's job history, through its linked project
 // (services/apps.py runs_for_app -- `jobs.read(project_slug=...)`, empty
 // when unlinked). GET /api/apps/{id}/runs.
+//
+// THE ROW IS THE PLATFORM'S RUN ROW, not a second drawing of it. This tab used
+// to render a Card per run carrying a StatusPill, the RAW `trigger` enum, the
+// absolute start time and the server-composed title, and nothing else. Measured
+// 2026-09-01 on the app with 50 runs: every row read "done manual Sweep <app>",
+// one distinct string over 50 records, while `trigger_label` ("Run now"),
+// `ended_at` (a duration), `tasks_done` and `tasks_failed` sat unread in the
+// same objects. The global feed had read them all along, from its own copy of
+// the row. There is one copy now (components/runs/RunRow.tsx) and both surfaces
+// draw it.
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { PlayCircle, Clock } from "lucide-react";
-import { Card, Row, SectionLabel, Stack, StatusPill, Tag, timeAbsolute } from "@workshop/ui";
-import { jobStatusKind, runHref, type Job } from "../../../lib/jobs";
+import { PlayCircle } from "lucide-react";
+import { Card, SectionLabel } from "@workshop/ui";
+import type { Job } from "../../../lib/jobs";
 import type { AppRecord } from "../../../lib/apps";
+import { RunRow } from "../../../components/runs/RunRow";
 import { AppTabPage, CollectionBody } from "./AppTabShell";
 import { unlinkedReason } from "./appTabState";
 import { queryKeys } from "../../../lib/queryKeys";
@@ -35,27 +46,17 @@ function RunsBody({ app }: { app: AppRecord }) {
         emptyHint={unlinkedReason("runs", app.project_slug, 0) ?? "Bounded executions for this app (cron ticks, event reactions, loops) appear here."}
         overflowHint={<>Browse the full history on <Link className="ws-link" to="/runs">Runs</Link>.</>}
         render={(rows) => (
-          <Stack>
-            {rows.map((j) => (
-              <Link key={j.id} to={runHref(j.id)} style={{ textDecoration: "none", color: "inherit" }}>
-                <Card interactive style={{ padding: "var(--space-3)" }}>
-                  <Row between wrap>
-                    <Row>
-                      <StatusPill status={jobStatusKind(j.status)}>{j.status || "unknown"}</StatusPill>
-                      {j.trigger && <Tag hue="slate">{j.trigger}</Tag>}
-                    </Row>
-                    {j.started_at && (
-                      <span className="ws-card__meta">
-                        <Clock size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
-                        {timeAbsolute(j.started_at)}
-                      </span>
-                    )}
-                  </Row>
-                  {j.title && <p style={{ marginTop: "var(--space-2)" }}>{j.title}</p>}
-                </Card>
-              </Link>
-            ))}
-          </Stack>
+          <Card pad0>
+            <ul className="ws-list">
+              {rows.map((j) => (
+                // `hideBinding`: every run on this tab belongs to this app, so
+                // the project slug is the same word on every row. A constant is
+                // not a signal (frontend/CLAUDE.md), and the header already
+                // names the app.
+                <li key={j.id}><RunRow job={j} hideBinding /></li>
+              ))}
+            </ul>
+          </Card>
         )}
       />
     </section>
