@@ -402,7 +402,10 @@ unset _APPS_CORE _APPS_FORBIDDEN _APPS_RELEVANT _apf
 # ONLY WHEN PYTHON CHANGED. It is the slowest check here by an order of
 # magnitude, and a frontend-only diff cannot move it.
 BACKEND_TESTS_CHECK="skipped"
-if [[ -n "$PY_FILES" ]]; then
+# NOT WHEN WE ARE ALREADY INSIDE A SUITE RUN. tests/test_change_gates.py executes
+# a real reviewer.sh, so without this the suite runs the reviewer runs the suite.
+# check_backend_tests.py sets this for its pytest subprocess; see its own note.
+if [[ -n "$PY_FILES" && -z "${WORKSHOP_BACKEND_TESTS_RUNNING:-}" ]]; then
   if [[ -f "$WORKSHOP/scripts/check_backend_tests.py" && -f "$WORKSHOP/scripts/backend_tests_baseline.json" ]]; then
     if python3 "$WORKSHOP/scripts/check_backend_tests.py" --quiet >/dev/null 2>&1; then
       BACKEND_TESTS_CHECK="ok"

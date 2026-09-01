@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -66,9 +67,23 @@ def run_suite(timeout: int) -> tuple[set[str], set[str], int, str]:
     py = BACKEND / ".venv" / "bin" / "python3"
     if not py.exists():
         raise FileNotFoundError(py)
+    # REENTRY SENTINEL, and it is not optional.
+    #
+    # `tests/test_change_gates.py` executes a REAL `reviewer.sh` (deliberately:
+    # its whole point is that the gate's output is checked against a real run).
+    # Wiring this check into reviewer.sh therefore closed a loop -- reviewer runs
+    # the suite, the suite runs reviewer, that reviewer runs the suite -- and the
+    # suite went from finishing in 198s to not finishing at all. Caught the same
+    # day it was introduced, by the same "run it to the hang and read the last
+    # test it started" method that found the previous one.
+    #
+    # The nested reviewer sees this variable and skips its backend-tests block,
+    # so recursion stops at depth one and that test still exercises everything
+    # else the gate does.
+    env = dict(os.environ, WORKSHOP_BACKEND_TESTS_RUNNING="1")
     proc = subprocess.run(
         [str(py), "-m", "pytest", "tests/", "-q", "-p", "no:cacheprovider"],
-        cwd=BACKEND, capture_output=True, text=True, timeout=timeout,
+        cwd=BACKEND, capture_output=True, text=True, timeout=timeout, env=env,
     )
     out = proc.stdout + proc.stderr
     failed, errored = set(), set()
