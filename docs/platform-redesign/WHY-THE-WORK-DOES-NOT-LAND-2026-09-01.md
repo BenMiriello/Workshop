@@ -326,8 +326,15 @@ measured rather than asserted. `semantic_index.search`, owner pinned:
       -> chat, chat, chat, then doc | docs/applying-changes.md   AT RANK 4
 
     "why is the backend restart deferred"
-      -> chat, chat, chat, doc | docs/platform-redesign/continuation-2026-07-31.md
-         applying-changes.md DOES NOT APPEAR
+      -> chat first; applying-changes.md second
+
+**Correction, from the agent that fixed it.** My first reading of the second
+query said the doc "does not appear at all". That was an artifact of a background
+index rebuild in flight when I measured, not a ranking fact — at rest the doc's
+best passage was already the second-highest raw score in the whole corpus and
+only lost the top slot. The first query's result was exactly as reported. Left
+here rather than quietly edited, because measuring a moving index and reporting
+the number as settled is the same class of error as the rest of this document.
 
 **Three conversations *discussing* the procedure outrank the document that *is*
 the procedure**, and on the second query the authoritative doc loses to a
