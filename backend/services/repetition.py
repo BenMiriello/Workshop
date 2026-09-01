@@ -135,6 +135,16 @@ def _meta_path():
     return _index_dir() / "repetition.json"
 
 
+def _model_tag() -> str:
+    """Which embedder produced the stored vectors. Read live rather than
+    cached: the provider is what decides, and asking it is cheap."""
+    try:
+        from services import embeddings
+        return f"{embeddings.provider_name()}:{embeddings.provider_dim()}"
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _fingerprint() -> str:
     """Identity of the chat log as it is on disk right now.
 
@@ -210,6 +220,11 @@ def _load() -> tuple[list[dict], np.ndarray, str]:
     if len(rows) != len(vecs):
         # A half-written pair is not partially usable; rebuild.
         return [], np.zeros((0, 0), dtype=np.float32), ""
+    # VECTORS FROM A DIFFERENT EMBEDDING MODEL ARE NOT COMPARABLE, and mixing
+    # two models' vectors in one matrix produces cosines that mean nothing
+    # while looking perfectly healthy. A model change discards the store.
+    if blob.get("model") and blob.get("model") != _model_tag():
+        return [], np.zeros((0, 0), dtype=np.float32), ""
     return rows, vecs, blob.get("fingerprint") or ""
 
 
@@ -221,7 +236,8 @@ def _save(rows: list[dict], vecs: np.ndarray, fingerprint: str) -> None:
     # silently produces `<name>.tmp.npy` and the rename below finds nothing.
     with open(tmp_v, "wb") as fh:
         np.save(fh, vecs)
-    tmp_m.write_text(json.dumps({"fingerprint": fingerprint, "rows": rows}),
+    tmp_m.write_text(json.dumps({"fingerprint": fingerprint,
+                                 "model": _model_tag(), "rows": rows}),
                      "utf-8")
     # Vectors first: a reader that sees the new meta must never find old
     # vectors under it, and `_load` rejects a length mismatch either way.
@@ -229,26 +245,83 @@ def _save(rows: list[dict], vecs: np.ndarray, fingerprint: str) -> None:
     tmp_m.replace(_meta_path())
 
 
+def _key(row: dict) -> str:
+    """What identifies a message's vector. A logged message is immutable, so
+    its ref is enough -- but the text is hashed in anyway, because a ref that
+    silently changed meaning would otherwise keep a vector describing text that
+    is no longer there."""
+    import hashlib
+    h = hashlib.sha1(row["text"][:EMBED_CHARS].encode("utf-8", "replace"))
+    return f"{row['ref']}\0{h.hexdigest()}"
+
+
 def build(force: bool = False) -> dict:
-    """Embed every collected message and persist. Blocks; ~60s cold on this
-    corpus, which is why nothing on a request path calls it directly."""
+    """Bring the store up to date and persist.
+
+    INCREMENTAL, and that is not an optimisation. This rides the retrieval
+    index's 300-second maintenance timer, and the chat log changes almost every
+    time anyone uses the system, so a full pass would mean re-embedding the
+    entire corpus every five minutes forever -- about a minute of every core on
+    the machine the operator is actually working on. Messages are immutable
+    once logged, so all but the newest few are already embedded; only what is
+    genuinely new costs anything.
+    """
     with _lock:
         fp = _fingerprint()
-        rows, vecs, have = _load()
-        if not force and rows and have == fp:
-            return {"messages": len(rows), "rebuilt": False}
+        old_rows, old_vecs, have = _load()
+        if not force and old_rows and have == fp:
+            return {"messages": len(old_rows), "rebuilt": False, "embedded": 0}
+
         rows = collect()
         if not rows:
             _save([], np.zeros((0, 384), dtype=np.float32), fp)
-            return {"messages": 0, "rebuilt": True}
-        from services import embeddings
-        vecs = np.asarray(
-            embeddings.embed_documents([r["text"][:EMBED_CHARS] for r in rows]),
-            dtype=np.float32)
-        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
-        vecs = vecs / np.where(norms == 0, 1.0, norms)
+            return {"messages": 0, "rebuilt": True, "embedded": 0}
+
+        known: dict[str, int] = {}
+        if len(old_rows) == len(old_vecs):
+            known = {_key(r): i for i, r in enumerate(old_rows)}
+
+        reuse = [known.get(_key(r)) for r in rows]
+        todo = [i for i, hit in enumerate(reuse) if hit is None]
+
+        dim = int(old_vecs.shape[1]) if len(old_vecs) else 384
+        fresh: np.ndarray | None = None
+        if todo:
+            from services import embeddings
+            fresh = np.asarray(
+                embeddings.embed_documents(
+                    [rows[i]["text"][:EMBED_CHARS] for i in todo]),
+                dtype=np.float32)
+            norms = np.linalg.norm(fresh, axis=1, keepdims=True)
+            fresh = fresh / np.where(norms == 0, 1.0, norms)
+            dim = int(fresh.shape[1])
+
+        # A DIMENSION MISMATCH MEANS THE OLD VECTORS ARE NOT REUSABLE. The
+        # model tag in `_load` normally catches a model change first, but it
+        # cannot when the embedder was unreachable at load time and the tag
+        # came back empty. Re-embedding everything is the correct, boring
+        # answer; crashing the maintenance thread on a broadcast error is not.
+        if len(old_vecs) and int(old_vecs.shape[1]) != dim:
+            log.info("embedding width changed (%s -> %s); re-embedding in full",
+                     old_vecs.shape[1], dim)
+            todo, reuse = list(range(len(rows))), [None] * len(rows)
+            from services import embeddings
+            fresh = np.asarray(
+                embeddings.embed_documents(
+                    [r["text"][:EMBED_CHARS] for r in rows]), dtype=np.float32)
+            norms = np.linalg.norm(fresh, axis=1, keepdims=True)
+            fresh = fresh / np.where(norms == 0, 1.0, norms)
+            dim = int(fresh.shape[1])
+
+        vecs = np.zeros((len(rows), dim), dtype=np.float32)
+        for slot, i in enumerate(todo):
+            vecs[i] = fresh[slot]
+        for i, hit in enumerate(reuse):
+            if hit is not None:
+                vecs[i] = old_vecs[hit]
+
         _save(rows, vecs, fp)
-        return {"messages": len(rows), "rebuilt": True}
+        return {"messages": len(rows), "rebuilt": True, "embedded": len(todo)}
 
 
 def is_stale() -> bool:
