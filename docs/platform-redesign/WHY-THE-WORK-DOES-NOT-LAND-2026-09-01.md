@@ -32,6 +32,25 @@ as an artifact anywhere in it.**
 
 Everything below is a mechanism for that sentence.
 
+### 0.1 What he actually opens to
+
+Screenshotted today against the built origin, `/apps/development`. It redirects
+to a chat list, which is complaint `7d8d733a`. But the thing worth recording is
+not the layout, it is the CONTENT of the rows. Each row previews its last
+message, and those messages read, in order down the page:
+
+> "Both done. Summary: ..."
+> "Everything is already in sync. The bundle is built and served."
+> "Done. Ticket `bcbd6d14` is marked done and changes are live."
+> "Both done, both on the built origin."
+> "Done. All four are committed and on the origin."
+
+**The landing page of the app he is trying to build is a scrolling wall of an
+agent telling him it finished.** That is the artifact this system produces most
+reliably, it is the first thing he sees every morning, and §4 and §5 explain why
+those claims and his experience of the app disagree. Baseline image kept at
+`scratch/baseline_apps_development.png`.
+
 ---
 
 ## 1. The operator's queue is not represented anywhere
