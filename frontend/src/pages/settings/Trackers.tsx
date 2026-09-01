@@ -133,6 +133,18 @@ export default function Trackers() {
   const conn = data?.connection;
   const connected = !!conn?.provider;
 
+  // WHY CONNECT CANNOT BE PRESSED, in words, or null when it can. One value
+  // drives both the `disabled` flag and the sentence under the button, so the
+  // control and its explanation cannot disagree: a greyed button with no reason
+  // beside it is a dead end, and the reason drifting from the condition is how
+  // it becomes a wrong one.
+  const connectBlocker =
+    !target.trim()
+      ? "A repo is required. Type owner/repo above."
+      : credSource === "pat" && !token.trim()
+        ? "A token is required for this credential source."
+        : null;
+
   return (
     <div>
       <PageHeader title="Trackers" />
@@ -161,33 +173,51 @@ export default function Trackers() {
                     One external ticket service at a time. Scopes point at their own
                     targets inside it.
                   </span>
-                  <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
-                    <Field label="Provider" inline>
+                  {/* A FIXED TWO-COLUMN GRID, not a wrapping row.
+                      This was one `Row wrap` with `alignItems: flex-end`
+                      holding six inline fields. Only Repo carries a help line,
+                      so Repo is taller than its siblings, and in a wrapping
+                      flex-end row a taller item both misaligns its neighbours
+                      and forces the break at whatever point it happens to
+                      reach: on a desktop Provider and Scope sat on line one,
+                      Repo was flung to the right on a half line ABOVE them, and
+                      Mode and Credential landed on line two. A grid gives every
+                      field the same cell whatever it contains.
+
+                      Each explanation now sits on the field it explains. The
+                      mode sentence and the credential sentence used to float
+                      under the whole row, describing controls three positions
+                      away. */}
+                  <div className="ws-trackers__form">
+                    <Field label="Provider">
                       <Select value={provider} onChange={(e) => setProvider(e.target.value)}>
                         {data.providers_built.map((p) => (
                           <option key={p} value={p}>{p}</option>
                         ))}
                       </Select>
                     </Field>
-                    <Field label="Scope" inline>
+                    <Field label="Scope">
                       <Select value={scope} onChange={(e) => setScope(e.target.value)}>
                         {(scopes.length ? scopes : ["workshop"]).map((s) => (
                           <option key={s} value={s}>{scopeLabel(s)}</option>
                         ))}
                       </Select>
                     </Field>
-                    <Field label="Repo" inline help="owner/repo. Chosen, never guessed.">
+                    <Field label="Repo" required help="owner/repo. Chosen, never guessed.">
                       <Input value={target} placeholder="owner/workshop-tickets"
                              onChange={(e) => setTarget(e.target.value)} />
                     </Field>
-                    <Field label="Mode" inline>
+                    <Field label="Mode" help={MODE_HELP[mode]}>
                       <Select value={mode} onChange={(e) => setMode(e.target.value)}>
                         {data.modes.filter((m) => m !== "off").map((m) => (
                           <option key={m} value={m}>{m}</option>
                         ))}
                       </Select>
                     </Field>
-                    <Field label="Credential" inline>
+                    <Field
+                      label="Credential"
+                      help={data.credential_sources.find((s) => s.source === credSource)?.detail}
+                    >
                       <Select value={credSource} onChange={(e) => setCredSource(e.target.value)}>
                         {data.credential_sources.map((s) => (
                           <option key={s.source} value={s.source}>
@@ -197,15 +227,20 @@ export default function Trackers() {
                       </Select>
                     </Field>
                     {credSource === "pat" && (
-                      <Field label="Token" inline help="Stored write only. It is never shown again.">
+                      <Field label="Token" required help="Stored write only. It is never shown again.">
                         <Input type="password" value={token} placeholder="ghp_..."
                                autoComplete="off"
                                onChange={(e) => setToken(e.target.value)} />
                       </Field>
                     )}
+                    {/* THE REQUIREMENT IS ON THE BUTTON'S OWN FIELD. Connect
+                        was greyed with nothing anywhere saying why, so the only
+                        way to learn that a repo is required was to type one. A
+                        disabled control has to carry the sentence that
+                        un-disables it. */}
+                    <Field className="ws-trackers__form-actions" help={connectBlocker}>
                     <Button size="sm" variant="primary" loading={busy === "connect"}
-                            disabled={!target.trim() || busy === "connect"
-                                      || (credSource === "pat" && !token.trim())}
+                            disabled={!!connectBlocker || busy === "connect"}
                             onClick={async () => {
                               // The token has to be stored BEFORE connect, because
                               // connect proves the credential works by using it.
@@ -222,13 +257,8 @@ export default function Trackers() {
                             }}>
                       Connect
                     </Button>
-                  </Row>
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                    {MODE_HELP[mode]}
-                  </span>
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                    {data.credential_sources.find((s) => s.source === credSource)?.detail}
-                  </span>
+                    </Field>
+                  </div>
                 </Stack>
               ) : (
                 <Stack gap="sm">

@@ -3220,6 +3220,25 @@ p.chat-workpanel__note { margin: 0; }
 .ws-claim__body { margin: 0; white-space: pre-wrap; }
 .ws-claim__note { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
 .ws-changes__filters { margin-bottom: var(--space-4); }
+
+/* The tracker connect form. A FIXED GRID, because the shape it replaces was a
+   wrapping flex row: six fields of which exactly one carried a help line, so
+   that one was taller, `align-items: flex-end` misaligned its neighbours
+   against it, and the wrap broke wherever the widths happened to land. On a
+   desktop that put Repo on its own half-line to the right and ABOVE the two
+   fields before it. Every cell is the same width here whatever it holds. */
+.ws-trackers__form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+/* The actions span the form and sit under it, with the sentence saying what is
+   still missing. */
+.ws-trackers__form-actions { grid-column: 1 / -1; align-items: start; }
+@media (max-width: 640px) {
+  .ws-trackers__form { grid-template-columns: 1fr; gap: var(--space-3); }
+}
 /* An app's name in the Settings > Apps index, with its glyph beside it. */
 .ws-installed-app {
   display: inline-flex; align-items: center; gap: var(--space-2);
