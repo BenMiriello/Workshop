@@ -38,6 +38,11 @@ from __future__ import annotations
 
 import logging
 import os
+from urllib.parse import quote
+
+import httpx
+
+from services import installation
 
 log = logging.getLogger(__name__)
 
@@ -99,8 +104,6 @@ def configured() -> bool:
     and it is what the tool grant and the prompt layers are computed from -- a
     chat is told it can reach the operator only where that is true.
     """
-    from services import installation
-
     return bool(_token() and installation.operator_dm_target())
 
 
@@ -139,29 +142,21 @@ def origin() -> str:
     return ""
 
 
-def chat_link(thread_id: str) -> str:
+def chat_link(thread_id: str, context_key: str) -> str:
     """A deep link to the conversation that sent the notification, or empty.
 
-    Empty rather than approximate. The route needs the thread's own context key
-    as well as its id, so a link built from a guess at the key lands the operator
-    in a different conversation than the one that had something to say -- worse
-    than sending no link, because it looks like it worked.
+    BOTH parts are required and neither is guessed. The route addresses a chat by
+    its context key AND its thread id, and this module is handed them rather than
+    looking them up: a link built from a guess at the key lands the operator in a
+    different conversation than the one that had something to say, which is worse
+    than sending no link because it looks like it worked. Empty whenever either
+    part, or the installation's own address, is missing.
     """
     base = origin()
-    if not base or not thread_id:
+    key = (context_key or "").strip()
+    if not base or not thread_id or not key:
         return ""
-    try:
-        from urllib.parse import quote
-
-        from services import chat_log
-
-        meta = chat_log.read_meta(thread_id) or {}
-        key = (meta.get("context_key") or "").strip()
-        if not key:
-            return ""
-        return f"{base}/chat/{quote(key, safe='')}?thread={quote(thread_id, safe='')}"
-    except Exception:  # noqa: BLE001 - a missing link never costs the message
-        return ""
+    return f"{base}/chat/{quote(key, safe='')}?thread={quote(thread_id, safe='')}"
 
 
 def compose(text: str, *, link: str = "") -> str:
@@ -190,13 +185,9 @@ def send(text: str, *, link: str = "") -> dict:
     if not _token():
         return {"ok": False, "error": "this installation has no messaging credential configured"}
 
-    from services import installation
-
     target = installation.operator_dm_target()
     if not target:
         return {"ok": False, "error": "this installation has not declared how to reach the operator"}
-
-    import httpx
 
     try:
         with httpx.Client(timeout=10.0) as client:

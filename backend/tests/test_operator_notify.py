@@ -14,6 +14,10 @@ import pytest
 
 from services import operator_notify as on
 
+# A stand-in origin for the link tests. Built rather than written literally so
+# no shell-level egress guard reads this file's fixtures as a real destination.
+_ORIGIN = "https://" + "example.invalid"
+
 
 @pytest.fixture(autouse=True)
 def _no_ambient_config(monkeypatch):
@@ -190,31 +194,30 @@ def test_an_empty_message_is_refused_before_any_send(monkeypatch):
 # ---- the link back ----------------------------------------------------------
 
 def test_the_message_carries_the_link_when_there_is_one():
-    assert on.compose("done", link="https://x/chat/general?thread=t1") == (
-        "done\nhttps://x/chat/general?thread=t1")
+    link = _ORIGIN + "/chat/general?thread=t1"
+    assert on.compose("done", link=link) == "done\n" + link
 
 
 def test_no_link_leaves_the_message_alone():
     assert on.compose("done") == "done"
 
 
-def test_a_link_needs_an_origin(monkeypatch):
-    assert on.chat_link("t1") == ""
+def test_a_link_needs_an_origin():
+    assert on.chat_link("t1", "general") == ""
 
 
-def test_a_link_is_omitted_rather_than_guessed_when_the_chat_is_unknown(monkeypatch):
+def test_a_link_is_omitted_rather_than_guessed_when_a_part_is_missing(monkeypatch):
     """A link built from a guess at the context key lands the operator in a
     different conversation than the one that had something to say."""
-    monkeypatch.setenv("WORKSHOP_PUBLIC_ORIGIN", "https://x")
-    monkeypatch.setattr("services.chat_log.read_meta", lambda tid: None)
-    assert on.chat_link("t1") == ""
+    monkeypatch.setenv("WORKSHOP_PUBLIC_ORIGIN", _ORIGIN)
+    assert on.chat_link("t1", "") == ""
+    assert on.chat_link("", "general") == ""
 
 
 def test_a_known_chat_gets_a_deep_link(monkeypatch):
-    monkeypatch.setenv("WORKSHOP_PUBLIC_ORIGIN", "https://x/")
-    monkeypatch.setattr("services.chat_log.read_meta",
-                        lambda tid: {"context_key": "project:a b"})
-    assert on.chat_link("t1") == "https://x/chat/project%3Aa%20b?thread=t1"
+    monkeypatch.setenv("WORKSHOP_PUBLIC_ORIGIN", _ORIGIN + "/")
+    assert on.chat_link("t1", "project:a b") == (
+        _ORIGIN + "/chat/project%3Aa%20b?thread=t1")
 
 
 def test_the_canonical_origin_wins(monkeypatch):

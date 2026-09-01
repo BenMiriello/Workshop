@@ -36,6 +36,12 @@ import json
 import os
 import sys
 
+# Module scope, unlike this file's other service imports. Those are local to
+# keep a per-turn subprocess's startup cheap; these two are on the `tools/list`
+# path that every turn takes anyway, so deferring them buys nothing and costs
+# the backend's import graph a pair of function-local edges.
+from services import chat_log, operator_notify
+
 SERVER_NAME = "workshop"
 SERVER_VERSION = "0.1.0"
 DEFAULT_PROTOCOL = "2025-06-18"
@@ -717,7 +723,6 @@ def _can_notify() -> bool:
     this tool, and the prompt layers say so rather than hedging.
     """
     try:
-        from services import operator_notify
         return operator_notify.configured()
     except Exception as e:  # noqa: BLE001
         print(f"workshop mcp: notify availability unknown: {e}", file=sys.stderr)
@@ -893,12 +898,19 @@ def _run_notify(args: dict) -> str:
     if not thread:
         return "Cannot notify the operator: this tool is not bound to a chat."
     _pin_owner()
-    from services import operator_notify
-
     message = (args.get("message") or "").strip()
     if not message:
         return "Nothing was sent: a notification needs a message."
-    result = operator_notify.send(message, link=operator_notify.chat_link(thread))
+    # The chat's own context key, read rather than guessed: the scope this
+    # server is bound to is a knowledge scope, not the key the chat route
+    # addresses a conversation by, and a link built from the wrong one opens
+    # somebody else's conversation.
+    try:
+        context_key = ((chat_log.read_meta(thread) or {}).get("context_key") or "")
+    except Exception:  # noqa: BLE001 - a missing link never costs the message
+        context_key = ""
+    result = operator_notify.send(
+        message, link=operator_notify.chat_link(thread, context_key))
     if result.get("ok"):
         return ("Delivered to the operator, with a link back to this chat. They "
                 "may not read it immediately; do not wait on a reply unless you "

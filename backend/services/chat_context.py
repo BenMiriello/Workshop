@@ -72,6 +72,7 @@ def _tasks_export_name() -> str:
 # Sourced from llm_router so they never drift from the actual call tiers.
 from services import llm_router as _llm  # noqa: E402
 from services import tool_registry as _tool_registry  # noqa: E402
+from services import operator_notify  # noqa: E402
 from wsplatform import paths
 
 PICKABLE_MODELS: list[str] = [
@@ -815,7 +816,6 @@ def _can_reach_operator() -> bool:
     a channel.
     """
     try:
-        from services import operator_notify
         return operator_notify.configured()
     except Exception:
         return False
