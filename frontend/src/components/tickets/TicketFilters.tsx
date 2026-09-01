@@ -448,8 +448,14 @@ export function TicketFilterSheet({
   );
 }
 
-/** The Table / Board / Timeline switcher. Timeline holds its slot, disabled,
- *  so the control does not need redesigning when it lands. */
+/** The Table / Board switcher.
+ *
+ *  A THIRD, PERMANENTLY-DISABLED "Timeline" slot used to sit here, on the
+ *  reasoning that holding the space saved redesigning the control when the view
+ *  landed. It did not land, and in the meantime the page advertised a view the
+ *  system does not have and could not be told when it would. A control that can
+ *  never be pressed is not a roadmap, it is a dead affordance. Adding a third
+ *  option to a Segmented costs one line on the day it is real. */
 export function ViewSwitcher({ view, onView }: {
   view: TicketView; onView: (v: TicketView) => void;
 }) {
@@ -457,11 +463,10 @@ export function ViewSwitcher({ view, onView }: {
     <Segmented
       ariaLabel="Ticket view"
       value={view}
-      onChange={(v) => { if (v !== "timeline") onView(v as TicketView); }}
+      onChange={(v) => onView(v as TicketView)}
       options={[
         { value: "table", label: "Table" },
         { value: "board", label: "Board" },
-        { value: "timeline", label: "Timeline", disabled: true },
       ]}
       hint={undefined}
     />

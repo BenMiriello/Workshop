@@ -17,10 +17,10 @@ import {
 import { ACTIVE_STATE_TYPES } from "./ticketGroups";
 
 // ---- views -------------------------------------------------------------------
-// Timeline is in the switcher and disabled, so the control does not have to be
-// redesigned when it lands (design handoff 2026-08-14). It is deliberately NOT
-// a value this module will parse: a `?view=timeline` URL falls back to the
-// default rather than rendering a blank page.
+// Two views, and they are the two that exist. A `?view=timeline` URL still
+// falls back to the default rather than rendering a blank page, which is what
+// this parse has always done for any unknown value; the difference is that the
+// switcher no longer offers a Timeline nobody can open.
 export type TicketView = "table" | "board";
 
 export const TICKET_VIEWS: TicketView[] = ["table", "board"];
