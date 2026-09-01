@@ -175,6 +175,30 @@ def __getattr__(name):
 # for the cost of a full re-embed.
 MIN_SCORE = 0.65
 
+# ---------------------------------------------------------------- ranking
+#
+# THREE RANKING SIGNALS, ALL RANKING-ONLY. None of them touches admission: the
+# floor below is always tested against the RAW cosine, so nothing here can make
+# a passage invisible, only reorder it. That split is the whole safety property
+# of this section and every adjustment added later must preserve it.
+#
+# THE DEFECT THEY EXIST TO FIX, measured 2026-09-01 on the live 12,912-chunk
+# index. `CLAUDE.md` names one document in bold as the only current source for
+# how to apply a change. Asked "how do I restart the backend", search returned
+# three CHATS discussing the procedure above the document that IS the
+# procedure. Similarity alone cannot tell those apart: a conversation about a
+# thing and the thing itself are about equally similar to a question about it.
+# So authority and kind became signals, alongside the supersession penalty that
+# was already here.
+#
+# ALL THREE ARE SIZED AGAINST ONE MEASUREMENT: the spread between the first and
+# eighth hit of a real question on this index is 0.015 to 0.077, mean 0.038
+# (measured 2026-08-23, re-checked 2026-09-01). An adjustment BIGGER than that
+# band stops reordering near-ties and starts overriding relevance, which is the
+# failure the supersession penalty already had at 0.05 and was resized down
+# from. So every value below is a fraction of 0.038, and the ordering between
+# two documents that are NOT in each other's competitive band never changes.
+
 # How far a superseded doc drops in the RANKING (never in admission; see
 # `search`). Sized against the measured spread, not picked round.
 #
@@ -198,6 +222,80 @@ MIN_SCORE = 0.65
 #     question's answer IS the history. At 0.05 it would have fallen behind
 #     three current chunks and the question would have gone unanswered.
 _SUPERSEDED_PENALTY = 0.03
+
+# What a document's declared lifecycle is worth in the ranking. Added 2026-09-01
+# with the two positive values; `superseded` is the penalty above, restated here
+# so one table is the whole story.
+#
+#   authoritative  the installation's own agent-rules file NAMES this document
+#                  (`_authoritative_docs`). That is the strongest statement of
+#                  authority available anywhere in the tree, because it is the
+#                  operator writing down which document settles a question, and
+#                  it is the same declaration the platform already reads for the
+#                  agent's project-local rules. +0.05 is above the mean 0.038
+#                  band ON PURPOSE and it is the only value here that is: the
+#                  point is that a named source of record wins its competitive
+#                  band outright, which is exactly what "the ONLY current
+#                  source" is asking for. It still cannot promote a document
+#                  that did not score in the band at all.
+#   current        the document's own banner says it is current (`doc_status`).
+#                  Weaker, because it is the document's opinion of itself, so it
+#                  breaks ties and nothing more.
+#
+# There is deliberately no value for "accepted", "built", "shipped" or
+# "decided", which are the other words `Status:` lines in this corpus carry.
+# Those describe the state of a DECISION, not whether the document still
+# describes the system; a plan can be fully built and completely superseded.
+# Reading them as currency would be a judgment, and this module ranks on
+# declarations rather than on judgments (same line `services/repetition.py`
+# draws: counting and citing is indexing, concluding is not).
+_STATUS_ADJUST = {
+    "authoritative": +0.03,
+    "current": +0.015,
+    "": 0.0,
+    "superseded": -_SUPERSEDED_PENALTY,
+}
+
+# A BONUS ONLY ACTS INSIDE THE COMPETITIVE BAND: a passage more than this far
+# below the best hit for a query gets no bonus at all, however authoritative it
+# is. Penalties are not gated; they apply wherever they land.
+#
+# This is the difference between "authority breaks a tie" and "authority
+# overrides relevance", and the ungated version really did the second. Measured
+# 2026-09-01 with a flat +0.05 and no gate, on queries with no strong match:
+#
+#   "what does the birdnet rig do"  -> app-is-the-entity-2026-08-20.md, raw
+#      0.6529, promoted over the master spec for that subject at 0.6963
+#   "how does plaid auth work"      -> final-plan-agent-generalize..., raw
+#      0.7431, promoted over the ticket that answers it at 0.7846
+#   "what is the design system for the frontend" -> two chunks of the apply
+#      procedure, raw 0.7087/0.7062, promoted over the note that answers it
+#
+# In each case a named document with nothing to say about the question beat the
+# document that answered it, because the bonus was larger than the gap. Gated,
+# all three fall out and the right answer comes back to the top.
+#
+# 0.05 rather than the 0.038 mean spread: at 0.038 the motivating query put its
+# answer 0.0005 inside the band, which is not a margin, it is a coincidence.
+_AUTHORITY_BAND = 0.05
+
+# What KIND of answer a passage is, as a ranking signal. One distinction only.
+#
+# A chat is a record of DISCUSSING something; a doc, a note and a ticket are
+# records of deciding it, being it, or committing to it. At equal similarity the
+# authored artifact is the better answer to "how do I X", and the transcript is
+# the better answer to "did we decide X" -- but the second case is self-
+# correcting, because when the answer only exists in the transcript every
+# competing hit is also a chat and a uniform offset among them changes nothing.
+# The offset can only ever act at the boundary BETWEEN kinds, which is where the
+# measured defect was.
+#
+# Half the mean competitive band, so it breaks near-ties and cannot outweigh a
+# chat that is genuinely more relevant. There is deliberately no ordering among
+# doc, note and ticket: no measurement here distinguishes them, and inventing a
+# preference would be exactly the unmeasured judgment the paragraph above
+# refuses.
+_KIND_ADJUST = {"chat": -0.02}
 
 # At most this many chunks from one document in a single answer. Adjacent
 # chunks of a file are near-identical in embedding space, so without a cap one
@@ -441,6 +539,30 @@ _NOT_SUPERSEDED_RE = re.compile(
     r"partly|partially|section|§|supersedes\s*/|/\s*superseded\s+by\s*:",
     re.IGNORECASE,
 )
+
+# A SUPERSESSION BANNER NAMES ITS REPLACEMENT. "Superseded by" with no document
+# after it is not this document's fate being declared; it is the PHRASE being
+# defined. Both index files in this corpus were demoted by that (measured
+# 2026-09-01, and they are the two documents whose whole job is to say which
+# other document to read):
+#
+#   INDEX-docs-2026-08-26.md            "SUPERSEDED BY <path>"   (a placeholder)
+#   INDEX-redesign-docs-2026-08-26.md   "**SUPERSEDED BY x**"    (a gloss)
+#
+# Same family as the ADR-template trap above, and the general form of it: a
+# banner cites, a definition does not. Only the "...by" wording is tested this
+# way; "Status: superseded" is a complete declaration on its own and names
+# nothing by design.
+#
+# The citation must be RIGHT AFTER the "by" -- a banner reads "superseded by
+# `x.md`", so the name is the NEXT THING SAID and every real banner in this
+# corpus puts it within a few characters. Searching the rest of the block
+# instead finds any backtick anywhere in it, which is how the first version of
+# this guard still demoted both index files: one of them says "marked
+# `(judged)`" four sentences later, and it was inside a 60-character window as
+# soon as the sentence between them was shortened.
+_SUPERSESSION_TARGET_RE = re.compile(r"`[^`]+`|\[[^\]]+\]\(|[\w][\w./-]*\.md\b")
+_TARGET_WINDOW = 24
 # How far into a file a banner counts. Supersession is declared up top, next to
 # the title; a "superseded by" deep in the body is usually a sentence ABOUT some
 # other document's fate, not this one's.
@@ -454,6 +576,12 @@ _BANNER_LINES = 20
 # declares itself by containing this file, and it applies to everything beneath.
 _DIR_STATUS_FILE = ".index-status"
 
+# The only statuses a chunk may carry. A marker file with anything else in it
+# reads as "nothing declared" rather than as a status nothing knows how to rank:
+# `_STATUS_ADJUST` is keyed on these and an unknown key would be a silent
+# KeyError-shaped hole in the ranking.
+_STATUSES = ("superseded", "authoritative", "current")
+
 
 def _dir_status(d: Path, root: Path, cache: dict[Path, str]) -> str:
     """The status a directory declares over its subtree, nearest wins."""
@@ -462,7 +590,10 @@ def _dir_status(d: Path, root: Path, cache: dict[Path, str]) -> str:
     marker = d / _DIR_STATUS_FILE
     try:
         if marker.is_file():
-            val = marker.read_text().strip().lower().split()[0] if marker.read_text().strip() else ""
+            body = marker.read_text().strip()
+            val = body.lower().split()[0] if body else ""
+            if val not in _STATUSES:
+                val = ""
             cache[d] = val
             return val
     except OSError:
@@ -472,8 +603,54 @@ def _dir_status(d: Path, root: Path, cache: dict[Path, str]) -> str:
     return val
 
 
+# A `Status:` line and the first words after it. Nearly every document in this
+# corpus opens with one, and the words it carries are the document's own account
+# of whether it still describes the system. Only two vocabularies are read; the
+# rest ("design", "proposal", "plan", "research", "accepted", "built", ...) mean
+# the document declared something this module does not rank on, which is not the
+# same as declaring nothing and is treated the same way.
+_STATUS_FIELD_RE = re.compile(r"\bstatus\s*:\s*(.{0,80})", re.IGNORECASE)
+
+# Retired. Read only at the START of the status value, so "Status: research ...
+# Historical note (do not follow ...)" -- a research doc remarking that one
+# section is history -- is not read as the whole document being history.
+_RETIRED_STATUS_RE = re.compile(
+    r"^(historical|obsolete|retired|archived|deprecated|superseded)\b",
+    re.IGNORECASE,
+)
+
+# Current. Deliberately short; see `_STATUS_ADJUST` for why "accepted" and
+# "built" are not in it.
+_CURRENT_STATUS_RE = re.compile(
+    r"^(current|canonical|authoritative"
+    r"|(?:model|plan|source)\s+of\s+record)\b",
+    re.IGNORECASE,
+)
+
+# Emphasis and blockquote punctuation is stripped before the two patterns above
+# are applied, because a banner is written as `> **Status:** CURRENT` at least
+# as often as `Status: current` and the marks are decoration, not content.
+_DECORATION = str.maketrans("", "", "*_>#`")
+
+
+def _status_field(flat: str) -> str:
+    """"superseded" | "current" | "" from a flattened banner block's `Status:`
+    field. Every match in the block is considered, retired winning over current,
+    so a doc that says "Status: design. Status: superseded by X" reads as
+    retired rather than as whichever came first."""
+    plain = flat.translate(_DECORATION)
+    found = ""
+    for m in _STATUS_FIELD_RE.finditer(plain):
+        value = m.group(1).strip()
+        if _RETIRED_STATUS_RE.match(value):
+            return "superseded"
+        if _CURRENT_STATUS_RE.match(value):
+            found = "current"
+    return found
+
+
 def doc_status(body: str) -> str:
-    """"superseded" when the doc's own banner says it has been replaced, else "".
+    """What the doc's own banner declares: "superseded", "current", or "".
 
     Judged per BLOCK (a run of non-blank lines), which is the unit a banner is
     actually written in. Matching the whole header as one blob let a qualifier
@@ -489,17 +666,123 @@ def doc_status(body: str) -> str:
     its qualifier together, which is the only unit where the question has an
     answer.
     """
+    found = ""
     for block in re.split(r"\n\s*\n", "\n".join(body.splitlines()[:_BANNER_LINES])):
         flat = " ".join(block.split())
-        if _SUPERSEDED_LINE_RE.search(flat) and not _NOT_SUPERSEDED_RE.search(flat):
+        m = _SUPERSEDED_LINE_RE.search(flat)
+        if m and not _NOT_SUPERSEDED_RE.search(flat):
+            names_a_target = _SUPERSESSION_TARGET_RE.search(
+                flat[m.end():m.end() + _TARGET_WINDOW])
+            if not m.group(0).rstrip().lower().endswith("by") or names_a_target:
+                return "superseded"
+        # The `Status:` field is read second and can only ever CONFIRM a
+        # retirement the prose form missed. A block that says both is retired:
+        # a supersession banner outranks a stale currency claim, because the
+        # banner is the later edit by construction.
+        field = _status_field(flat)
+        if field == "superseded":
             return "superseded"
-    return ""
+        if field == "current":
+            found = "current"
+    return found
+
+
+# ------------------------------------------------------- declared authority
+#
+# WHICH DOCUMENT SETTLES A QUESTION IS A DECLARATION, AND THE DECLARATION ALREADY
+# EXISTS. Every checkout keeps agent-instruction files, and this one's names a
+# document in bold as the only current source for how to apply a change. That
+# sentence was already the answer to the query that motivated this; nothing read
+# it. `provider.persona()` reads the same files for the agent's project-local
+# rules, so this is not a new convention, it is a second reader of an existing
+# one.
+#
+# Rejected: a hand-kept list of authoritative paths in this module. It would be
+# a fact about one checkout living in platform source -- the thing this repo
+# forbids everywhere else -- and it would go stale the first time a doc was
+# renamed without anyone editing this file. A rules file that names a document
+# it no longer has is a broken link the operator sees; a stale list here is
+# invisible.
+#
+# Rejected: treating every markdown link in the corpus as a vote (PageRank over
+# docs). The corpus is 282 documents of which about half link each other for
+# argument rather than for authority ("supersedes X", "corrects the banner of
+# Y"), so the highest in-degree nodes measured here are the SUPERSEDED ones --
+# a doc gets cited most when it is being retired. Link-counting would invert the
+# exact ranking this is meant to fix.
+
+# Any `.md` path or bare filename, as written in prose or in a markdown link.
+_DOC_MENTION_RE = re.compile(r"[\w][\w./-]*\.md\b")
+
+
+def _rules_files() -> list[Path]:
+    """The installation's agent-instruction files: one per directory, the repo
+    root and its immediate subdirectories.
+
+    The FILENAMES are not redefined here. `chat_context._RULES_FILES` is the
+    single list of what an agent-instructions file is called and in what
+    preference order, and it is imported rather than copied so the two readers
+    cannot drift -- the same reason `stat_fingerprint` is a public seam."""
+    from services.chat_context import _RULES_FILES as names
+
+    root = paths.workshop_root()
+    try:
+        dirs = [root] + sorted(p for p in root.iterdir()
+                               if p.is_dir() and not p.name.startswith("."))
+    except OSError:
+        return []
+    out: list[Path] = []
+    for d in dirs:
+        for n in names:
+            f = d / n
+            try:
+                if f.is_file() and f.read_text(errors="ignore").strip():
+                    out.append(f)
+                    break
+            except OSError:
+                continue
+    return out
+
+
+def _authoritative_docs() -> set[str]:
+    """Repo-relative paths of the docs the agent-instruction files name.
+
+    A bare filename resolves only when exactly one document in the tree carries
+    it. An ambiguous name is dropped rather than guessed: promoting the wrong
+    one of two same-named files is worse than promoting neither, and this is a
+    ranking bonus, not a lookup -- nothing is lost by declining."""
+    root = paths.workshop_root()
+    docs_root = root / "docs"
+    try:
+        rels = {_rel(p) for p in docs_root.rglob("*.md")}
+    except OSError:
+        return set()
+    by_name: dict[str, list[str]] = {}
+    for rel in rels:
+        by_name.setdefault(Path(rel).name, []).append(rel)
+
+    found: set[str] = set()
+    for f in _rules_files():
+        try:
+            text = f.read_text(errors="ignore")
+        except OSError:
+            continue
+        for m in _DOC_MENTION_RE.finditer(text):
+            token = m.group(0)
+            if token in rels:
+                found.add(token)
+                continue
+            same = by_name.get(Path(token).name)
+            if same and len(same) == 1:
+                found.add(same[0])
+    return found
 
 
 def collect_docs() -> list[Chunk]:
     root = paths.workshop_root() / "docs"
     out: list[Chunk] = []
     dir_cache: dict[Path, str] = {}
+    named = _authoritative_docs()
     for f in sorted(root.rglob("*.md")):
         try:
             body = f.read_text()
@@ -509,6 +792,13 @@ def collect_docs() -> list[Chunk]:
         # The file's own banner wins; otherwise inherit whatever its directory
         # declares, so a historical doc SET is marked once at its root.
         status = doc_status(body) or _dir_status(f.parent, root, dir_cache)
+        # RETIREMENT BEATS BEING NAMED. An instructions file names documents for
+        # several reasons, and one of them is to say "this set is historical,
+        # do not treat it as current". A document that declares itself retired
+        # stays retired however prominently it is cited, so being named can only
+        # ever upgrade a doc that declared nothing or declared itself current.
+        if status != "superseded" and _rel(f) in named:
+            status = "authoritative"
         for c in _split(body):
             out.append(Chunk("doc", _rel(f), title, "", _iso(f), c, status))
     return out
@@ -898,7 +1188,22 @@ def stat_fingerprint(root: Path, pattern: str) -> str:
 
 
 def _doc_fingerprint() -> str:
-    return _stat_fingerprint(paths.workshop_root() / "docs", "*.md")
+    """Drift in the doc corpus, INCLUDING the agent-instruction files.
+
+    Those files are not indexed, but they decide which documents are
+    authoritative (`_authoritative_docs`), so editing one changes the ranking of
+    documents that did not themselves change. Without them in the fingerprint
+    that edit would take effect only at the next unrelated doc write, which is
+    the kind of "it did not take" that costs a session."""
+    h = hashlib.sha1()
+    h.update(_stat_fingerprint(paths.workshop_root() / "docs", "*.md").encode())
+    for f in _rules_files():
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        h.update(f"{_rel(f)}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
+    return h.hexdigest()
 
 
 _FS_FINGERPRINTERS = {"doc": _doc_fingerprint}
@@ -1484,12 +1789,21 @@ def search(query: str, *, limit: int = 8,
     scopes = _scope_set(scope)
     mask = _keep_mask(meta, kinds, scopes, from_scope)
 
-    # RECENCY IS A FILTER, NEVER A RANKING TERM. The retrieval design is
-    # explicit that ranking is cosine plus the supersession penalty and nothing
-    # else, and that is right: a scoring bonus for newness would quietly bury
-    # the decision that settled a question under the most recent chatter about
-    # it. A caller asking "lately" is narrowing the corpus, which is a
-    # different act, and it is stated in `searched` like every other filter.
+    # RECENCY IS A FILTER, NEVER A RANKING TERM, and it stayed that way when
+    # authority and kind became ranking terms on 2026-09-01. The original
+    # reason still holds and the two are not the same request: a scoring bonus
+    # for newness would quietly bury the decision that settled a question under
+    # the most recent chatter about it, and on this corpus the most recent
+    # thing said about any subject is almost always a chat message. What was
+    # actually wanted from "make recency count" is that a RETIRED document stop
+    # being returned as if current, and a document is retired when it says so
+    # or when the tree says so -- not when it is old. `docs/birdnet-accuracy.md`
+    # is one of the oldest files here and is still exactly right; a plan written
+    # last week can be dead. So staleness is read from the declaration
+    # (`doc_status`, `_dir_status`), never from the timestamp.
+    #
+    # A caller asking "lately" is narrowing the corpus, which is a different
+    # act, and it is stated in `searched` like every other filter.
     floor_day = parse_since(since)
     if floor_day:
         recent = np.array([(m.get("ts") or "")[:10] >= floor_day for m in meta])
@@ -1523,8 +1837,16 @@ def search(query: str, *, limit: int = 8,
 
     masked = np.where(mask, scores, -np.inf)
 
-    # RANK on an adjusted score, ADMIT on the real one. Two corrections, both
-    # measured against this corpus on 2026-08-22 (docs are 66% of the index):
+    # RANK on an adjusted score, ADMIT on the real one. Three corrections, all
+    # measured against this corpus (docs are 66% of the index):
+    #
+    # 0. AUTHORITY AND KIND WERE NOT SIGNALS AT ALL, so a conversation ABOUT a
+    #    procedure beat the document that IS the procedure. Measured
+    #    2026-09-01: "how do I restart the backend" returned three chats above
+    #    the one document the instructions file names as the only current
+    #    source for exactly that. Both offsets are declared and explained at
+    #    `_STATUS_ADJUST` / `_KIND_ADJUST`; both are ranking-only, like the
+    #    penalty below, so neither can hide anything.
     #
     # 1. SUPERSEDED DOCS OUTRANKED THE MODEL OF RECORD. "is an app the same
     #    thing as a project" returned docs/workshop-v1/00-overview.md first --
@@ -1547,9 +1869,27 @@ def search(query: str, *, limit: int = 8,
     #    floor, so it can only ever change which passages are shown.
     adjusted = masked.copy()
     if is_semantic:
-        sup = np.array([bool(m.get("status") == "superseded") for m in meta])
-        adjusted = np.where(sup & np.isfinite(adjusted),
-                            adjusted - _SUPERSEDED_PENALTY, adjusted)
+        # One offset per row: the document's declared lifecycle plus its kind.
+        # Computed together rather than in two passes so the total any passage
+        # can move is visible in one place, and so an authoritative doc and a
+        # superseded one can never both apply.
+        #
+        # Semantic mode ONLY. BM25 scores are unbounded and corpus-relative, so
+        # a constant sized in cosine units means nothing against them; on the
+        # fallback path the ranking stays pure lexical rather than pretending
+        # to a precision it does not have.
+        offset = np.array(
+            [_STATUS_ADJUST.get(m.get("status") or "", 0.0)
+             + _KIND_ADJUST.get(m.get("kind") or "", 0.0) for m in meta],
+            dtype=np.float64,
+        )
+        # Bonuses are gated to the competitive band, penalties are not. A
+        # demoted passage is already losing; a promoted one has to have been in
+        # contention to begin with, or the promotion is not a tie-break.
+        in_band = masked >= (float(masked.max()) - _AUTHORITY_BAND)
+        effective = np.clip(offset, None, 0.0) + np.where(
+            in_band, np.clip(offset, 0.0, None), 0.0)
+        adjusted = np.where(np.isfinite(adjusted), adjusted + effective, adjusted)
 
     # Scan deeper than `limit` so the per-ref cap has replacements to promote.
     order = np.argsort(-adjusted)[:max(limit * _OVERSCAN, limit)]

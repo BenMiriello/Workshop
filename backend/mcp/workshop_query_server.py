@@ -69,7 +69,11 @@ SEARCH_TOOL_DESC = (
     "'what did we say about Z', 'is there already a ticket for this', and before "
     "designing anything that may already exist. Returns nothing when nothing is "
     "genuinely relevant, which means an empty result is an answer: there is no "
-    "prior art in the workshop for that."
+    "prior art in the workshop for that. Ranking is by meaning AND by what each "
+    "source declares itself to be: a document this repository's own agent-rules "
+    "file names as the source of record outranks a conversation that merely "
+    "mentions it, and a document that declares itself superseded is demoted and "
+    "arrives labelled rather than hidden. Read the labels on each hit."
 )
 SEARCH_TOOL_SCHEMA = {
     "type": "object",
@@ -362,6 +366,16 @@ def _reach_scopes(scope_key: str) -> set[str] | None:
         return None
 
 
+# How a passage's declared status reads to the model. Kept beside the renderer
+# rather than in the index, because these are words chosen for a reader; the
+# index stores the bare status and the numbers it ranks by.
+_STATUS_FLAGS = {
+    "superseded": " \u00b7 SUPERSEDED, historical",
+    "authoritative": " \u00b7 SOURCE OF RECORD, named by this repository's own agent rules",
+    "current": " \u00b7 declares itself current",
+}
+
+
 def _run_search(args: dict) -> str:
     """Ranked passages, rendered for a model to read.
 
@@ -451,13 +465,16 @@ def _run_search(args: dict) -> str:
             where = f"chat {h['ref']}"
         stamp = (h["ts"] or "")[:10]
         scope = f" · scope {h['scope']}" if h.get("scope") else ""
-        # SUPERSEDED IS SAID OUT LOUD. These passages are already demoted in the
-        # ranking, but a demotion the reader cannot see is only a reordering: a
-        # historical doc that still makes the cut has to ARRIVE labelled, or the
-        # model quotes a retired design as current. That is the exact failure
-        # this repo keeps hitting, agents rediscovering superseded plans and
-        # building against them.
-        flag = " · SUPERSEDED, historical" if h.get("status") == "superseded" else ""
+        # THE STATUS IS SAID OUT LOUD, in both directions. These passages are
+        # already reordered by it, but an adjustment the reader cannot see is
+        # only a reordering: a historical doc that still makes the cut has to
+        # ARRIVE labelled, or the model quotes a retired design as current.
+        # That is the exact failure this repo keeps hitting, agents
+        # rediscovering superseded plans and building against them. The
+        # positive labels are here for the mirror-image reason: a model that
+        # cannot tell the source of record from a passing remark about it has
+        # to weigh five passages equally and will pick by tone.
+        flag = _STATUS_FLAGS.get(h.get("status") or "", "")
         out.append(f"--- [{h['score']:.2f}] {h['kind']}: {h['title']} ({where}{scope}"
                    + (f" · {stamp}" if stamp else "") + flag + ")")
         out.append(h["text"])
@@ -512,7 +529,7 @@ def _render_repeats(query: str, since: str, limit: int,
         if ech:
             out.append("  also written down as:")
             for e in ech:
-                flag = " · SUPERSEDED, historical" if e["status"] == "superseded" else ""
+                flag = _STATUS_FLAGS.get(e.get("status") or "", "")
                 out.append(f"  - {e['kind']}: {e['title']} ({e['ref']}){flag}")
         out.append("")
     return "\n".join(out)
