@@ -494,6 +494,13 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
         "watched": apps,
         "content_files": sum(len(v) for v in content.values()),
         "content_by_app": {a: len(v) for a, v in sorted(content.items()) if v},
+        # The PATHS behind `content_files`, not just the count. Added 2026-09-01
+        # for check_fresh_clone.sh's build_with_zero_apps assertion, which has to
+        # DELETE the app source before building and must delete exactly what this
+        # classifier calls app source. Anything else would be a second definition
+        # of "app source" living in a shell script, which is the duplication
+        # check_one_definition.py exists to catch.
+        "content_paths": sorted(p for v in content.values() for p in v),
         "import_sites": len(imports),
         "literal_sites": len(literals),
         "home_path_sites": len(home_paths),
@@ -508,6 +515,13 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", action="store_true")
+    ap.add_argument(
+        "--list-content",
+        action="store_true",
+        help="Print the tracked paths counted by `content` (the files that ARE "
+             "app source), one per line, and exit. The list form of the number; "
+             "check_fresh_clone.sh deletes exactly these before building.",
+    )
     ap.add_argument("--write-baseline", action="store_true")
     ap.add_argument(
         "--since",
@@ -604,6 +618,11 @@ def main() -> int:
         print(f"baseline written: {BASELINE.relative_to(ROOT)}")
         for k, v in sorted(payload.get("raised", {}).items()):
             print(f"  RAISED {k} {v['from']} -> {v['to']}: {v['because']}")
+        return 0
+
+    if args.list_content:
+        for rel in result["content_paths"]:
+            print(rel)
         return 0
 
     if args.json:
