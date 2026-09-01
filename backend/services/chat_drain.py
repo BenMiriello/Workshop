@@ -271,12 +271,23 @@ async def continuation_loop(*, interval: float = 5.0) -> None:
     because a ContextVar set on a task is held across that task's awaits.
     """
     from services import ownership
+    from services import wakeups as _wakeups
     while True:
         await asyncio.sleep(interval)
         try:
             for owner_id in _all_owner_ids():
                 ownership.set_current_owner(owner_id)
                 try:
+                    # A scheduled wake-up becomes a seed at its due time and is
+                    # then an ordinary continuation. This is why a wake-up needs
+                    # no scheduler of its own: the pass that already runs every
+                    # few seconds in the one process that outlives every turn
+                    # asks "is anything due" first, and the rest of this loop
+                    # does what it has always done. See services/wakeups.
+                    try:
+                        _wakeups.fire_due()
+                    except Exception as e:  # pragma: no cover - defensive
+                        log.warning("wake-up pass failed: %s", e)
                     for tid in chat_queue.threads_with_continuation():
                         try:
                             await drain_continuation(tid, reason="continuation")
@@ -297,7 +308,8 @@ async def continuation_loop(*, interval: float = 5.0) -> None:
 
 
 async def drain_all(*, reason: str = "startup") -> int:
-    """Every thread holding a queue or continuation, across every owner. Runs at startup.
+    """Every thread holding a queue, a continuation or an overdue wake-up, across
+    every owner. Runs at startup.
 
     A backend that went down while a turn was running comes back with the turn
     gone and the queue still there. Nothing else would ever notice: the browser
@@ -310,10 +322,18 @@ async def drain_all(*, reason: str = "startup") -> int:
     already-owned contexts like turn-finalize, so the gap never showed.)
     """
     from services import ownership
+    from services import wakeups as _wakeups
     sent = 0
     for owner_id in _all_owner_ids():
         ownership.set_current_owner(owner_id)
         try:
+            # A wake-up armed for 03:00 against a backend that was down at 03:00
+            # fires here instead, late rather than never. That is the correct
+            # failure for an alarm, and it is why the store is on disk.
+            try:
+                _wakeups.fire_due()
+            except Exception as e:  # pragma: no cover - defensive
+                log.warning("startup wake-up pass failed: %s", e)
             for tid in chat_queue.threads_with_continuation():
                 try:
                     if await drain_continuation(tid, reason=reason):

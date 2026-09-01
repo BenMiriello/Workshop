@@ -273,6 +273,41 @@ PLATFORM_TOOLS: tuple[Tool, ...] = (
         scopes=("chat",),
         ceiling=(_mcp_id(_wqs.SPAWN_TOOL_NAME),),
     ),
+    # The alarm clock. Chat-scope for the same reason as the tool above: a
+    # wake-up is an alarm ON a thread, so with no thread bound there is nothing
+    # for it to wake. Three tools rather than one, because arming, seeing what
+    # is armed, and taking one back are three different questions and a tool
+    # that answers all three has to be told which one is being asked.
+    Tool(
+        id=_mcp_id(_wqs.WAKE_TOOL_NAME),
+        title="Wake this chat later",
+        description=_wqs.WAKE_TOOL_DESC,
+        kind="mcp",
+        provenance="platform",
+        spec={"server": _WORKSHOP_SERVER, "tool": _wqs.WAKE_TOOL_NAME},
+        scopes=("chat",),
+        ceiling=(_mcp_id(_wqs.WAKE_TOOL_NAME),),
+    ),
+    Tool(
+        id=_mcp_id(_wqs.LIST_WAKEUPS_TOOL_NAME),
+        title="List armed wake-ups",
+        description=_wqs.LIST_WAKEUPS_TOOL_DESC,
+        kind="mcp",
+        provenance="platform",
+        spec={"server": _WORKSHOP_SERVER, "tool": _wqs.LIST_WAKEUPS_TOOL_NAME},
+        scopes=("chat",),
+        ceiling=(_mcp_id(_wqs.LIST_WAKEUPS_TOOL_NAME),),
+    ),
+    Tool(
+        id=_mcp_id(_wqs.CANCEL_WAKEUP_TOOL_NAME),
+        title="Cancel a wake-up",
+        description=_wqs.CANCEL_WAKEUP_TOOL_DESC,
+        kind="mcp",
+        provenance="platform",
+        spec={"server": _WORKSHOP_SERVER, "tool": _wqs.CANCEL_WAKEUP_TOOL_NAME},
+        scopes=("chat",),
+        ceiling=(_mcp_id(_wqs.CANCEL_WAKEUP_TOOL_NAME),),
+    ),
     # ---- CLI builtins -------------------------------------------------------
     # These add description and eligibility to tools the harness already has.
     # Names are the CLI's own allowlist vocabulary (verified against the four
@@ -397,6 +432,7 @@ PLATFORM_TOOL_IDS: frozenset[str] = frozenset(t.id for t in PLATFORM_TOOLS)
 # consumers:
 #   WEB_TOOL_IDS, SUBAGENT_TOOL_ID   → chat_context.WEB_TOOLS / SUBAGENT_TOOL
 #   WORKSHOP_TOOLKIT_IDS              → chat_context.WORKSHOP_TOOLKIT
+#   WAKEUP_TOOL_IDS                   → chat_context.WAKEUP_TOOLS
 #   GENERAL_ALLOWLIST_IDS             → chat_context._general.allowed_tools
 #   READ_TOOL_IDS                     → agent_authority._READ_TOOLS
 #   TREE_WRITE_IDS                    → agent_authority._TARGET_TOOLS["tree"]
@@ -408,12 +444,29 @@ PLATFORM_TOOL_IDS: frozenset[str] = frozenset(t.id for t in PLATFORM_TOOLS)
 WEB_TOOL_IDS: tuple[str, ...] = ("WebSearch", "WebFetch")
 SUBAGENT_TOOL_ID: str = "Agent"
 WORKSHOP_SEARCH_TOOL_ID: str = _mcp_id(_wqs.SEARCH_TOOL_NAME)
+SPAWN_TOOL_ID: str = _mcp_id(_wqs.SPAWN_TOOL_NAME)
+
+# The alarm clock. Named as its own group because two things read it: the
+# allowlists below, and the prompt layers, which state the capability only where
+# the grant is real (chat_context._grants_workshop_tool).
+#
+# EVERY CHAT GETS IT, including the narrow ones. A build chat could already wait
+# on something with a backgrounded Bash command or the Monitor tool, badly and
+# only for the length of a turn; a data chat had neither, so "check this again at
+# five" was a thing it could not do at all. Being woken at a time is not a
+# builder's capability, it is any assistant's.
+WAKEUP_TOOL_IDS: tuple[str, ...] = (
+    _mcp_id(_wqs.WAKE_TOOL_NAME),
+    _mcp_id(_wqs.LIST_WAKEUPS_TOOL_NAME),
+    _mcp_id(_wqs.CANCEL_WAKEUP_TOOL_NAME),
+)
 
 # Workshop tools offered to every chat (not spawn, which is chat-scope only).
 WORKSHOP_TOOLKIT_IDS: tuple[str, ...] = (
     _mcp_id(_wqs.WHERE_IS_TOOL_NAME),
     _mcp_id(_wqs.LIST_ATTACHMENTS_TOOL_NAME),
     _mcp_id(_wqs.GET_FILE_TOOL_NAME),
+    *WAKEUP_TOOL_IDS,
 )
 
 # Full allowlist for the general/assistant chat provider.

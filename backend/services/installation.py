@@ -61,3 +61,71 @@ def git_forge() -> str:
     """The git hosting vendor this installation publishes to. Empty when
     undeclared: the branching rule then says "remote" and names nobody."""
     return os.environ.get("WORKSHOP_GIT_FORGE", "").strip()
+
+
+def timezone_name() -> str:
+    """The IANA timezone this installation keeps its wall clock in.
+
+    Declared with WORKSHOP_TIMEZONE. Unset falls back to the host's own zone,
+    which is the right default rather than a guess: a personal installation runs
+    on a machine already set to the operator's time, and every scheduled thing on
+    it (a wake-up, a report, a nightly sweep) is already expressed against that
+    clock. Empty only when the host declares nothing either, in which case the
+    caller states the offset and names no zone.
+    """
+    declared = os.environ.get("WORKSHOP_TIMEZONE", "").strip()
+    if declared:
+        return declared
+    env_tz = os.environ.get("TZ", "").strip()
+    if env_tz:
+        return env_tz
+    return _host_zone_name()
+
+
+def _host_zone_name() -> str:
+    """The host's configured zone, read where the OS keeps it. Never raises: an
+    unreadable answer means the prompt states an offset and names no zone."""
+    import os.path
+    from pathlib import Path
+
+    try:
+        raw = Path("/etc/timezone").read_text(encoding="utf-8").strip()
+        if raw:
+            return raw
+    except OSError:
+        pass
+    try:
+        link = os.path.realpath("/etc/localtime")
+        marker = "/zoneinfo/"
+        if marker in link:
+            return link.split(marker, 1)[1]
+    except OSError:  # pragma: no cover - defensive
+        pass
+    return ""
+
+
+def local_tzinfo():
+    """A tzinfo for `timezone_name()`, or the host's current offset.
+
+    The fallback is a fixed offset rather than UTC: showing an agent a UTC clock
+    on a machine set to another zone is worse than showing it no zone name, and
+    the offset is always knowable.
+    """
+    name = timezone_name()
+    if name:
+        try:
+            from zoneinfo import ZoneInfo
+
+            return ZoneInfo(name)
+        except Exception:  # noqa: BLE001 - an unknown zone falls back, never raises
+            pass
+    import datetime as _dt
+
+    return _dt.datetime.now().astimezone().tzinfo
+
+
+def local_now():
+    """Right now, in this installation's own timezone."""
+    import datetime as _dt
+
+    return _dt.datetime.now(tz=local_tzinfo())

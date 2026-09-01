@@ -38,13 +38,16 @@ def _scope_line(scope_key: str | None) -> str:
     return f"This chat's scope is {key}."
 
 
-def manifest_text(scope_key: str | None = None, *, background: bool = True) -> str:
+def manifest_text(scope_key: str | None = None, *, background: bool = True,
+                  wakeup: bool = False) -> str:
     """The orientation block. `scope_key` is the chat's knowledge scope
     ("workshop", "development", "project:<slug>", "app:<name>", "agent:<id>").
 
-    `background` says whether this chat is actually granted `spawn_background`.
-    A narrow data chat is not, and naming a tool it cannot call is the
-    told-but-absent error this manifest exists to prevent, not commit."""
+    `background` says whether this chat is actually granted `spawn_background`,
+    and `wakeup` whether it is granted `wake_me`. Naming a tool the chat cannot
+    call is the told-but-absent error this manifest exists to prevent, not
+    commit, so each line is present exactly where its grant is real. Neither is
+    ever hedged: a map that says a road "may exist" is not a map."""
     return (
         "=== WHERE THINGS ARE (orientation; reach by tool, don't grep) ===\n"
         + _scope_line(scope_key) + "\n"
@@ -74,8 +77,16 @@ def manifest_text(scope_key: str | None = None, *, background: bool = True) -> s
            "instead, foreground or background, and the turn stays open until it "
            "reports.\n" if background else
            "- A subagent (the Agent tool) belongs to THIS turn, foreground or "
-           "background, and the turn stays open until it reports. Nothing here "
-           "outlives the turn.\n")
+           "background, and the turn stays open until it reports. No work you "
+           "start runs on past the end of this turn.\n")
+        # THE ALARM CLOCK. A chat had no durable way to wake itself at all
+        # until 2026-09-01, so nothing in this map answered "how do I come back
+        # to this later" -- the honest answer was that you could not, and the
+        # dishonest one was to promise the operator you would.
+        + ("- Something that has to happen at a TIME rather than now: `wake_me` "
+           "arms a durable alarm on this chat and a new turn starts here when "
+           "it comes due, carrying the reason you gave. `list_wakeups` and "
+           "`cancel_wakeup` manage what is armed.\n" if wakeup else "")
         +
         "- `where_is` restates this map any time you need it."
     )

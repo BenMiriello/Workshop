@@ -14,11 +14,12 @@ They ride on THIS server rather than a second one so a declared tool's CLI name
 is an ordinary `mcp__workshop__<id>`, granted by the argv `llm_router.tool_flags`
 already builds and by nothing else.
 
-Plus one WRITE tool, `spawn_background`, offered ONLY to a real chat (when
-WORKSHOP_QUERY_THREAD is bound): it launches a background agent for that chat and
-returns an id, not file contents. The agent's own file access is a run's, not
-this server's, and its result reaches the operator through the chat, not this
-tool's return. See services/background_runs.
+Plus the WRITE tools, offered ONLY to a real chat (when WORKSHOP_QUERY_THREAD is
+bound), each of which acts ON that chat rather than returning file contents:
+`spawn_background` launches a background agent for it (services/background_runs)
+whose result reaches the operator through the chat, not this tool's return; and
+`wake_me` / `list_wakeups` / `cancel_wakeup` arm and manage a durable alarm on it
+(services/wakeups), which starts a later turn there and outlives this process.
 
 Transport: MCP stdio (newline-delimited JSON-RPC 2.0), implemented by hand so it
 needs no MCP SDK (none is installed in the backend venv). The claude CLI spawns
@@ -181,6 +182,84 @@ GET_FILE_TOOL_SCHEMA = {
 }
 
 _GET_FILE_MAX_CHARS = 100_000
+
+
+# --- Waking this chat up later ------------------------------------------------
+#
+# The other three WRITE tools, and like `spawn_background` they are offered only
+# to a real chat: a wake-up is an alarm ON a thread, so with no thread bound
+# there is nothing for it to wake. The alarm is held by the platform rather than
+# by this process, which is the whole point -- see services/wakeups.
+
+WAKE_TOOL_NAME = "wake_me"
+WAKE_TOOL_DESC = (
+    "Wake yourself up later. Arms a durable alarm on THIS chat: at the time you "
+    "ask for, a new turn starts here carrying the reason you gave, and you act "
+    "on it then. It is held by the platform, not by this turn, so it survives "
+    "the turn ending, the turn being stopped, and a restart in between. Use it "
+    "for anything that has to happen at a TIME rather than now: check whether a "
+    "deploy settled, chase something that was promised, follow up on a reply "
+    "that has not come, report at an hour the operator asked for, re-read a "
+    "measurement once enough of it has accumulated. Say when with EITHER "
+    "in_minutes OR at, never both. Write the reason to your future self and "
+    "make it self-contained: it is what that turn is handed, and it should say "
+    "what to check and what to do about each outcome. Returns the wake-up's id."
+)
+WAKE_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reason": {
+            "type": "string",
+            "description": (
+                "What the woken turn should do, in enough detail to act on "
+                "without re-deriving it. This is the whole of what that turn "
+                "is given about why it is running."
+            ),
+        },
+        "in_minutes": {
+            "type": "number",
+            "description": "Wake this many minutes from now. Use this OR `at`.",
+        },
+        "at": {
+            "type": "string",
+            "description": (
+                "Wake at a specific time. A 24-hour clock time like '16:30' "
+                "means the next time the clock reads that; a full date and time "
+                "like '2026-01-31T09:15' means that instant. Read in this "
+                "installation's own timezone unless the value states an offset. "
+                "Use this OR `in_minutes`."
+            ),
+        },
+    },
+    "required": ["reason"],
+    "additionalProperties": False,
+}
+
+LIST_WAKEUPS_TOOL_NAME = "list_wakeups"
+LIST_WAKEUPS_TOOL_DESC = (
+    "List the wake-ups currently armed on THIS chat: their id, when each fires, "
+    "and the reason it carries. Call it before arming another one to avoid "
+    "stacking duplicates, and to get the id you need to cancel one. Takes no "
+    "arguments."
+)
+LIST_WAKEUPS_TOOL_SCHEMA = {"type": "object", "properties": {},
+                            "additionalProperties": False}
+
+CANCEL_WAKEUP_TOOL_NAME = "cancel_wakeup"
+CANCEL_WAKEUP_TOOL_DESC = (
+    "Cancel a wake-up armed on this chat, by its id (from list_wakeups). Use it "
+    "when the thing it was going to check has already happened, or the operator "
+    "has changed the plan, so a turn does not start for a reason that no longer "
+    "holds."
+)
+CANCEL_WAKEUP_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string", "description": "The wake-up id, as shown by list_wakeups."},
+    },
+    "required": ["id"],
+    "additionalProperties": False,
+}
 
 
 def _pin_owner() -> None:
@@ -358,7 +437,22 @@ def _run_where_is() -> str:
     services.orientation, shared with the injected L1 manifest."""
     scope = os.environ.get("WORKSHOP_QUERY_SCOPE", "workshop").strip() or "workshop"
     from services import orientation
-    return orientation.manifest_text(scope)
+
+    # Computed from what THIS server will actually answer for, not defaulted.
+    # The manifest names a tool only where the grant is real, and the default
+    # said "you have spawn_background" to every caller including the ones with
+    # no chat behind them at all.
+    #
+    # This is the server's own offer, which the turn's allowlist can narrow
+    # further and never widen. The copy that matters is the one injected into
+    # the prompt (chat_context.orientation_manifest); that one is computed from
+    # the chat's real allowlist and is exact.
+    offered = {t["name"] for t in _tool_list()}
+    return orientation.manifest_text(
+        scope,
+        background=SPAWN_TOOL_NAME in offered,
+        wakeup=WAKE_TOOL_NAME in offered,
+    )
 
 
 def _run_list_attachments() -> str:
@@ -461,6 +555,16 @@ def _bound_thread() -> str | None:
 _BUILTIN_TOOL_NAMES = (
     TOOL_NAME, SEARCH_TOOL_NAME, SPAWN_TOOL_NAME, WHERE_IS_TOOL_NAME,
     LIST_ATTACHMENTS_TOOL_NAME, GET_FILE_TOOL_NAME,
+    WAKE_TOOL_NAME, LIST_WAKEUPS_TOOL_NAME, CANCEL_WAKEUP_TOOL_NAME,
+)
+
+# The tools that only mean anything with a chat behind them, listed once so
+# `_tool_list` cannot offer one of them and forget another.
+_CHAT_BOUND_TOOLS = (
+    (SPAWN_TOOL_NAME, SPAWN_TOOL_DESC, SPAWN_TOOL_SCHEMA),
+    (WAKE_TOOL_NAME, WAKE_TOOL_DESC, WAKE_TOOL_SCHEMA),
+    (LIST_WAKEUPS_TOOL_NAME, LIST_WAKEUPS_TOOL_DESC, LIST_WAKEUPS_TOOL_SCHEMA),
+    (CANCEL_WAKEUP_TOOL_NAME, CANCEL_WAKEUP_TOOL_DESC, CANCEL_WAKEUP_TOOL_SCHEMA),
 )
 
 
@@ -499,10 +603,12 @@ def _tool_list() -> list:
         {"name": GET_FILE_TOOL_NAME, "description": GET_FILE_TOOL_DESC,
          "inputSchema": GET_FILE_TOOL_SCHEMA},
     ]
-    # Only a real chat can spawn a background agent for itself.
+    # Only a real chat can spawn a background agent for itself, or arm an alarm
+    # on itself. With no thread bound there is nothing to post back to and
+    # nothing to wake.
     if _bound_thread():
-        tools.append({"name": SPAWN_TOOL_NAME, "description": SPAWN_TOOL_DESC,
-                      "inputSchema": SPAWN_TOOL_SCHEMA})
+        for name, desc, schema in _CHAT_BOUND_TOOLS:
+            tools.append({"name": name, "description": desc, "inputSchema": schema})
     try:
         from services import command_tools
         for tool in _command_tools():
@@ -554,6 +660,65 @@ def _run_spawn(args: dict) -> str:
     )
 
 
+def _run_wake(args: dict) -> str:
+    """Arm a wake-up on the bound chat."""
+    thread = _bound_thread()
+    if not thread:
+        return "Cannot arm a wake-up: this tool is not bound to a chat."
+    _pin_owner()
+    from services import installation, wakeups
+
+    try:
+        when = wakeups.resolve_when(in_minutes=args.get("in_minutes"),
+                                    at=args.get("at"))
+        record = wakeups.arm(thread, reason=(args.get("reason") or ""), due_at=when)
+    except ValueError as e:
+        # A refusal the model can act on, not a stack trace. The whole value of
+        # this tool is that the alarm goes off when it was meant to, so a time
+        # that could not be read is worth one sentence saying so.
+        return f"No wake-up was armed: {e}."
+    local = when.astimezone(installation.local_tzinfo())
+    return (
+        f"Wake-up armed (id {record['id']}) for "
+        f"{local.strftime('%Y-%m-%d %H:%M %Z').strip()}. A new turn will start "
+        "in this chat then, carrying your reason. It survives this turn ending "
+        "and a restart. Tell the operator when you will be back, in one line, "
+        "and carry on."
+    )
+
+
+def _run_list_wakeups() -> str:
+    thread = _bound_thread()
+    if not thread:
+        return "Cannot list wake-ups: this tool is not bound to a chat."
+    _pin_owner()
+    from services import wakeups
+
+    armed = wakeups.read(thread)
+    if not armed:
+        return "No wake-ups are armed on this chat."
+    return (f"{len(armed)} wake-up(s) armed on this chat:\n"
+            + "\n".join(wakeups.render(w) for w in armed)
+            + "\nCancel one with cancel_wakeup, by its id.")
+
+
+def _run_cancel_wakeup(args: dict) -> str:
+    thread = _bound_thread()
+    if not thread:
+        return "Cannot cancel a wake-up: this tool is not bound to a chat."
+    _pin_owner()
+    from services import wakeups
+
+    wake_id = (args.get("id") or "").strip()
+    if not wake_id:
+        return "error: a wake-up id is required (see list_wakeups)."
+    record = wakeups.cancel(thread, wake_id)
+    if record is None:
+        return (f"No wake-up with id {wake_id} is armed on this chat. It may "
+                "have already fired or been cancelled.")
+    return f"Cancelled {wake_id}. It will not fire."
+
+
 def _handle(msg: dict) -> dict | None:
     """Return a JSON-RPC response dict, or None for a notification (no reply)."""
     method = msg.get("method")
@@ -600,6 +765,12 @@ def _handle(msg: dict) -> dict | None:
                 text = _run_list_attachments()
             elif name == GET_FILE_TOOL_NAME:
                 text = _run_get_file(params.get("arguments") or {})
+            elif name == WAKE_TOOL_NAME:
+                text = _run_wake(params.get("arguments") or {})
+            elif name == LIST_WAKEUPS_TOOL_NAME:
+                text = _run_list_wakeups()
+            elif name == CANCEL_WAKEUP_TOOL_NAME:
+                text = _run_cancel_wakeup(params.get("arguments") or {})
             else:
                 text = _build_digest()
         except Exception as e:  # noqa: BLE001

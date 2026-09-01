@@ -574,7 +574,7 @@ _BACKGROUND_RULE = (
 
 
 _WAITING_RULE = (
-    "WAITING, WATCHING AND BEING WOKEN. You do not have to block a turn on a "
+    "WAITING AND WATCHING. You do not have to block a turn on a "
     "slow thing, and you must never promise to come back later in a reply that "
     "is about to end. Pick by what you are waiting for: ONE outcome (a build, a "
     "deploy, a long command) is Bash with run_in_background true, which "
@@ -583,21 +583,53 @@ _WAITING_RULE = (
     "Most of these are DEFERRED tools: only their names are in your prompt, and "
     "ToolSearch fetches a schema on demand (`select:Monitor`). Fetch the one you "
     "need when you need it rather than up front; a search with no filter lists "
-    "what this session actually has.\n\n"
-    "THERE IS NO TIMER THAT OUTLIVES A TURN. A turn's process is retired when "
-    "the turn ends, so an in-session scheduler (CronCreate) loses its jobs at "
-    "that moment: it cannot wake you in ten minutes, because nothing of this "
-    "turn is left in ten minutes. Anything that must fire later is a Ticket, a "
-    "Workshop agent with a trigger, or spawn_background, all of which are their "
-    "own processes and survive. Do not tell the operator you will check back "
-    "unless you are using one of those.\n\n"
-    "WHAT TIME IS IT is not in this prompt beyond the date. If a decision "
-    "depends on the clock, read it (`date`) rather than assuming."
+    "what this session actually has."
+)
+
+
+# BEING WOKEN, stated only where the alarm exists -- the same rule as the
+# durable-work paragraph above, applied to the other chat-scope write tool.
+#
+# The paragraph this replaces said "THERE IS NO TIMER THAT OUTLIVES A TURN" and
+# it was true when it was written: nothing an assistant could call from inside a
+# turn survived the turn's process group being retired. It is now false wherever
+# `wake_me` is granted, and a prompt that denies a capability the chat holds is
+# the same defect as one that promises a capability it does not -- it just costs
+# the operator the thing instead of costing the model a turn.
+_WAKEUP_RULE = (
+    "BEING WOKEN LATER. A turn's own process is retired the moment the turn "
+    "ends, so an in-session scheduler (CronCreate) loses its jobs exactly when "
+    "they were about to matter. The alarm that does survive is `wake_me`: the "
+    "platform holds it, not this process, so it outlives the turn, a stop and a "
+    "restart, and at the time you ask for it starts a NEW turn in this chat "
+    "carrying the reason you wrote. Use it for anything that belongs to a TIME "
+    "rather than to now -- checking whether something settled, chasing a reply "
+    "that has not come, reporting at an hour that was asked for, re-reading a "
+    "measurement once enough of it exists. Write the reason to your future "
+    "self: that turn is handed the reason and nothing else, so it must say what "
+    "to check and what to do about each outcome. `list_wakeups` shows what is "
+    "armed here and `cancel_wakeup` takes one back, so cancel rather than "
+    "leaving an alarm to fire on a plan that has changed.\n\n"
+    "You may tell the operator you will come back at a time -- but only once "
+    "you have actually armed it, and never as a way to end a turn you should be "
+    "finishing now."
+)
+
+
+# ...and stated the other way where it does not, so a chat without the alarm
+# does not promise a return it cannot make.
+_NO_WAKEUP_RULE = (
+    "NOTHING WAKES YOU LATER in this chat. A turn's own process is retired the "
+    "moment the turn ends, so an in-session scheduler (CronCreate) loses its "
+    "jobs at that moment: it cannot wake you in ten minutes, because nothing of "
+    "this turn is left in ten minutes. Work that must happen later leaves as a "
+    "Ticket or a Workshop agent with a trigger, which are their own processes "
+    "and survive. Do not tell the operator you will check back."
 )
 
 
 def delegation_block(tools_active: bool, is_build: bool = False,
-                     background: bool = False) -> str:
+                     background: bool = False, wakeup: bool = False) -> str:
     """The subagent rule plus the named delegates this instance can call.
 
     Named subagents come from the same registry the Agents page reads
@@ -632,6 +664,7 @@ def delegation_block(tools_active: bool, is_build: bool = False,
     )
     tail = ("\n\n" + _BACKGROUND_RULE) if background else ""
     tail += ("\n\n" + _WAITING_RULE) if is_build else ""
+    tail += "\n\n" + (_WAKEUP_RULE if wakeup else _NO_WAKEUP_RULE)
     return DELEGATION_RULE + named + tail
 
 
@@ -695,17 +728,38 @@ def platform_kernel() -> str:
     return PLATFORM_KERNEL
 
 
-def _grants_background(provider: "ContextProvider") -> bool:
-    """Does this chat actually have `spawn_background`?
+def _grants_workshop_tool(provider: "ContextProvider", tool_id: str) -> bool:
+    """Does this chat actually have the named tool on the workshop server?
 
     Computed from the same allowlist the CLI is launched with, so the prompt and
     the grant cannot disagree. Any failure answers False: not mentioning a tool
     that exists costs a search, while promising one that does not costs a turn.
+
+    A BUILD PROVIDER DECLARES AN EMPTY ALLOWLIST, and that does not mean "no
+    tools". It is the signal that this turn runs the full agentic surface
+    (llm_router.tool_flags: "neither -> full agentic inheritance"), which
+    attaches the whole workshop server, so every tool on it is reachable.
+    Reading the empty list literally is what made the durable-work paragraph
+    absent from exactly the chats that most obviously had the tool: measured
+    2026-09-01, `_grants_background` answered False for BOTH a narrow chat and a
+    build chat, so the sentence it gates was reaching nobody at all.
     """
     try:
-        return any("spawn_background" in t for t in effective_allowed_tools(provider))
+        if is_build_provider(provider):
+            return True
+        return tool_id in effective_allowed_tools(provider)
     except Exception:
         return False
+
+
+def _grants_background(provider: "ContextProvider") -> bool:
+    """Does this chat actually have `spawn_background`?"""
+    return _grants_workshop_tool(provider, BACKGROUND_TOOL)
+
+
+def _grants_wakeup(provider: "ContextProvider") -> bool:
+    """Does this chat actually have `wake_me`?"""
+    return _grants_workshop_tool(provider, WAKEUP_TOOL)
 
 
 # ---------------------------------------------------------------- role preamble
@@ -718,6 +772,7 @@ def role_preamble(
     cwd: str | None = None,
     is_build: bool = False,
     background: bool = False,
+    wakeup: bool = False,
 ) -> str:
     """Platform-owned layer-1 system facts, generated from the ACTUAL run config
     (tools_active is computed in routes/chat.py from the same branch that decides
@@ -728,6 +783,8 @@ def role_preamble(
     is_build=True       -> use the accurate BUILD-context egress facts (clone /
     install from dev hosts is allowed; only push/publish goes through the
     platform), instead of the strict data-context "egress blocked" text.
+    background / wakeup -> this chat's REAL grant of the two chat-scope write
+    tools, so each paragraph is present exactly where its tool is.
     """
     if not tools_active:
         return (
@@ -788,7 +845,7 @@ def role_preamble(
         # Stated here, with the rest of what this session can actually do, so the
         # rule and the granted tool are computed from the same tools_active flag
         # and cannot disagree.
-        + "\n\n" + delegation_block(True, is_build, background)
+        + "\n\n" + delegation_block(True, is_build, background, wakeup)
         + "\n\n" + UI_CARD_PROTOCOL
         + "\n\n" + _STYLE_RULE
     )
@@ -1110,7 +1167,47 @@ def turn_contract(timeout_s: float | int = 0) -> str:
         "is not, and why. Never imply a continuation that cannot happen.\n"
         "\n"
         + bound + "\n\n"
-        + REALTIME_CHANNEL
+        + REALTIME_CHANNEL + "\n\n"
+        + clock_line()
+    )
+
+
+def clock_line() -> str:
+    """WHAT TIME IS IT, answered instead of left to a shell call.
+
+    The platform injected no clock at all: not the time of day, not the zone,
+    and no tool that returned either. A chat asked to "check this again after
+    lunch" had to shell out for `date` to find out what it was now, and a chat
+    with no shell could not find out at all.
+
+    IT GOES ON THE PER-TURN CONTRACT, not in the orientation manifest beside the
+    other "where things are" facts, and that placement is the whole of the
+    design. The manifest and the persona are sent ONCE, at session spawn, and
+    every later turn resumes that session (routes/chat._resumed_prompt) -- a
+    clock there would be right for one turn and then be a stale number the model
+    trusts, which is worse than no clock. This block is re-sent every turn by
+    both prompt paths, so the reading is always this turn's.
+
+    The zone is the installation's, declared or taken from the host
+    (services/installation): a wake-up asked for at "16:30" means the operator's
+    afternoon, so the clock the assistant reads has to be the same clock the
+    alarm is set against.
+    """
+    from services import installation as _inst
+
+    now = _inst.local_now()
+    zone = _inst.timezone_name()
+    offset = now.strftime("%z")
+    offset = f"UTC{offset[:3]}:{offset[3:]}" if offset else "an unknown offset"
+    where = f" in {zone}" if zone else ""
+    return (
+        "=== THE TIME NOW ===\n"
+        f"{now.strftime('%A %-d %B %Y, %H:%M')}{where} ({offset}). "
+        "That is local time on this installation, read at the start of this "
+        "turn, and every scheduled thing here is expressed against it. Use it "
+        "rather than guessing the date or working from when the conversation "
+        "started; a long turn drifts from it, so read it again if an hour "
+        "matters."
     )
 
 
@@ -1470,12 +1567,15 @@ def orientation_manifest(provider: "ContextProvider") -> str:
     active, since it points at tools the chat would not otherwise have."""
     try:
         from services import orientation
-        # Only claim the background tool when this chat is actually granted it.
-        try:
-            bg = any("spawn_background" in t for t in effective_allowed_tools(provider))
-        except Exception:
-            bg = False
-        return orientation.manifest_text(provider.knowledge_scope(), background=bg)
+        # Only claim a chat-scope write tool when this chat is actually granted
+        # it. Both answers come from the one grant function the preamble uses,
+        # so the map and the capability paragraph cannot disagree about the same
+        # tool -- which they did while this path had its own inline copy.
+        return orientation.manifest_text(
+            provider.knowledge_scope(),
+            background=_grants_background(provider),
+            wakeup=_grants_wakeup(provider),
+        )
     except Exception:
         return ""
 
@@ -2371,6 +2471,14 @@ WEB_TOOLS = list(_tool_registry.WEB_TOOL_IDS)
 # `Agent`, and `Task` is the older accepted spelling.
 SUBAGENT_TOOL = _tool_registry.SUBAGENT_TOOL_ID
 
+# The two chat-scope WRITE tools whose PROSE is gated on the grant being real:
+# durable work that outlives the turn, and a durable alarm that starts a later
+# one. Named here so `_grants_workshop_tool` tests the id the allowlist actually
+# carries rather than a substring of it.
+BACKGROUND_TOOL = _tool_registry.SPAWN_TOOL_ID
+WAKEUP_TOOL = _tool_registry.WAKEUP_TOOL_IDS[0]
+WAKEUP_TOOLS = list(_tool_registry.WAKEUP_TOOL_IDS)
+
 
 def effective_allowed_tools(provider: ContextProvider) -> list[str]:
     """A data provider's declared MCP tools + the shared web tools + the subagent
@@ -2633,6 +2741,10 @@ def instruction_contract(provider: ContextProvider, *, enable_chat_tools: bool) 
             # stated where the tool exists and absent where it does not. It
             # used to be unconditional and hedged with "if it is available".
             background=_grants_background(provider),
+            # Same rule for the alarm clock: the chat is told it can be woken
+            # later where that is true, and told plainly that nothing wakes it
+            # where it is not. Never "if it is available".
+            wakeup=_grants_wakeup(provider),
         )
         + "\n\n"
         + provider.persona()

@@ -39,6 +39,7 @@ from services import build_agents
 from services import chat_events
 from services import tenancy
 from services import chat_queue
+from services import wakeups
 from services import chat_store, chat_context, chat_log
 from services import tasks
 from services import thread_ops
@@ -981,6 +982,9 @@ async def remove(thread_id: str):
     # The queue goes with the conversation it belongs to. Left behind it would
     # be text nothing can ever deliver, held forever under an id with no thread.
     chat_queue.forget(thread_id)
+    # And so do its alarms: a wake-up for a deleted conversation can only ever
+    # fire into nothing.
+    wakeups.forget(thread_id)
     chat_events.forget(thread_id)
     t = chat_store.get_thread(thread_id)
     draft_store.clear_for_thread(t.get("context_key") if t else None, thread_id)
