@@ -286,14 +286,23 @@ class TestResolveWorkspace:
         ws = app_files.resolve("app:widgets")
         assert ws.root == registry
 
-    def test_an_app_with_no_tree_anywhere_still_gets_its_own_root(self, registry):
+    def test_an_app_with_no_tree_anywhere_still_gets_its_own_root(
+            self, registry, tmp_path, monkeypatch):
         # It used to raise "no linked project", and app_surface caught that and
         # dropped the app's Files tab, so five of eight apps had one and three
         # did not for a reason invisible on screen. The operator: "all apps have
         # files obviously". Every app resolves to the app tree's own directory,
         # made on demand, which is the root its memory already uses.
+        #
+        # WORKSHOP_ROOT IS PATCHED, and the assertion that it landed under
+        # tmp_path is the point of the test as much as the resolve is: this is
+        # the first thing in app_files that CREATES a directory, and the first
+        # version of this test ran without the patch and made `apps/nosuchthing`
+        # in the live repo. A test that writes outside its tmp_path is a test
+        # that changes the tree it is judging.
+        monkeypatch.setenv("WORKSHOP_ROOT", str(tmp_path))
         ws = app_files.resolve("app:nosuchthing")
-        assert ws.root.name == "nosuchthing"
+        assert ws.root == tmp_path / "apps" / "nosuchthing"
         assert ws.root.is_dir()
 
     def test_a_project_with_no_directory_reports_why(self, registry):
