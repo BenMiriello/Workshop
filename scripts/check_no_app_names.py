@@ -672,7 +672,23 @@ def main() -> int:
                   f"The rule is that this only goes down.")
             failed = True
         elif now < was:
-            print(f"  ok  {key} improved {was} -> {now} against {against}")
+            # "improved", NOT "ok", AND THE DISTANCE FROM ZERO IS PRINTED WITH IT.
+            #
+            # This line used to read "ok  literal_sites improved 479 -> 470",
+            # and "ok" is the word every reader takes away. The target for all
+            # four counts is zero (see this file's header and the baseline's own
+            # comment), but nothing here has ever failed for being ABOVE zero:
+            # the gate only fails when a number goes UP. So a tree with 470
+            # platform lines naming a specific app, and 106 tracked files that
+            # ARE app source, reports green, and has for months.
+            #
+            # That is the shape `check_fresh_clone.sh` already avoids and this
+            # one did not: "a pin there prints NOT YET, never PASS, and never
+            # makes the absolute run green." Reported 2026-09-01: "how the fuck
+            # is it still happening?" It is still happening because the
+            # instrument said ok.
+            print(f"  improved  {key} {was} -> {now} against {against}"
+                  f"  (NOT YET: {now} to remove, the target is 0)")
 
     # Inherited debt is REPORTED in delta mode, never gated on. A count that is
     # above the pinned baseline but unchanged by this run is somebody's problem,
@@ -688,6 +704,23 @@ def main() -> int:
                   f"inherited and not caused by this change (not gating):")
             for line in stale:
                 print(f"      {line}")
+
+    # THE STANDING DISTANCE FROM ZERO, printed on every run that is not gating,
+    # so no summary can read this check as done while the violation is there.
+    # It does not change the exit code: this is a ratchet and turning it into a
+    # hard failure at 470 would just get it switched off. What it removes is the
+    # ability to glance at the output and conclude the work landed.
+    remaining = {k: result[k] for k in
+                 ("content_files", "import_sites", "literal_sites", "home_path_sites")
+                 if result[k] > 0}
+    if remaining and not failed:
+        total = sum(remaining.values())
+        print(f"\n  NOT YET: {total} app-specific site(s) remain in platform "
+              f"source; the target for every count is 0.")
+        for k, v in remaining.items():
+            print(f"      {k}: {v}")
+        print("      This check going green means NO WORSE, never done. "
+              "app-is-the-entity-2026-08-20.md section 9 is the removal.")
 
     return 1 if failed else 0
 
