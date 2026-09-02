@@ -209,7 +209,12 @@ class TestNoAppNamesDelta:
         (repo / "backend" / "legacy.py").write_text('A = "demoapp"\n')
         r = _run(repo, "check_no_app_names.py", "--since", "HEAD")
         assert r.returncode == 0, r.stdout
-        assert f"literal_sites improved {n} -> {n - 2}" in r.stdout
+        # The word is "improved", NOT "ok", and it carries the distance from
+        # zero. The line used to read "ok  literal_sites improved ...", and a
+        # reader took "ok" away from it while hundreds of sites remained. See
+        # the comment at that print in check_no_app_names.py.
+        assert f"improved  literal_sites {n} -> {n - 2}" in r.stdout
+        assert "NOT YET" in r.stdout
 
     def test_roster_is_taken_from_the_working_tree_for_both_sides(self, repo: Path):
         """The roster is partly drawn from untracked instance state, which no

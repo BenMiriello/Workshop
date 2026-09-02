@@ -131,9 +131,11 @@ def test_every_card_route_is_the_apps_own_id():
     whose route is anything else points the reader at a route nobody serves:
     the shell finds no app with that slug and bounces to Home with an error.
 
-    Measured 2026-09-01: the notes app was `id="notes-app"` with
-    `route="/apps/notes"`, and its own test asserted that literal, which pinned
-    the bug rather than catching it. Opening Notes went to Home with an error.
+    Measured 2026-09-01: one app's card declared a route that dropped a suffix
+    from its own id, and that app's own test asserted the wrong literal, which
+    pinned the bug rather than catching it. Opening the app went to Home with an
+    error. This guard is written over the whole catalog, and names no app, so it
+    covers the next one too.
 
     A card with NO route is fine and not what this guards: that app simply has
     no screen of its own and takes the platform's tabs.
