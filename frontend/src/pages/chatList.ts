@@ -98,9 +98,23 @@ export function groupByDate<T extends { updated_at?: string | null }>(
   rows: readonly T[],
   now: Date = new Date(),
 ): ChatGroup<T>[] {
+  return groupByField(rows, (t) => t.updated_at, now);
+}
+
+/** The same cut, over whatever date the surface is actually ordered by.
+ *
+ *  The archive is the caller: it comes back most-recently-ARCHIVED first, which
+ *  answers "where did the one I just archived go", and a heading taken from
+ *  `updated_at` there would name a different day from the row underneath it. A
+ *  heading must always read the field its list is sorted by. */
+export function groupByField<T>(
+  rows: readonly T[],
+  dateOf: (t: T) => string | null | undefined,
+  now: Date = new Date(),
+): ChatGroup<T>[] {
   const byKey = new Map<string, ChatGroup<T>>();
   for (const t of rows) {
-    const b = bucketFor(t.updated_at, now);
+    const b = bucketFor(dateOf(t), now);
     if (!byKey.has(b.key)) byKey.set(b.key, { key: b.key, label: b.label, items: [] });
     byKey.get(b.key)!.items.push(t);
   }

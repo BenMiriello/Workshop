@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { Archive, MoreVertical, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, MoreVertical, Trash2 } from "lucide-react";
 import { Menu, MenuItem, MenuSeparator } from "@workshop/ui";
 import type { ThreadSummary } from "../../lib/chat";
 import { scopeKind, scopeName } from "./chatScope";
@@ -91,7 +91,7 @@ export function RunningDot({ running, ordinal }: { running: boolean; ordinal: nu
 }
 
 export default function ChatRow({
-  thread, ordinal = 0, showScope = true, onOpen, onArchive, onDelete,
+  thread, ordinal = 0, showScope = true, time, onOpen, onArchive, onRestore, onDelete,
 }: {
   thread: ThreadSummary;
   /** Whether to tag this row with its scope. FALSE on a list that is all one
@@ -102,10 +102,22 @@ export default function ChatRow({
   /** Position among the RUNNING rows, so their pulses are offset rather than
    *  strobing in unison. 0 when nothing is running. */
   ordinal?: number;
-  onOpen: (t: ThreadSummary) => void;
-  /** Omitted where the surface does not offer archiving; the control and the
-   *  menu item both disappear with it rather than sitting there inert. */
+  /** What the row's time column says, when the surface is not ordered by
+   *  activity. The archive is the caller: its list is most-recently-archived
+   *  first, so "3d" (last activity) beside a row filed yesterday is a time that
+   *  disagrees with the row's own position. */
+  time?: string;
+  /** OPTIONAL, because an archived chat is not a link. There is no way in from
+   *  the archive on purpose: opening one would have to either un-archive it
+   *  silently or drop you in a conversation you cannot send to. Without this
+   *  the row renders its title as plain text and takes no click. */
+  onOpen?: (t: ThreadSummary) => void;
+  /** The three verbs. Each is omitted where the surface does not offer it, and
+   *  the control and its menu item disappear together rather than sitting
+   *  there inert. The live list hands in archive and delete; the archive hands
+   *  in restore and delete. */
   onArchive?: (t: ThreadSummary) => void;
+  onRestore?: (t: ThreadSummary) => void;
   onDelete?: (t: ThreadSummary) => void;
 }) {
   const t = thread;
@@ -114,7 +126,10 @@ export default function ChatRow({
   // is for something you scan FOR."
   const facts = chatRowFacts(t, { showScope, shortModel });
   return (
-    <div className="ws-listrow" onClick={() => onOpen(t)}>
+    <div
+      className={"ws-listrow" + (onOpen ? "" : " ws-listrow--static")}
+      onClick={onOpen ? () => onOpen(t) : undefined}
+    >
       {/* The live dot is the row's mark, exactly where a ticket's status dot
           is. It is the one thing on a chat row worth scanning for. */}
       <span className="ws-listrow__mark">
@@ -123,23 +138,29 @@ export default function ChatRow({
       {/* THE HIT TARGET IS A BUTTON, so the list is reachable by keyboard. The
           row around it carries the shape; a button inside a button would be
           invalid, which is why the actions are siblings and not children. */}
-      <button
-        type="button"
-        className="ws-listrow__hit"
-        title={t.title || "New chat"}
-        onClick={(e) => { e.stopPropagation(); onOpen(t); }}
-      >
-        {t.title || "New chat"}
-      </button>
+      {onOpen ? (
+        <button
+          type="button"
+          className="ws-listrow__hit"
+          title={t.title || "New chat"}
+          onClick={(e) => { e.stopPropagation(); onOpen(t); }}
+        >
+          {t.title || "New chat"}
+        </button>
+      ) : (
+        <span className="ws-listrow__hit" title={t.title || "New chat"}>
+          {t.title || "New chat"}
+        </span>
+      )}
       <span className="ws-listrow__meta">
         {facts.map((f) => (
           <span key={f} className="ws-listrow__scope">{f}</span>
         ))}
         <span className="ws-listrow__time" title={t.updated_at ?? undefined}>
-          {relTime(t.updated_at)}
+          {time ?? relTime(t.updated_at)}
         </span>
       </span>
-      {(onArchive || onDelete) && (
+      {(onArchive || onRestore || onDelete) && (
         <span
           className="ws-listrow__actions"
           onClick={(e) => e.stopPropagation()}
@@ -155,6 +176,17 @@ export default function ChatRow({
               <Archive size={14} aria-hidden />
             </button>
           )}
+          {onRestore && (
+            <button
+              type="button"
+              className="ws-listrow__act"
+              title="Restore"
+              aria-label="Restore chat"
+              onClick={() => onRestore(t)}
+            >
+              <ArchiveRestore size={14} aria-hidden />
+            </button>
+          )}
           <Menu
             label="Chat actions"
             trigger={
@@ -168,7 +200,12 @@ export default function ChatRow({
                 Archive
               </MenuItem>
             )}
-            {onArchive && onDelete && <MenuSeparator />}
+            {onRestore && (
+              <MenuItem icon={<ArchiveRestore size={14} aria-hidden />} onSelect={() => onRestore(t)}>
+                Restore
+              </MenuItem>
+            )}
+            {(onArchive || onRestore) && onDelete && <MenuSeparator />}
             {onDelete && (
               <MenuItem danger icon={<Trash2 size={14} aria-hidden />} onSelect={() => onDelete(t)}>
                 Delete

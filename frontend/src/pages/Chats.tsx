@@ -1,18 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  ArchiveRestore, ChevronLeft, MoreVertical, Plus, Trash2,
-} from "lucide-react";
+import { ChevronLeft, Plus } from "lucide-react";
 import {
   Button,
-  Card,
   ConfirmDialog,
   Field,
   Input,
-  Menu,
-  MenuItem,
-  MenuSeparator,
   Notice,
   PageHeader,
   SectionLabel,
@@ -21,11 +15,11 @@ import {
   StateBlock,
 } from "@workshop/ui";
 import { chatApi, threadAgent, type ThreadSummary } from "../lib/chat";
-import ChatRow, { ChatScopeGlyph, shortModel } from "../components/chat/ChatRow";
+import ChatRow from "../components/chat/ChatRow";
 import { queryKeys } from "../lib/queryKeys";
 import { newChatHref } from "../lib/chatSelection";
-import { scopeLabel, scopeName } from "../components/chat/chatScope";
-import { groupByDate, spansScopes, visibleThreads, type ArmedFilter } from "./chatList";
+import { scopeLabel } from "../components/chat/chatScope";
+import { groupByDate, groupByField, spansScopes, visibleThreads, type ArmedFilter } from "./chatList";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
 // its own object with an optional context binding (general / project / app /
@@ -519,6 +513,10 @@ export function ChatsArchived() {
 
   const visible = filtered.slice(0, shown);
   const more = shown < filtered.length;
+  const archivedGroups = useMemo(
+    () => groupByField(visible, (t) => t.archived_at),
+    [visible],
+  );
 
   // Load the next page when the foot nears the viewport (same observer the live
   // list uses). rootMargin starts it early so the scroll never stops at the seam.
@@ -601,74 +599,38 @@ export function ChatsArchived() {
               purpose: an archived conversation is closed, so opening one would
               have to either un-archive it silently or drop you in a chat you
               cannot send to. The two things you can do to it are the two
-              buttons, and both of them ask first. */}
-          <div style={{ display: "grid", gap: "var(--space-2)" }}>
-            {visible.map((t) => (
-              <Card key={t.id} compact className="ws-chat-row" style={{ minWidth: 0 }}>
-                {/* Same row shape as the live list, minus the live-state dot (an
-                    archived chat is closed, so it can never be running). Line one:
-                    the scope's own icon, the name, then the meta right-justified.
-                    Line two: the last message. */}
-                <div className="ws-chat-row__head">
-                  <span
-                    className="ws-chat-row__scope"
-                    title={scopeName(t.context_key)}
-                    aria-label={scopeLabel(t.context_key)}
-                  >
-                    <ChatScopeGlyph contextKey={t.context_key} />
-                  </span>
-                  <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
-                  <div className="ws-chat-row__meta">
-                    {t.model && (
-                      <>
-                        <span className="ws-card__meta ws-chat-row__model">{shortModel(t.model)}</span>
-                        <span className="ws-chat-row__sep ws-chat-row__sep--model" aria-hidden>·</span>
-                      </>
-                    )}
-                    <span className="ws-card__meta">{t.message_count} turns</span>
-                    <span className="ws-chat-row__sep" aria-hidden>·</span>
-                    <span className="ws-card__meta ws-chat-row__when">{archivedLabel(t.archived_at)}</span>
-                    {/* Restore is the frequent, reversible action, so it sits on
-                        the row; Delete is the one destructive verb, so it lives in
-                        the menu. Both still confirm. */}
-                    <button
-                      type="button"
-                      className="ws-chat-row__act"
-                      title="Restore"
-                      aria-label="Restore chat"
-                      onClick={() => setPending({ id: t.id, title: t.title || "this chat", action: "restore" })}
-                    >
-                      <ArchiveRestore size={14} aria-hidden />
-                    </button>
-                    <Menu
-                      label="Chat actions"
-                      trigger={
-                        <button type="button" className="ws-chat-row__act" title="More" aria-label="More chat actions">
-                          <MoreVertical size={14} aria-hidden />
-                        </button>
-                      }
-                    >
-                      <MenuItem
-                        icon={<ArchiveRestore size={14} aria-hidden />}
-                        onSelect={() => setPending({ id: t.id, title: t.title || "this chat", action: "restore" })}
-                      >
-                        Restore
-                      </MenuItem>
-                      <MenuSeparator />
-                      <MenuItem
-                        danger
-                        icon={<Trash2 size={14} aria-hidden />}
-                        onSelect={() => setPending({ id: t.id, title: t.title || "this chat", action: "delete" })}
-                      >
-                        Delete
-                      </MenuItem>
-                    </Menu>
-                  </div>
-                </div>
-                <p className="ws-muted ws-chat-row__snippet">{t.last_message || " "}</p>
-              </Card>
-            ))}
-          </div>
+              buttons, and both of them ask first. ChatRow renders a plain
+              title rather than a button when it is handed no `onOpen`.
+
+              THE SAME ROW AND THE SAME HEADINGS AS THE OTHER TWO CHATS LISTS.
+              This page was the last copy of the pre-2026-09-01 design still
+              standing: bordered cards, a bold title with a scope glyph, no
+              date headings. It was still that on the day the operator said
+              "just put that back on all chats pages", so it is not a separate
+              surface with its own look, it is the third chats list.
+
+              Grouped by ARCHIVED date, not by activity: the server returns this
+              list most-recently-archived first (see `filtered` above), and a
+              heading has to name the field its list is sorted by or it labels
+              the wrong day. The row's time says the same thing for the same
+              reason. */}
+          {archivedGroups.map((g) => (
+            <div key={g.key} className="ws-chatgroup" style={{ display: "grid", gap: "var(--space-2)" }}>
+              <div className="ws-chatgroup__head">
+                <SectionLabel>{g.label}</SectionLabel>
+                <span className="ws-card__meta">{g.items.length}</span>
+              </div>
+              {g.items.map((t) => (
+                <ChatRow
+                  key={t.id}
+                  thread={t}
+                  time={archivedLabel(t.archived_at)}
+                  onRestore={(x) => setPending({ id: x.id, title: x.title || "this chat", action: "restore" })}
+                  onDelete={(x) => setPending({ id: x.id, title: x.title || "this chat", action: "delete" })}
+                />
+              ))}
+            </div>
+          ))}
           {more && <div ref={sentinel} aria-hidden style={{ height: 1 }} />}
         </>
       )}
