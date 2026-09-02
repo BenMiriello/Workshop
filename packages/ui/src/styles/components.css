@@ -745,7 +745,12 @@ a.ws-btn { text-decoration: none; }
    one row from 720px, with no second markup path. */
 .ws-listrow {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  /* A third column for row actions, at every width. It is `auto`, so a list
+     whose rows have none (tickets, runs) collapses it to zero and is
+     unchanged. Without an explicit column the actions auto-placed into the
+     next row's FIRST cell, under the status mark, which on a phone put an
+     archive button where the dot belongs. */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: baseline;
   column-gap: var(--space-2); row-gap: 2px;
   width: 100%; min-width: 0;
@@ -793,12 +798,13 @@ a.ws-btn { text-decoration: none; }
 
 @media (min-width: 720px) {
   .ws-listrow {
-    /* A fourth column for row actions. It is `auto`, so a list whose rows have
-       none (tickets, runs) collapses it to zero and is unchanged. */
+    /* Meta moves onto the title line here, so it takes a column of its own and
+       the actions move to the fourth. */
     grid-template-columns: auto minmax(0, 1fr) auto auto;
     align-items: center;
     padding-block: var(--space-2);
   }
+  .ws-listrow__actions { grid-column: 4; }
   .ws-listrow__sub { grid-column: 2; grid-row: 2; }
   .ws-listrow__meta { grid-column: 3; grid-row: 1; }
   /* No longer pushed apart, so the whole meta line is one trailing group and
@@ -828,7 +834,10 @@ a.ws-btn { text-decoration: none; }
    costs a navigation. They are siblings of the row's own hit target rather
    than children of it, because a button inside a button is invalid and the
    browser unpicks it silently. */
-.ws-listrow__actions { display: inline-flex; align-items: center; gap: 2px; }
+.ws-listrow__actions {
+  grid-column: 3; grid-row: 1; align-self: center;
+  display: inline-flex; align-items: center; gap: 2px;
+}
 .ws-listrow__act {
   display: inline-flex; align-items: center; justify-content: center;
   width: 26px; height: 26px;
