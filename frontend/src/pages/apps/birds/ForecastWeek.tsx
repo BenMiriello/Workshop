@@ -6,11 +6,12 @@ import {
   Area, Bar, CartesianGrid, ComposedChart, ErrorBar, LabelList, Line,
   ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
-import { Button, Skeleton, StateBlock, ChartTooltip, CHART_TARGET, userStorage } from "@workshop/ui";
+import { Button, Skeleton, StateBlock, ChartTooltip, CHART_TARGET } from "@workshop/ui";
 import BirdsHeader from "./BirdsHeader";
 import { hh, CHART_SERIES } from "./ui";
-import { birdsKeys, fetchForecastWeek, fetchLocations } from "./queries";
+import { birdsKeys, fetchForecastWeek } from "./queries";
 import { wx, OUTLOOK, localTime, dayLen, type Level } from "./forecastUtil";
+import { useBirdsScope } from "./scope";
 
 // The 7-day BIRD forecast: the bird activity is the subject. A week-activity graph
 // up top, bird-first day cards (predicted activity level + species count, weather
@@ -57,28 +58,23 @@ const FORECAST_DAYS = 7;
 
 export default function ForecastWeek() {
   const [sel, setSel] = useState(0);
-  // THE PLACE THE READER LAST CHOSE, or the first one this installation has.
+  // THE PLACE THE APP IS SCOPED TO, from the scope the whole app already shares.
   //
-  // It used to fall back to `return 6; // the yard station is the default
-  // place` -- one installation's row id compiled into the product. Measured
-  // 2026-09-01 on an installation with ZERO locations: the page asked for
-  // location 6, the backend answered 500, and the reader got "Couldn't load the
-  // forecast" for a place that does not exist rather than "add a place". A
-  // magic id cannot be right for a second installation and was not right for
-  // this one either.
-  const locsQ = useQuery({
-    queryKey: birdsKeys.locations({ includeNonBird: false }),
-    queryFn: () => fetchLocations<{ locations?: { id: number }[] }>({ includeNonBird: false }),
-    staleTime: 60_000,
-  });
-  const stored = (() => {
-    const ls = userStorage.local.getItem("birds-source");
-    if (!ls) return null;
-    try { const v = JSON.parse(ls); return v?.kind === "loc" && v.id ? Number(v.id) : null; }
-    catch { return null; }
-  })();
-  const locations = locsQ.data?.locations ?? [];
-  const locationId = stored ?? locations[0]?.id ?? null;
+  // Two things were wrong here. It read `birds-source` out of localStorage by
+  // hand, which is the scope provider's own state parsed a second time by a
+  // page that could not see it go stale; and it fell back to `return 6; // the
+  // yard station is the default place`, one installation's row id compiled into
+  // the product. Measured 2026-09-01 on an installation with ZERO locations:
+  // the page asked for location 6, the backend answered 500, and the reader got
+  // "Couldn't load the forecast" for a place that does not exist rather than
+  // "add a place". A magic id cannot be right for a second installation and was
+  // not right for this one either.
+  //
+  // `useBirdsScope` is what every other page in this app reads (BirdDetail and
+  // BirdsReview take the identical two lines), so this is one source of truth
+  // rather than a third copy, and it needs no request of its own.
+  const { selected } = useBirdsScope();
+  const locationId = selected?.kind === "loc" && selected.id != null ? Number(selected.id) : null;
 
   // A read with no cadence at all: a seven-day forecast does not move minute to
   // minute, and the client re-reads it on the way back to the tab. The
@@ -100,7 +96,7 @@ export default function ForecastWeek() {
   return (
     <div>
       <BirdsHeader title="7-day forecast" />
-      {!locsQ.isLoading && locationId === null ? (
+      {locationId === null ? (
         <StateBlock
           title="No place yet"
           hint="A forecast is for somewhere. Add a location and this fills in."
