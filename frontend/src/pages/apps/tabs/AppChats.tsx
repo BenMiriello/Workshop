@@ -32,10 +32,15 @@ export default function AppChats() {
   return (
     <AppTabPage slug={appSlug} title="Chats" header={false}>
       {(app) => (
+        // NO SUB. `.ws-chats-head` keeps these controls on the title's line at
+        // every width (that is the class's whole job), so on a 390px screen a
+        // subtitle has one narrow column left and "Every conversation in this
+        // app." wrapped to three lines beside the buttons. It was explainer
+        // text under a header already reading DEVELOPMENT / Chats, which rule
+        // 11 rules out anyway, and /chats has never had one.
         <ChatsView
           app={{ id: app.id, slug: app.slug, name: app.name }}
           eyebrow={app.name}
-          sub="Every conversation in this app."
         />
       )}
     </AppTabPage>
