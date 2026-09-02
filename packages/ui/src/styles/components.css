@@ -589,15 +589,40 @@ a.ws-btn { text-decoration: none; }
   padding-top: var(--space-2);
 }
 
-/* ---- THE CHAT LIST'S LIVE DOT -------------------------------------------
-   All that is left of `.ws-chat-row`. The chat list was a bordered card with
-   its own head/meta/snippet grid; the whole of it is now `.ws-listrow`, which
-   is the one row shape every list in the app uses (operator, 2026-08-12). The
-   last holdout was the archive, still wearing the pre-2026-09-01 design on the
-   day the operator asked for one chats page rather than three, and it is a
-   ChatRow now too. The rules those markup classes styled are deleted rather
-   than left orphaned: a change deletes the surface it replaces, and that
-   includes the style the surface was wearing. */
+/* ---- CHAT ROW (the /chats list and the archive) -------------------------- */
+/* A horizontal row: the left column fills the width with the title line and the
+   last-message line, each on ONE line and ellipsized; the right rail holds the
+   quiet meta (a live dot, the length, the last-activity time) off to the side so
+   the counts line up down the list rather than trailing the snippet at a ragged
+   edge. This is the /chats mockup's row, and it replaces the older stacked
+   ws-chat-card, which buried both counts at the end of a two-line snippet. */
+.ws-chat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+/* A chat row does not lift on hover (a lift reads as jumpy in a dense list); it
+   takes the quiet background wash the list rows use, and only on a device that
+   can hover so it never sticks after a tap. */
+@media (hover: hover) {
+  .ws-chat-row.ws-card--interactive:hover {
+    transform: none;
+    box-shadow: var(--shadow-card);
+    background: var(--card-hover);
+  }
+}
+/* Line one: the state dot, the scope icon, the title, then the meta trailing
+   right. align-items:center keeps the dot and icon on the title's line. */
+.ws-chat-row__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+/* Everything on the head line holds its size; only the title gives way, so a
+   long name ellipsizes rather than crushing the icon or the meta. */
+.ws-chat-row__head > :not(.ws-chat-row__title) { flex: none; }
 /* The live-state dot: filled in the live tone while a turn is running, a hollow
    ring at rest. It is the only hue on the row, because liveness is the one thing
    a chat list is scanned for. */
@@ -618,6 +643,85 @@ a.ws-btn { text-decoration: none; }
 @media (prefers-reduced-motion: reduce) {
   .ws-chat-row__state[data-live] { animation: none; }
 }
+/* The scope's icon says what KIND of place the chat is in (its name is on the
+   title attribute, shown on hover). A glyph that identifies, not a control, so
+   it is muted ink and never a hue. */
+.ws-chat-row__scope {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+}
+.ws-chat-row__title {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The meta trails on the SAME line as the title, pushed to the right edge. Same
+   at every width, so the phone reads as two lines exactly like the desktop. */
+.ws-chat-row__meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  /* Tight: the dot separators are their own flex items, so the gap lands on
+     both sides of each dot. A small gap reads as "model · turns · age" with
+     normal spacing; a large one leaves a weird gulf around every dot. */
+  gap: var(--space-1);
+}
+/* The row actions keep a touch more air from the last meta value and each
+   other, since they are tap targets, not text. */
+.ws-chat-row__meta .ws-chat-row__act { margin-left: var(--space-1); }
+/* The age sits tight after its dot. It used to have a 36px min-width and
+   right-align (from when the meta was a fixed right rail), which pushed the text
+   to the right of that box and opened a gap between the dot and the time. The
+   meta is right-justified as a whole now, so the column needs neither. */
+.ws-chat-row__when {
+  min-width: 0;
+  white-space: nowrap;
+}
+/* A faint dot between the meta sections (model, turns, age). It is a separator,
+   so it is the quietest ink and never a control. */
+.ws-chat-row__sep { color: var(--faint); user-select: none; }
+/* Line two: the snippet. It gets the whole row width, flush left under the dot,
+   and only ellipsizes when the message truly runs past the row's right edge. */
+.ws-chat-row__snippet {
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-tight, 1.4);
+}
+/* Row actions: a control, so neutral at rest and --fg on hover, never a hue. */
+.ws-chat-row__act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ws-chat-row__act:hover { color: var(--fg); }
+/* On a narrow phone the meta stays on the title line but sheds its widest,
+   least-scanned parts (the model name, then the archive shortcut, which also
+   lives in the menu) so the name keeps a readable width. */
+@media (max-width: 640px) {
+  .ws-chat-row__meta .ws-chat-row__model,
+  .ws-chat-row__meta .ws-chat-row__sep--model,
+  .ws-chat-row__meta .ws-chat-row__archive { display: none; }
+}
+/* The chat list's date-group heading was here. It is deleted, not orphaned:
+   the chat list stopped grouping by date on 2026-09-01 (one flat list, newest
+   first -- threads-branches-and-pages-2026-08-29.md section 6), so the rule had
+   no caller left. A change deletes the surface it replaces, and that includes
+   the style the surface was wearing. */
 
 /* A DATE-GROUP HEADING (label + count) on the chat list. It owns the group's
    vertical rhythm: room above to separate it from the previous group, with the
@@ -661,12 +765,7 @@ a.ws-btn { text-decoration: none; }
    one row from 720px, with no second markup path. */
 .ws-listrow {
   display: grid;
-  /* A third column for row actions, at every width. It is `auto`, so a list
-     whose rows have none (tickets, runs) collapses it to zero and is
-     unchanged. Without an explicit column the actions auto-placed into the
-     next row's FIRST cell, under the status mark, which on a phone put an
-     archive button where the dot belongs. */
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: baseline;
   column-gap: var(--space-2); row-gap: 2px;
   width: 100%; min-width: 0;
@@ -677,10 +776,6 @@ a.ws-btn { text-decoration: none; }
   transition: background var(--dur-fast) var(--ease-out);
 }
 .ws-listrow:hover { background: var(--card-hover); }
-/* A row with nowhere to go. The archive is the caller: an archived chat is not
-   a link, so the row must not claim to be one with a pointer cursor. It keeps
-   the hover tint, because the row's ACTIONS are still live. */
-.ws-listrow--static { cursor: default; }
 /* The status mark is a DOT: no pill, no border, no word beside the title.
    Labelling it there gave every row two chip-shaped objects (status and scope),
    which is what made the list read as chip soup rather than as a list.
@@ -711,10 +806,6 @@ a.ws-btn { text-decoration: none; }
    out of the box and the archive read "Archived A...". The time is the field
    the list is SORTED by, so it is the last thing that may be cut. */
 .ws-listrow__meta > * { flex: 0 0 auto; white-space: nowrap; }
-/* A fact that may NOT be shortened. See ChatRow: the model and the turn count
-   are short and load-bearing, so they hold their width and the names beside
-   them give way instead. */
-.ws-listrow__fact { flex: 0 0 auto; }
 .ws-listrow__meta > .ws-listrow__time { flex: 0 0 auto; }
 /* A fact that has been allowed to shrink must ellipsize rather than wrap: a
    shrunk box with no nowrap just breaks its text onto a second line, which is
@@ -729,48 +820,6 @@ a.ws-btn { text-decoration: none; }
   content: "·"; margin-right: var(--space-2); color: var(--faint);
 }
 
-/* A SECOND LINE UNDER THE TITLE, for a list whose row carries a preview. The
-   chat list is the caller: a conversation's last message is the one thing a
-   ticket has no equivalent of, and it is why the chat list had its own row
-   shape for so long. It gets one line, muted, ellipsized, so a row cannot
-   change height with its content and the list stays scannable. */
-.ws-listrow__sub {
-  grid-column: 2;
-  min-width: 0;
-  font-size: var(--fs-xs);
-  line-height: var(--lh-tight);
-  color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-/* ROW ACTIONS. Also the chat list's: archiving and deleting a conversation
-   from the list is frequent, and a row you must open to act on is a row that
-   costs a navigation. They are siblings of the row's own hit target rather
-   than children of it, because a button inside a button is invalid and the
-   browser unpicks it silently. */
-.ws-listrow__actions {
-  grid-column: 3; grid-row: 1; align-self: center;
-  display: inline-flex; align-items: center; gap: 2px;
-}
-.ws-listrow__act {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px;
-  border: none; border-radius: 6px;
-  background: transparent; color: var(--muted); cursor: pointer;
-}
-.ws-listrow__act:hover { color: var(--fg); }
-/* The row's own hit target: a real button, so the list is reachable by
-   keyboard. It carries no box of its own; the row around it is the shape. */
-.ws-listrow__hit {
-  grid-column: 2; min-width: 0;
-  border: 0; padding: 0; margin: 0;
-  background: transparent; color: inherit; font: inherit; text-align: left;
-  cursor: pointer;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: var(--fs-sm); line-height: var(--lh-tight);
-}
-.ws-listrow__hit:hover { text-decoration: none; }
-
 /* THE WIDE LAYOUT, AND IT MUST BE LAST IN THIS BLOCK.
    A media query adds no specificity, so these overrides only win by coming
    after the rules they override. When this block sat ABOVE `.ws-listrow__
@@ -780,16 +829,12 @@ a.ws-btn { text-decoration: none; }
    "opus 5 (archive)(menu) · 176 turns". Reported 2026-09-01. Keep this last. */
 @media (min-width: 720px) {
   .ws-listrow {
-    /* Meta moves onto the title line here, so it takes a column of its own and
-       the actions move to the fourth. */
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    /* Meta moves onto the title line here, so it takes a column of its own. */
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
     padding-block: var(--space-2);
   }
-  .ws-listrow__hit { grid-column: 2; grid-row: 1; }
   .ws-listrow__meta { grid-column: 3; grid-row: 1; }
-  .ws-listrow__actions { grid-column: 4; grid-row: 1; }
-  .ws-listrow__sub { grid-column: 2; grid-row: 2; }
   /* No longer pushed apart, so the whole meta line is one trailing group and
      every gap in it takes the same separator. */
   .ws-listrow__time { margin-left: 0; }
