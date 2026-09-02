@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { Button, ConfirmDialog, PageActionBar, PageHeader, Row, Stack, Input, StateBlock, Skeleton, Tag, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, userStorage } from "@workshop/ui";
 import { scopeLabel } from "../lib/tasks";
-import { NOTES_APP_ID } from "../apps/registry";
+import { appLegacyTabs } from "../apps/registry";
 import { httpFail } from "../lib/http";
 import { useIsWide } from "../lib/useMediaQuery";
 import { useDirectoryPage } from "../components/shell/directory";
@@ -117,8 +117,12 @@ const OVERFLOW_AT = 100;
  *  `?path=` selects the document. So it resolves by falling through. */
 const MOVED: Record<string, string> = {
   chats: "/chats",
-  vault: `/apps/${NOTES_APP_ID}`,
   files: "/chats",
+  // `vault` is not here: it belongs to whichever app absorbed it, and that app
+  // declares it (`AppModule.legacyTabs`). This page used to import the notes
+  // app's id from the shell registry to build the path, which is a platform
+  // page naming a specific app.
+  ...appLegacyTabs(),
 };
 
 export default function Memory() {

@@ -10,15 +10,15 @@
     "notes-app",
     "wearables"
   ],
-  "content_files": 114,
-  "import_sites": 18,
-  "literal_sites": 408,
+  "content_files": 121,
+  "import_sites": 17,
+  "literal_sites": 354,
   "home_path_sites": 0,
   "raised": {
     "content_files": {
-      "from": 106,
-      "to": 114,
-      "because": "STAGE E, FIRST HALF (2026-09-01): the backend app registry no longer enumerates apps. services/app_registry.py held eight hardcoded per-app factories and a literal _CATALOG_FACTORIES tuple listing them, so the platform module that defines what an app IS also decided which apps EXIST, and adding an app meant editing platform source. Each app now declares itself in its own services/<app>_app.py exposing app_spec(), the registry discovers those by scanning, and the contract (AppSpec/RouterMount/store helpers) moved to services/app_spec.py. content_files 106 -> 114 is exactly the eight new app-owned declaration files; it is the legitimate upward move this baseline documents, and it buys import_sites 24 -> 18 and literal_sites 479 -> 408. app_registry.py and app_spec.py now contain ZERO app names. The frontend registry (frontend/src/apps/registry.tsx, 54 literals) is the second half and is not done."
+      "from": 114,
+      "to": 121,
+      "because": "STAGE E, SECOND HALF (2026-09-02): the FRONTEND app registry no longer enumerates apps either. frontend/src/apps/registry.tsx held a literal APPS array with every app's routes, crumbs, icon, provider and launcher probe, and called itself 'the ONE file allowed to name a specific app'. Each app now declares itself in frontend/src/pages/apps/<app>/module.tsx exporting appModule, and the registry finds them with import.meta.glob, which Vite still resolves statically so code-splitting is unchanged. The contract is apps/appModule.ts (types) and apps/appShell.tsx (AppGroupNav + makeChatDock). content_files 114 -> 121 is exactly the seven new app-owned module.tsx files, buying literal_sites 408 -> 354 and import_sites 18 -> 17. Both registries -- backend and frontend -- now contain ZERO app names, as do apps/appModule.ts, apps/appShell.tsx and pages/Memory.tsx (which imported the notes app's id to build a legacy redirect; the app declares that via AppModule.legacyTabs now). What remains is EXTRACTION: moving the app source itself out of this repo, which is section 10 of app-is-the-entity-2026-08-20.md and needs the operator's repo decision."
     }
   }
 }
