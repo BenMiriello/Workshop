@@ -1,9 +1,9 @@
 import { useRef } from "react";
-import { Archive, GitBranch, MoreVertical, Trash2 } from "lucide-react";
-import { Card, Menu, MenuItem, MenuSeparator, Tag, catFor } from "@workshop/ui";
+import { Archive, MoreVertical, Trash2 } from "lucide-react";
+import { Menu, MenuItem, MenuSeparator } from "@workshop/ui";
 import type { ThreadSummary } from "../../lib/chat";
-import { scopeKind, scopeLabel, scopeName } from "./chatScope";
-import { chatTags } from "../../pages/chatList";
+import { scopeKind, scopeName } from "./chatScope";
+import { chatRowFacts } from "../../pages/chatList";
 import { pulseDelay } from "../../pages/chatPulse";
 import ScopeIcon from "./ScopeIcon";
 import { appIcon } from "../../apps/registry";
@@ -109,128 +109,81 @@ export default function ChatRow({
   onDelete?: (t: ThreadSummary) => void;
 }) {
   const t = thread;
-  const tags = chatTags(t, showScope);
+  // PLAIN TEXT, NOT CHIPS. components.css beside `.ws-listrow__meta`: "Scope
+  // and age are things you read once you are already looking at a row; a chip
+  // is for something you scan FOR."
+  const facts = chatRowFacts(t, { showScope, shortModel });
   return (
-    <Card
-      interactive
-      compact
-      className="ws-chat-row"
-      onClick={() => onOpen(t)}
-      // min-width:0 lets the two ellipsizing lines shrink instead of setting
-      // the card's min-content width and overflowing the viewport on mobile.
-      style={{ cursor: "pointer", minWidth: 0 }}
-    >
-      {/* Line one: the live-state dot, the scope's own icon (its name on
-          hover), the chat name, then the meta right-justified. Line two: the
-          last message. Two lines at every width. */}
-      <div className="ws-chat-row__head">
+    <div className="ws-listrow" onClick={() => onOpen(t)}>
+      {/* The live dot is the row's mark, exactly where a ticket's status dot
+          is. It is the one thing on a chat row worth scanning for. */}
+      <span className="ws-listrow__mark">
         <RunningDot running={!!t.running} ordinal={ordinal} />
-        <span
-          className="ws-chat-row__scope"
-          title={scopeName(t.context_key)}
-          aria-label={scopeLabel(t.context_key)}
-        >
-          <ChatScopeGlyph contextKey={t.context_key} />
+      </span>
+      {/* THE HIT TARGET IS A BUTTON, so the list is reachable by keyboard. The
+          row around it carries the shape; a button inside a button would be
+          invalid, which is why the actions are siblings and not children. */}
+      <button
+        type="button"
+        className="ws-listrow__hit"
+        title={t.title || "New chat"}
+        onClick={(e) => { e.stopPropagation(); onOpen(t); }}
+      >
+        {t.title || "New chat"}
+      </button>
+      <span className="ws-listrow__meta">
+        {facts.map((f) => (
+          <span key={f} className="ws-listrow__scope">{f}</span>
+        ))}
+        <span className="ws-listrow__time" title={t.updated_at ?? undefined}>
+          {relTime(t.updated_at)}
         </span>
-        <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
-        <div className="ws-chat-row__meta">
-          {t.model && (
-            <>
-              <span className="ws-card__meta ws-chat-row__model">{shortModel(t.model)}</span>
-              <span className="ws-chat-row__sep ws-chat-row__sep--model" aria-hidden>·</span>
-            </>
-          )}
-          {/* A count is only shown when there is one. A surface whose source
-              does not carry it must not print "undefined turns" or claim 0. */}
-          {typeof t.message_count === "number" && t.message_count > 0 && (
-            <>
-              <span className="ws-card__meta">{t.message_count} turns</span>
-              <span className="ws-chat-row__sep" aria-hidden>·</span>
-            </>
-          )}
-          <span className="ws-card__meta ws-chat-row__when">{relTime(t.updated_at)}</span>
-          {/* THE BRANCH IS A TAG NOW, on the line below with scope and role
-              (`threads-branches-and-pages-2026-08-29.md` §6: "A branch is a
-              small tag on the row, next to scope and role"). It was an icon
-              here, with the name only on the title attribute, so on a phone
-              there was no hover and the row could not answer which branch at
-              all. §3 is the reason it is a name and not a glyph: the interface
-              says branch, and a branch has one. */}
+      </span>
+      {(onArchive || onDelete) && (
+        <span
+          className="ws-listrow__actions"
+          onClick={(e) => e.stopPropagation()}
+        >
           {onArchive && (
             <button
               type="button"
-              className="ws-chat-row__act ws-chat-row__archive"
+              className="ws-listrow__act"
               title="Archive"
               aria-label="Archive chat"
-              onClick={(e) => { e.stopPropagation(); onArchive(t); }}
+              onClick={() => onArchive(t)}
             >
               <Archive size={14} aria-hidden />
             </button>
           )}
-          {/* The menu opens on its own; the stop keeps its trigger from also
-              opening the chat behind it. */}
-          {(onArchive || onDelete) && (
-            <span onClick={(e) => e.stopPropagation()}>
-              <Menu
-                label="Chat actions"
-                trigger={
-                  <button type="button" className="ws-chat-row__act" title="More" aria-label="More chat actions">
-                    <MoreVertical size={14} aria-hidden />
-                  </button>
-                }
-              >
-                {onArchive && (
-                  <MenuItem icon={<Archive size={14} aria-hidden />} onSelect={() => onArchive(t)}>
-                    Archive
-                  </MenuItem>
-                )}
-                {onArchive && onDelete && <MenuSeparator />}
-                {onDelete && (
-                  <MenuItem
-                    danger
-                    icon={<Trash2 size={14} aria-hidden />}
-                    onSelect={() => onDelete(t)}
-                  >
-                    Delete
-                  </MenuItem>
-                )}
-              </Menu>
-            </span>
-          )}
-        </div>
-      </div>
-      {/* Line two: the last message, and the row's tags trailing it.
-          WHAT A THREAD IS, IN THREE TAGS: its scope, its role, its branch, in
-          that order, each omitted when the thread does not have one (§6, and
-          §1 for why a null role prints nothing rather than a default). The
-          derivation is `chatTags`, so both chat lists tag a thread identically
-          and the rule can be executed in a test.
-          `ws-tagstrip` is the kit's row-of-tags container and it is what keeps
-          the narrow column safe: one line that scrolls, never a wrap, so a row
-          cannot change height or overflow because a branch has a long name.
-          The snippet keeps a floor and gives up the rest (see below); it
-          ellipsizes as it always did. */}
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0 }}>
-        {/* `1 1 8rem`, and the basis is the whole point: at `auto` the flex
-            basis is the message's own length, which on a 390px phone is far
-            longer than the line, so the snippet claimed the width and the tags
-            were shrunk to a clipped dot. A fixed basis makes the snippet ASK
-            for 8rem and take the rest only when there is a rest. Measured in a
-            390px shot, which is the only thing that catches this. */}
-        <p className="ws-muted ws-chat-row__snippet" style={{ flex: "1 1 8rem", width: "auto" }}>
-          {t.last_message || " "}
-        </p>
-        {tags.length > 0 && (
-          <span className="ws-tagstrip" style={{ flex: "0 1 auto" }}>
-            {tags.map((tag) => (
-              <Tag key={`${tag.kind}:${tag.label}`} hue={catFor(tag.label)} variant="neutral">
-                {tag.kind === "branch" && <GitBranch size={11} aria-hidden />}
-                {tag.label}
-              </Tag>
-            ))}
-          </span>
-        )}
-      </div>
-    </Card>
+          <Menu
+            label="Chat actions"
+            trigger={
+              <button type="button" className="ws-listrow__act" title="More" aria-label="More chat actions">
+                <MoreVertical size={14} aria-hidden />
+              </button>
+            }
+          >
+            {onArchive && (
+              <MenuItem icon={<Archive size={14} aria-hidden />} onSelect={() => onArchive(t)}>
+                Archive
+              </MenuItem>
+            )}
+            {onArchive && onDelete && <MenuSeparator />}
+            {onDelete && (
+              <MenuItem danger icon={<Trash2 size={14} aria-hidden />} onSelect={() => onDelete(t)}>
+                Delete
+              </MenuItem>
+            )}
+          </Menu>
+        </span>
+      )}
+      {/* The last message. One line, muted, ellipsized: a conversation's
+          preview is the one thing a ticket row has no equivalent of, and it is
+          why this list carried its own row shape for so long. It does not get
+          to change the row's height. */}
+      {t.last_message ? (
+        <span className="ws-listrow__sub">{t.last_message}</span>
+      ) : null}
+    </div>
   );
 }

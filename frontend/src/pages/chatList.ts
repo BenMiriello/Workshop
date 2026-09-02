@@ -118,3 +118,47 @@ export function chatTags(
   if (branch) tags.push({ kind: "branch", label: branch });
   return tags;
 }
+
+
+/**
+ * The facts on a chat row's meta line, in order, as PLAIN TEXT.
+ *
+ * The design law's own words about this line, in components.css beside
+ * `.ws-listrow__meta`: "Plain muted text, not tags. Scope and age are things
+ * you read once you are already looking at a row; a chip is for something you
+ * scan FOR. Spending the chip treatment on both is what stops the one mark
+ * that matters from standing out at all."
+ *
+ * The chat row used to do both at once: a model and a turn count on line one,
+ * and scope, role and branch as coloured chips on line two. Same rule and same
+ * shape as `ticketRowFacts` in lib/tasks, so the two lists read alike.
+ *
+ * A fact is omitted rather than defaulted. No "0 turns", no "none" for a role
+ * a thread does not have.
+ */
+export function chatRowFacts(
+  t: {
+    context_key?: string | null;
+    model?: string | null;
+    message_count?: number | null;
+    role?: string | null;
+    branch_slug?: string | null;
+  },
+  opts: { showScope?: boolean; shortModel?: (m: string) => string } = {},
+): string[] {
+  const out: string[] = [];
+  const model = (t.model || "").trim();
+  if (model) out.push(opts.shortModel ? opts.shortModel(model) : model);
+  if (typeof t.message_count === "number" && t.message_count > 0) {
+    out.push(`${t.message_count} ${t.message_count === 1 ? "turn" : "turns"}`);
+  }
+  if (opts.showScope) {
+    const scope = scopeName(t.context_key || "");
+    if (scope) out.push(scope);
+  }
+  const role = (t.role || "").trim();
+  if (role) out.push(role);
+  const branch = branchName({ branch_slug: t.branch_slug });
+  if (branch) out.push(branch);
+  return out;
+}
