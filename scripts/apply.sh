@@ -279,10 +279,11 @@ else
   # that started cleanly. Same shape as the guard below and for the same reason:
   # decline, say exactly why, name what to do.
   if [ "$MIG_BLOCKS" = 1 ]; then
-    warn "not restarting: this tree's migrations have not been applied to the live database (above)."
-    say  "          Restarting onto that is an outage, not a risk: the service starts fine and"
-    say  "          then fails every query for a column that is not there. The import preflight"
-    say  "          cannot see it. Apply the migration and rerun:"
+    warn "not restarting: this tree's migrations have not been applied yet (above)."
+    say  "          ORDER, not permission. Restarting first breaks the app for real: the"
+    say  "          service starts fine and then fails every query for a column that is not"
+    say  "          there, and the import preflight cannot see it. So run the migration"
+    say  "          FIRST, which is ordinary work in a dev installation, then rerun this:"
     say  "            $MIG_FIX"
     BE_SKIPPED=1
     BE_SKIP_WHY="unapplied migrations above"
