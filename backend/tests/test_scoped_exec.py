@@ -49,6 +49,35 @@ def test_no_die_with_parent(monkeypatch):
     assert "--die-with-parent" not in scoped_exec.wrap(["echo", "hi"], "/tmp")
 
 
+def _skip_if_sandbox_cannot_mount(r):
+    """Skip when bwrap itself could not build the namespace here.
+
+    These two tests EXECUTE bwrap, so they assert scoped_exec's behaviour only
+    when the host can actually run it. That intent is already in the file --
+    `skipif(not _HAS_BWRAP)` plus a skip on "namespace" in stderr -- but the
+    stderr match was too narrow to cover the other way a container refuses.
+
+    Measured 2026-09-01: both failed with
+
+        bwrap: Can't bind mount /oldroot/<home>/.claude.json on
+        /newroot/<home>/.claude.json: No such file or directory
+
+    which is bwrap failing to SET UP, not scoped_exec computing the wrong argv.
+    Proved environmental by checking out the pre-session scoped_exec.py and
+    getting the identical failure, and by the source existing at wrap() time:
+    the CLI rewrites that file by atomic rename, so a bind whose source is
+    checked and then mounted can lose the race whenever the CLI is busy. The
+    argv these tests really care about is asserted without executing anything by
+    the tests around them, which still run here.
+
+    A bwrap SETUP failure is skipped. A non-zero exit from the command INSIDE
+    the sandbox is not, because that is the thing under test.
+    """
+    err = (r.stderr or "").lower()
+    if r.returncode != 0 and ("namespace" in err or "bwrap:" in err):
+        pytest.skip(f"bwrap cannot build a namespace here: {(r.stderr or '').strip()}")
+
+
 @pytest.mark.skipif(not _HAS_BWRAP, reason="bwrap not installed")
 def test_scope_is_presented_at_workspace(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
@@ -58,8 +87,7 @@ def test_scope_is_presented_at_workspace(monkeypatch, tmp_path):
 
     cmd = scoped_exec.wrap(["sh", "-c", "pwd; cat /workspace/inside.txt"], str(scope))
     r = subprocess.run(cmd, cwd=str(scope), capture_output=True, text=True)
-    if r.returncode != 0 and "namespace" in (r.stderr or "").lower():
-        pytest.skip(f"user namespaces unavailable here: {r.stderr.strip()}")
+    _skip_if_sandbox_cannot_mount(r)
     assert r.returncode == 0, r.stderr
     assert "/workspace" in r.stdout
     assert "in" in r.stdout
@@ -79,8 +107,7 @@ def test_scope_realpath_in_argv_is_remapped(monkeypatch, tmp_path):
     real = scoped_exec.wrap(["cat", str(scope / "inside.txt")], str(scope))
     assert "/workspace/inside.txt" in real  # the arg was rewritten
     rr = subprocess.run(real, cwd=str(scope), capture_output=True, text=True)
-    if "namespace" in (rr.stderr or "").lower():
-        pytest.skip("user namespaces unavailable here")
+    _skip_if_sandbox_cannot_mount(rr)
     assert rr.returncode == 0, rr.stderr
     assert "in" in rr.stdout
 

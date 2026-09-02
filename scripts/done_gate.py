@@ -614,7 +614,22 @@ def check_correctness(files, base_rev, evidence, foreign):
     the fact that the whole gate could not be attributed is written down.
     """
     if not foreign:
-        rec = run(["bash", str(ROOT / "scripts" / "reviewer.sh")], timeout=1200, full=True)
+        # PASS THE TURN'S BASELINE. reviewer.sh judges the working tree against
+        # a baseline commit-ish and defaults to HEAD, so on a CLEAN tree it sees
+        # zero changed files and rejects with `no_diff`.
+        #
+        # That made this branch unreachable in the one case it is meant for.
+        # CLAUDE.md says "commit your own work as you go; never leave it
+        # uncommitted", so a finished turn's tree is clean BY THE RULES, and the
+        # only reason the gate had been passing was that an untracked file kept
+        # the tree dirty and sent every run down the scoped path instead.
+        # Measured 2026-09-01: cleaning the tree turned a passing gate into
+        # `no_diff` with no change to the work being judged.
+        #
+        # `base_rev` is the turn boundary this function is already given, which
+        # is exactly the revision the turn's commits sit on top of.
+        rec = run(["bash", str(ROOT / "scripts" / "reviewer.sh"), base_rev],
+                  timeout=1200, full=True)
         evidence["commands"].append(rec)
         try:
             verdict = json.loads(rec["stdout"])
