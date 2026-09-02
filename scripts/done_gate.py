@@ -671,6 +671,23 @@ def check_correctness(files, base_rev, evidence, foreign):
     }
 
 
+# BOTH WIDTHS, ALWAYS, and this is the point of the check rather than a detail
+# of it.
+#
+# frontend/CLAUDE.md has said "shoot it at 390 wide and at 1440 wide before you
+# report it done" since 2026-08-22. This gate shot 1440 only, and the phone shot
+# was left to whoever remembered, so in practice a turn produced ONE image and
+# the other width was never seen. The kit's own row breaks at 720px: on
+# 2026-09-01 `.ws-listrow__actions` was placed in the same grid cell as the meta
+# at every width above that, so the archive and overflow buttons drew on top of
+# the model name, and the phone -- where the two are on separate rows -- looked
+# perfect. Three rounds of "fixed" went out over it, and the operator reported
+# the same page wrong each time.
+#
+# One shot cannot answer a question about a responsive layout. Two can.
+SHOT_WIDTHS = (("390", 390, 900), ("1440", 1440, 900))
+
+
 def check_screenshot(files, shot_routes, evidence, delivery_state):
     visual = [f for f in files if f.endswith(VISUAL_SUFFIXES) and
               (f.startswith(UI_PREFIXES) or f.startswith("mobile/"))]
@@ -687,17 +704,22 @@ def check_screenshot(files, shot_routes, evidence, delivery_state):
         }
     shots = []
     for route in shot_routes:
-        name = "shot" + (route.rstrip("/").replace("/", "-") or "-root") + ".png"
-        rel = f"scratch/done-gate/{name}"
+        stem = "shot" + (route.rstrip("/").replace("/", "-") or "-root")
         (ROOT / "scratch" / "done-gate").mkdir(parents=True, exist_ok=True)
-        rec = run(["bash", str(ROOT / "scripts" / "shoot.sh"), route, "1440", "900", rel],
-                  timeout=180)
-        evidence["commands"].append(rec)
-        ok = rec["exit"] == 0 and (ROOT / rel).is_file()
-        shots.append({"route": route, "path": str(ROOT / rel), "ok": ok})
+        for label, w, h in SHOT_WIDTHS:
+            rel = f"scratch/done-gate/{stem}-{label}.png"
+            rec = run(["bash", str(ROOT / "scripts" / "shoot.sh"), route, str(w), str(h), rel],
+                      timeout=180)
+            evidence["commands"].append(rec)
+            ok = rec["exit"] == 0 and (ROOT / rel).is_file()
+            shots.append({"route": route, "width": w, "path": str(ROOT / rel), "ok": ok})
     return {
         "state": "pass" if all(s["ok"] for s in shots) else "fail",
         "files": visual, "shots": shots,
+        # Said in the result, not only in this file, because the agent reading
+        # the gate's output is the one who has to open both files.
+        "look_at_both": "a defect can exist at one width and not the other; "
+                        "read every path above, not the first one",
     }
 
 
