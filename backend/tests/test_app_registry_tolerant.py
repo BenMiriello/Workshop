@@ -119,3 +119,34 @@ def test_catalog_never_hard_imports_app_modules_at_toplevel():
         stripped = line.strip()
         if stripped.startswith("from routes import") and line[:1] not in (" ", "\t"):
             pytest.fail(f"app_registry top-level imports a route module: {stripped!r}")
+
+
+def test_every_card_route_is_the_apps_own_id():
+    """A card's route is where the platform SENDS you, so it has to be a route
+    that exists.
+
+    `app_surface.surface_for` takes the built-in card's `route` as the app's
+    home, and the frontend registers each app's page at `/apps/<id>`
+    (`frontend/src/apps/registry.tsx` builds the path from the id). So a card
+    whose route is anything else points the reader at a route nobody serves:
+    the shell finds no app with that slug and bounces to Home with an error.
+
+    Measured 2026-09-01: the notes app was `id="notes-app"` with
+    `route="/apps/notes"`, and its own test asserted that literal, which pinned
+    the bug rather than catching it. Opening Notes went to Home with an error.
+
+    A card with NO route is fine and not what this guards: that app simply has
+    no screen of its own and takes the platform's tabs.
+    """
+    from services import app_registry
+
+    wrong = {
+        app_id: spec.card["route"]
+        for app_id, spec in app_registry.BUILTIN_APPS.items()
+        if (spec.card or {}).get("route")
+        and spec.card["route"] != f"/apps/{app_id}"
+    }
+    assert not wrong, (
+        "these apps declare a route that is not their own id, so opening them "
+        f"lands on a route nobody serves: {wrong}"
+    )

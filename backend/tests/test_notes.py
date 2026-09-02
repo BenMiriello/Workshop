@@ -152,5 +152,13 @@ def test_catalog_registration():
     assert "notes-app" in app_registry.BUILTIN_APPS
     spec = app_registry.BUILTIN_APPS["notes-app"]
     assert spec.identity["provides"] == notes_routes.PROVIDES
-    assert spec.card["route"] == "/apps/notes"
+    # THE ROUTE IS THE ID, and this used to assert `/apps/notes`, which pinned
+    # the bug in place. The frontend serves this app at `/apps/notes-app`
+    # (registry.tsx builds the path from the same id), no app has the slug
+    # `notes`, and `app_surface.surface_for` takes this card's route as the
+    # app's home. So the one link the app handed out went to a route nobody
+    # serves and the shell bounced the reader to Home with an error. Reported
+    # 2026-09-01: "https://.../apps/notes/chats -- redirects to home with an
+    # error".
+    assert spec.card["route"] == f"/apps/{spec.id}"
     assert spec.mounts and spec.mounts[0].deps  # mounted with an auth dep

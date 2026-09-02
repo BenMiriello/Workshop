@@ -509,11 +509,18 @@ def _wearables_spec() -> AppSpec:
     )
 
 
+# The notes app's id, written ONCE. Its route is built from it below, because
+# the two spellings drifting apart is the whole of the bug this constant exists
+# to prevent. frontend/src/apps/registry.tsx already does the same thing with
+# NOTES_APP_ID for the same reason.
+_NOTES_APP_ID = "notes-app"
+
+
 def _notes_spec() -> AppSpec:
     from routes import notes
     from services import notes_store_adapter, notes_vault, permissions
     return AppSpec(
-        id="notes-app",
+        id=_NOTES_APP_ID,
         # `notes:vault`, not `notes-app:vault`. The URI predates this
         # declaration; see `store_owner`.
         store_owner="notes",
@@ -521,7 +528,22 @@ def _notes_spec() -> AppSpec:
             "title": "Notes",
             "tagline": "Markdown vault — wikilinks, backlinks, search",
             "icon": "NotebookPen",
-            "route": "/apps/notes",
+            # `/apps/notes-app`, from the id above, NOT `/apps/notes`.
+            #
+            # This card's route is where the platform sends anyone who opens the
+            # app: `app_surface.surface_for` takes it as the app's home. It said
+            # `/apps/notes`, the frontend registers the page at `/apps/notes-app`
+            # (registry.tsx builds it from the same id), and no app has the slug
+            # `notes`. So the one link the app hands out pointed at a route
+            # nobody serves, the shell found no such app, and bounced the reader
+            # to Home with an error. Reported 2026-09-01: "why is notes still
+            # crashing".
+            #
+            # Built from `id` so the two spellings cannot drift apart again,
+            # which is exactly what registry.tsx did on the frontend side for
+            # the same bug: "Two spellings of one name is the bug. There is now
+            # one, and the paths are built from it."
+            "route": f"/apps/{_NOTES_APP_ID}",
         },
         identity={
             "sensitivity": "private",
