@@ -391,7 +391,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
       <Modal open={logsFor !== null} onClose={() => setLogsFor(null)} title={logsFor ? `Logs: ${logsFor}` : "Logs"}>
         <pre className="ws-mono" style={{
           maxHeight: "60vh", overflow: "auto", fontSize: "var(--fs-xs)",
-          background: "var(--surface-2)", padding: "var(--space-3)", borderRadius: "var(--radius-2)",
+          background: "var(--bg-inset)", padding: "var(--space-3)", borderRadius: "var(--radius-md)",
           whiteSpace: "pre-wrap", margin: 0,
         }}>
           {logText}

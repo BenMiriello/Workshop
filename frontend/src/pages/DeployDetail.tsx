@@ -464,7 +464,7 @@ export default function DeployDetail() {
             maxHeight: "60vh",
             overflowY: "auto",
             padding: "var(--space-3)",
-            background: "var(--surface-muted)",
+            background: "var(--bg-inset)",
             borderRadius: "var(--radius-sm)",
           }}>
             {logText}

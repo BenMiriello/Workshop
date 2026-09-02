@@ -26,7 +26,7 @@ export function wx(code: number | null | undefined): { label: string; Icon: type
 // Activity level -> icon + accent token (not status hues; this isn't ok/warn/danger).
 export const OUTLOOK: Record<Level, { label: string; Icon: typeof Sun; tone: string }> = {
   elevated: { label: "Elevated", Icon: TrendingUp, tone: "var(--accent)" },
-  normal: { label: "Normal", Icon: Activity, tone: "var(--text)" },
+  normal: { label: "Normal", Icon: Activity, tone: "var(--fg)" },
   subdued: { label: "Subdued", Icon: TrendingDown, tone: "var(--muted)" },
   low: { label: "Low", Icon: TrendingDown, tone: "var(--muted)" },
 };

@@ -303,7 +303,7 @@
 .atlas-popover__row { display: flex; align-items: center; gap: .4rem; }
 .atlas-popover__name { font-weight: 600; text-decoration: none; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .atlas-popover__close { margin-left: auto; background: none; border: 0; color: var(--muted); cursor: pointer; display: inline-flex; padding: 2px; border-radius: 4px; }
-.atlas-popover__close:hover { color: var(--text); background: var(--bg-inset); }
+.atlas-popover__close:hover { color: var(--fg); background: var(--bg-inset); }
 .atlas-popover__meta { font-size: .8rem; margin-top: .25rem; }
 .atlas-popover__play { display: flex; align-items: center; gap: .4rem; margin-top: .45rem; }
 

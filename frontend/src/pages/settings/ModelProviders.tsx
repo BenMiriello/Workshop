@@ -118,7 +118,7 @@ function ApiKeyRow({ row, onRefresh }: { row: ProviderRow; onRefresh: () => void
   };
 
   return (
-    <div style={{ padding: "var(--space-3) 0", borderTop: "1px solid var(--border-faint)" }}>
+    <div style={{ padding: "var(--space-3) 0", borderTop: "1px solid var(--border)" }}>
       <Stack gap="sm">
         <Row style={{ justifyContent: "space-between", alignItems: "center", gap: "var(--space-2)" }}>
           <span style={{ fontSize: "var(--fs-sm)" }}>{row.label}</span>

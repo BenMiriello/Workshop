@@ -273,7 +273,7 @@ export function MemoryTreeView({
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       {places.length > 1 && (
-        <div style={{ padding: "var(--space-2) var(--space-3)", borderBottom: "1px solid var(--border-faint)", flexShrink: 0 }}>
+        <div style={{ padding: "var(--space-2) var(--space-3)", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
           <Select
             value={selectedPlace}
             onChange={(e) => onPlaceChange(e.target.value)}

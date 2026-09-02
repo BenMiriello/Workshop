@@ -140,7 +140,7 @@ export default function AppPreview() {
             key={nonce}
             title={`${slug} preview`}
             src={src}
-            style={{ flex: 1, width: "100%", border: "1px solid var(--border)", borderRadius: "var(--radius-2)", background: "var(--surface)" }}
+            style={{ flex: 1, width: "100%", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", background: "var(--card)" }}
           />
         </div>
       )}

@@ -2982,7 +2982,7 @@ span.ws-filterchip__open { cursor: default; }
   font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: var(--fw-semi);
 }
 .ws-chart-tooltip__val + .ws-chart-tooltip__val { margin-top: 1px; }
-.ws-chart-tooltip__name { color: var(--muted); font-family: var(--font-sans); font-weight: var(--fw-reg); }
+.ws-chart-tooltip__name { color: var(--muted); font-family: var(--font-sans); font-weight: var(--fw-normal); }
 
 /* Legend chips */
 .ws-chart-legend { display: flex; gap: var(--space-4); flex-wrap: wrap; margin-top: var(--space-3); }
@@ -3211,7 +3211,7 @@ span.ws-filterchip__open { cursor: default; }
   border-bottom: 1px solid var(--border);
 }
 @media (hover: hover) {
-  .ws-task-row:hover { background: var(--surface-2); }
+  .ws-task-row:hover { background: var(--bg-inset); }
 }
 .ws-task-row__actions {
   display: flex;
@@ -4149,8 +4149,8 @@ span.ws-filterchip__open { cursor: default; }
 .ctx-body { display: flex; flex-direction: column; gap: var(--space-3); }
 
 .ctx-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
-.ctx-head__total { font-size: var(--text-lg); font-weight: 600; }
-.ctx-head__pct { font-size: var(--text-lg); font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ctx-head__total { font-size: var(--fs-lg); font-weight: 600; }
+.ctx-head__pct { font-size: var(--fs-lg); font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .ctx-bar { margin-block: var(--space-1); }
 
@@ -4162,12 +4162,12 @@ span.ws-filterchip__open { cursor: default; }
   align-items: center;
   gap: var(--space-2);
   padding-block: var(--space-1);
-  font-size: var(--text-sm);
+  font-size: var(--fs-sm);
   min-width: 0;
 }
-.ctx-row__swatch { width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--border); }
+.ctx-row__swatch { width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--border); }
 .ctx-row__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.ctx-row__sub { color: var(--muted); margin-left: var(--space-2); font-size: var(--text-xs); }
+.ctx-row__sub { color: var(--muted); margin-left: var(--space-2); font-size: var(--fs-xs); }
 .ctx-row__tokens { text-align: right; font-variant-numeric: tabular-nums; }
 .ctx-row__pct { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 
@@ -4202,7 +4202,7 @@ span.ws-filterchip__open { cursor: default; }
    is only useful whole. */
 .ctx-detail {
   padding-left: calc(var(--space-5) + var(--space-2));
-  color: var(--muted); font-size: var(--text-xs);
+  color: var(--muted); font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
@@ -4217,7 +4217,7 @@ span.ws-filterchip__open { cursor: default; }
 
 .ctx-foot {
   display: flex; align-items: center; justify-content: space-between;
-  gap: var(--space-3); color: var(--muted); font-size: var(--text-xs);
+  gap: var(--space-3); color: var(--muted); font-size: var(--fs-xs);
 }
 .ctx-foot__age { margin-left: auto; }
 .ctx-foot__model { font-variant-numeric: tabular-nums; }
@@ -4239,7 +4239,7 @@ span.ws-filterchip__open { cursor: default; }
    line rather than wearing a dead control. */
 .ctx-nospec {
   padding-left: calc(var(--space-5) + var(--space-2));
-  color: var(--muted); font-size: var(--text-xs);
+  color: var(--muted); font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 /* A row switched off. Dimmed, because unlike a BROKEN server this one is
@@ -4260,13 +4260,13 @@ span.ws-filterchip__open { cursor: default; }
 .mcp-name__chev { transition: transform var(--dur-fast) var(--ease-in-out); color: var(--muted); }
 .mcp-name.is-open .mcp-name__chev { transform: rotate(90deg); }
 .mcp-why td {
-  color: var(--muted); font-size: var(--text-xs);
+  color: var(--muted); font-size: var(--fs-xs);
   padding-top: 0; overflow-wrap: anywhere;
 }
-.mcp-more td { background: var(--bg-inset); font-size: var(--text-sm); }
+.mcp-more td { background: var(--bg-inset); font-size: var(--fs-sm); }
 .mcp-tools {
   display: grid; grid-template-columns: 1fr auto;
-  gap: var(--space-1) var(--space-4); font-size: var(--text-xs);
+  gap: var(--space-1) var(--space-4); font-size: var(--fs-xs);
 }
 .mcp-tools__row { display: contents; }
 /* Rule 9's overflow case: past eight servers the table scrolls in place rather
