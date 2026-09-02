@@ -204,8 +204,13 @@ case "$MIG_STATE" in
   tree_ahead)
     MIG_BLOCKS=1
     stale "$MIG_MSG"
-    say  "          apply.sh does not run migrations and will not. Run this yourself:"
-    say  "            $MIG_FIX" ;;
+    say  "          apply.sh does not run migrations, because the migration has to land"
+    say  "          BEFORE the restart. That is ORDER, not permission: this is a dev"
+    say  "          installation and applying it is ordinary work. Run it, then rerun:"
+    say  "            $MIG_FIX"
+    say  "          UNLESS the line above says 'per a direct connection' -- then the"
+    say  "          database measured is not the one the backend uses (a sandbox), and"
+    say  "          migrating it would change the wrong one." ;;
   live_ahead)
     # The database is ahead of the tree -- a revert, or an old checkout. Real
     # drift, so it is reported. It does NOT hold the restart: the code on disk

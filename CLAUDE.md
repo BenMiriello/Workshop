@@ -22,12 +22,32 @@ with any other agent**. You do not need to coordinate and you do not need to ask
 
 **One surface it reports and never fixes: the database schema.** It compares the
 tree's alembic head to the live `alembic_version`, and when the tree is ahead it
-**declines the backend restart** and names the command to run — because starting
-code whose migration has not landed is a guaranteed outage (a missing column
-fails at query time, which the import preflight cannot see; that is exactly how
-`15883681` nearly took chat down on 2026-09-01). Running the migration stays the
-operator's act, in his own terminal. Nothing in this repo's deploy path runs
-alembic, deliberately.
+**declines the backend restart** and names the command to run.
+
+**RUN THAT COMMAND. It is ordinary work, not an escalation.** This is a
+development installation and a migration here is a migration in development: if
+it is in the tree, apply it. Do not report the schema as "blocked" and hand the
+command back, which reads as asking permission. The operator has corrected this
+more than once, most recently on 2026-09-01: "in development you shouldn't treat
+it like production, that's so fucking annoying to have you stopping short over
+and over making me do extra work to remind you you can do things."
+
+The reason apply.sh does not run alembic itself is ORDER, not danger. The
+migration has to land BEFORE the restart, because a missing column fails at
+query time and the import preflight cannot see it, which is how `15883681`
+nearly took chat down on 2026-09-01. So the sequence is: run the migration, then
+run apply.sh. Both are yours to run.
+
+**One genuine exception, and it is reachability rather than permission.** An
+agent in a sandbox may not share the backend's network namespace, in which case
+the DSN in the config resolves to a DIFFERENT database. Measured 2026-09-01: a
+session reached an empty scratch Postgres on the same host:port while the real
+one served 129 chat threads a socket away, and every downstream report inherited
+that wrong number. `scripts/migration_state.py` now asks the RUNNING BACKEND for
+its revision first (`/healthz` reports it) and falls back to connecting itself,
+naming the source in its message. **"per the running backend"** is measured, so
+run the migration. **"per a direct connection"** is unverified, and migrating on
+it would change the wrong database: say that plainly and leave it.
 
 Mechanics, costs and troubleshooting: [`docs/applying-changes.md`](docs/applying-changes.md).
 That file is the ONLY current source for how to apply a change. Restart and

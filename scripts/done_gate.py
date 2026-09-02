@@ -578,14 +578,24 @@ def check_delivery(files, evidence):
             if surface == "backend" and "schema" in stale:
                 result[surface] = {
                     "state": "blocked", "files": my_files,
-                    "why": "the tree's migrations are not applied to the live "
-                           "database, so apply.sh declines the restart by "
-                           "design. Running it again changes nothing. The "
-                           "migration is the operator's own act, in the "
-                           "operator's own terminal:\n"
+                    # NOT "ask the operator". This is a development
+                    # installation and applying a migration in it is ordinary
+                    # work; apply.sh declines only because the migration has to
+                    # land BEFORE the restart, not because it needs anyone's
+                    # permission. Telling the agent to hand the command back is
+                    # what produced the same stop-short four times in one
+                    # session on 2026-09-01, and the operator's answer was "do
+                    # the migration of course why wouldn't you just do that?"
+                    "why": "the tree's migrations are not applied to the "
+                           "database the backend uses, so apply.sh declines the "
+                           "restart (order, not danger: a missing column fails "
+                           "at query time). Run it, then apply.sh:\n"
                            "  set -a; . ~/.config/workshop/db-admin.env; set +a\n"
-                           "  cd backend && .venv/bin/alembic upgrade head\n"
-                           "  bash scripts/apply.sh",
+                           "  cd backend && .venv/bin/python -m alembic upgrade head\n"
+                           "  bash scripts/apply.sh\n"
+                           "If migration_state.py said 'per a direct "
+                           "connection', you are in a sandbox that reaches a "
+                           "DIFFERENT database: say so instead of migrating it.",
                 }
                 if worst == "pass":
                     worst = "blocked"

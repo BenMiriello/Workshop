@@ -538,19 +538,51 @@ _SOURCE_ID = _backend_source_id()
 _STARTED_AT = _dt.datetime.now(_dt.timezone.utc).isoformat()
 
 
+def _live_schema_revision() -> str | None:
+    """The alembic revision of the database THIS PROCESS is connected to.
+
+    The backend is the only thing that can answer this truthfully. Everything
+    else asks the DSN in the config and connects for itself, which is the same
+    question only when the asker shares this process's network namespace -- and
+    an agent working in a sandbox does not. Measured 2026-09-01: a sandboxed
+    session read `WORKSHOP_DATABASE_URL`, reached a Postgres on the same
+    host:port that was an EMPTY scratch copy, and `scripts/migration_state.py`
+    reported its revision as "the live database" with total confidence while the
+    real one served 129 chat threads a socket away.
+
+    So the value is served from inside the process that holds the connection,
+    and `migration_state.py` prefers it over connecting itself.
+    """
+    try:
+        from sqlalchemy import text
+        from db.engine import engine
+        with engine().connect() as conn:
+            return conn.execute(text("select version_num from alembic_version")).scalar()
+    except Exception as exc:  # pragma: no cover - diagnostic path
+        log.debug("live schema revision unavailable: %s", exc)
+        return None
+
+
 @app.get("/healthz")
 async def healthz():
-    """Liveness, plus what code is answering.
+    """Liveness, plus what code is answering and what schema it is answering on.
 
     `ok` is unchanged for existing callers. `source_id` is what lets a restart be
     VERIFIED instead of assumed: before this, nothing the backend served said
     which version it was, so "did my change land" could only be guessed at from
     uptime -- and guessing wrong is how backend work has been reported shipped
     while the old code kept serving.
+
+    `schema` is the same idea for the database, and for the same reason: it is
+    the one number that says which schema the running code is actually sitting
+    on, reported by the process that is sitting on it rather than inferred by
+    whoever is asking. Null when the query fails, which is honest; a caller must
+    not read null as agreement.
     """
     return {
         "ok": True,
         "source_id": _SOURCE_ID,
         "started_at": _STARTED_AT,
         "pid": os.getpid(),
+        "schema": _live_schema_revision(),
     }

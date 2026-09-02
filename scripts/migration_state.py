@@ -45,9 +45,14 @@ ALEMBIC_INI = BACKEND / "alembic.ini"
 # The command that fixes tree_ahead. It is printed, never run. Two halves,
 # because migrations run as the schema OWNER: the application role holds DML
 # only and cannot execute DDL (see backend/db/migrations/env.py).
+# `python -m alembic`, not `.venv/bin/alembic`. The console script carries an
+# absolute shebang to the venv's interpreter, which does not resolve inside a
+# sandboxed agent's mount namespace: it fails with "cannot execute: required
+# file not found", which reads like a missing package rather than a path
+# problem. Going through the module works in both places.
 UPGRADE_CMD = (
     "set -a; . ~/.config/workshop/db-admin.env; set +a; "
-    "cd backend && .venv/bin/alembic upgrade head"
+    "cd backend && .venv/bin/python -m alembic upgrade head"
 )
 
 
@@ -72,6 +77,93 @@ def live_url() -> str:
         pass
     return (os.environ.get("WORKSHOP_DATABASE_URL", "").strip()
             or os.environ.get("WORKSHOP_DATABASE_ADMIN_URL", "").strip())
+
+
+BACKEND_HEALTHZ = "http://127.0.0.1:8000/healthz"
+
+
+def live_from_backend() -> tuple[str | None, str | None]:
+    """The schema revision the RUNNING BACKEND reports, and why not, if not.
+
+    ASK THE PROCESS THAT HOLDS THE CONNECTION. `live_url` reads a DSN from the
+    config and this script connects for itself, which is the same database as
+    the backend's only when the two share a network namespace. An agent working
+    in a sandbox does not: measured 2026-09-01, a session read
+    `WORKSHOP_DATABASE_URL`, reached a Postgres at the same host:port that was
+    an EMPTY scratch copy, and this script reported its revision as "the live
+    database" with total confidence while the real one served 129 chat threads.
+    Everything downstream inherited that: apply.sh declined a restart, the done
+    gate printed NOT LIVE, and a migration command was handed to the operator
+    four times for a database nobody had actually measured.
+
+    A number this script cannot verify is worse than no number, because every
+    reader treats it as measured. So the backend answers first and the direct
+    connection is the fallback.
+    """
+    try:
+        import json as _json
+        import urllib.request
+        with urllib.request.urlopen(BACKEND_HEALTHZ, timeout=3) as r:
+            body = _json.loads(r.read().decode())
+    except Exception as exc:
+        return None, f"the backend did not answer ({type(exc).__name__})"
+    rev = body.get("schema")
+    if isinstance(rev, str) and rev:
+        return rev, None
+    # Reachable but silent: backends older than 2026-09-01 do not report it.
+    return None, ("the running backend (source_id "
+                  f"{body.get('source_id', 'unknown')}) does not report its "
+                  "schema; it predates the /healthz field")
+
+
+def _compare(live: str, head: str, source: str) -> tuple:
+    """(state, message, fix) for a live revision against the tree's head.
+
+    `source` NAMES WHO MEASURED IT, and appears in the message, because the two
+    callers can reach different databases and the reader has to be able to tell
+    which one the number came from. That is not hypothetical; it is why this
+    function exists as one (see `live_from_backend`).
+    """
+    if live == head:
+        return ("ok", f"schema ({head})", "")
+
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    script = ScriptDirectory.from_config(Config(str(ALEMBIC_INI)))
+    try:
+        script.get_revision(live)
+    except Exception:
+        # The live revision is not in this tree at all. That is a REVERT, or a
+        # checkout older than the database. Real drift, and worth saying, but it
+        # does not block a restart: the code on disk does not know about
+        # whatever that revision added, so the extra schema is inert, and the
+        # restart is usually the very thing that puts the app back on code the
+        # database can serve.
+        return ("live_ahead",
+                f"schema: the live database is at {live}, which THIS TREE DOES "
+                f"NOT CONTAIN; the tree's head is {head} (per {source})",
+                f"the tree is behind the database (a revert, or an old "
+                f"checkout); restore the commit that adds {live}, or downgrade "
+                f"deliberately")
+
+    try:
+        pending = [r.revision for r in script.iterate_revisions(head, live)]
+    except Exception:
+        pending = []
+    if not pending:
+        # Known revision, not the head, and the head does not descend from it:
+        # the history branched. Ambiguous, so do not guess.
+        return ("unknown",
+                f"schema: COULD NOT DETERMINE -- live is at {live} and the "
+                f"tree's head is {head}, and neither is an ancestor of the "
+                f"other (per {source})", "")
+
+    n = len(pending)
+    return ("tree_ahead",
+            f"schema: the tree is {n} migration{'s' if n != 1 else ''} AHEAD of "
+            f"the live database (live {live}, tree head {head}, per {source}); "
+            f"code in this tree queries a schema that is not there yet",
+            UPGRADE_CMD)
 
 
 def tree_heads() -> list[str]:
@@ -114,6 +206,12 @@ def main() -> None:
              f"({', '.join(heads) or 'none'}); `upgrade head` is ambiguous")
     head = heads[0]
 
+    # THE RUNNING BACKEND ANSWERS FIRST (see `live_from_backend`). It is the
+    # only party that can say which database the app is actually on.
+    from_backend, why_not = live_from_backend()
+    if from_backend:
+        emit(*_compare(from_backend, head, source="the running backend"))
+
     # A SHORT TIMEOUT IS PART OF THE CONTRACT. apply.sh is documented as safe to
     # run at any time from any agent; a check that can hang on a wedged database
     # is not safe to run at any time.
@@ -147,44 +245,7 @@ def main() -> None:
              UPGRADE_CMD)
     live = rows[0]
 
-    if live == head:
-        emit("ok", f"schema ({head})")
-
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-    script = ScriptDirectory.from_config(Config(str(ALEMBIC_INI)))
-    try:
-        script.get_revision(live)
-    except Exception:
-        # The live revision is not in this tree at all. That is a REVERT, or a
-        # checkout older than the database. Real drift, and worth saying, but it
-        # does not block a restart: the code on disk does not know about
-        # whatever that revision added, so the extra schema is inert, and the
-        # restart is usually the very thing that puts the app back on code the
-        # database can serve.
-        emit("live_ahead",
-             f"schema: the live database is at {live}, which THIS TREE DOES NOT "
-             f"CONTAIN; the tree's head is {head}",
-             f"the tree is behind the database (a revert, or an old checkout); "
-             f"restore the commit that adds {live}, or downgrade deliberately")
-
-    try:
-        pending = [r.revision for r in script.iterate_revisions(head, live)]
-    except Exception:
-        pending = []
-    if not pending:
-        # Known revision, not the head, and the head does not descend from it:
-        # the history branched. Ambiguous, so do not guess.
-        emit("unknown",
-             f"schema: COULD NOT DETERMINE -- live is at {live} and the tree's "
-             f"head is {head}, and neither is an ancestor of the other")
-
-    n = len(pending)
-    emit("tree_ahead",
-         f"schema: the tree is {n} migration{'s' if n != 1 else ''} AHEAD of the "
-         f"live database (live {live}, tree head {head}); code in this tree "
-         f"queries a schema that is not there yet",
-         UPGRADE_CMD)
+    emit(*_compare(live, head, source="a direct connection"))
 
 
 if __name__ == "__main__":
