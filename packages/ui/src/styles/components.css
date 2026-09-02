@@ -723,6 +723,26 @@ a.ws-btn { text-decoration: none; }
    no caller left. A change deletes the surface it replaces, and that includes
    the style the surface was wearing. */
 
+/* A DATE-GROUP HEADING (label + count) on the chat list. It owns the group's
+   vertical rhythm: room above to separate it from the previous group, with the
+   grid gap below carrying the space to its first row. The first group sits
+   directly under the page header, so it takes no top margin.
+
+   Deleted 2026-09-01 with the date buckets, restored the same day when the
+   operator corrected the reading that removed them: section 6's "no grouping"
+   is about BRANCH headings, and a date heading only names the recency the list
+   is already ordered by. */
+.ws-chatgroup__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+/* The heading owns the group's rhythm, so the label inside it drops its own
+   margins; the grid gap below carries the space to the first row. */
+.ws-chatgroup__head .ws-section-label { margin: 0; }
+.ws-chatgroup:first-of-type .ws-chatgroup__head { margin-top: 0; }
+
 /* ---- LIST ROW ------------------------------------------------------------ */
 /* The one row shape for every list in the app: tickets and runs today. It is a
    ROW, not a card and not a table cell (operator, 2026-08-12).

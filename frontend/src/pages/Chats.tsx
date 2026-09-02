@@ -15,6 +15,7 @@ import {
   MenuSeparator,
   Notice,
   PageHeader,
+  SectionLabel,
   Segmented,
   Skeleton,
   StateBlock,
@@ -24,7 +25,7 @@ import ChatRow, { ChatScopeGlyph, shortModel } from "../components/chat/ChatRow"
 import { queryKeys } from "../lib/queryKeys";
 import { newChatHref } from "../lib/chatSelection";
 import { scopeLabel, scopeName } from "../components/chat/chatScope";
-import { spansScopes, visibleThreads, type ArmedFilter } from "./chatList";
+import { groupByDate, spansScopes, visibleThreads, type ArmedFilter } from "./chatList";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
 // its own object with an optional context binding (general / project / app /
@@ -209,6 +210,11 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
 
   const visible = rows.slice(0, shown);
   const more = shown < rows.length;
+  // The mounted page, cut into its date headings. Grouping happens AFTER the
+  // slice so a heading always matches the rows actually on screen: bucketing
+  // the whole list first would print "Earlier this month 84" over the four of
+  // those eighty-four that have loaded.
+  const groups = useMemo(() => groupByDate(visible), [visible]);
 
   // Load the next page when the foot of the list nears the viewport. rootMargin
   // starts the next page early so the scroll never actually stops at the seam.
@@ -365,21 +371,28 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
         />
       ) : (
         <>
-          {/* ONE LIST, NEWEST FIRST. No headings and no grouping: see the note
-              at the top of this file, and §6. */}
-          <div style={{ display: "grid", gap: "var(--space-2)" }}>
-            {visible.map((t) => (
-              <ChatRow
-                key={t.id}
-                thread={t}
-                ordinal={runningOrdinals.get(t.id) ?? 0}
-                showScope={showScope}
-                onOpen={open}
-                onArchive={(x) => { void archiveOne(x); }}
-                onDelete={(x) => setPending({ id: x.id, title: x.title || "this chat" })}
-              />
-            ))}
-          </div>
+          {/* NEWEST FIRST, UNDER DATE HEADINGS. The order is the one order and
+              the headings only NAME runs of it, so nothing here reorders a row.
+              The rule is `groupByDate` in pages/chatList, tested there. */}
+          {groups.map((g) => (
+            <div key={g.key} className="ws-chatgroup" style={{ display: "grid", gap: "var(--space-2)" }}>
+              <div className="ws-chatgroup__head">
+                <SectionLabel>{g.label}</SectionLabel>
+                <span className="ws-card__meta">{g.items.length}</span>
+              </div>
+              {g.items.map((t) => (
+                <ChatRow
+                  key={t.id}
+                  thread={t}
+                  ordinal={runningOrdinals.get(t.id) ?? 0}
+                  showScope={showScope}
+                  onOpen={open}
+                  onArchive={(x) => { void archiveOne(x); }}
+                  onDelete={(x) => setPending({ id: x.id, title: x.title || "this chat" })}
+                />
+              ))}
+            </div>
+          ))}
           {more && <div ref={sentinel} aria-hidden style={{ height: 1 }} />}
         </>
       )}

@@ -4,18 +4,27 @@
 // live somewhere it can be executed. `chatPulse` beside this file is the same
 // pattern.
 //
-// CHATS IS A FLAT LIST OF THREADS, NEWEST FIRST.
-// `threads-branches-and-pages-2026-08-29.md` section 6: "Chats is a flat list of
-// threads, newest first. It is the quick-jump surface. No branch headings, no
-// grouping. (Reverted once already; it stays reverted.) A branch is a small tag
-// on the row, next to scope and role."
+// ONE ORDER, NEWEST FIRST, UNDER DATE HEADINGS.
 //
-// So there is ONE order here and no control that changes it. The page used to
-// carry a three-value sort whose only real job was switching date headings on
-// and off ("Recent" grouped the rows under Today / Yesterday / Earlier this
-// week); the headings are the grouping section 6 names, and the control existed
-// to produce them. Both are gone together, which is the rule that document
-// opens with: a change deletes the surface it replaces.
+// `threads-branches-and-pages-2026-08-29.md` section 6 says "Chats is a flat
+// list of threads, newest first... No branch headings, no grouping. (Reverted
+// once already; it stays reverted.)" On 2026-09-01 that sentence was read as
+// banning ALL grouping, and commit 64539d5d deleted the date buckets with the
+// sort control that switched them on.
+//
+// THAT WAS A MISREADING, and the operator corrected it the same day: "its the
+// page where you have different groupings by today yesterday etc... just put
+// that back on all chats pages." Read the paragraph it sits in and the subject
+// is BRANCHES -- the surrounding clauses are "no branch headings" and "a branch
+// is a small tag on the row", and the thing "reverted once already" is the
+// branch-organised list that section's addendum spends a page arguing against.
+// Date is not an organising axis competing with recency; it IS recency, named.
+// A heading over a run of rows the reader is already scanning in that order
+// adds no second structure and takes nothing away.
+//
+// The SORT CONTROL does not come back. It was three values whose only real job
+// was switching these headings off, and nobody wants a chat list oldest-first.
+// The headings are unconditional, so there is nothing to control.
 import { branchName } from "../components/chat/chatBranch";
 import { scopeName } from "../components/chat/chatScope";
 import type { ThreadArmed } from "../lib/chat";
@@ -41,6 +50,61 @@ export const ARMED_VALUES: readonly ThreadArmed[] = ["off", "on-message", "sched
 export function armedOf(t: { armed?: string | null }): ThreadArmed {
   const v = (t.armed || "").trim();
   return (ARMED_VALUES as readonly string[]).includes(v) ? (v as ThreadArmed) : "off";
+}
+
+/** The date headings, oldest bucket last. Exported so a caller cannot invent
+ *  its own order for them (the map they come out of has insertion order, which
+ *  is the list's order, which is not the same thing when a bucket is empty). */
+export const BUCKET_ORDER = ["today", "yesterday", "week", "month", "older"] as const;
+
+/**
+ * Which date heading a chat sits under.
+ *
+ * Off `updated_at`, the same field `newestFirst` orders by and the same one the
+ * row's own age prints, so a row's heading, its position and its "3d" can never
+ * disagree. Bucketed by CALENDAR DAY, not by elapsed hours: at 00:30 a message
+ * from 23:00 is "Yesterday", which is what a reader means by the word, and
+ * "25 hours ago" is not.
+ *
+ * An unparseable or missing timestamp falls to the last bucket rather than
+ * being dropped: a chat with a bad date is still a chat, and a list that
+ * silently omits rows is the failure this whole surface keeps having.
+ */
+export function bucketFor(iso: string | null | undefined, now: Date = new Date()):
+    { key: string; label: string } {
+  const t = iso ? new Date(iso) : null;
+  if (!t || Number.isNaN(t.getTime())) return { key: "older", label: "Earlier" };
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const today = startOfDay(now);
+  const day = 86_400_000;
+  const ts = startOfDay(t);
+  if (ts >= today) return { key: "today", label: "Today" };
+  if (ts >= today - day) return { key: "yesterday", label: "Yesterday" };
+  if (ts >= today - 7 * day) return { key: "week", label: "Earlier this week" };
+  if (ts >= today - 30 * day) return { key: "month", label: "Earlier this month" };
+  return { key: "older", label: "Earlier" };
+}
+
+export type ChatGroup<T> = { key: string; label: string; items: T[] };
+
+/**
+ * The rows, in order, cut into date groups.
+ *
+ * Takes the list ALREADY ordered and never reorders it, so grouping cannot
+ * change which chat is at the top. An empty bucket does not appear at all: a
+ * heading over nothing tells the reader there is nothing, which they can see.
+ */
+export function groupByDate<T extends { updated_at?: string | null }>(
+  rows: readonly T[],
+  now: Date = new Date(),
+): ChatGroup<T>[] {
+  const byKey = new Map<string, ChatGroup<T>>();
+  for (const t of rows) {
+    const b = bucketFor(t.updated_at, now);
+    if (!byKey.has(b.key)) byKey.set(b.key, { key: b.key, label: b.label, items: [] });
+    byKey.get(b.key)!.items.push(t);
+  }
+  return BUCKET_ORDER.filter((k) => byKey.has(k)).map((k) => byKey.get(k)!);
 }
 
 /** "A thread that is armed is what used to be called an agent" (section 1). */
