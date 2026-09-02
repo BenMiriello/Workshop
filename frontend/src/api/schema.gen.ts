@@ -6075,13 +6075,19 @@ export interface paths {
         };
         /**
          * Healthz
-         * @description Liveness, plus what code is answering.
+         * @description Liveness, plus what code is answering and what schema it is answering on.
          *
          *     `ok` is unchanged for existing callers. `source_id` is what lets a restart be
          *     VERIFIED instead of assumed: before this, nothing the backend served said
          *     which version it was, so "did my change land" could only be guessed at from
          *     uptime -- and guessing wrong is how backend work has been reported shipped
          *     while the old code kept serving.
+         *
+         *     `schema` is the same idea for the database, and for the same reason: it is
+         *     the one number that says which schema the running code is actually sitting
+         *     on, reported by the process that is sitting on it rather than inferred by
+         *     whoever is asking. Null when the query fails, which is honest; a caller must
+         *     not read null as agreement.
          */
         get: operations["healthz_healthz_get"];
         put?: never;

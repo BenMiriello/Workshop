@@ -36,6 +36,15 @@ import datetime as _dt
 import logging
 import os
 
+# MODULE SCOPE, not inside `_live_schema_revision`. `db.engine` builds its
+# engine lazily (`_engine = None` until `engine()` is called), so importing it
+# opens no connection and costs nothing at startup, and a function-local import
+# here would be one more of the 639 this repo is already trying to get rid of
+# (scripts/check_module_layout.py counts them and gates on the delta).
+from sqlalchemy import text as _sa_text
+
+from db.engine import engine as _db_engine
+
 log = logging.getLogger("workshop.main")
 
 
@@ -554,10 +563,9 @@ def _live_schema_revision() -> str | None:
     and `migration_state.py` prefers it over connecting itself.
     """
     try:
-        from sqlalchemy import text
-        from db.engine import engine
-        with engine().connect() as conn:
-            return conn.execute(text("select version_num from alembic_version")).scalar()
+        with _db_engine().connect() as conn:
+            return conn.execute(
+                _sa_text("select version_num from alembic_version")).scalar()
     except Exception as exc:  # pragma: no cover - diagnostic path
         log.debug("live schema revision unavailable: %s", exc)
         return None

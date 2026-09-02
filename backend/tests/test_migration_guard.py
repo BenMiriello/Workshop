@@ -157,7 +157,16 @@ def test_apply_declines_the_backend_restart_when_the_tree_is_ahead(tmp_path: Pat
     out = proc.stdout
     assert "STALE   schema:" in out
     assert "AHEAD of the live database" in out
-    assert "apply.sh does not run migrations and will not" in out
+    # The wording changed on 2026-09-01 and the CHANGE IS THE POINT, so this
+    # asserts the new frame rather than the old sentence. It used to read
+    # "apply.sh does not run migrations and will not", which is true but reads
+    # as a prohibition; every agent that met it handed the command back to the
+    # operator instead of running it. This is a development installation and
+    # applying a migration in it is ordinary work. What apply.sh actually
+    # guarantees is ORDER: the migration lands before the restart, because a
+    # missing column fails at query time and the import preflight cannot see it.
+    assert "apply.sh does not run migrations" in out
+    assert "ORDER, not permission" in out
     assert "alembic upgrade head" in out
     assert proc.returncode != 0
 
