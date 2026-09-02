@@ -73,6 +73,9 @@ const threadA: WorkThread = {
   context_key: "workshop",
   agent_id: "agent-1",
   last_user_at: "2026-09-01T11:00:00Z",
+  // Required on the wire since the arming migration: the column is NOT NULL
+  // with a server default, so every thread the API returns carries one.
+  armed: "off",
 };
 
 const threadB: WorkThread = {

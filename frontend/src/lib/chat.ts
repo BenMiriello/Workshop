@@ -294,7 +294,7 @@ export type ChatMsg = {
  *  `scope` is derived server-side from `context_key` on every read and stored
  *  by nobody, so it cannot go stale after a rescope. `last_user_at` is when the
  *  OPERATOR last spoke, which is what the list orders by. */
-export type ThreadSummary = components["schemas"]["ThreadSummary"] & ThreadIdentity;
+export type ThreadSummary = components["schemas"]["ThreadSummary"];
 
 /** What advances a thread without a person.
  *
@@ -303,31 +303,20 @@ export type ThreadSummary = components["schemas"]["ThreadSummary"] & ThreadIdent
  *  armed is what used to be called an agent. */
 export type ThreadArmed = "off" | "on-message" | "schedule" | "on-ready-ticket";
 
-/**
- * The two fields section 1 puts on every thread, READ ONLY and both optional,
- * because the client is ahead of the server on them.
- *
- * They are hand-written, which every other shape in this file is not, and that
- * is deliberate rather than sloppy: neither field is in `schema.gen.ts` as of
- * 2026-09-01, and the chat list is the surface section 1 asks for them on. So
- * both are optional and both are nullable, which is the whole accommodation:
- * `armed` missing reads as `off` through `armedOf` (pages/chatList), and a
- * missing or null `role` renders no tag at all rather than a default or the
- * word "none". Nothing here writes either field.
- *
- * THIS IS A BRIDGE, AND IT HAS AN END. Take both from the schema and delete
- * this the next time `npm run gen:api-types` runs against a backend whose
- * `ThreadSummary` declares them. The intersection is not load-bearing once it
- * does. Do not add a third field here in the meantime: one narrow, dated
- * exception is a gap that closes, a habit is how a hand-written type diverges
- * from the wire in both directions, which is what the note at the top of this
- * file is about.
- */
-type ThreadIdentity = {
-  armed?: ThreadArmed | null;
-  /** Names a role definition. Nullable, and null is a good value. */
-  role?: string | null;
-};
+// THE `ThreadIdentity` BRIDGE IS GONE, on its own terms. It hand-wrote `armed`
+// and `role` onto ThreadSummary while the client was ahead of the server, and
+// said: "take both from the schema and delete this the next time
+// `npm run gen:api-types` runs against a backend whose `ThreadSummary` declares
+// them." That ran on 2026-09-01 and it declares both, so both now come from the
+// wire: `armed: string` (required, because the column is NOT NULL with a server
+// default of `off`) and `role?: string | null`.
+//
+// `armed` arrives as a bare string rather than the closed set, because the
+// backend types the column and not an enum. That is what `armedOf`
+// (pages/chatList) is for: it narrows to ThreadArmed at the read boundary and
+// answers `off` for anything outside the set. Do not re-narrow the field here;
+// a hand-written type that claims more than the wire promises is the divergence
+// the note at the top of this file is about.
 
 /**
  * The agent this chat is with, or null.

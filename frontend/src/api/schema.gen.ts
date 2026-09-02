@@ -3509,6 +3509,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chat/threads/{thread_id}/arming": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Thread Arming
+         * @description Set what advances this thread without a person, and the role it answers
+         *     as. There is no conversion gesture here and no second entity being made:
+         *     every thread is chattable always, and an "agent" is a description of a
+         *     thread whose `armed` is not `off`
+         *     (threads-branches-and-pages-2026-08-29 section 1).
+         *
+         *     Cheap and reversible, so it commits on change rather than behind a Save --
+         *     the same terms as the mode switch above.
+         *
+         *     An unknown `armed` is REJECTED rather than clamped. `chat_store` clamps on
+         *     the way OUT, because a value already on disk has to resolve to something
+         *     safe; a request is a different matter, and silently storing `off` for a
+         *     caller who asked for `schedule` is how a thread ends up not running with
+         *     nothing on screen to say why.
+         */
+        post: operations["set_thread_arming_chat_threads__thread_id__arming_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chat/threads/{thread_id}/branches": {
         parameters: {
             query?: never;
@@ -7724,10 +7757,21 @@ export interface paths {
          *     here), `scope` (restrict to a single scope key), `labels` (comma-separated,
          *     a row matches if it carries ANY of them), `effort` (comma-separated, from
          *     tasks.EFFORTS), `assignee` (comma-separated, `operator` or `agent:<slug>`),
+         *     `source` (comma-separated, from tasks.SOURCE_KINDS: where the ticket came
+         *     FROM),
          *     `q` (case-insensitive substring of title or body), `ready` (only what the
          *     scheduler could pick up, or only what it could not).
          *     Ordering: `sort` (one of tasks.SORT_KEYS, including `queue` = the
-         *     scheduler's own order) + `desc`. Paging: `limit`/`offset`.
+         *     scheduler's own order and `source` = the door it came through) + `desc`.
+         *     Paging: `limit`/`offset`.
+         *
+         *     `source` was on every ticket since the store existed and nothing read it: on
+         *     2026-09-01, 132 of 208 open tickets came through the agent door and no view
+         *     anywhere could tell them from the rest. It reports WHERE A TICKET CAME FROM
+         *     and nothing more. It is not a record of what anyone intended, and `unknown`
+         *     is one of its values precisely so it cannot be read as one: see
+         *     tasks.SOURCE_KINDS for the day `operator` doubled as the value for "nobody
+         *     recorded anything" and put 34 tickets under a name that had not filed them.
          *
          *     `labels` and `effort` exist so the list page's filter chips push DOWN to the
          *     server like status and scope already did. A chip narrowed in the browser
@@ -7788,6 +7832,11 @@ export interface paths {
          * @description File a task into a scope through the dedup path, so a manual ticket
          *     dedupes against open tasks exactly like a chat-filed one. Returns the task
          *     plus the dedup decision (exact | merge | related | distinct).
+         *
+         *     REFUSES a ticket with no executable acceptance, 400, carrying the sentence
+         *     that says what would satisfy it (services/ticket_format.acceptance_refusal).
+         *     A ticket whose finish line is prose leaves the worker to invent one and the
+         *     reviewer to guess at it, which is how 195 open tickets came to have none.
          */
         post: operations["create_tasks_post"];
         delete?: never;
@@ -9375,6 +9424,11 @@ export interface components {
             agent_id?: string | null;
             /** Archived At */
             archived_at?: string | null;
+            /**
+             * Armed
+             * @default off
+             */
+            armed: string;
             /** Branch Slug */
             branch_slug?: string | null;
             /** Context Key */
@@ -9399,6 +9453,8 @@ export interface components {
             mode: string;
             /** Model */
             model?: string | null;
+            /** Role */
+            role?: string | null;
             /**
              * Running
              * @default false
@@ -15632,6 +15688,22 @@ export interface components {
             text: string;
         };
         /**
+         * SetThreadArming
+         * @description Either field, or both. An omitted field is LEFT ALONE; a field sent as
+         *     null is CLEARED, and for `role` those are genuinely different requests --
+         *     null is a value a thread can hold. `model_fields_set` is what tells them
+         *     apart, which is why neither field is read off a `None` default.
+         *
+         *     ARMED AND ROLE ARE INDEPENDENT. This route never derives one from the
+         *     other: arming a thread gives it no role, and naming a role does not arm it.
+         */
+        SetThreadArming: {
+            /** Armed */
+            armed?: string | null;
+            /** Role */
+            role?: string | null;
+        };
+        /**
          * Signature
          * @description Whether the webhook proved it was who it said. `reason` names the
          *     verifier's verdict, including "no_verifier_registered" for a source with no
@@ -16213,6 +16285,8 @@ export interface components {
         };
         /** TaskAcceptanceIn */
         TaskAcceptanceIn: {
+            /** Criteria */
+            criteria?: components["schemas"]["TaskAcceptanceCriterion"][] | null;
             /** Kind */
             kind: string;
             /** Spec */
@@ -16262,6 +16336,7 @@ export interface components {
         };
         /** TaskCreateIn */
         TaskCreateIn: {
+            acceptance?: components["schemas"]["TaskAcceptanceIn"] | null;
             /** Body */
             body?: string | null;
             /** Effort */
@@ -16635,6 +16710,24 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * ThreadArming
+         * @description What advances this thread without a person, and which definition it
+         *     answers as. The response to `POST /threads/{id}/arming` and the shape the
+         *     Roles surface reads back.
+         *
+         *     Both are always present here even though the request may carry one: the
+         *     caller asked to change the thread's arming and the honest answer is what
+         *     the thread now holds, not an echo of the half it sent.
+         */
+        ThreadArming: {
+            /** Armed */
+            armed: string;
+            /** Id */
+            id: string;
+            /** Role */
+            role?: string | null;
+        };
+        /**
          * ThreadContext
          * @description The context meter. OUR estimate, measured over the prompt a turn would
          *     actually send -- summary included -- because an estimate over a trimmed
@@ -16682,6 +16775,11 @@ export interface components {
             } | null;
             /** Archived At */
             archived_at?: string | null;
+            /**
+             * Armed
+             * @default off
+             */
+            armed: string;
             /** Card States */
             card_states?: {
                 [key: string]: components["schemas"]["StoredCardState"];
@@ -16719,6 +16817,8 @@ export interface components {
             model?: string | null;
             /** Permission Mode */
             permission_mode?: string | null;
+            /** Role */
+            role?: string | null;
             /** Scope */
             scope: string;
             /** Summary */
@@ -16803,6 +16903,11 @@ export interface components {
             } | null;
             /** Archived At */
             archived_at?: string | null;
+            /**
+             * Armed
+             * @default off
+             */
+            armed: string;
             /** Card States */
             card_states?: {
                 [key: string]: components["schemas"]["StoredCardState"];
@@ -16835,6 +16940,8 @@ export interface components {
             model?: string | null;
             /** Permission Mode */
             permission_mode?: string | null;
+            /** Role */
+            role?: string | null;
             /** Scope */
             scope: string;
             /** Summary */
@@ -16864,6 +16971,11 @@ export interface components {
             agent_id?: string | null;
             /** Archived At */
             archived_at?: string | null;
+            /**
+             * Armed
+             * @default off
+             */
+            armed: string;
             /** Branch Slug */
             branch_slug?: string | null;
             /** Context Key */
@@ -16886,6 +16998,8 @@ export interface components {
             mode: string;
             /** Model */
             model?: string | null;
+            /** Role */
+            role?: string | null;
             /**
              * Running
              * @default false
@@ -16935,6 +17049,11 @@ export interface components {
             } | null;
             /** Archived At */
             archived_at?: string | null;
+            /**
+             * Armed
+             * @default off
+             */
+            armed: string;
             /** Card States */
             card_states?: {
                 [key: string]: components["schemas"]["StoredCardState"];
@@ -16975,6 +17094,8 @@ export interface components {
             queue_held: boolean;
             /** Queued */
             queued: components["schemas"]["QueuedMessage"][];
+            /** Role */
+            role?: string | null;
             /** Scope */
             scope: string;
             /** Summary */
@@ -25064,6 +25185,41 @@ export interface operations {
             };
         };
     };
+    set_thread_arming_chat_threads__thread_id__arming_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetThreadArming"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadArming"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     branches_chat_threads__thread_id__branches_get: {
         parameters: {
             query?: never;
@@ -31656,6 +31812,7 @@ export interface operations {
                 labels?: string | null;
                 effort?: string | null;
                 assignee?: string | null;
+                source?: string | null;
                 include_done?: boolean;
                 q?: string | null;
                 ready?: boolean | null;
