@@ -182,6 +182,16 @@ def _app_content_patterns(app: str) -> tuple[re.Pattern[str], ...]:
 _PLATFORM_MODULES = frozenset({"notes_all"})
 
 
+def _is_platform_module_path(rel: str) -> bool:
+    """Is this path one of the PLATFORM modules named in _PLATFORM_MODULES?
+
+    Same roster the import check consults, applied to the path classification so
+    the two cannot disagree about which files belong to an app.
+    """
+    m = re.fullmatch(r"backend/(?:routes|services)/([a-z_]+)\.py", rel)
+    return bool(m and m.group(1) in _PLATFORM_MODULES)
+
+
 def _imports_app_module(body: str, short: str) -> bool:
     """Does this file import a module BELONGING to the app, as opposed to one
     whose name merely starts the same way?
@@ -439,6 +449,18 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
         if Path(rel).suffix.lower() in _BINARY_SUFFIXES:
             continue
         owner = next((a for a in apps if any(p.search(rel) for p in content_pat[a])), None)
+        if owner and _is_platform_module_path(rel):
+            # A PLATFORM module whose NAME merely starts like an app's. The
+            # import check has always known the difference (_PLATFORM_MODULES);
+            # this classification did not, so `routes/notes_all.py` -- the
+            # cross-scope knowledge feed, platform code by every other measure
+            # -- was counted as one app's source. That is not just a wrong
+            # number: check_fresh_clone.sh DELETES exactly these paths to prove
+            # the platform builds without any app, so it was deleting a platform
+            # route module, and `import main` died on it. Found 2026-09-02, once
+            # the frontend half of that assertion started passing and stopped
+            # masking the backend half.
+            owner = None
         if owner:
             content[owner].append(rel)
         # NO `continue` HERE, since 2026-08-27, and this is the whole point of

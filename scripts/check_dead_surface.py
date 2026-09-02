@@ -397,6 +397,46 @@ def _backend_modules(tree: Path) -> dict[str, tuple[Path, bool]]:
     return mods
 
 
+_GLOB_DISCOVERY_RE = re.compile(
+    r"""(?P<const>[A-Z_]+)\s*=\s*["'](?P<suffix>[A-Za-z0-9_]+)["']""")
+
+
+def _glob_discovered(mods: dict[str, tuple[Path, bool]]) -> set[str]:
+    """Modules a platform file imports DYNAMICALLY, by globbing for a suffix.
+
+    The blind spot this closes is real and was introduced deliberately.
+    `services/app_registry.py` no longer enumerates apps; it scans its own
+    directory for `*_app.py` and imports each by name, so an app joins the
+    platform by existing as a file. To `ast`, nothing imports those modules at
+    all -- there is no import statement naming any of them -- and every app
+    declaration read as dead code the moment the enumeration was removed.
+
+    The convention is READ FROM THE SOURCE, not written here: the scanning file
+    declares its suffix in a constant and globs on it, and both must be present
+    for anything to be exempted. If the scan is ever deleted, these modules go
+    straight back to being reported, which is the behaviour that makes this
+    safe to have.
+    """
+    out: set[str] = set()
+    for name, (path, is_pkg) in mods.items():
+        text = _read_tracked(path) or ""
+        if ".glob(" not in text or "import_module(" not in text:
+            continue
+        pkg = name.rsplit(".", 1)[0] if "." in name and not is_pkg else (name if is_pkg else "")
+        for m in _GLOB_DISCOVERY_RE.finditer(text):
+            suffix = m.group("suffix")
+            # The constant must actually be used in the glob pattern, so an
+            # unrelated string constant in a scanning file exempts nothing.
+            if f'f"*{{{m.group("const")}}}.py"' not in text:
+                continue
+            for other in mods:
+                if not pkg or not other.startswith(f"{pkg}."):
+                    continue
+                if other.rsplit(".", 1)[-1].endswith(suffix):
+                    out.add(other)
+    return out
+
+
 def _imported_names(mods: dict[str, tuple[Path, bool]]) -> set[str]:
     """Every module name a NON-TEST backend file imports, relatives resolved."""
     found: set[str] = set()
@@ -475,7 +515,7 @@ def _external_refs(corpus: list[tuple[str, str]], module: str,
 
 def _scan_backend(tree: Path, rules: dict, tracked: list[Path]) -> dict:
     mods = _backend_modules(tree)
-    imported = _imported_names(mods)
+    imported = _imported_names(mods) | _glob_discovered(mods)
     allowed = set((rules.get("backend_modules_allowed") or {}).keys())
     corpus = _external_corpus(tree, tracked)
     per_module: dict[str, dict] = {}

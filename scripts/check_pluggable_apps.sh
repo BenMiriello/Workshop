@@ -23,22 +23,37 @@ APPS_TSX="frontend/src/pages/Apps.tsx"
 REGISTRY="backend/services/app_registry.py"
 CHATCTX="backend/services/chat_context.py"
 
-# App route modules — these belong to installed apps and must mount from
-# services/app_registry, never from main.py.
-# Derived from the catalog, never typed here: a guard with its own hardcoded
-# app roster misses exactly the app someone just added, which is the only case
-# that matters. Falls back to the union of route modules an AppSpec mounts.
+# App route modules — these belong to installed apps and must mount from the
+# catalog, never from main.py.
+#
+# Derived from the APPS THEMSELVES, never typed here: a guard with its own
+# hardcoded app roster misses exactly the app someone just added, which is the
+# only case that matters.
+#
+# READ FROM THE DECLARATIONS since 2026-09-01. This used to grep the registry
+# for `from routes import ...`, which worked only while the registry held one
+# hardcoded factory per app. It does not any more -- apps declare themselves in
+# `services/<app>_app.py` and the registry discovers them -- so that grep came
+# back empty and this guard reported the catalog as unreadable. The names moved;
+# the guard follows them. Each declaration states its own route modules in
+# `REQUIRES`, and its `from routes import` lines are the fallback.
+APP_DECLS=(backend/services/*_app.py)
 APP_MODULES="$(
-  grep -hoE '^[[:space:]]*from routes import .*' "$REGISTRY" 2>/dev/null \
-    | sed 's/.*from routes import //' | tr ',' '\n' \
-    | tr -d ' ' | grep -E '^[a-z_]+$' | sort -u | paste -sd'|' -
+  {
+    grep -hoE '^REQUIRES[[:space:]]*=[[:space:]]*\(.*\)' "${APP_DECLS[@]}" 2>/dev/null \
+      | sed 's/^REQUIRES[^(]*(//; s/)$//' | tr ',' '\n' | tr -d ' "'"'"''
+    grep -hoE '^[[:space:]]*from routes import .*' "${APP_DECLS[@]}" "$REGISTRY" 2>/dev/null \
+      | sed 's/.*from routes import //' | tr ',' '\n' | tr -d ' '
+  } | grep -E '^[a-z_]+$' | sort -u | paste -sd'|' -
 )"
 if [[ -z "$APP_MODULES" ]]; then
-  VIOL+=("$REGISTRY names no route modules — the catalog cannot be read, so this guard cannot tell an app from platform code.")
+  VIOL+=("no app declaration (backend/services/*_app.py) or $REGISTRY names any route module — the catalog cannot be read, so this guard cannot tell an app from platform code.")
   APP_MODULES="__none__"
 fi
-# App-specific startup loops that were moved into app_registry.
-APP_LOOPS="_prewarm_finance_cache|_prewarm_loop|_categorize_loop|_env_refresh_loop|_atlas_rebuild_loop"
+# App-specific startup loops. Historical names included deliberately: this is a
+# regression guard, and the thing it guards against is these reappearing in
+# platform-core, which is where they were before they moved onto the apps.
+APP_LOOPS="_prewarm_finance_cache|_prewarm_cache|_prewarm_loop|_categorize_loop|_env_refresh_loop|_atlas_rebuild_loop"
 
 # 1) main.py must not import or mount any app route module.
 if [[ -f "$MAIN" ]]; then
@@ -71,6 +86,19 @@ if [[ -f "$REGISTRY" ]]; then
     VIOL+=("$REGISTRY no longer builds the catalog tolerantly via _build_catalog() — a slimmed instance (missing an app module) would crash on import.")
   fi
 fi
+
+# 1b-ii) Same rule, one level down: a DECLARATION is imported by the discovery
+#        scan, so a top-level `from routes import <its own module>` makes a
+#        slimmed instance lose the declaration entirely -- including its
+#        REQUIRES, which is what tells the catalog to skip it cleanly. The
+#        import belongs inside app_spec(), which only ever runs after the
+#        module check has passed.
+for decl in "${APP_DECLS[@]}"; do
+  [[ -f "$decl" ]] || continue
+  if grep -nE "^(from routes import|import routes\.)" "$decl" >/dev/null; then
+    VIOL+=("$decl imports its route module at load time. Import it inside app_spec(); the discovery scan imports this file on every instance, including ones that do not ship the routes.")
+  fi
+done
 
 # 1c) chat_context.py is platform chat plumbing — it must not hardcode app
 #     personas. App personas live in services/app_personas.py and are registered

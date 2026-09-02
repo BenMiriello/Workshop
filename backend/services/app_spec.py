@@ -127,19 +127,22 @@ class AppSpec:
 
 
 # --------------------------------------------------------------------------- #
-# Store path helpers, for an app declaring `stores`. Imported lazily inside the
-# functions because `services.stores` imports this contract.
+# Store path helpers, for an app declaring `stores`.
+#
+# Imported at MODULE SCOPE. `services.stores` has no module-level service
+# imports at all -- it reaches the registry only from inside two functions --
+# so there is no import-time cycle to dodge here, and a function-local import
+# would only add two more to a count the layout gate already tracks.
 # --------------------------------------------------------------------------- #
+from services import stores as _stores  # noqa: E402
+
+
 def runtime_dir(name: str):
     """An app-shared (not per-owner) directory under the runtime root."""
-    from services import stores as _stores
-
     return _stores._runtime_root() / name
 
 
 def owner_file(name: str):
     """A per-owner data file under the current owner's runtime dir."""
-    from services import stores as _stores
-
     base = _stores._operator_runtime_dir()
     return None if base is None else base / name

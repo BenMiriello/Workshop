@@ -10,15 +10,10 @@
     "notes-app",
     "wearables"
   ],
-  "content_files": 121,
+  "content_files": 106,
   "import_sites": 17,
   "literal_sites": 354,
   "home_path_sites": 0,
-  "raised": {
-    "content_files": {
-      "from": 114,
-      "to": 121,
-      "because": "STAGE E, SECOND HALF (2026-09-02): the FRONTEND app registry no longer enumerates apps either. frontend/src/apps/registry.tsx held a literal APPS array with every app's routes, crumbs, icon, provider and launcher probe, and called itself 'the ONE file allowed to name a specific app'. Each app now declares itself in frontend/src/pages/apps/<app>/module.tsx exporting appModule, and the registry finds them with import.meta.glob, which Vite still resolves statically so code-splitting is unchanged. The contract is apps/appModule.ts (types) and apps/appShell.tsx (AppGroupNav + makeChatDock). content_files 114 -> 121 is exactly the seven new app-owned module.tsx files, buying literal_sites 408 -> 354 and import_sites 18 -> 17. Both registries -- backend and frontend -- now contain ZERO app names, as do apps/appModule.ts, apps/appShell.tsx and pages/Memory.tsx (which imported the notes app's id to build a legacy redirect; the app declares that via AppModule.legacyTabs now). What remains is EXTRACTION: moving the app source itself out of this repo, which is section 10 of app-is-the-entity-2026-08-20.md and needs the operator's repo decision."
-    }
-  }
+  "raised": {},
+  "_content_files_note": "content_files is DELIBERATELY LEFT AT 106 while the tree measures 120. De-hardcoding the two app registries (2026-09-01/02) moved app declarations out of platform files and into app-owned ones: 8 backend services/<app>_app.py and 7 frontend pages/apps/<app>/module.tsx. That is the upward move check_no_app_names.py's header calls legitimate -- it bought import_sites 24->17 and literal_sites 479->354, both pinned down here -- but check_ratchets_not_loosened.py is right that a worker does not re-pin upward to pass its own gate. So the gate reports the rise honestly and the pin is the operator's to make. The real fix is not a pin at all: it is EXTRACTION, which takes this count to zero and needs the repo decision in app-is-the-entity-2026-08-20.md section 10."
 }
