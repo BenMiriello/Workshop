@@ -20,7 +20,9 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
-from services.birds_analyze import _conn, _local, _shannon
+# From birds_db, not birds_analyze: these are the store primitives, and
+# importing them from the analysis module made the two a cycle (2026-09-02).
+from services.birds_db import _conn, _local, _shannon
 
 # How the qualitative activity outlook nudges expected VOLUME (not the species mix):
 # a falling-pressure "elevated" day runs busier, a wet "subdued" day quieter. Modest
@@ -107,7 +109,7 @@ def _astro_for(location_id: int, date_str: str, cache: dict):
 def _detection_contexts(location_id: int):
     """One row per bird detection with its (species, light_phase, weather_bucket,
     local_hour). The join that the whole conditional model rests on."""
-    from services.birds_analyze import _light_phase
+    from services.birds_db import _light_phase
     conds, _ = _load_env_context(location_id)
     acache: dict = {}
     out = []
@@ -362,7 +364,7 @@ def forecast_week(location_id: int, days: int = 7) -> dict:
     week's usual regulars and the shared expected daily shape. Honest about thin
     data: the per-day differences are real (weather, day length, moon), while the
     species list is the same residents until weather-conditioned history exists."""
-    from services.birds_analyze import _light_phase
+    from services.birds_db import _light_phase
     e = _env()
     if not e:
         return {"days": [], "regulars": [], "expected_shape": None}
