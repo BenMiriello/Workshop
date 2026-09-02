@@ -35,61 +35,113 @@ class _BlockRouteModules:
         return None  # defer to the normal finders
 
 
+# THIS FILE NAMES NO APP, and that is part of what it tests. It used to type
+# seven app ids and three route-module names into its assertions, so the gate
+# that measures "no platform source names an app" counted 28 sites here and the
+# test would have to be edited every time the operator added or removed an app.
+# Everything below is derived from the catalog's own discovery scan instead.
+def _declarations():
+    """(module, spec) for every in-tree declaration that builds on this instance."""
+    ar = _reload_registry()
+    out = []
+    for source, factory in ar._in_tree_factories():
+        try:
+            out.append((importlib.import_module(f"services.{source}"), factory()))
+        except Exception:
+            continue
+    return out
+
+
+def _a_declaration_with_required_modules():
+    """A declaration that names route modules, plus one that names none.
+
+    The pair is what the drop test needs: something to make absent, and
+    something that must survive it regardless.
+    """
+    withreq = [(m, s) for m, s in _declarations() if getattr(m, "REQUIRES", ())]
+    without = [(m, s) for m, s in _declarations() if not getattr(m, "REQUIRES", ())]
+    if not withreq:
+        pytest.skip("this instance ships no app with route modules")
+    return withreq[0], withreq[1:], without
+
+
 def test_full_instance_has_all_builtin_apps():
     ar = _reload_registry()
-    for app_id in ("finance", "budget", "commute", "location", "birds", "health", "wearables"):
-        assert app_id in ar.BUILTIN_APPS, f"{app_id} missing from full catalog"
+    declared = _declarations()
+    assert declared, "no in-tree app declarations discovered at all"
+    for _mod, spec in declared:
+        assert spec.id in ar.BUILTIN_APPS, f"{spec.id} declared but missing from the catalog"
 
 
 def test_missing_module_drops_only_its_app_and_never_crashes():
-    blocker = _BlockRouteModules({"birds", "commute"})
+    (victim_mod, victim), others, external = _a_declaration_with_required_modules()
+    required = tuple(getattr(victim_mod, "REQUIRES", ()))
+    blocker = _BlockRouteModules(set(required))
     # Ensure the blocked modules aren't already cached, so the finder is consulted.
-    for n in ("routes.birds", "routes.commute", "routes.environment"):
-        sys.modules.pop(n, None)
+    for n in required:
+        sys.modules.pop(f"routes.{n}", None)
     sys.meta_path.insert(0, blocker)
     try:
         ar = _reload_registry()  # must NOT raise
-        assert "birds" not in ar.BUILTIN_APPS, "birds should be dropped when its module is absent"
-        assert "commute" not in ar.BUILTIN_APPS, "commute should be dropped when its module is absent"
-        # Unaffected apps stay; external app (no module requirement) always stays.
-        assert "finance" in ar.BUILTIN_APPS
-        assert "budget" in ar.BUILTIN_APPS
-        assert "wearables" in ar.BUILTIN_APPS
+        assert victim.id not in ar.BUILTIN_APPS, \
+            f"{victim.id} should be dropped when its module is absent"
+        # Unaffected apps stay. An app that requires nothing (an external one,
+        # which is all probes and no route module) always stays.
+        for _m, spec in others:
+            if set(getattr(_m, "REQUIRES", ())) & set(required):
+                continue  # shares a blocked module; legitimately dropped too
+            assert spec.id in ar.BUILTIN_APPS, f"{spec.id} dropped by an unrelated absence"
+        for _m, spec in external:
+            assert spec.id in ar.BUILTIN_APPS, f"{spec.id} needs no module and must survive"
         # A dropped app can't be installed/mounted/listed even if named in the roster.
-        assert all(s.id != "birds" for s in ar.installed_specs())
+        assert all(s.id != victim.id for s in ar.installed_specs())
     finally:
         sys.meta_path.remove(blocker)
-        for n in ("routes.birds", "routes.commute", "routes.environment"):
-            sys.modules.pop(n, None)
+        for n in required:
+            sys.modules.pop(f"routes.{n}", None)
         _reload_registry()  # restore a full catalog for any later test
 
 
 def test_chat_personas_are_install_gated():
     """A chat persona is available only when its app is installed — chat_context
-    assembles its provider map from installed apps, hardcoding none."""
-    from services import chat_context, app_registry
+    assembles its provider map from installed apps, hardcoding none.
+
+    The app ids come from the catalog, never typed: which apps ship a persona is
+    exactly the kind of fact a platform test must not carry.
+    """
+    from services import chat_context
 
     from tests.conftest import requires_app
+
+    # Ids FIRST: `_declarations()` reloads the registry, so a binding taken
+    # before it would patch the popped module object while chat_context reads
+    # the fresh one -- the exact stale-module trap this file's reload helper
+    # sets, and it fails as a persona that "leaked".
+    with_persona = [s.id for _m, s in _declarations() if s.chat_provider]
+    app_registry = importlib.import_module("services.app_registry")
+    if len(with_persona) < 2:
+        pytest.skip("this instance ships fewer than two apps with a chat persona")
 
     # The full roster is only "full" where those apps are installed. On a fresh
     # instance none are, and asserting them here failed for the absence of a
     # feature rather than for the behaviour under test.
-    for key in ("finance", "budget", "commute", "location"):
+    for key in with_persona:
         requires_app(key)
 
     full = chat_context.provider_map()
-    for key in ("general", "finance", "budget", "commute", "location"):
+    for key in ("general", *with_persona):
         assert key in full, f"{key} persona missing from full provider map"
 
-    # Simulate an instance with only 'budget' installed: only its persona (+
-    # platform providers) should appear; finance/commute/location must be absent.
+    # Simulate an instance with only ONE of them installed: only its persona (+
+    # platform providers) should appear; every other app persona must be absent.
+    kept, *dropped = with_persona
     orig = app_registry.installed_specs
-    app_registry.installed_specs = lambda: [s for s in orig() if s.id == "budget"]
+    app_registry.installed_specs = lambda: [s for s in orig() if s.id == kept]
     try:
         slim = chat_context.provider_map()
-        assert "budget" in slim
+        assert kept in slim
         assert "general" in slim  # platform provider always present
-        for gone in ("finance", "commute", "location"):
+        for gone in dropped:
             assert gone not in slim, f"{gone} persona leaked with its app uninstalled"
     finally:
         app_registry.installed_specs = orig

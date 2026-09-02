@@ -81,12 +81,22 @@ SEAM_SPEC = AppSpec(
 )
 
 
-# Some catalog tests need "a built-in that is not the fake app". Taken from the
-# catalog rather than typed, so this file names no real app either.
+# Some catalog tests need "an in-tree app that is not the fake app". Taken from
+# the catalog rather than typed, so this file names no real app either.
+#
+# Read from the DISCOVERY scan since 2026-09-01: the registry used to hold a
+# literal `_CATALOG_FACTORIES` tuple, and reading it here was the only way to
+# get a real id without writing one down. The scan is now that source, and the
+# id still comes from the spec each declaration returns, never from a filename.
 def _a_builtin_id() -> str:
-    ids = [app_id for app_id, _, _ in _registry()._CATALOG_FACTORIES]
+    ids = []
+    for _source, factory in _registry()._in_tree_factories():
+        try:
+            ids.append(factory().id)
+        except Exception:
+            continue
     if not ids:
-        pytest.skip("this instance ships no built-in apps")
+        pytest.skip("this instance ships no in-tree apps")
     return ids[0]
 
 
@@ -286,7 +296,7 @@ class TestEventPublishSeam:
 # --------------------------------------------------------------------------- #
 class TestOutOfTreeApps:
     def test_an_entry_point_app_enters_the_catalog(self, monkeypatch):
-        """The real test of the seams. `_CATALOG_FACTORIES` was a literal tuple
+        """The real test of the seams. The catalog was a literal tuple
         consumed once at import, with the factory required to be defined in
         app_registry.py and the route module required to sit in backend/routes/,
         so nothing outside backend/ could be an app at all."""
@@ -298,7 +308,7 @@ class TestOutOfTreeApps:
                 return lambda: SEAM_SPEC
 
         monkeypatch.setattr(_registry(), "_entry_point_factories",
-                            lambda: [("seamtest", (), lambda: SEAM_SPEC)])
+                            lambda: [("seamtest", lambda: SEAM_SPEC)])
         catalog = _registry()._build_catalog()
         assert catalog["seamtest"] is SEAM_SPEC
         # and it did not displace the built-ins
@@ -310,7 +320,7 @@ class TestOutOfTreeApps:
         target = _a_builtin_id()
         replacement = AppSpec(id=target)
         monkeypatch.setattr(_registry(), "_entry_point_factories",
-                            lambda: [(target, (), lambda: replacement)])
+                            lambda: [(target, lambda: replacement)])
         assert _registry()._build_catalog()[target] is replacement
 
     def test_a_broken_entry_point_does_not_sink_the_catalog(self, monkeypatch):
@@ -318,7 +328,7 @@ class TestOutOfTreeApps:
             raise RuntimeError("bad spec")
 
         monkeypatch.setattr(_registry(), "_entry_point_factories",
-                            lambda: [("seamtest", (), _boom)])
+                            lambda: [("seamtest", _boom)])
         assert _a_builtin_id() in _registry()._build_catalog()
 
     def test_a_non_appspec_return_is_rejected(self, monkeypatch):
@@ -334,7 +344,7 @@ class TestOutOfTreeApps:
                 return lambda: {"id": "seamtest"}
 
         monkeypatch.setattr(md, "entry_points", lambda group=None: [_EP()])
-        (_, _, factory), = _registry()._entry_point_factories()
+        (_, factory), = _registry()._entry_point_factories()
         with pytest.raises(TypeError):
             factory()
 

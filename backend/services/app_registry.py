@@ -1,55 +1,86 @@
-"""Built-in app catalog — the pluggable-app registration contract.
+"""The app catalog — which apps this instance can plug in, and how.
 
 Workshop is a container: the platform ships the shell (agents, projects, chat,
-voice, auth, launcher, runner, and the per-user primitives apps build on) and a
-*catalog* of built-in apps, but installs none of them. This module is that
-catalog. Which apps are actually wired up is decided by the per-instance
-installed-apps registry (`installed_apps.py`); a fresh clone installs nothing and
-boots blank.
+voice, auth, launcher, runner, and the per-user primitives apps build on) and
+installs no apps of its own. This module assembles the catalog. Which apps are
+actually wired up is decided by the per-instance installed-apps registry
+(`installed_apps.py`); a fresh clone installs nothing and boots blank.
 
-Each app declares, in one place, everything the platform needs to plug it in:
+THIS MODULE NAMES NO APP. It used to: eight per-app factories and a literal
+tuple listing them lived here, so the platform hardcoded the operator's apps and
+adding one meant editing platform source. Apps now declare themselves and this
+module discovers those declarations, by two paths and no others:
 
-  * `card`      — the launcher card (title, tagline, icon, route) or None (headless).
-  * `identity`  — the identity manifest fields (sensitivity, api_prefixes, caps).
-  * `mounts`    — the FastAPI routers + their auth, mounted only when installed.
-  * `mcp`       — MCP servers the app registers for chat tool-use (e.g. plaid).
-  * `on_startup`/`background` — lifespan hooks + loops, started only when installed.
+  * in-tree   — `services/<app>_app.py` exposing `app_spec() -> AppSpec`
+  * out-of-tree — a distribution with a `workshop.apps` entry point
+
+The declaration contract itself (`AppSpec`, `RouterMount`, and the store-path
+helpers an app needs to fill one in) is `services/app_spec.py`, kept separate so
+an app module can import what it must fill in without importing the discoverer
+that imports it. Both names are re-exported here: this module was the import
+site for years and there is no reason to break that.
 
 `main.py` and the launcher iterate installed apps over this catalog. Adding or
 removing an app is an installed-apps edit, never an edit here or to any
-platform-core file — this catalog is the built-in library, not the install list.
+platform-core file.
 """
 from __future__ import annotations
 
-import asyncio
 import contextvars
+import importlib
 import logging
 import os
-import time
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Callable
 
-import importlib
-
-from fastapi import Depends, FastAPI
-
-from deps_auth import require_internal_caller
-from deps_user import require_user, require_domain_owner
 from services import installed_apps
+# THE CONTRACT, re-exported. Apps import these from `services.app_spec`; every
+# existing platform caller imports them from here, and both keep working.
+from services.app_spec import AppSpec, RouterMount, owner_file, runtime_dir  # noqa: F401
 
 log = logging.getLogger("workshop.apps")
 
 
-# Workshop is a container: the catalog is the built-in app LIBRARY, but a given
-# instance need not ship every app's route module (a slimmed build, or a
-# downstream that removed apps it doesn't use). So the catalog must NEVER
-# hard-import an app's route module at load time — doing so would crash the whole
-# platform (base_apps/main/llm_router all import this) the moment one app is
-# absent. Instead each app is built by a factory that imports its own module(s);
-# a factory whose modules aren't present is skipped and its app never enters the
-# catalog. See _build_catalog() below.
-def _has_module(name: str) -> bool:
+# --------------------------------------------------------------------------- #
+# In-tree apps: DISCOVERED, never enumerated.
+#
+# THIS MODULE NAMES NO APP, and keeping it that way is the point. Until
+# 2026-09-01 it held eight hardcoded per-app factories and a literal tuple
+# listing them, so the file that decides what an app IS also decided which apps
+# EXIST. Adding an app meant editing platform source; the operator asked
+# repeatedly why the platform hardcodes his apps, and this tuple was the answer.
+#
+# An app now declares itself in its OWN module, `services/<app>_app.py`,
+# exposing `app_spec() -> AppSpec`. The suffix IS the contract: this scan reads
+# the directory, so an app appears by existing and disappears by being deleted,
+# with no platform edit either way. The app id comes from the spec the module
+# returns, not from its filename, so nothing here has to know or guess a name.
+#
+# Workshop is a container and a given instance need not ship every app's route
+# module (a slimmed build, or a downstream that removed apps it does not use),
+# so a declaration is still only ever called INSIDE the builder's try/except: a
+# module whose routes are absent raises ModuleNotFoundError from its own import
+# and is skipped, exactly as a missing `required` module used to be.
+# --------------------------------------------------------------------------- #
+APP_MODULE_SUFFIX = "_app"
+
+# What an app module may declare, besides `app_spec()`, so the catalog can drop
+# it cleanly on an instance that does not ship its routes:
+#
+#   REQUIRES = ("birdsong", "environment")   # names under `routes.`
+#
+# THE NAMES LIVE IN THE APP'S OWN FILE, which is the point; the platform only
+# knows the attribute. It exists because `from routes import x` inside a
+# declaration is NOT a reliable presence test: once `routes.x` has been imported
+# anywhere, `x` stays bound as an attribute of the `routes` package, and the
+# `from ... import` finds it there without ever consulting the import system.
+# So an instance that dropped the module would still admit the app, and the app
+# would fail later at request time instead of never entering the catalog. This
+# probes through `import_module`, which does consult it.
+APP_REQUIRES_ATTR = "REQUIRES"
+
+
+def _has_route_module(name: str) -> bool:
     try:
         importlib.import_module(f"routes.{name}")
         return True
@@ -57,543 +88,48 @@ def _has_module(name: str) -> bool:
         return False
 
 
-@dataclass(frozen=True)
-class RouterMount:
-    """One FastAPI router an app contributes, with its prefix/tags/auth."""
-    router: Any
-    prefix: str = ""
-    tags: tuple[str, ...] = ()
-    deps: tuple = ()  # FastAPI Depends() dependencies for the mount
+def _in_tree_factories() -> "list[tuple[str, Callable[[], AppSpec]]]":
+    """Every `services/<app>_app.py` that exposes `app_spec()`, by module name.
 
-
-@dataclass(frozen=True)
-class AppSpec:
-    id: str
-    card: dict[str, Any] | None = None
-    identity: dict[str, Any] = field(default_factory=dict)
-    mounts: tuple[RouterMount, ...] = ()
-    mcp: dict[str, dict] = field(default_factory=dict)
-    # Provider interface for each MCP server this app registers (Phase 4). The
-    # `mcp` field carries the LAUNCH spec (type/command/args) consumed by the chat
-    # tool-use router; `mcp_provider` carries the PROVIDER-INTERFACE ops, kept
-    # separate so adding ops never perturbs the launch-spec path. Every provider
-    # MUST declare an `export` op naming the Store it dumps:
-    #   {"<server>": {"export": {"store_uri": "workshop://store/<app>/<name>"}}}
-    # See mcp_provider_export() below.
-    mcp_provider: dict[str, dict] = field(default_factory=dict)
-    on_startup: tuple[Callable[[FastAPI], Awaitable[None]], ...] = ()
-    background: tuple[Callable[[], Awaitable[None]], ...] = ()
-    # Chat surface (services/chat_context, services/app_persona):
-    #   chat_provider — factory returning this app's ContextProvider (its in-app
-    #                   assistant persona). Exposed only when the app is installed.
-    #   chat_snapshot — a compact live-state string for the GENERAL assistant's
-    #                   cross-app snapshot. None => this app contributes none.
-    chat_provider: Callable[[], Any] | None = None
-    chat_snapshot: Callable[[], str] | None = None
-    # Model tier for this app's in-app assistant. None => the platform default.
-    # Here rather than in routes/chat.py so opting an app up to a bigger model
-    # is a property of the app, not a line the platform keeps about it.
-    chat_model_tier: str | None = None
-    # Event-bus sources this app accepts webhooks from (routes/events.py unions
-    # these with the platform's own over the installed set).
-    event_sources: tuple[str, ...] = ()
-    # Webhook signature verifiers, keyed by the source they verify. Signature:
-    #   (headers: dict[str, str], body: bytes) -> (ok: bool, reason: str)
-    # with `headers` lowercased. A source with no verifier is accepted with
-    # reason "no_verifier_registered", which is why the platform must not be the
-    # place this lives: whether a webhook is authentic is knowledge the app that
-    # owns the integration has, and the platform's default is permissive.
-    # Declared lazily (the factory can reference an app module) and read per
-    # request, so an app can be installed without restarting the receiver.
-    event_verifiers: dict[str, Callable[[dict, bytes], tuple[bool, str]]] = field(default_factory=dict)
-    # Cross-arrival idempotency, keyed by source. Signature:
-    #   (event_summary: dict) -> str | None
-    # Return a key that is stable across redeliveries of the SAME event (Plaid
-    # retries identical webhooks), or None to fall back to the platform's
-    # content hash. Only the app knows which payload fields identify an event
-    # rather than merely varying with it.
-    event_dedup: dict[str, Callable[[dict], str | None]] = field(default_factory=dict)
-    # Store adapters this app contributes, keyed by the Store `type` string it
-    # shapes. `stores` above declares that a store of type T exists; this is the
-    # thing that knows how to select and project rows out of it.
-    store_adapters: tuple[Any, ...] = ()
-    # Semantic-index collectors this app contributes: kind -> () -> list[Chunk].
-    # `default` is False for a corpus the operator opts into rather than one
-    # indexed on every build (semantic_index.DEFAULT_KINDS).
-    index_collectors: dict[str, Callable[[], Any]] = field(default_factory=dict)
-    index_collectors_default: tuple[str, ...] = ()
-    # An app's TOOLS are declared in its manifest, not here: see
-    # `services/tool_registry.app_tools` and
-    # `docs/platform-redesign/tools-are-declared-2026-08-23.md`. The `tools`
-    # field that used to sit here fed `routes/agents.known_tools`, in the same
-    # made-up vocabulary as that route's deleted five-string platform list --
-    # not CLI tool names, not MCP tool names, and enforced by nothing.
-    # Stores this app owns: (name, path_factory, type). The factory is called
-    # lazily so a store whose directory does not exist yet costs nothing at
-    # import time. `per_owner` stores resolve under the owner's runtime dir.
-    stores: tuple[tuple[str, Callable[[], Any], str, bool], ...] = ()
-    # The owner segment of this app's store URIs, when it is not the app id.
-    #
-    # It exists for exactly one reason: an app whose stores were declared in
-    # platform code BEFORE they were declared here, under a URI that is already
-    # written down elsewhere. Moving such a store onto its AppSpec is the fix
-    # (a store must exist exactly while the app that owns it is installed);
-    # renaming its URI at the same time is a separate, breaking change that
-    # nothing here needs. So the URI is pinned and the ownership moves.
-    # Empty means the app id, which is what a new app should always use.
-    store_owner: str = ""
-    # Paths the PUBLIC edge must NEVER forward to this app: unauthenticated or
-    # loopback-trusted ingest that would otherwise inherit the proxy's trust.
-    # `_exact` is for an ingest POST whose siblings under the same prefix are
-    # ordinary authed reads the SPA uses (workshop_public_app.py).
-    edge_blocked_prefixes: tuple[str, ...] = ()
-    edge_blocked_exact: tuple[str, ...] = ()
-    # Env vars to strip from a spawned agent turn because they are this app's
-    # secrets and nothing downstream should inherit them (llm_router).
-    secret_env: tuple[str, ...] = ()
-    # Processes this app expects to be running, probed by routes/services.py.
-    # Each entry: (name, category, url, probe_path, expect_status). An app that
-    # runs out of process is the only thing that knows what "up" means for it.
-    service_probes: tuple[tuple[str, str, str, str, tuple[int, ...]], ...] = ()
-
-
-# --------------------------------------------------------------------------- #
-# Finance / Budget MCP: the plaid server the finance & budget chat assistants
-# use for on-demand transaction lookup.
-#
-# The source now lives IN-TREE at backend/mcp/plaid/ (final-plan PM.4): it used
-# to be sourced from ~/clawdbot/plaid-mcp/, outside the repo, which made it
-# undiffable and tied a first-class platform capability to the lifetime of the
-# chat bridge's home directory. Repo-relative, so a fresh clone gets it after
-# one `npm install` in that dir; override with the env var.
-#
-# NOT moved: the secrets it reads. `~/.config/clawdbot/plaid-auth.env` (creds)
-# and `~/.config/clawdbot/plaid-tokens.json` (per-bank access tokens, mode 0600)
-# keep their host-level paths — server.js reads them from there directly. Code
-# moves into the repo; secrets never do.
-# --------------------------------------------------------------------------- #
-_PLAID_MCP = {
-    "plaid": {
-        "type": "stdio",
-        "command": "node",
-        "args": [os.environ.get(
-            "WORKSHOP_PLAID_MCP",
-            str(Path(__file__).resolve().parents[1] / "mcp" / "plaid" / "server.js"),
-        )],
-    },
-}
-
-# Provider interface for the plaid MCP server (Phase 4). Every MCP provider must
-# declare an `export` op naming the Store it dumps; plaid exports the finance
-# plaid-items Store. This establishes the pattern (currently only plaid is wired)
-# without touching the launch spec above.
-_PLAID_MCP_PROVIDER = {
-    "plaid": {
-        "export": {"store_uri": "workshop://store/finance/plaid-items"},
-    },
-}
-
-
-# --------------------------------------------------------------------------- #
-# App-specific background loops + startup, moved off platform-core main.py so
-# they run only when their app is installed.
-# --------------------------------------------------------------------------- #
-_PREWARM_INTERVAL_S = 9 * 60
-_CATEGORIZE_HOUR_LOCAL = 23
-
-
-async def _prewarm_finance_cache(realtime: bool = False) -> None:
-    """Pre-fetch balances + transactions so the next browser load is already hot.
-    Finance is per-owner; prewarm the operator's cache. Best-effort."""
-    from services import auth_store, ownership, finance_cache
-    from services import finance_plaid as plaid_bridge
-
-    oid = auth_store.operator_id()
-    if oid is None:
-        return
-    ownership.set_current_owner(oid)
-    try:
-        await finance_cache.get_or_fetch(
-            "balances",
-            lambda: plaid_bridge.balances(realtime=realtime),
-            force_refresh=realtime,
-        )
-        await finance_cache.get_or_fetch("transactions:30", lambda: plaid_bridge.transactions(days=30))
-    except Exception:
-        pass
-
-
-async def _prewarm_loop() -> None:
-    while True:
-        await asyncio.sleep(_PREWARM_INTERVAL_S)
-        await _prewarm_finance_cache(realtime=False)
-
-
-async def _categorize_loop() -> None:
-    """Once-a-day Sonnet categorization of uncategorized/transfer transactions."""
-    from services import auth_store, ownership, categorizer
-
-    last_run_day = None
-    while True:
-        await asyncio.sleep(30 * 60)
-        lt = time.localtime()
-        today = (lt.tm_year, lt.tm_yday)
-        if lt.tm_hour >= _CATEGORIZE_HOUR_LOCAL and today != last_run_day:
-            try:
-                oid = auth_store.operator_id()
-                if oid is None:
-                    continue
-                ownership.set_current_owner(oid)
-                summary = await categorizer.run(days=30)
-                log.info("nightly categorizer: %s", summary)
-            except Exception as e:
-                log.warning("nightly categorizer failed: %s", e)
-            last_run_day = today
-
-
-async def _finance_on_startup(app: FastAPI) -> None:
-    """Wire the cache-invalidate prewarm hook and fire an initial realtime warm."""
-    from services import finance_cache
-
-    finance_cache.set_invalidate_hook(_prewarm_finance_cache)
-    asyncio.create_task(_prewarm_finance_cache(realtime=True))
-
-
-async def _env_refresh_loop() -> None:
-    """Keep the Birds weather/astro spine fresh (stdlib astro + Open-Meteo) and
-    score any forecast predictions whose hour has passed. Best-effort, off-thread."""
-    from services import environment as environment_svc
-
-    while True:
+    The id is deliberately NOT derived from the filename: `notes_app.py`
+    declares the app `notes-app`, and a filename-derived id would have to
+    special-case that -- which is a platform file knowing an app's name again.
+    The module is imported, `app_spec()` is called by the builder, and the id is
+    read off the returned spec.
+    """
+    here = Path(__file__).resolve().parent
+    out: "list[tuple[str, Callable[[], AppSpec]]]" = []
+    for path in sorted(here.glob(f"*{APP_MODULE_SUFFIX}.py")):
+        mod_name = path.stem
         try:
-            n = await asyncio.to_thread(environment_svc.refresh)
-            log.info("env refresh: %s", "egress blocked" if n == -1 else f"{n} rows")
+            mod = importlib.import_module(f"services.{mod_name}")
+        except ModuleNotFoundError as e:
+            log.info("app module %r not loaded: %s", mod_name, e)
+            continue
         except Exception as e:
-            log.warning("env refresh failed: %s", e)
-        try:
-            from services import birds_forecast
-            graded = await asyncio.to_thread(birds_forecast.score_due)
-            if graded:
-                log.info("forecast calibration: graded %s hours", graded)
-        except Exception as e:
-            log.warning("forecast scoring failed: %s", e)
-        await asyncio.sleep(6 * 60 * 60)
-
-
-async def _atlas_rebuild_loop() -> None:
-    """Nightly Soundscape Atlas UMAP/HDBSCAN rebuild, gated on enough new
-    embeddings. Heavy ML runs detached in the analyzer venv; this just triggers."""
-    from services import birds_analyze
-
-    await asyncio.sleep(5 * 60)  # let startup settle before the first check
-    while True:
-        try:
-            res = await asyncio.to_thread(birds_analyze.maybe_auto_rebuild)
-            if res.get("triggered"):
-                log.info("atlas auto-rebuild: triggered (%s embedded, %s new)",
-                         res.get("embedded"), res.get("new"))
-        except Exception as e:
-            log.warning("atlas auto-rebuild check failed: %s", e)
-        await asyncio.sleep(24 * 60 * 60)
-
-
-# --------------------------------------------------------------------------- #
-# The built-in catalog. Auth mirrors the previous hardcoded main.py wiring.
-# --------------------------------------------------------------------------- #
-# One factory per built-in app. A factory imports ITS OWN route module(s) at call
-# time (safe — the builder only calls it once those modules are confirmed present)
-# and returns the AppSpec. This is what keeps the catalog from hard-coupling to
-# every app module: an app whose modules aren't shipped is simply never built.
-def _finance_spec() -> AppSpec:
-    from routes import finance, plaid_webhook
-    from services import finance_events, finance_persona, finance_store_adapter
-    return AppSpec(
-        id="finance",
-        chat_provider=finance_persona.FinanceContextProvider,
-        chat_snapshot=finance_persona.finance_snapshot,
-        card={
-            "title": "Finance",
-            "tagline": "Balances, accounts, recent transactions",
-            "icon": "Banknote",
-            "route": "/apps/finance",
-        },
-        identity={
-            "sensitivity": "private",
-            "api_prefixes": ["/finance", "/plaid"],
-            "provides": ["finance.read"],
-            "needs": [],
-        },
-        mounts=(
-            RouterMount(finance.router, prefix="/finance", tags=("finance",), deps=(Depends(require_user),)),
-            # Plaid webhook — Plaid-signed, no user gate.
-            RouterMount(plaid_webhook.router, prefix="/plaid/webhook", tags=("plaid-webhook",)),
-        ),
-        mcp=_PLAID_MCP,
-        mcp_provider=_PLAID_MCP_PROVIDER,
-        on_startup=(_finance_on_startup,),
-        background=(_prewarm_loop, _categorize_loop),
-        event_sources=("plaid",),
-        event_verifiers={"plaid": finance_events.verify_webhook},
-        event_dedup={"plaid": finance_events.dedup_key},
-        edge_blocked_prefixes=("/plaid/webhook",),
-        secret_env=("PLAID_CLIENT_ID", "PLAID_SECRET", "PLAID_ENV", "PLAID_ENV_URL"),
-        stores=(
-            ("plaid-items", lambda: _owner_file("plaid-items.json"), "Finance", True),
-            ("transactions", lambda: _owner_file("finance-cache.json"), "Finance", True),
-        ),
-        store_adapters=(finance_store_adapter.FinanceAdapter(),),
-    )
-
-
-def _budget_spec() -> AppSpec:
-    from routes import budget
-    from services import budget_persona
-    return AppSpec(
-        id="budget",
-        chat_model_tier="sonnet",  # plan-patch needs careful path generation
-        chat_provider=budget_persona.BudgetContextProvider,
-        card={
-            "title": "Budget",
-            "tagline": "Payoff plan, savings goals, projections",
-            "icon": "PiggyBank",
-            "route": "/apps/budget",
-        },
-        identity={
-            "sensitivity": "private",
-            "api_prefixes": ["/budget"],
-            "provides": [],
-            "needs": ["finance.read"],
-        },
-        mounts=(
-            RouterMount(budget.router, prefix="/budget", tags=("budget",), deps=(Depends(require_user),)),
-        ),
-        # Budget chat shares the plaid MCP for transaction lookup.
-        mcp=_PLAID_MCP,
-        mcp_provider=_PLAID_MCP_PROVIDER,
-        stores=(("plan", lambda: _owner_file("budget.json"), "Budget", True),),
-    )
-
-
-def _commute_spec() -> AppSpec:
-    from routes import commute
-    from services import commute_persona
-    return AppSpec(
-        id="commute",
-        chat_provider=commute_persona.CommuteContextProvider,
-        chat_snapshot=commute_persona.commute_snapshot,
-        card={
-            "title": "Commute",
-            "tagline": "Day-of departures + transit status",
-            "icon": "TrainFront",
-            "route": "/apps/commute",
-        },
-        identity={
-            "sensitivity": "private",
-            "api_prefixes": ["/commute"],
-            "provides": [],
-            "needs": ["location.read"],
-        },
-        mounts=(
-            RouterMount(commute.router, deps=(Depends(require_domain_owner("commute")),)),
-        ),
-        stores=(("data", lambda: _runtime_dir("commute"), "Commute", False),),
-    )
-
-
-def _location_spec() -> AppSpec:
-    from routes import location, owntracks
-    from services import location_persona
-    return AppSpec(
-        id="location",
-        chat_provider=location_persona.LocationContextProvider,
-        chat_snapshot=location_persona.location_snapshot,
-        card={
-            "title": "Location",
-            "tagline": "Live position + history from OwnTracks",
-            "icon": "MapPin",
-            "route": "/apps/location",
-        },
-        identity={
-            "sensitivity": "private",
-            "api_prefixes": ["/location"],
-            "provides": ["location.read"],
-            "needs": [],
-        },
-        mounts=(
-            RouterMount(location.router, deps=(Depends(require_user),)),
-            # OwnTracks ingest — HTTP Basic bound to an owner inside the handler.
-            RouterMount(owntracks.router),
-        ),
-        edge_blocked_prefixes=("/location/owntracks",),
-    )
-
-
-def _birds_spec() -> AppSpec:
-    from routes import birds, environment
-    return AppSpec(
-        id="birds",
-        card={
-            "title": "Birds",
-            "tagline": "Backyard bird-song detections, live",
-            "icon": "Bird",
-            "route": "/apps/birds",
-        },
-        identity={
-            "sensitivity": "shareable",
-            "api_prefixes": ["/birds", "/environment"],
-            "provides": ["birds.read"],
-            "needs": [],
-        },
-        mounts=(
-            RouterMount(birds.router, deps=(Depends(require_user),)),
-            # Yard-mic / BirdNET-Go ingest — internal caller only, carries its own token.
-            RouterMount(birds.ingest_router, deps=(Depends(require_internal_caller),)),
-            RouterMount(environment.router, deps=(Depends(require_user),)),
-        ),
-        background=(_env_refresh_loop, _atlas_rebuild_loop),
-        edge_blocked_prefixes=("/birds/webhook", "/birds/live/publish"),
-        edge_blocked_exact=("/birds/analyze",),
-    )
-
-
-def _health_spec() -> AppSpec:
-    from routes import health
-    return AppSpec(
-        id="health",
-        card=None,  # headless: iOS Health auto-export ingest + reads, no launcher card
-        identity={
-            "sensitivity": "private",
-            "api_prefixes": ["/health"],
-            "provides": ["health.read"],
-            "needs": [],
-        },
-        mounts=(
-            # /ingest: HTTP Basic bound to owner; reads: require_user per-endpoint.
-            RouterMount(health.router),
-        ),
-        edge_blocked_prefixes=("/health/ingest",),
-    )
-
-
-def _wearables_spec() -> AppSpec:
-    # External app: served from its own origin, no in-platform route module.
-    return AppSpec(
-        id="wearables",
-        card={
-            "title": "Open Wearables",
-            "tagline": "Wearables data UI",
-            "icon": "Watch",
-            "href": os.environ.get("WORKSHOP_WEARABLES_URL", ""),
-            "external": True,
-            "probe": "open-wearables-backend",
-        },
-        identity={
-            "sensitivity": "private",
-            "api_prefixes": [],
-            "provides": [],
-            "needs": [],
-        },
-        # This app IS three external processes; the probes are its whole
-        # backend presence, which is why the platform used to carry them.
-        service_probes=(
-            ("open-wearables-backend", "wearables",
-             os.environ.get("WORKSHOP_WEARABLES_BACKEND", "http://127.0.0.1:8100"),
-             "/", (200, 301, 302, 404)),
-            ("open-wearables-frontend", "wearables",
-             os.environ.get("WORKSHOP_WEARABLES_FRONTEND", "http://127.0.0.1:3100"),
-             "/", (200, 301, 302)),
-            ("open-wearables-flower", "wearables",
-             os.environ.get("WORKSHOP_WEARABLES_FLOWER", "http://127.0.0.1:5556"),
-             "/", (200, 401)),
-        ),
-    )
-
-
-def _notes_spec() -> AppSpec:
-    from routes import notes
-    from services import notes_store_adapter, notes_vault, permissions
-    spec = AppSpec(
-        id="notes-app",
-        # `notes:vault`, not `notes-app:vault`. The URI predates this
-        # declaration; see `store_owner`.
-        store_owner="notes",
-        card={
-            "title": "Notes",
-            "tagline": "Markdown vault — wikilinks, backlinks, search",
-            "icon": "NotebookPen",
-            # No "route" here. It is set from `spec.id` below, so this app's
-            # name is written ONCE in this function.
-        },
-        identity={
-            "sensitivity": "private",
-            "api_prefixes": ["/notes-app"],
-            "provides": list(notes.PROVIDES),
-            "needs": [],
-        },
-        mounts=(
-            RouterMount(notes.router, deps=(Depends(require_user),)),
-        ),
-        # THE VAULT IS THIS APP'S STORE, declared here rather than in
-        # `stores.register_builtin_stores` (2026-08-27,
-        # memory-page-and-file-viewer-2026-08-27.md D1 and section 1.2).
-        #
-        # It sat in the platform's own block, four lines under a comment reading
-        # "Everything app-specific is declared on that app's AppSpec and
-        # registered below, so a store exists exactly while the app that owns it
-        # is installed" -- so the file contradicted itself, and an installation
-        # without this app still declared a store over a folder in the user's
-        # home directory. The path still comes from `permissions.NOTES_VAULT_ROOT`
-        # and nothing about the folder changes; what changes is that the store
-        # exists only while the app does.
-        stores=(("vault", lambda: permissions.NOTES_VAULT_ROOT, "Note", False),),
-        # Searchable, but only when asked for by name: `vault` is deliberately
-        # absent from index_collectors_default.
-        index_collectors={"vault": notes_vault.collect_index_chunks},
-        store_adapters=(notes_store_adapter.VaultNoteAdapter(),),
-    )
-    # THE ROUTE IS THE ID, DERIVED, so this app's name is written once above.
-    #
-    # The card used to hand-write a route that dropped a suffix from the id.
-    # The frontend serves each app's page under its id (registry.tsx builds the
-    # path that way) and `app_surface.surface_for` takes this route as the app's
-    # HOME, so the one link the app handed out went to a route nobody serves:
-    # the shell found no app with that slug and bounced the reader to Home with
-    # an error. Reported 2026-09-01.
-    #
-    # Derived rather than spelled, and derived HERE rather than from a module
-    # constant, because a constant holding the name would be a SECOND literal
-    # naming an app in platform source, which is the thing being removed.
-    # check_no_app_names counts those and caught exactly that on the first
-    # attempt at this fix.
-    spec.card["route"] = f"/apps/{spec.id}"
-    return spec
-
-
-# (id, required route modules, factory). An app is admitted to the catalog only
-# when every required module is importable on this instance; otherwise it is
-# skipped (logged once) and can never be installed, mounted, or listed. Apps with
-# no required modules (external apps like wearables) are always admitted.
-_CATALOG_FACTORIES: tuple[tuple[str, tuple[str, ...], Callable[[], AppSpec]], ...] = (
-    ("finance", ("finance", "plaid_webhook"), _finance_spec),
-    ("budget", ("budget",), _budget_spec),
-    ("commute", ("commute",), _commute_spec),
-    ("location", ("location", "owntracks"), _location_spec),
-    ("birds", ("birds", "environment"), _birds_spec),
-    ("health", ("health",), _health_spec),
-    ("notes-app", ("notes",), _notes_spec),
-    ("wearables", (), _wearables_spec),
-)
+            log.warning("app module %r failed to import: %s", mod_name, e)
+            continue
+        factory = getattr(mod, "app_spec", None)
+        if not callable(factory):
+            continue
+        missing = [m for m in getattr(mod, APP_REQUIRES_ATTR, ()) if not _has_route_module(m)]
+        if missing:
+            log.info("app module %r not in catalog: route module(s) not shipped: %s",
+                     mod_name, ", ".join(missing))
+            continue
+        out.append((mod_name, factory))
+    return out
 
 
 # --------------------------------------------------------------------------- #
 # Out-of-tree apps.
 #
-# `_CATALOG_FACTORIES` above is the BUILT-IN library: apps whose code ships in
-# this repo. It was also, until now, the only way into the catalog -- a literal
-# tuple, consumed once at import, with the factory required to be defined in
-# this file and the route module required to sit in `backend/routes/`. So
-# nothing outside `backend/` could be an app, which makes "an app is installed
-# content, not platform source" unachievable rather than merely undone.
+# The scan above is the IN-TREE library: apps whose code still ships in this
+# repo. It was, until 2026-09-01, a literal tuple consumed once at import,
+# with the factory required to be defined in this file and the route module
+# required to sit in `backend/routes/`. So nothing outside `backend/` could be
+# an app, which makes "an app is installed content, not platform source"
+# unachievable rather than merely undone.
 #
 # The second path is the standard Python one: a distribution declares
 #
@@ -611,8 +147,8 @@ _CATALOG_FACTORIES: tuple[tuple[str, tuple[str, ...], Callable[[], AppSpec]], ..
 APP_ENTRY_POINT_GROUP = "workshop.apps"
 
 
-def _entry_point_factories() -> "list[tuple[str, tuple[str, ...], Callable[[], AppSpec]]]":
-    out: "list[tuple[str, tuple[str, ...], Callable[[], AppSpec]]]" = []
+def _entry_point_factories() -> "list[tuple[str, Callable[[], AppSpec]]]":
+    out: "list[tuple[str, Callable[[], AppSpec]]]" = []
     try:
         from importlib.metadata import entry_points
 
@@ -629,33 +165,47 @@ def _entry_point_factories() -> "list[tuple[str, tuple[str, ...], Callable[[], A
                 )
             return spec
 
-        # No `required` modules: an out-of-tree app's importability is its own
-        # entry point's problem, and a failure to load is caught below and
-        # skipped exactly like a built-in factory that raises.
-        out.append((ep.name, (), _factory))
+        # An out-of-tree app's importability is its own entry point's problem; a
+        # failure to load is caught below and skipped exactly like an in-tree
+        # declaration that raises.
+        out.append((ep.name, _factory))
     return out
 
 
 def _build_catalog() -> dict[str, AppSpec]:
+    """Every app that declared itself and can actually be built here.
+
+    THE ID COMES FROM THE SPEC, never from the module or entry-point name. That
+    is what lets this function assemble the catalog without a single app name in
+    it: the source is asked what it is rather than told.
+    """
     catalog: dict[str, AppSpec] = {}
-    builtin_ids = {app_id for app_id, _, _ in _CATALOG_FACTORIES}
+    in_tree = _in_tree_factories()
     discovered = _entry_point_factories()
-    for app_id, required, factory in (*_CATALOG_FACTORIES, *discovered):
-        missing = [m for m in required if not _has_module(m)]
-        if missing:
-            log.info("app %r not in catalog: route module(s) not shipped: %s", app_id, ", ".join(missing))
-            continue
+    in_tree_ids: set[str] = set()
+    tagged = [(s, f, True) for s, f in in_tree] + [(s, f, False) for s, f in discovered]
+    for source, factory, is_in_tree in tagged:
         try:
             spec = factory()
-        except Exception as e:  # a factory that fails to build must not sink the rest
-            log.warning("app %r skipped: failed to build spec: %s", app_id, e)
+        except ModuleNotFoundError as e:
+            # Its route module is not shipped on this instance. Expected on a
+            # slimmed build, and the reason a declaration is never called at
+            # import time: the app simply never enters the catalog.
+            log.info("app %r not in catalog: module(s) not shipped: %s", source, e)
             continue
-        if app_id in catalog and app_id in builtin_ids:
-            log.info("app %r: an installed distribution supersedes the built-in", app_id)
-        catalog[app_id] = spec
-    if discovered:
-        log.info("app discovery: %d out-of-tree app(s) via %s entry points",
-                 len(discovered), APP_ENTRY_POINT_GROUP)
+        except Exception as e:  # a declaration that fails must not sink the rest
+            log.warning("app %r skipped: failed to build spec: %s", source, e)
+            continue
+        if not isinstance(spec, AppSpec) or not spec.id:
+            log.warning("app %r skipped: declaration returned no usable AppSpec", source)
+            continue
+        if spec.id in catalog and spec.id in in_tree_ids:
+            log.info("app %r: an installed distribution supersedes the in-tree copy", spec.id)
+        if is_in_tree:
+            in_tree_ids.add(spec.id)
+        catalog[spec.id] = spec
+    log.info("app catalog: %d in-tree declaration(s), %d out-of-tree via %s entry points",
+             len(in_tree), len(discovered), APP_ENTRY_POINT_GROUP)
     return catalog
 
 
@@ -787,20 +337,6 @@ def _platform_mcp_servers() -> dict[str, dict]:
         }
     }
 
-
-def _runtime_dir(name: str):
-    """An app-shared (not per-owner) directory under the runtime root."""
-    from services import stores as _stores
-
-    return _stores._runtime_root() / name
-
-
-def _owner_file(name: str):
-    """A per-owner data file under the current owner's runtime dir."""
-    from services import stores as _stores
-
-    base = _stores._operator_runtime_dir()
-    return None if base is None else base / name
 
 
 def installed_service_probes() -> list[tuple[str, str, str, str, tuple[int, ...]]]:

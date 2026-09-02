@@ -10,20 +10,15 @@
     "notes-app",
     "wearables"
   ],
-  "content_files": 106,
-  "import_sites": 24,
-  "literal_sites": 479,
+  "content_files": 114,
+  "import_sites": 18,
+  "literal_sites": 408,
   "home_path_sites": 0,
   "raised": {
-    "import_sites": {
-      "from": 20,
-      "to": 24,
-      "because": "SCAN AREA WIDENED 2026-08-27, not new debt. PLATFORM_DIRS was six directories and an app-content file short-circuited out of all four checks; both are fixed in the same commit, so the scan now covers the tracked tree and reads app-owned files for OTHER apps' names. literal_sites 291 -> 479 and import_sites 20 -> 24 are what that widening MADE VISIBLE, not lines anyone added: 152 of the new literals are docs/ prose, 24 are app-owned files naming a different app, the rest are shared/ and root files. Pinned at the new measured value deliberately and only once; from here it is a ratchet again and only goes down. The count that measures work actually done is home_path_sites, 7 -> 0, fixed at the source rather than re-pinned."
-    },
-    "literal_sites": {
-      "from": 291,
-      "to": 479,
-      "because": "SCAN AREA WIDENED 2026-08-27, not new debt. PLATFORM_DIRS was six directories and an app-content file short-circuited out of all four checks; both are fixed in the same commit, so the scan now covers the tracked tree and reads app-owned files for OTHER apps' names. literal_sites 291 -> 479 and import_sites 20 -> 24 are what that widening MADE VISIBLE, not lines anyone added: 152 of the new literals are docs/ prose, 24 are app-owned files naming a different app, the rest are shared/ and root files. Pinned at the new measured value deliberately and only once; from here it is a ratchet again and only goes down. The count that measures work actually done is home_path_sites, 7 -> 0, fixed at the source rather than re-pinned."
+    "content_files": {
+      "from": 106,
+      "to": 114,
+      "because": "STAGE E, FIRST HALF (2026-09-01): the backend app registry no longer enumerates apps. services/app_registry.py held eight hardcoded per-app factories and a literal _CATALOG_FACTORIES tuple listing them, so the platform module that defines what an app IS also decided which apps EXIST, and adding an app meant editing platform source. Each app now declares itself in its own services/<app>_app.py exposing app_spec(), the registry discovers those by scanning, and the contract (AppSpec/RouterMount/store helpers) moved to services/app_spec.py. content_files 106 -> 114 is exactly the eight new app-owned declaration files; it is the legitimate upward move this baseline documents, and it buys import_sites 24 -> 18 and literal_sites 479 -> 408. app_registry.py and app_spec.py now contain ZERO app names. The frontend registry (frontend/src/apps/registry.tsx, 54 literals) is the second half and is not done."
     }
   }
 }
