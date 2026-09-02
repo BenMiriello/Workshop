@@ -796,25 +796,6 @@ a.ws-btn { text-decoration: none; }
   content: "·"; margin-right: var(--space-2); color: var(--faint);
 }
 
-@media (min-width: 720px) {
-  .ws-listrow {
-    /* Meta moves onto the title line here, so it takes a column of its own and
-       the actions move to the fourth. */
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-    align-items: center;
-    padding-block: var(--space-2);
-  }
-  .ws-listrow__actions { grid-column: 4; }
-  .ws-listrow__sub { grid-column: 2; grid-row: 2; }
-  .ws-listrow__meta { grid-column: 3; grid-row: 1; }
-  /* No longer pushed apart, so the whole meta line is one trailing group and
-     every gap in it takes the same separator. */
-  .ws-listrow__time { margin-left: 0; }
-  .ws-listrow__meta > * + *::before {
-    content: "·"; margin-right: var(--space-2); color: var(--faint);
-  }
-}
-
 /* A SECOND LINE UNDER THE TITLE, for a list whose row carries a preview. The
    chat list is the caller: a conversation's last message is the one thing a
    ticket has no equivalent of, and it is why the chat list had its own row
@@ -856,6 +837,33 @@ a.ws-btn { text-decoration: none; }
   font-size: var(--fs-sm); line-height: var(--lh-tight);
 }
 .ws-listrow__hit:hover { text-decoration: none; }
+
+/* THE WIDE LAYOUT, AND IT MUST BE LAST IN THIS BLOCK.
+   A media query adds no specificity, so these overrides only win by coming
+   after the rules they override. When this block sat ABOVE `.ws-listrow__
+   actions`, that rule's `grid-column: 3` beat the `4` below and the meta and
+   the action buttons were placed in the SAME cell: on a 1440px screen the
+   archive and overflow glyphs drew on top of the model name, so a row read
+   "opus 5 (archive)(menu) · 176 turns". Reported 2026-09-01. Keep this last. */
+@media (min-width: 720px) {
+  .ws-listrow {
+    /* Meta moves onto the title line here, so it takes a column of its own and
+       the actions move to the fourth. */
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    padding-block: var(--space-2);
+  }
+  .ws-listrow__hit { grid-column: 2; grid-row: 1; }
+  .ws-listrow__meta { grid-column: 3; grid-row: 1; }
+  .ws-listrow__actions { grid-column: 4; grid-row: 1; }
+  .ws-listrow__sub { grid-column: 2; grid-row: 2; }
+  /* No longer pushed apart, so the whole meta line is one trailing group and
+     every gap in it takes the same separator. */
+  .ws-listrow__time { margin-left: 0; }
+  .ws-listrow__meta > * + *::before {
+    content: "·"; margin-right: var(--space-2); color: var(--faint);
+  }
+}
 
 /* Child rows under a parent row (a sweep and the runs it spawned). Indented by
    space, not by a rule down the left: the nesting is one level and the indent
