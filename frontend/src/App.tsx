@@ -1,6 +1,7 @@
 import { lazyPage, RouteSkeleton } from "./lib/lazyPage";
 import { runHref } from "./lib/jobs";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { useFreshBuild } from "./lib/useFreshBuild";
 import Roles from "./pages/Roles";
 import Chats, { ChatsArchived } from "./pages/Chats";
 import Apps from "./pages/Apps";
@@ -147,6 +148,14 @@ function VoiceRedirect() {
 // modifiers (--chatfull, --appfull) moved there with it and are still the ONLY
 // per-route width logic there is. Do not reintroduce a route-by-route list.
 export default function App() {
+  // A TAB THAT HAS BEEN OPEN ALL DAY IS RUNNING THE BUILD IT LOADED. The edge
+  // already stops a FRESH load from getting a stale bundle (index.html goes out
+  // no-cache with an ETag); nothing was closing the other half, so a fix could
+  // be committed, built, and verifiably live on the public origin while the
+  // operator, in an open tab, was still looking at the previous one and
+  // correctly saying it was not fixed. Measured 2026-09-01. No banner: it
+  // reloads on the next navigation and says nothing. See lib/newBuild.ts.
+  useFreshBuild();
   return (
     // The query cache sits ABOVE every route, so moving between screens does
     // not throw away what was already read, and INSIDE `AuthProvider` (which
