@@ -11,12 +11,23 @@ import { useAppRef } from "../../../components/holders/useHolders";
 import { stalenessNote } from "../../../lib/holders";
 
 export function AppTabPage({
-  slug, title, sub, actions, children,
+  slug, title, sub, actions, header = true, children,
 }: {
   slug: string;
   title: string;
   sub?: ReactNode;
   actions?: (app: AppRecord) => ReactNode;
+  /** FALSE where the tab's own body draws the header, because its controls
+   *  belong on the title's line and their state lives inside it.
+   *
+   *  The Chats tab is the caller. Its controls (the armed filter, New chat)
+   *  are ChatsView's, so from underneath a header drawn here they could only
+   *  ever take a row of their own -- which left a band of empty space that
+   *  /chats does not have, and was one of the two things that still made the
+   *  app's Chats tab look like a different page (2026-09-01). The app record
+   *  is still loaded here, and the staleness line and the loading and error
+   *  states are still this shell's; only the h1 moves. */
+  header?: boolean;
   children: (app: AppRecord) => ReactNode;
 }) {
   const { app, err, reload } = useApp(slug);
@@ -81,7 +92,7 @@ export function AppTabPage({
 
   return (
     <div className="ws-page">
-      {chrome && (
+      {chrome && header && (
         // THE PAGE SAYS WHICH APP IT BELONGS TO.
         //
         // The h1 was the tab name alone, so opening an app landed you on a page

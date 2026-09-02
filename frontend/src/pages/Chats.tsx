@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -111,10 +111,21 @@ export type ChatsScope = { id: string; slug: string; name: string };
  * you to do this". Three previous rounds changed how the copy RENDERED. The
  * copy was the bug.
  */
-export function ChatsView({ app = null, header = true }: {
+export function ChatsView({ app = null, header = true, eyebrow, sub }: {
   app?: ChatsScope | null;
   /** False where a page header is already on screen above this (an app tab). */
   header?: boolean;
+  /** Drawn INSIDE the header this view owns, by a caller that would otherwise
+   *  have drawn a header of its own above it.
+   *
+   *  The app tab did exactly that, and the cost was visible: the filter and
+   *  New chat could not reach the title's line from below it, so they took a
+   *  row to themselves and the page had a band of empty space between its
+   *  subtitle and its list, where /chats has none. Compared side by side at
+   *  1440px on 2026-09-01, that band and the missing tab strip were the only
+   *  things left that made the two pages look like different pages. */
+  eyebrow?: string;
+  sub?: ReactNode;
 } = {}) {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -293,7 +304,13 @@ export function ChatsView({ app = null, header = true }: {
   return (
     <div>
       {header ? (
-        <PageHeader className="ws-chats-head" title="Chats" actions={controls} />
+        <PageHeader
+          className="ws-chats-head"
+          eyebrow={eyebrow}
+          title="Chats"
+          sub={sub}
+          actions={controls}
+        />
       ) : (
         // The app tab draws its own header above this (AppTabShell), so only
         // the controls belong here. A second "Chats" heading under a page
