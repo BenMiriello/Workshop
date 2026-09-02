@@ -175,3 +175,17 @@ docs/masini/
 /agents/apps/
 /backend/mcp/plaid/
 /commute/
+
+# COMPACTION HANDOFFS ARE INSTANCE STATE, NOT SOURCE.
+# `shared/knowledge/<scope>/working-state.md` is written by the summariser every
+# time a chat in that scope compacts, and overwritten by the next one. Two
+# consequences made tracking them actively harmful:
+#   * The tree was never clean. done.sh saw an uncommitted file it could not
+#     attribute, so it fell back to scoped checks and the full reviewer.sh had
+#     not run all session.
+#   * They carry this installation's identity. The summariser writes whatever
+#     the chat discussed, and on 2026-09-01 that was the operator's own domain,
+#     twice, which check_no_hardcoding correctly counts as a new identity
+#     reference in tracked source.
+# They stay on disk and keep working; a new chat still reads its scope's file.
+shared/knowledge/**/working-state.md
