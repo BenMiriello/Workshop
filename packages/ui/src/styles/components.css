@@ -710,12 +710,16 @@ a.ws-btn { text-decoration: none; }
    line, so on a 390px screen the model and the scope pushed the time straight
    out of the box and the archive read "Archived A...". The time is the field
    the list is SORTED by, so it is the last thing that may be cut. */
-.ws-listrow__meta > * { flex: 0 1 auto; min-width: 0; white-space: nowrap; }
+.ws-listrow__meta > * { flex: 0 0 auto; white-space: nowrap; }
+/* A fact that may NOT be shortened. See ChatRow: the model and the turn count
+   are short and load-bearing, so they hold their width and the names beside
+   them give way instead. */
+.ws-listrow__fact { flex: 0 0 auto; }
 .ws-listrow__meta > .ws-listrow__time { flex: 0 0 auto; }
 /* A fact that has been allowed to shrink must ellipsize rather than wrap: a
    shrunk box with no nowrap just breaks its text onto a second line, which is
    the row growing a line instead of the fact getting shorter. */
-.ws-listrow__scope { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ws-listrow__scope { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ws-listrow__time { margin-left: auto; padding-left: var(--space-2); }
 /* Separators between meta facts, so "to do workshop 2h ago" reads as three
    things. Not on the time while it is pushed to the far right by margin-left:

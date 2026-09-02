@@ -153,8 +153,15 @@ export default function ChatRow({
         </span>
       )}
       <span className="ws-listrow__meta">
-        {facts.map((f) => (
-          <span key={f} className="ws-listrow__scope">{f}</span>
+        {facts.map((f, i) => (
+          // WHICH FACT GIVES WAY WHEN THE ROW IS TOO NARROW, and it is not all
+          // of them equally. `chatRowFacts` emits model, turns, scope, role,
+          // branch in that order; the first two are short and load-bearing
+          // ("opus 5", "2 turns") and ellipsizing them produced "sonnet 4..."
+          // beside "2 tur..." on a 390px archive row, which is three damaged
+          // facts instead of one shortened one. The names are the long ones and
+          // the ones a reader can still recognise clipped.
+          <span key={f} className={i < 2 ? "ws-listrow__fact" : "ws-listrow__scope"}>{f}</span>
         ))}
         <span className="ws-listrow__time" title={t.updated_at ?? undefined}>
           {time ?? relTime(t.updated_at)}
