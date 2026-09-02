@@ -44,11 +44,12 @@ the availability filter below.
 `tabs` is the app's own list, in the order it wants them. Absent, the app takes
 every tab it CAN have. Either way the answer is filtered by availability: a tab
 whose collection can never be non-empty for this app is not offered at all.
-That filter is the same fact `unlinkedReason` states in words on the frontend
+The only thing that filter now turns on is whether the app has a linked working
+tree, which Work and Overview both read and the other three do not. That is the
+same fact `unlinkedReason` states in words on the frontend
 (`frontend/src/pages/apps/tabs/appTabState.ts`), which is where the rule lives
-and is tested; this module supplies the FACTS it reads (does this app have a
-linked project tree, does it have a file root) plus the resolved home, so the
-launcher card and the shell cannot disagree about where an app opens.
+and is tested; this module supplies it plus the resolved home, so the launcher
+card and the shell cannot disagree about where an app opens.
 """
 from __future__ import annotations
 
@@ -83,10 +84,8 @@ RETIRED_TAB_IDS: frozenset[str] = frozenset({
 # Mirrors `services/apps.py` collection by collection. Work is the branch,
 # ticket, run and change view, and every one of those resolves through
 # `app_links.linked_project_slug`, so an app with no linked tree can never have
-# it. Chats and notes (memory) resolve through the app's slug alone. Files is
-# its own question -- an app may declare its own root with a manifest instead
-# (`app_files._app_declared_root`) -- so it is answered by `_has_file_root`
-# rather than by this map.
+# it. Chats, memory and files resolve through the app's slug alone: every app
+# has all three, so none of them is listed here.
 REQUIRES_LINKED_PROJECT: dict[str, bool] = {
     "work": True,
     # Overview is the autonomy brake, the services, the deploys and the
@@ -139,34 +138,23 @@ def _linked_project(slug: str) -> str | None:
         return None
 
 
-def _has_file_root(slug: str) -> bool:
-    """Whether the Files tab can show anything: the app declares its own root
-    with a manifest, or it has a linked working tree. `app_files.resolve`
-    answers both in one call and raises when the answer is neither."""
-    try:
-        from services import app_files
-
-        app_files.resolve(f"app:{slug}")
-        return True
-    except Exception:
-        return False
-
-
 def available_tabs(slug: str) -> list[str]:
     """Every tab that could hold something for this app, in platform order.
 
     This is availability, not population: a linked app with no tickets yet
     keeps its Tickets tab, because the next ticket filed against it goes
     there. What is dropped is the tab that can never be anything but empty.
+
+    FILES IS NOT ONE OF THEM, and used to be. This asked `app_files.resolve`
+    whether the app had a tree and dropped the tab when it raised, so five of
+    eight apps had Files on 2026-09-01 and three did not, for a reason that was
+    invisible on screen: whether a directory happened to exist on disk. The
+    operator: "all apps have files obviously". They do, and `app_files` now
+    says so for every one of them, so there is nothing left to filter.
     """
     project = _linked_project(slug)
-    files = _has_file_root(slug)
     out: list[str] = []
     for tab in TAB_IDS:
-        if tab == "files":
-            if files:
-                out.append(tab)
-            continue
         if REQUIRES_LINKED_PROJECT.get(tab, False) and not project:
             continue
         out.append(tab)

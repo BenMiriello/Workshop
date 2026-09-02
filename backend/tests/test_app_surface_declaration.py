@@ -67,14 +67,19 @@ def test_with_no_declaration_it_takes_every_tab_it_can_have(install):
 
 
 def test_an_unlinked_app_loses_the_tabs_that_could_only_be_empty(install):
-    # Nothing declared and no working tree: Work resolves through the link
-    # (services/apps.py), so for this app it can never be anything but empty.
-    # It is not offered rather than offered and apologised for.
+    # Nothing declared and no working tree: Work and Overview both resolve
+    # through the link (services/apps.py), so for this app they can never be
+    # anything but empty. They are not offered rather than offered and
+    # apologised for.
+    #
+    # FILES IS NOT IN THAT CATEGORY and used to be dropped here too. Every app
+    # has a file tree (app_files._app_own_root), so the only thing left that
+    # turns on the link is Work and Overview.
     from services import app_links
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(app_links, "linked_project_slug", lambda slug: None)
         s = app_surface.surface_for("nothing-installed-here")
-    assert s["tabs"] == ["chats", "memory"]
+    assert s["tabs"] == ["chats", "memory", "files"]
     assert s["home"] == "/apps/nothing-installed-here/chats"
 
 

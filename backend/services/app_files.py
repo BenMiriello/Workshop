@@ -192,17 +192,51 @@ def _resolve_app(slug: str, ref: str) -> Workspace:
         return Workspace(ref=ref, root=own, display=own.name)
 
     project_slug = app_links.linked_project_slug(slug)
-    if not project_slug:
-        return _fail("this app has no linked project, so it has no file tree")
-    root = project_root(project_slug)
-    if root is None:
-        return _fail(
-            f"the app's linked project {project_slug!r} has no directory registered")
-    if not root.is_dir():
-        return _fail(
-            f"the app's linked project directory does not exist on disk: {root}")
-    return Workspace(ref=ref, root=root, display=root.name)
+    if project_slug:
+        root = project_root(project_slug)
+        if root is not None and root.is_dir():
+            return Workspace(ref=ref, root=root, display=root.name)
 
+    # EVERY APP HAS FILES. The three branches above are about WHERE they are,
+    # never about whether the app gets a tree at all, so none of them may fail
+    # into "this app has no files".
+    #
+    # They used to. An app with no manifest and no linked project directory
+    # raised here, `app_surface._has_file_root` caught the raise, and the app
+    # silently lost its Files tab: measured 2026-09-01, five of eight apps had
+    # one and three did not, with no property of those three explaining it.
+    # The operator: "why do some apps not have files? that makes no sense...
+    # apps are configuration not code so theres no reason for this kind of
+    # thing to happen and it indicates a possible hardcoding or
+    # misconfiguration"; then, plainly, "all apps have files obviously".
+    #
+    # He is right, and the give-away is that MEMORY never had this problem.
+    # The knowledge store roots every scope at `scope_root` unconditionally, so
+    # it works for all eight. Files went looking for a directory instead of
+    # being told one, and inherited the answer "sometimes there isn't one".
+    #
+    # So the last resort is the same root memory already uses, created if it is
+    # not there yet. It is the app's own directory in the app tree; an app with
+    # nothing in it yet gets an empty tree, which is a true and useful answer,
+    # and not a missing tab.
+    return Workspace(ref=ref, root=_app_own_root(slug), display=slug)
+
+
+
+def _app_own_root(slug: str) -> Path:
+    """`apps/<slug>`, made if it is not there yet.
+
+    The same directory `paths.scope_root` gives every other per-app subtree, so
+    an app's files and its memory live under one root rather than two. Creating
+    it is not inventing a claim: the app exists, this is where the platform
+    keeps its tree, and the alternative is a tab that is absent for reasons the
+    reader cannot see.
+    """
+    from wsplatform import paths
+
+    d = paths.scope_root(f"app:{slug}")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def _app_declared_root(slug: str) -> Path | None:
