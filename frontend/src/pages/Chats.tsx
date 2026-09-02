@@ -69,9 +69,12 @@ function archivedLabel(iso?: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const sameDay = new Date().toDateString() === d.toDateString();
+  // NOT "Archived Aug 25". The page is headed Archived chats and every row on
+  // it is archived, so the word was the page's title repeated once per row, and
+  // it is what pushed the date itself off the edge of a 390px screen.
   return sameDay
-    ? `Archived ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-    : `Archived ${d.toLocaleDateString([], { month: "short", day: "numeric" })}`;
+    ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 /** What the archive is being asked to do to a chat, while the dialog is open. */
@@ -517,6 +520,7 @@ export function ChatsArchived() {
     () => groupByField(visible, (t) => t.archived_at),
     [visible],
   );
+  const archiveSpansScopes = useMemo(() => spansScopes(visible), [visible]);
 
   // Load the next page when the foot nears the viewport (same observer the live
   // list uses). rootMargin starts it early so the scroll never stops at the seam.
@@ -624,6 +628,10 @@ export function ChatsArchived() {
                 <ChatRow
                   key={t.id}
                   thread={t}
+                  // Same rule the live list uses: the scope tag appears only
+                  // where the rows actually differ in scope, never as the
+                  // page's own name printed down the list.
+                  showScope={archiveSpansScopes}
                   time={archivedLabel(t.archived_at)}
                   onRestore={(x) => setPending({ id: x.id, title: x.title || "this chat", action: "restore" })}
                   onDelete={(x) => setPending({ id: x.id, title: x.title || "this chat", action: "delete" })}

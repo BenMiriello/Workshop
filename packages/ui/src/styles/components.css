@@ -705,7 +705,13 @@ a.ws-btn { text-decoration: none; }
   min-width: 0; flex-wrap: nowrap; overflow: hidden;
   color: var(--muted); font-size: var(--fs-xs);
 }
-.ws-listrow__meta > * { flex: 0 0 auto; }
+/* THE TIME SURVIVES A NARROW ROW; the facts before it give way first.
+   Every child used to be `flex: 0 0 auto` inside a nowrap, overflow-hidden
+   line, so on a 390px screen the model and the scope pushed the time straight
+   out of the box and the archive read "Archived A...". The time is the field
+   the list is SORTED by, so it is the last thing that may be cut. */
+.ws-listrow__meta > * { flex: 0 1 auto; min-width: 0; }
+.ws-listrow__meta > .ws-listrow__time { flex: 0 0 auto; }
 .ws-listrow__scope { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ws-listrow__time { margin-left: auto; padding-left: var(--space-2); }
 /* Separators between meta facts, so "to do workshop 2h ago" reads as three
