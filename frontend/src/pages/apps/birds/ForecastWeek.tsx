@@ -9,7 +9,7 @@ import {
 import { Button, Skeleton, StateBlock, ChartTooltip, CHART_TARGET, userStorage } from "@workshop/ui";
 import BirdsHeader from "./BirdsHeader";
 import { hh, CHART_SERIES } from "./ui";
-import { birdsKeys, fetchForecastWeek } from "./queries";
+import { birdsKeys, fetchForecastWeek, fetchLocations } from "./queries";
 import { wx, OUTLOOK, localTime, dayLen, type Level } from "./forecastUtil";
 
 // The 7-day BIRD forecast: the bird activity is the subject. A week-activity graph
@@ -57,28 +57,56 @@ const FORECAST_DAYS = 7;
 
 export default function ForecastWeek() {
   const [sel, setSel] = useState(0);
-  const [locationId] = useState(() => {
-    const ls = userStorage.local.getItem("birds-source");
-    if (ls) { try { const v = JSON.parse(ls); if (v?.kind === "loc" && v.id) return Number(v.id); } catch { /* ignore */ } }
-    return 6; // the yard station is the default place
+  // THE PLACE THE READER LAST CHOSE, or the first one this installation has.
+  //
+  // It used to fall back to `return 6; // the yard station is the default
+  // place` -- one installation's row id compiled into the product. Measured
+  // 2026-09-01 on an installation with ZERO locations: the page asked for
+  // location 6, the backend answered 500, and the reader got "Couldn't load the
+  // forecast" for a place that does not exist rather than "add a place". A
+  // magic id cannot be right for a second installation and was not right for
+  // this one either.
+  const locsQ = useQuery({
+    queryKey: birdsKeys.locations({ includeNonBird: false }),
+    queryFn: () => fetchLocations<{ locations?: { id: number }[] }>({ includeNonBird: false }),
+    staleTime: 60_000,
   });
+  const stored = (() => {
+    const ls = userStorage.local.getItem("birds-source");
+    if (!ls) return null;
+    try { const v = JSON.parse(ls); return v?.kind === "loc" && v.id ? Number(v.id) : null; }
+    catch { return null; }
+  })();
+  const locations = locsQ.data?.locations ?? [];
+  const locationId = stored ?? locations[0]?.id ?? null;
 
   // A read with no cadence at all: a seven-day forecast does not move minute to
   // minute, and the client re-reads it on the way back to the tab. The
   // `let live = true` guard the effect carried is gone with the effect -- a
   // cancelled render cannot land a response in a cache entry keyed by the
   // request that asked for it, so there is nothing left for the flag to protect.
-  const p = { locationId, days: FORECAST_DAYS };
+  const p = { locationId: locationId ?? 0, days: FORECAST_DAYS };
   const weekQ = useQuery({
     queryKey: birdsKeys.forecastWeek(p),
     queryFn: () => fetchForecastWeek<Week>(p),
+    // NOT ASKED AT ALL WHEN THERE IS NO PLACE. A forecast is for somewhere;
+    // with no location the request has no subject, and firing it anyway is what
+    // turned "this installation has no places yet" into a 500 and an error
+    // region.
+    enabled: locationId !== null,
   });
   const week = weekQ.data;
 
   return (
     <div>
       <BirdsHeader title="7-day forecast" />
-      {weekQ.isError ? (
+      {!locsQ.isLoading && locationId === null ? (
+        <StateBlock
+          title="No place yet"
+          hint="A forecast is for somewhere. Add a location and this fills in."
+          action={<Link to="/apps/birds/locations"><Button size="sm">Add a location</Button></Link>}
+        />
+      ) : weekQ.isError ? (
         <StateBlock variant="error" title="Couldn't load the forecast"
           hint={<code>GET /api/birds/forecast/week: {String(weekQ.error)}</code>}
           action={<Button size="sm" onClick={() => void weekQ.refetch()}>Retry</Button>} />
