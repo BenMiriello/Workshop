@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { placementFor, problemBlock } from "./chatProblem";
+import { HttpError } from "@workshop/ui";
+import { placementFor, problemBlock, problemClause } from "./chatProblem";
 
 // The bug this pins: the chat said errors three ways, and which one you got
 // depended on the code path rather than on what had failed. A send that never
@@ -80,5 +81,29 @@ describe("problemBlock", () => {
   it("does not split on a colon that is buried past the title bound", () => {
     const lead = `${"a".repeat(120)}: cause`;
     expect(problemBlock({ text: lead }).title).toBe("Something went wrong in this chat.");
+  });
+});
+
+describe("problemClause", () => {
+  it("drops the period the sentence around it is about to supply", () => {
+    // "Couldn't compact: Server unavailable (502). Retrying.. The chat is
+    // unchanged." was on screen on 2026-09-04.
+    expect(problemClause(new HttpError(502, "Server unavailable (502). Retrying.")))
+      .toBe("Server unavailable (502). Retrying");
+  });
+
+  it("leaves a failure that does not end in punctuation alone", () => {
+    expect(problemClause("the tunnel dropped")).toBe("the tunnel dropped");
+  });
+
+  it("does not print the error class at the operator", () => {
+    // HttpError overrides toString for exactly this; the operator's screenshots
+    // carried "HttpError: Server unavailable (502)" in three places.
+    expect(problemClause(new HttpError(503, "Server unavailable (503). Retrying.")))
+      .not.toContain("HttpError");
+  });
+
+  it("takes a trailing newline with it, so a line break cannot split a sentence", () => {
+    expect(problemClause("no route to host.\n")).toBe("no route to host");
   });
 });

@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
+import { withTransientRetry } from "@workshop/ui";
 import { chatApi } from "../../lib/chat";
-import type { ChatProblem } from "./chatProblem";
+import { problemClause, type ChatProblem } from "./chatProblem";
 import type { FoldMode } from "./foldControls";
 
 // /compact and /clear — the two ways to reclaim a chat's context.
@@ -99,10 +100,21 @@ export function useCompaction({
     if (!id) { setErr({ text: "Nothing to compact. This chat has no messages yet.", endpoint: null }); return; }
     setErr(null);
     try {
-      const r = await chatApi.compactThread(id);
+      // A RESTART IS NOT A REFUSAL. The public edge answers 502 for the second
+      // or so it has no origin to reach, and this reported that as "Couldn't
+      // compact. Server unavailable (502). The chat is unchanged." on the first
+      // one -- a dead button for a fault that was over before the sentence
+      // finished rendering. Reported 2026-09-04.
+      //
+      // Retrying is safe HERE specifically: the backend refuses a second
+      // compact while one is running (`busy`) and answers `queued` when a turn
+      // owns the thread, so a duplicate request is answered, not acted on
+      // twice. Same schedule as every other read in the app, from the kit, so
+      // nothing has its own idea of how long a restart lasts.
+      const r = await withTransientRetry(() => chatApi.compactThread(id));
       if (r.error) {
         setErr({
-          text: `Couldn't compact: ${r.error}. The chat is unchanged.`,
+          text: `Couldn't compact: ${problemClause(r.error)}. The chat is unchanged.`,
           endpoint: `/api/chat/threads/${id}/compact`,
         });
         return;
@@ -122,7 +134,7 @@ export function useCompaction({
       setCtxNonce((n) => n + 1);
     } catch (e) {
       setErr({
-        text: `Couldn't compact: ${String(e)}. The chat is unchanged.`,
+        text: `Couldn't compact: ${problemClause(e)}. The chat is unchanged.`,
         endpoint: `/api/chat/threads/${id}/compact`,
       });
     }
@@ -139,7 +151,7 @@ export function useCompaction({
     setFolding("clear");
     const startedAt = Date.now();
     try {
-      const r = await chatApi.clearThreadContext(id);
+      const r = await withTransientRetry(() => chatApi.clearThreadContext(id));
       // `cleared` is about the TRANSCRIPT boundary; `session_reset` is about the
       // live session. A fully folded chat has no messages left to cut, so
       // `cleared` is false, and this reported "Nothing to clear" for a call that
@@ -162,7 +174,7 @@ export function useCompaction({
       setCtxNonce((n) => n + 1);
     } catch (e) {
       setErr({
-        text: `Couldn't clear: ${String(e)}. The context is unchanged.`,
+        text: `Couldn't clear: ${problemClause(e)}. The context is unchanged.`,
         endpoint: `/api/chat/threads/${id}/clear`,
       });
     } finally {
@@ -196,7 +208,7 @@ export function useCompaction({
       })
       .catch((e) => {
         setErr({
-          text: `Could not stop the clear: ${String(e)}. It is still running.`,
+          text: `Could not stop the clear: ${problemClause(e)}. It is still running.`,
           endpoint: `/api/chat/threads/${id}/operation/cancel`,
         });
       })

@@ -112,3 +112,19 @@ export function problemBlock(p: { text?: string | null }): {
   if (text.length <= TITLE_MAX) return { title: text, detail: null };
   return { title: "Something went wrong in this chat.", detail: clamp(text, DETAIL_MAX) };
 }
+
+/** A failure, as one CLAUSE of a longer sentence.
+ *
+ *  Every one of these lines is built the same way: a stem, the failure, and
+ *  what it means for the chat. "Couldn't compact: ${e}. The chat is unchanged."
+ *  The failure already ends in a period whenever it came from `shortHttpError`
+ *  ("Server unavailable (502). Retrying."), so the caller's own period landed
+ *  beside it and the operator read "Retrying.. The chat is unchanged." on
+ *  2026-09-04. Trimming the punctuation the sentence is about to supply is the
+ *  whole of it; the words are untouched.
+ *
+ *  Trailing whitespace goes too, so a message with a stray newline does not put
+ *  a line break in the middle of a sentence. */
+export function problemClause(e: unknown): string {
+  return String(e).trim().replace(/[.\s]+$/, "");
+}

@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { TRANSIENT_BACKOFF_MS } from "@workshop/ui";
 import { chatApi, newClientId, shortHttpError, type Thread, type ThreadSummary } from "../../lib/chat";
 import type { AttachmentRef } from "./attachments";
 import type { ChatModeId } from "./chatModes";
@@ -29,12 +30,20 @@ import type { ChatProblem } from "./chatProblem";
 // arrives, and it is what makes a retry after a dropped response land as the
 // same message rather than a second one (the log dedupes on it).
 
-// How long to wait before the one silent retry of a transient failure. Long
-// enough to clear a backend restart (the unit is back inside a second) and short
-// enough that the operator reads it as the send being slow, not as a send that
-// failed. See isTransientSendFailure.
-const RETRY_DELAY_MS = 900;
-
+// HOW LONG A RESTART IS WAITED OUT, AND IT IS NOT THIS FILE'S NUMBER.
+//
+// It was: one retry, 900ms, on the reasoning that a restart is "back inside a
+// second". It is not. `TRANSIENT_BACKOFF_MS` in the kit is the measured window
+// -- three waits, 4.1s in total -- and every other read in the app already
+// rides a restart out on it (packages/ui/httpError.ts says why the schedule is
+// exported rather than being a private default). The SEND, the one request the
+// operator cannot afford to lose, was the one thing waiting a fifth as long,
+// and it is what produced "Not sent: the server is briefly unavailable. Press
+// Retry in a moment." on 2026-09-04 -- a message the operator had to re-send by
+// hand for an outage that was over before he finished reading the sentence.
+//
+// A restated number is also how a poll and a send came to disagree about the
+// same outage. There is one schedule; this reads it.
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export type SendPipeline = {
@@ -174,7 +183,7 @@ export function useSendPipeline({
         }
         return r.json();
       };
-      // ONE SILENT RETRY FOR A FAULT THAT IS ALREADY OVER.
+      // SILENT RETRIES FOR A FAULT THAT IS ALREADY OVER.
       //
       // The deployment produces two of these on its own — the edge's pooled
       // connection to the backend expiring on the same 5s clock the backend
@@ -185,12 +194,14 @@ export function useSendPipeline({
       // button already relies on. See isTransientSendFailure for what does not
       // qualify.
       let res;
-      try {
-        res = await attempt();
-      } catch (first) {
-        if (!isTransientSendFailure(first)) throw first;
-        await sleep(RETRY_DELAY_MS);
-        res = await attempt();
+      for (let tries = 0; ; tries++) {
+        try {
+          res = await attempt();
+          break;
+        } catch (e) {
+          if (!isTransientSendFailure(e) || tries >= TRANSIENT_BACKOFF_MS.length) throw e;
+          await sleep(TRANSIENT_BACKOFF_MS[tries]);
+        }
       }
       // QUEUED IS ACCEPTED. The thread was busy with something that reads
       // nothing, so the server took the message onto the thread's own queue and

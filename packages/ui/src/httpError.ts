@@ -26,7 +26,8 @@ export const ERROR_BODY_CAP = 200;
 /**
  * An HTTP failure that carries its status, so a caller can tell a transient
  * gateway hiccup from a real refusal without string-matching the message.
- * `message` stays the `shortHttpError` line, so `${e}` reads exactly as before.
+ * `message` stays the `shortHttpError` line, and `toString` returns it verbatim,
+ * so `${e}` really does read exactly as before (see the override below).
  */
 export class HttpError extends Error {
   readonly status: number;
@@ -34,6 +35,22 @@ export class HttpError extends Error {
     super(message);
     this.name = "HttpError";
     this.status = status;
+  }
+
+  /** THE SENTENCE, NOT THE CLASS NAME.
+   *
+   *  `Error.prototype.toString` prefixes `name`, so every caller that
+   *  interpolates a failure -- `Couldn't compact: ${e}` -- printed
+   *  "HttpError: Server unavailable (502). Retrying." at the operator. The
+   *  comment above promised `${e}` "reads exactly as before"; it did not, and
+   *  three of the strings on screen during the 2026-09-04 restart carried the
+   *  class name of a browser object into copy written for a person.
+   *
+   *  `name` stays "HttpError" because a console trace and a devtools breakpoint
+   *  are the two places it IS the right answer. This only changes what the
+   *  string coercion says. */
+  override toString(): string {
+    return this.message;
   }
 }
 
