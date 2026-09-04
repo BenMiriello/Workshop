@@ -1017,10 +1017,28 @@ def stop_hook():
         stale = stale_surfaces(rec["stdout"])
         mine_stale = sorted({s for s in (surface_of(f) for f in files) if s and s in stale})
         # Only the surfaces the evidence itself recorded as deliverable. A
-        # surface the evidence called `foreign` is not this turn's to fix.
+        # surface the evidence called `foreign` is not this turn's to fix, and
+        # neither is one it called `armed`.
+        #
+        # `armed` IS THE STATE THIS HOOK RUNS IN, which is why it has to be
+        # honoured here as well as in check_delivery. The backend restart is
+        # deferred precisely so it does not fire under a live turn: it waits for
+        # THIS reply to land. So at the moment the Stop hook asks, a turn that
+        # changed backend code has necessarily armed a restart that has
+        # necessarily not run yet, and re-reading apply.sh --check will always
+        # say STALE. Blocking on that is a loop with no exit: the hook tells the
+        # agent to run apply.sh, apply.sh arms the restart it already armed, and
+        # the hook asks again. Measured 2026-09-03, immediately after the same
+        # deadlock was fixed one function away.
+        #
+        # The waiter being alive is what makes this safe rather than a hole: if
+        # nothing is parked, the restart is genuinely owed and the surface still
+        # fails below.
         blocked = set()
         for surface, s in ((ev.get("checks", {}).get("delivery", {}) or {}).get("surfaces") or {}).items():
             if s.get("state") == "foreign":
+                blocked.add(surface)
+            elif s.get("state") == "armed" and _restart_is_armed():
                 blocked.add(surface)
         mine_stale = [s for s in mine_stale if s not in blocked]
         if mine_stale:
