@@ -212,13 +212,19 @@ export type TicketSourcePreset = {
   sources: TaskSource[];
 };
 
-// "From anywhere" rather than "All", because the status bar sits directly under
-// this one and already has an All. Two pills a row apart reading the same word
+// "From all" rather than "All", and the preposition is doing two jobs. It says
+// this is a question about WHERE A TICKET CAME FROM rather than about the
+// ticket, and it keeps this pill distinguishable from the status bar's own All,
+// which sits one row under it: two pills a row apart reading the same word
 // about two different axes is how a control stops being read at all.
+//
+// It is also why all three are this short. Shot at 390: "From anywhere" pushed
+// the set onto a second line, and a second line here costs a whole ticket row
+// on the phone, which is the width the operator reviews on.
 export const SOURCE_PRESETS: TicketSourcePreset[] = [
   { value: "you", label: "From you", sources: [...DEFAULT_SOURCES] },
   { value: "agents", label: "From agents", sources: ["agent", "autogen"] },
-  { value: "anywhere", label: "From anywhere", sources: [] },
+  { value: "anywhere", label: "From all", sources: [] },
 ];
 
 /** Which preset a source set IS, or null when it is a hand-picked combination. */

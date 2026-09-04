@@ -1,9 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
-  ACTIVE_STATUSES, BOARD_STATUSES, DEFAULT_SORT, DEFAULT_VIEW, PAGE_SIZE,
-  STATUS_PRESETS, apiQuery, chipsFor, clampPage, clearField, defaultFilters,
-  defaultStatuses, isDefaultStatus, isNarrowed, laneQuery, pageCount,
-  pageItems, parseFilters, parsePage, parseSort, parseView, statusPresetOf,
+  ACTIVE_STATUSES, BOARD_STATUSES, DEFAULT_SORT, DEFAULT_SOURCES, DEFAULT_VIEW,
+  PAGE_SIZE,
+  SOURCE_PRESETS, STATUS_PRESETS, apiQuery, chipsFor, clampPage, clearField,
+  defaultFilters,
+  defaultStatuses, isDefaultSource, isDefaultStatus, isNarrowed, laneQuery,
+  pageCount,
+  pageItems, parseFilters, parsePage, parseSort, parseView, sourcePresetOf,
+  sourcesForPreset, statusPresetOf,
   statusesForPreset, toggleValue, writeParams,
 } from "./ticketFilters";
 import type { TaskStatus } from "./tasks";
@@ -239,11 +243,109 @@ describe("narrowing is what the empty state has to explain", () => {
     expect(isNarrowed({ ...base, effort: ["quick"] }, "list")).toBe(true);
     expect(isNarrowed({ ...base, assignee: ["operator"] }, "list")).toBe(true);
     expect(isNarrowed({ ...base, status: ["done"] }, "list")).toBe(true);
+    expect(isNarrowed({ ...base, source: ["agent"] }, "list")).toBe(true);
+    expect(isNarrowed({ ...base, source: [] }, "list")).toBe(true);
+  });
+
+  it("does not count the DEFAULT source set as narrowing", () => {
+    // The page opens on it. Counting it would make every fresh load read as
+    // filtered and hand the empty state a Clear button that clears to the state
+    // it is already in. `TicketsView` draws that case separately.
+    expect(isNarrowed({ ...defaultFilters("list"), source: [...DEFAULT_SOURCES] },
+                      "list")).toBe(false);
   });
 
   it("reads a list default as narrowed when the view is a board", () => {
     // The same set is the default for one view and a real choice in the other.
     expect(isNarrowed(defaultFilters("list"), "board")).toBe(true);
+  });
+});
+
+describe("the list opens on what the operator asked for", () => {
+  // 215 live tickets on 2026-09-04, 140 of them filed by an agent. An
+  // unfiltered list is two thirds work nobody asked for, which is the whole
+  // finding in WHY-THE-WORK-DOES-NOT-LAND-2026-09-01 section 1.
+  it("defaults to the operator's own two doors", () => {
+    expect(DEFAULT_SOURCES).toEqual(["operator", "chat"]);
+    expect(defaultFilters("list").source).toEqual(["operator", "chat"]);
+    expect(defaultFilters("board").source).toEqual(["operator", "chat"]);
+    expect(sourcePresetOf(defaultFilters("list").source)).toBe("you");
+  });
+
+  it("does not hand the default array out to be mutated", () => {
+    const f = defaultFilters("list");
+    f.source.push("agent");
+    expect(DEFAULT_SOURCES).toEqual(["operator", "chat"]);
+    expect(defaultFilters("list").source).toEqual(["operator", "chat"]);
+  });
+
+  it("covers both machine doors with one pill and neither with anywhere", () => {
+    // `unknown` is in no group but the widest one: a record nobody wrote a
+    // source for must not be counted as anyone's, which is why that value
+    // exists at all.
+    expect(sourcesForPreset("agents")).toEqual(["agent", "autogen"]);
+    expect(sourcesForPreset("anywhere")).toEqual([]);
+    expect(SOURCE_PRESETS.map((p) => p.value)).toEqual(["you", "agents", "anywhere"]);
+    expect(SOURCE_PRESETS.flatMap((p) => p.sources)).not.toContain("unknown");
+  });
+
+  it("spells its default by leaving the param off, and 'every' by a word", () => {
+    // Exactly how status is spelled, and for the same reason: an empty param
+    // would be indistinguishable from an absent one, and absent means default.
+    expect(writeParams(defaultFilters("list"), DEFAULT_SORT, "list").has("source"))
+      .toBe(false);
+    const every = writeParams(
+      { ...defaultFilters("list"), source: [] }, DEFAULT_SORT, "list");
+    expect(every.get("source")).toBe("all");
+    expect(parseFilters(every, "list").source).toEqual([]);
+  });
+
+  it("round-trips a hand-picked source and reads it back as itself", () => {
+    const p = writeParams(
+      { ...defaultFilters("list"), source: ["chat"] }, DEFAULT_SORT, "list");
+    expect(p.get("source")).toBe("chat");
+    expect(parseFilters(p, "list").source).toEqual(["chat"]);
+    expect(sourcePresetOf(["chat"])).toBe(null);
+  });
+
+  it("falls back to the default rather than showing a list nothing can match", () => {
+    expect(parseFilters(q("source=nonsense"), "list").source).toEqual([...DEFAULT_SOURCES]);
+    expect(parseFilters(q("source=agent,nonsense"), "list").source).toEqual(["agent"]);
+  });
+
+  it("is order-independent about which set is the default", () => {
+    expect(isDefaultSource({ ...defaultFilters("list"), source: ["chat", "operator"] }))
+      .toBe(true);
+    expect(isDefaultSource({ ...defaultFilters("list"), source: ["operator"] }))
+      .toBe(false);
+  });
+
+  it("pushes the source down to the server", () => {
+    // A source narrowed in the browser would report the count of the unnarrowed
+    // set and page against it, so the number on the pill would contradict the
+    // rows under it.
+    expect(apiQuery(defaultFilters("list"), DEFAULT_SORT, 50).get("source"))
+      .toBe("operator,chat");
+    expect(apiQuery({ ...defaultFilters("list"), source: [] }, DEFAULT_SORT, 50)
+      .has("source")).toBe(false);
+  });
+
+  it("spends no chip on a source the bar is already showing", () => {
+    for (const p of SOURCE_PRESETS) {
+      const f = { ...defaultFilters("list"), source: p.sources };
+      expect(chipsFor(f, fmt).filter((c) => c.field === "source")).toEqual([]);
+    }
+    const picked = chipsFor({ ...defaultFilters("list"), source: ["chat"] }, fmt);
+    expect(picked.map((c) => c.field)).toEqual(["source"]);
+    expect(picked[0].value).toBe("chat");
+  });
+
+  it("clears a source chip to every source, not back to the default", () => {
+    // Clearing to a default that has its own pressed pill would read as the
+    // control doing nothing.
+    const f = clearField({ ...defaultFilters("list"), source: ["chat"] }, "source");
+    expect(f.source).toEqual([]);
+    expect(sourcePresetOf(f.source)).toBe("anywhere");
   });
 });
 

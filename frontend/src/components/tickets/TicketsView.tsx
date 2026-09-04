@@ -428,7 +428,9 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
         title={sourcePreset
           ? `No tickets ${sourcePreset.label.toLowerCase()}`
           : "No tickets from that source"}
-        hint={`${anySourceCount} match everything else.`}
+        hint={anySourceCount === 1
+          ? "1 ticket matches everything else."
+          : `${anySourceCount} tickets match everything else.`}
         action={(
           <Button size="sm" onClick={() => applyFilters({ ...filters, source: [] })}>
             Show every source
