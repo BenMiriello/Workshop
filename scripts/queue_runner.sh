@@ -197,11 +197,35 @@ unset ANTHROPIC_API_KEY
 
 log "=== runner start pid=$$ dir=$DIR poll=${POLL}s max_tasks=$MAX_TASKS ==="
 
+# ONE LINE PER STATE CHANGE, NOT ONE PER POLL. The autonomy override has been
+# engaged since 2026-08-24 and two runners poll this loop every 60s, so the
+# unconditional "idling" line below wrote 81,473 lines / 8.4 MB in eleven days.
+# A log that repeats one unchanged fact until it is too large to read tells you
+# less than one that records the change, and it was the only thing in .runtime
+# growing without bound while the system was deliberately doing nothing.
+#
+# So: log the state when it CHANGES, plus one heartbeat an hour, because a long
+# idle still has to be distinguishable from a dead runner. Resuming is logged
+# too — it is the transition an operator releasing the brake actually looks for,
+# and it was previously invisible in the noise.
+IDLE_HEARTBEAT_S="${IDLE_HEARTBEAT_S:-3600}"
+_was_idle=-1
+_last_idle_log=0
+
 while :; do
   beat_presence "sweeping $DIR"
   if is_autonomy_off; then
-    log "autonomy disabled (flag or override present); idling"
+    _now_s=$(date +%s)
+    if (( _was_idle != 1 )) || (( _now_s - _last_idle_log >= IDLE_HEARTBEAT_S )); then
+      log "autonomy disabled (flag or override present); idling"
+      _last_idle_log=$_now_s
+    fi
+    _was_idle=1
   else
+    if (( _was_idle == 1 )); then
+      log "autonomy re-enabled; resuming sweeps"
+    fi
+    _was_idle=0
     # pause_guard signals "paused" by calling `exit 0` in the shell it is sourced
     # into, and "not paused" by returning 0 — indistinguishable by exit status
     # from a subshell. So run it in a subshell that echoes a marker AFTER the
