@@ -510,6 +510,26 @@ def dirty_paths():
     return out
 
 
+def _restart_is_armed():
+    """True when a deferred backend restart is parked and still alive.
+
+    `scripts/restart_backend.sh --deferred` records its waiter here and clears
+    the file after the restart lands, so a live pid means the restart is still
+    coming. A stale pid is not trusted: the waiter may have been killed, or the
+    machine rebooted under it.
+    """
+    f = RUNTIME / "restart-armed.pid"
+    try:
+        pid = int(f.read_text().strip())
+    except (OSError, ValueError):
+        return False
+    try:
+        os.kill(pid, 0)
+    except (OSError, ProcessLookupError):
+        return False
+    return True
+
+
 def stale_surfaces(apply_stdout):
     """Surfaces apply.sh --check reported STALE, by the names it prints."""
     stale = set()
@@ -644,6 +664,36 @@ def check_delivery(files, evidence):
                 }
                 if worst == "pass":
                     worst = "blocked"
+            elif surface == "backend" and _restart_is_armed():
+                # A DEFERRED RESTART IS THE CORRECT STATE MID-TURN, NOT A DEBT.
+                #
+                # apply.sh does not restart the backend while a turn is
+                # running: it arms a waiter that fires once the reply lands,
+                # because restarting underneath a live turn kills the process
+                # holding it. So between "the agent ran apply.sh" and "the reply
+                # is delivered" the backend is STALE and cannot be anything
+                # else, by design.
+                #
+                # This gate demanded a state apply.sh deliberately refuses to
+                # produce. Any turn that changed backend code therefore failed
+                # its own completion gate, was told to "run: bash
+                # scripts/apply.sh", ran it, got the same answer, and looped.
+                # Measured 2026-09-03, and it is the third instance of this
+                # shape in one session: a check that cannot be satisfied by the
+                # thing it asks for.
+                #
+                # The waiter is the evidence. A live pid in
+                # `.runtime/restart-armed.pid` means the restart is coming and
+                # this turn has done its part; a missing or dead one means it
+                # has not, and that still fails.
+                result[surface] = {
+                    "state": "armed", "files": my_files,
+                    "why": "a deferred restart is armed and fires when this "
+                           "reply lands; apply.sh will not restart under a live "
+                           "turn. Verify next turn: bash scripts/apply.sh --check",
+                }
+                if worst == "pass":
+                    worst = "pass"
             else:
                 result[surface] = {
                     "state": "fail", "files": my_files,
