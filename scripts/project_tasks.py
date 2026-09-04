@@ -135,6 +135,11 @@ def _pin_owner() -> None:
         pass  # no auth store: file-backed scopes still work unchanged
 
 
+# `ticket.spec_hash` is character varying(64). Spelled here so the refusal can
+# name the real limit rather than a guess.
+_PROVENANCE_MAX = 64
+
+
 def _csv(v: str | None) -> list[str]:
     return [x.strip() for x in (v or "").split(",") if x.strip()]
 
@@ -470,6 +475,23 @@ def main(argv: list[str]) -> int:
             refusal = ticket_format.acceptance_refusal(acceptance)
             if refusal:
                 print(json.dumps({"error": refusal, "fix": _ACCEPTANCE_FIX}))
+                return 2
+            # `--provenance` is a KEY, not prose. It lands in `ticket.spec_hash`,
+            # `character varying(64)`, and a longer value reached psycopg and
+            # came back as a StringDataRightTruncation traceback with the whole
+            # INSERT and every parameter inlined -- including the ticket body.
+            # The filing was lost and the reason was buried in 30 lines of SQL.
+            # Refused here, with the limit and the actual length, because this
+            # is the surface an agent types at and a stack trace is not an
+            # error message.
+            if a.provenance and len(a.provenance) > _PROVENANCE_MAX:
+                print(json.dumps({
+                    "error": f"--provenance is a short KEY, not prose: "
+                             f"{len(a.provenance)} chars, limit {_PROVENANCE_MAX}",
+                    "fix": "pass a stable identifier (a ticket id, a doc slug, a "
+                           "check name). Put the explanation in the ticket body, "
+                           "which has no such limit.",
+                }))
                 return 2
             t = tasks.add(
                 root, text=a.text, priority=a.priority, depends_on=_csv(a.depends_on),
