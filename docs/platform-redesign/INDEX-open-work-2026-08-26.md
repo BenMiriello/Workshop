@@ -511,11 +511,11 @@ one.
 **These cannot be executed by an agent.** Each needs root, another host
 user's account, or a decision only the operator can make. An autonomous
 run should skip them. Nine are traceable to
-`docs/masini/security-audit-2026-07-18.md`; `source.ref` on these is an audit
+`docs/instance-audits/security-audit-2026-07-18.md`; `source.ref` on these is an audit
 slug, not a chat id.
 
 - `4a79ffc5` (P80) [SEC-A1] Run every chat and autonomy turn as a
-  dedicated non-`clawd-a` sub-user without the docker group, inside a
+  dedicated non-`<service-user>` sub-user without the docker group, inside a
   bwrap view of one scope root. Needs root and systemd.
 - `5c893b55` (P100, parked) [SEC-C3] Verify inbound IPv6 default-deny
   for 6379/8188/11434/11435/445/139/22/111. Root.

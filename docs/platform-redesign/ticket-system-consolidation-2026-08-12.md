@@ -279,7 +279,7 @@ change away. The board re-lanes onto the five state types.
 The intent was a `managed: true` flag marking the core ticket agents
 (scoping, refining, reviewing, completing) as platform-owned, cloneable but not
 editable. **The distinction has no referent yet.** The registry holds exactly
-three workspace agents (`masini` the Discord bridge, `masini-commute`,
+three workspace agents (`<bridge-agent>` the Discord bridge, `<bridge-agent>-commute`,
 `memory-keeper`) plus per-project builders, all of which are the operator's own.
 There is **no registered reviewer, scoping or refining agent anywhere**: that
 pipeline is `scripts/project_ralph.sh`, `scripts/reviewer.sh`,

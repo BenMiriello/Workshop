@@ -44,7 +44,7 @@ phases P0-P4 / PM, or one of the 2026-07-18 model docs). Nothing here is orphan.
   no runner exists, so they cannot execute.
 - The bridge agent fold is intentionally half-done: build ported, live surface not
   flipped. `the-bridge.service` is still `active (running)` (systemctl --user)
-  out of `~/clawdbot/` (dir present with `run.sh`, `plaid-mcp/`, `CLAUDE.md`).
+  out of `<bridge-checkout>/` (dir present with `run.sh`, `plaid-mcp/`, `CLAUDE.md`).
   `agents/the bridge agent.md` is INERT by design (self-declared, line 27-32 of the def).
   This is correct per memory `project_agent_protocols_2026_07_16`. Not a bug;
   called out so it does not read as one.
@@ -150,7 +150,7 @@ The system-audit doc identifies four serialization points making concurrent exec
 | Chats.tsx | Segmented filter with "Builders / Assistants" as first-class kinds | Filter by scope kind (workshop / project / app / agent); role, not runtime | CONFLICTING |
 | `agents/` on disk | 8 legacy/probe/blank defs; 2 ghosts (plaid-watcher, email-triager); workshop-builder-{1,2} carry stale plan bodies | Prune legacy; either template-adopt or delete ghosts; retire workshop-builder-{1,2} | STALE |
 | letta_tools bindings | Ten tools bound to nonexistent `workshop-overseer` | Rebind to `the bridge agent` (triager) or delete | STALE |
-| The bridge agent live surface | `the-bridge.service` runs out of `~/clawdbot/`; `agents/the bridge agent.md` INERT | Deliberate intermediate state; flip is Phase PM.5 (out of scope here) | PRESERVE |
+| The bridge agent live surface | `the-bridge.service` runs out of `<bridge-checkout>/`; `agents/the bridge agent.md` INERT | Deliberate intermediate state; flip is Phase PM.5 (out of scope here) | PRESERVE |
 | `docs/workshop-v1/` | Master plan header, describes builder/assistant | Supersession banner pointing at entity-model | STALE |
 | CLAUDE.md (root) | Points at `docs/workshop-v1/` as master | Point at `docs/platform-redesign/entity-model-2026-07-18.md`; keep workshop-v1 as historical | STALE |
 | Concurrency | Single-threaded queue (system-audit) | Per-agent autonomy implies concurrent scopes | BLOCKS full per-agent value; note; not this plan's fix |
@@ -477,7 +477,7 @@ one-click adopt path.
 Stores are not a distinct enough concept to warrant a page. A Store is the
 data-face of an App or a Project (mostly 1:1). Store configuration (tier,
 grants, allowlists, adjudications) lives INSIDE the App detail and Project
-detail views. The workshop-level notes vault (`~/notes`) is the exception: it
+detail views. The workshop-level notes vault (`$WORKSHOP_NOTES_VAULT`) is the exception: it
 belongs to the operator, not to any App or Project, and remains its own Store
 surfaced through the Notes app.
 
@@ -589,7 +589,7 @@ Three surface-specific checks:
 
 ### B11. Store settings surface inside App detail and Project detail
 
-- **Files**: `frontend/src/pages/Apps.tsx` and `frontend/src/pages/ProjectDetail.tsx` (add a "Storage and access" section per detail view). Each section reads `GET /api/stores` filtered to the host's URIs and exposes: Store URI, tier (open / gated / mediated), Grants outstanding on it (agent slug + verb set + scope; source `backend/services/permissions.py:100-108` Identity + Grant), the mediated broker allowlist entries when tier is `mediated` (source `backend/services/broker.py`), and the recent adjudications (source: broker verdict log). Inline edit for tier + allowlist + individual grant revoke. The workshop-level notes vault (`~/notes`) stays reachable through the Notes app since it belongs to the operator, not to any App or Project.
+- **Files**: `frontend/src/pages/Apps.tsx` and `frontend/src/pages/ProjectDetail.tsx` (add a "Storage and access" section per detail view). Each section reads `GET /api/stores` filtered to the host's URIs and exposes: Store URI, tier (open / gated / mediated), Grants outstanding on it (agent slug + verb set + scope; source `backend/services/permissions.py:100-108` Identity + Grant), the mediated broker allowlist entries when tier is `mediated` (source `backend/services/broker.py`), and the recent adjudications (source: broker verdict log). Inline edit for tier + allowlist + individual grant revoke. The workshop-level notes vault (`$WORKSHOP_NOTES_VAULT`) stays reachable through the Notes app since it belongs to the operator, not to any App or Project.
 - **Change**: Store configuration lands where the operator already reasons about the app or project. No separate `/stores` page.
 - **Backend**: verify Store registry location. `backend/services/stores.py` is the current home per the notes-and-docs audit. A small `GET /api/broker/verdicts?store=<uri>` may be added for the adjudication list, small self-contained endpoint reading `broker.py`'s log.
 - **Risk**: low. Reuses existing `/api/stores`, permissions, broker paths.
@@ -671,9 +671,9 @@ Two surprises from the audit before the detail:
 
 The operator asked whether there is a standardized per-scope protocol for
 notes, learnings, decisions, and design docs, and whether agents are polluting
-the personal `~/notes` vault. Short answer: the protocol is already largely
+the personal `$WORKSHOP_NOTES_VAULT` vault. Short answer: the protocol is already largely
 built (three tiers, per-scope layout, ADR convention, mediated-only vault
-access), and no code path writes agent-internal notes into `~/notes`. The
+access), and no code path writes agent-internal notes into `$WORKSHOP_NOTES_VAULT`. The
 remaining work is cleanup, one missing ADR, and a lint-level guard so a flat
 `NOTES.md` cannot creep back in.
 
@@ -690,7 +690,7 @@ remaining work is cleanup, one missing ADR, and a lint-level guard so a flat
 | 7 | ADR decisions | Long-lived, versioned architecture decisions | Repo-wide `docs/decisions/NNNN-*.md`; 10 present (0000 template + 0001-0009) | Operator | Agents (fenced ADR advice, chat_context.py:238) + humans | notes-system-plan-2026-07-15.md:120-121; on-disk |
 | 8 | Design docs | Long-form plans, redesigns, handoffs | Repo-wide `docs/` (workshop-v1, platform-redesign, voice-mode, etc.) | Operator (mostly) + coherence-audit subagents | Operator + agents on request | on-disk |
 | 9 | Notes-and-docs policy | The one-hard-rule tiering doc | Workshop scope note + SKILL | Operator | Any agent that loads the SKILL; builders auto-discover | shared/knowledge/notes-and-docs-policy.md; shared/skills/notes-and-docs/SKILL.md |
-| 10 | Personal notes vault | The operator's own thinking | Filesystem tree at `$WORKSHOP_NOTES_VAULT` (default `~/notes`) | Operator only (via `/notes-app` HTTP routes) | Operator; agents ONLY via mediated broker | notes_vault.py:26-32; stores.py:261; store-policies.json (vault entry) |
+| 10 | Personal notes vault | The operator's own thinking | Filesystem tree at `$WORKSHOP_NOTES_VAULT` (default `$WORKSHOP_NOTES_VAULT`) | Operator only (via `/notes-app` HTTP routes) | Operator; agents ONLY via mediated broker | notes_vault.py:26-32; stores.py:261; store-policies.json (vault entry) |
 | 11 | Task store | Tasks/tickets carrying prose bodies (which themselves accrete context) | Root `.tasks.json` + `TODO.md`; per-project `projects/<slug>/.tasks.json`+`TODO.md` | Everyone (operator, agents, dispatchers) | Everyone | on-disk; system-audit-2026-07-18.md flagged this |
 | 12 | Job evidence | Per-run receipts, verdicts, effort, tokens | Single append-only `.runtime/jobs.jsonl`, filtered by scope on read | jobs.py writers | memory-keeper (`_scope_jobs`), Work surface | memory_keeper.py:210-235; `.runtime/jobs.jsonl` |
 | 13 | Chat transcripts | Message history per thread | Per-owner under `.runtime/users/<owner_id>/chat/<thread_id>.json` (NOT per-scope) | chat_store on turn commit | Chat UI + chat compaction | chat_store.py:20-24 |
@@ -704,7 +704,7 @@ remaining work is cleanup, one missing ADR, and a lint-level guard so a flat
 ### 8.2 The notes-vault leak check
 
 Verdict: **NO**. Under the shipped code, no ambient agent execution writes to
-`~/notes`. Evidence:
+`$WORKSHOP_NOTES_VAULT`. Evidence:
 
 - `notes_vault.create_note` / `update_note` / `delete_note` are called from exactly two places: the HTTP routes at `routes/notes.py:84-122` (mounted under `/notes-app`, operator-authenticated) and the vault-adapter write door at `stores.py:687-700`.
 - The write door refuses to write knowledge scopes (`stores.py:687-692`) so it can only target the vault Store, and only when the caller carries a matching grant (`_grant_for(uri, verb, token)`, stores.py:679-682). The operator identity is trivially permitted; an `agent` identity has no ambient authority (permissions.py:100-108).
@@ -742,7 +742,7 @@ The protocol is already designed and largely built. Restating so it can be point
 - **Chat transcripts** -> `.runtime/users/<owner>/chat/<thread>.json`. Not per-scope on disk; per-thread with a `context_key` naming the scope. Kept as-is.
 - **Long-form plans and design docs** -> `docs/`. Committed. Discoverable via Notes UI Documents view (Phase N3 of notes-system-plan).
 - **Architecture decisions** -> `docs/decisions/NNNN-short-title.md`. 10 records seeded.
-- **Personal notes vault** (`~/notes`) -> OPERATOR-ONLY WRITE, read-only to agents via mediated broker. No ambient grants; write verbs capped at the policy level; adapter refuses to serve knowledge-scope writes through the vault door.
+- **Personal notes vault** (`$WORKSHOP_NOTES_VAULT`) -> OPERATOR-ONLY WRITE, read-only to agents via mediated broker. No ambient grants; write verbs capped at the policy level; adapter refuses to serve knowledge-scope writes through the vault door.
 - **What is NOT a notes surface (do not add one)**: flat per-scope `NOTES.md`; project-level `INTERVENTIONS.md` as a "notes" store; repo-root `learnings.md` that is not a scope mirror; Letta-era `global-memory.md`.
 
 Each per-scope knowledge dir is declared as a Store of type `Note` at startup (`knowledge.register_knowledge_stores`, knowledge.py:412-447), so agents reach it through the same grants mechanics as any other Store. Substrate stays flat markdown; Store is the addressing/permission layer on top.
@@ -773,7 +773,7 @@ Light smoke checks; each is one command or one probe.
 2. **Fenced-note capture round trip.** POST a chat message to the `project:probe-notes` scope containing a `note` fenced block. Verify `projects/probe-notes/knowledge/<id>.md` exists with the body and `MEMORY.md` lists it; verify the reply does NOT contain the fenced block (finalize path strips it).
 3. **Learnings scope isolation (F3 regression).** From a fresh scope, `python -m services.learnings record "probe rule" --scope project:probe-notes`. Verify `.runtime/learnings/project-probe-notes.jsonl` gains an entry and `.runtime/learnings/global.jsonl` does NOT.
 4. **Vault write blocked to agents.** With the empty `grants.json`, simulate an agent-identity call to the store write door with a `notes:vault` URI and `verb=write`. Expect `AccessDenied("no_grant", ...)` before the adapter is reached (stores.py:679). With a hand-added grant: the policy rejects `write` because it is not in `verbs_max` (stores.py:674-678).
-5. **Memory-keeper writes only to knowledge scopes.** Run `python -m services.memory_keeper workshop --dry-run`. Verify no vault files change (compare `~/notes` mtimes) and any deltas would land only in `shared/knowledge/consolidated-memory.md`.
+5. **Memory-keeper writes only to knowledge scopes.** Run `python -m services.memory_keeper workshop --dry-run`. Verify no vault files change (compare `$WORKSHOP_NOTES_VAULT` mtimes) and any deltas would land only in `shared/knowledge/consolidated-memory.md`.
 6. **Index-cap under load.** Push 250 tiny notes into a scope. Verify `MEMORY.md` stays under 200 lines and older notes moved to `archive/` under `memory-archive` catalog (knowledge.py:177-236).
 7. **Design-check lint.** After N5 lands: create `projects/probe-notes/NOTES.md`, run `bash scripts/check_design.sh`, expect failure with a clear message pointing at the tiering policy.
 
@@ -807,7 +807,7 @@ DO NOT REMOVE:
 - `AgentBuild.tsx` — the builder workbench is legitimate as the maker-runtime UI for a project-scoped `role: maker` agent. It is not the concept, it is A concept UI. Keep it, stop making it the front door.
 - The `builder` runtime field on Agent — deriving `builder` from `role: maker + project_slug` in the create form is fine, and the field remains valid metadata for dispatch (dispatch_triggers.sh:508-516 uses it).
 - The `.runtime/AUTONOMY_DISABLED` flag file — keep it readable during transition; the scripts fall back to it if the JSON overlay is absent. Removable after one release.
-- `the-bridge.service` and `~/clawdbot/` — deliberate intermediate state per PM plan.
+- `the-bridge.service` and `<bridge-checkout>/` — deliberate intermediate state per PM plan.
 - `agents/the bridge agent.md` — inspection surface for the flip.
 - `agents/the bridge agent-commute.md` — persona for on-demand commute chats.
 - `agents/memory-keeper.md` — works.
@@ -833,7 +833,7 @@ Called out so silence is not oversight.
 
 DESIGN OBSERVATIONS TO KEEP DURABLE:
 
-- **Store is ~1:1 with an App or Project.** Operator observation 2026-07-18: a Store is the data-face of an app or a project, so its settings (tier, grants, allowlists, adjudications) belong INSIDE the App or Project detail view (B11), not on a separate `/stores` page. The workshop-level notes vault (`~/notes`) is the exception because it belongs to the operator, not to any App or Project. Whether `entity-model-2026-07-18.md` should mint a formal `Store.host_app | Store.host_project` field is Open Question 5 (an operator decision surface, not a mandate to add).
+- **Store is ~1:1 with an App or Project.** Operator observation 2026-07-18: a Store is the data-face of an app or a project, so its settings (tier, grants, allowlists, adjudications) belong INSIDE the App or Project detail view (B11), not on a separate `/stores` page. The workshop-level notes vault (`$WORKSHOP_NOTES_VAULT`) is the exception because it belongs to the operator, not to any App or Project. Whether `entity-model-2026-07-18.md` should mint a formal `Store.host_app | Store.host_project` field is Open Question 5 (an operator decision surface, not a mandate to add).
 
 ---
 

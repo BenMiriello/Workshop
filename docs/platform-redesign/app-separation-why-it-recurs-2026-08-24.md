@@ -129,7 +129,7 @@ the backend, and asserts what a stranger's install must be true of:
    are not present fails here and passes every other gate in the repo.
 3. **The shell boots and serves.** Nav, chat and settings render with an empty
    app catalog.
-4. **No operator identity.** No `benmiriello`, no tailnet host, no personal
+4. **No operator identity.** No `<operator>`, no tailnet host, no personal
    paths in tracked files.
 
 It is the right instrument for three reasons. It cannot be satisfied by a

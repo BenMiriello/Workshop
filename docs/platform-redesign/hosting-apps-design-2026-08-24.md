@@ -34,7 +34,7 @@ One app has ever run: gengui, containerised on 5 July, up since 21 July.
 ## 1. The one assumption that has to die first
 
 `compose_gen.py:213` bind-mounts an **absolute host path** into the container:
-`/home/clawd-a/workshop/projects/gengui/frontend:/app`.
+`~/workshop/projects/<slug>/frontend:/app`.
 
 That single line makes **"the app" and "a directory in the operator's git working
 tree" the same object**. Manifest resolution, the build step, the runtime, the

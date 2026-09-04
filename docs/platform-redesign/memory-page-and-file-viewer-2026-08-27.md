@@ -75,7 +75,7 @@ tabs are a second door onto something that already has a front one.
 
 ### 1.2 The vault is hardcoded in platform source, and the purity gate cannot see it
 
-`~/notes` is reachable from platform code in three places:
+`$WORKSHOP_NOTES_VAULT` is reachable from platform code in three places:
 
 - `backend/services/permissions.py:86-87` -- `NOTES_VAULT_ROOT`, module
   level, a folder name joined onto `Path.home()` behind a
@@ -89,7 +89,7 @@ tabs are a second door onto something that already has a front one.
   that owns it is installed."
 - `backend/services/notes_vault.py:34-35` -- the same default again.
 
-It is operator-visible (`Memory.tsx:1381` prints the literal `~/notes` and
+It is operator-visible (`Memory.tsx:1381` prints the literal `$WORKSHOP_NOTES_VAULT` and
 names Obsidian) and model-visible (`mcp/workshop_query_server.py:85`).
 
 `scripts/check_no_app_names.py` reports zero findings for any of those
@@ -384,7 +384,8 @@ is worse than a reported partial.
 `check_no_app_names.py` grew three independent blind spots that all hid the
 same violation (1.2). A fourth count is added: **platform source may not
 name a path under the user's home directory.** It is a narrow, mechanical
-check (`Path.home() / "<literal>"`, `~/<literal>` in a user-visible string,
+check (a literal folder name joined onto the home directory, in code or in a
+user-visible string,
 `os.path.expanduser`) with its own baseline, and it catches the class the
 app-name alphabet structurally cannot.
 

@@ -394,7 +394,7 @@ shipped system and the asked-for system is mostly unfinished wiring, not missing
 
 | Phase | Content | Depends on the identity decision? |
 | --- | --- | --- |
-| **P0** | Repair: `_coerce_role`; role-dispatch table replacing `:329`; retire `workshop-overseer`; register `~/notes` as a Store; decide enforce-or-delete on `touches` | no |
+| **P0** | Repair: `_coerce_role`; role-dispatch table replacing `:329`; retire `workshop-overseer`; register `$WORKSHOP_NOTES_VAULT` as a Store; decide enforce-or-delete on `touches` | no |
 | **P1** | `latitude` (one string field + cascade key + persona paragraph + panel control; ~a day) | no |
 | **P2** | Block loop + rule minting (**prereq: fix the `global` learnings fallback first**) | no |
 | **P3** | The mediated broker (last: the only part needing a live cloud model) | **yes** |

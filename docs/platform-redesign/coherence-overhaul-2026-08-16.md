@@ -217,7 +217,7 @@ Stated so it stops being rediscovered.
   itself, or forget"; in Workshop that place is the **ticket**, which is already
   operator-legible in a way a flowchart is not.
 - **No compaction or summarisation.** ADR 0011 settled this and it remains correct.
-- **The `~/notes` vault stays out of the default retrieval corpus.** 965 files, ADR 0010
+- **The `$WORKSHOP_NOTES_VAULT` vault stays out of the default retrieval corpus.** 965 files, ADR 0010
   makes it read-only to agents, and the 08-14 doc removed it from the design after
   looking inside. This is a decision, not an omission.
 - **No multi-tenant guardrails.** Single operator, per CLAUDE.md.

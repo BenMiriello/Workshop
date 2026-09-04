@@ -600,7 +600,7 @@ is what the call site does after the change, not a promise that it is easy.
 
 | # | call site | what it assumes today | replaced by |
 |---|---|---|---|
-| 1 | `compose_gen.py:213`, `volumes: [f"{abs_cwd}:/app"]` | the app IS `/home/clawd-a/workshop/projects/<slug>/<cwd>` | the release's `service` artifact, extracted once to `.runtime/releases/<digest>/`, bind-mounted **read-only** at `/app`, plus a named volume for the app's writable scratch. Same compose mechanics, immutable source |
+| 1 | `compose_gen.py:213`, `volumes: [f"{abs_cwd}:/app"]` | the app IS `~/workshop/projects/<slug>/<cwd>` | the release's `service` artifact, extracted once to `.runtime/releases/<digest>/`, bind-mounted **read-only** at `/app`, plus a named volume for the app's writable scratch. Same compose mechanics, immutable source |
 | 2 | `compose_gen._load_dep_block` (`:118`) reading the project's own `docker-compose.yml` | the dep blocks live in the working tree at start time | `release.resolved_deps`, captured and sanitized at build time (2.5) |
 | 3 | `app_runner._project_dir` at `:708`, `:911`, `:973` (bring-up), `:1088`, `:1147`, `:1216` | one function answers both "where do I edit" and "where do I run" | split into `source_dir(slug)` (unchanged body, used by the build input and the editing surfaces) and `release_root(release_digest)` (used by everything in the serving path). These six call sites take `release_root` |
 | 4 | `app_runner.resolve_manifest` at `:461`, `:990`, `:1084`, `:1146`, `:1260`, `:1304` | the live manifest on disk governs a running app | `release.manifest` for the serving path. `resolve_manifest` survives for the build path and the editing surfaces (2.6) |
@@ -649,7 +649,7 @@ catalog: it never enumerates which apps exist.
   --port 8080 --strictPort --host 0.0.0.0 --base /base-apps/run/gengui/proxy/frontend/`.
 - Compose project `ws_gengui`, from `.runtime/compose/gengui.yml`, mtime
   2026-07-05 21:48.
-- Bind mount `/home/clawd-a/workshop/projects/gengui/frontend:/app`.
+- Bind mount `~/workshop/projects/<slug>/frontend:/app`.
 - Published to `127.0.0.1:8799`. One port allocation in the whole registry.
 - Two of gengui's three services are `enabled: false` and all three deps are
   `ok: false`.

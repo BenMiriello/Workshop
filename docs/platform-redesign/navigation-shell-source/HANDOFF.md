@@ -2,7 +2,7 @@
 
 For an agent picking up the Workshop navigation redesign. Read this before touching the files.
 
-Source repo: `BenMiriello/Workshop`, branch `main`. Nothing here is implemented in the repo yet.
+Source repo: `<operator>/Workshop`, branch `main`. Nothing here is implemented in the repo yet.
 
 ---
 
@@ -317,7 +317,7 @@ The user asked whether the final mobile system is standard. Recorded for the nex
 - `source/github.md` — repo association.
 - `HANDOFF.md` — this file.
 - `TRANSCRIPT-session-1.md`, `TRANSCRIPT-session-2.md` — moved 2026-08-27 to the
-  untracked `docs/masini/`; see README.md.
+  untracked `docs/instance-audits/`; see README.md.
 
 ## Where state lives now (updated)
 

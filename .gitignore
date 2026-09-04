@@ -142,7 +142,7 @@ TODO.md
 
 # Tenant operational records: bring-up playbook and security audits of one
 # operator's own box. Kept on disk, not shipped as platform documentation.
-docs/masini/
+docs/instance-audits/
 
 # ---- ONE OPERATOR'S APPS ARE NOT PLATFORM SOURCE -------------------------
 # 2026-08-20. An app is installed content; the platform is the container. A

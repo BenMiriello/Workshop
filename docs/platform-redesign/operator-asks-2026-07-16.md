@@ -228,7 +228,7 @@ report. Nothing was silently dropped; the deliberate rejections are listed below
 - **C2 (skills and rules ensure well-scoped work)**: `touches` (`tasks.py:32`,
   documented as "fan-out safety") is enforced nowhere. The advisory-vs-enforced gap was
   already live in the tree.
-- **A3 (per-folder permission protocols)**: unsatisfiable on the `~/notes` vault, which
+- **A3 (per-folder permission protocols)**: unsatisfiable on the `$WORKSHOP_NOTES_VAULT` vault, which
   is not registered as a Store at all, and is the only resource with real folders.
 - **B4 (mint rules from blocks)**: gated on the project-learnings `global` fallback
   (F3 in `review-findings-2026-07-15.md`, confirmed HIGH), or every project rule leaks

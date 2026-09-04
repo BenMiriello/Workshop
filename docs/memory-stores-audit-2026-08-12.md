@@ -21,7 +21,7 @@ and a store that is PULLED costs nothing until it is asked for.
 | 3 | Consolidated memory | `shared/knowledge/consolidated-memory.md` | memory-keeper | same |
 | 4 | Learnings | `.runtime/learnings/<scope>.jsonl`, mirrored to `shared/learnings.md` | reviewer gate, ralph, operator corrections | **PUSH, every turn** |
 | 5 | Tasks | `.tasks.json` per tree (13 of them) + `TODO.md` export | agents, operator | **PUSH**, via `workspace_digest`, capped |
-| 6 | Notes app vault | `~/notes` (965 files) | the operator, in Obsidian | **never** |
+| 6 | Notes app vault | `$WORKSHOP_NOTES_VAULT` (965 files) | the operator, in Obsidian | **never** |
 | 7 | Repo CLAUDE.md | `CLAUDE.md`, `frontend/CLAUDE.md` | operator, agents | **PUSH, whole file** |
 | 8 | Claude auto-memory | `~/.claude/projects/<enc>/memory/*.md` (30 files) | the CLI itself | **PUSH**, index every turn |
 | 9 | docs/ | `docs/**` | agents, operator | **never**, unless someone reads it |
@@ -115,7 +115,7 @@ are unbounded and the index cap does not delete a note, only unlist it. Every
 one of P1's symptoms gets worse monotonically as notes accumulate.
 
 **P5. The operator's own vault is invisible.** 965 human-written markdown files
-in `~/notes`, reachable only by the Notes app. Whether agents *should* read it
+in `$WORKSHOP_NOTES_VAULT`, reachable only by the Notes app. Whether agents *should* read it
 is a real question with a real answer either way, but right now it has not been
 asked.
 

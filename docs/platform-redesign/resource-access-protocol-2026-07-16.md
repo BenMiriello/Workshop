@@ -109,7 +109,7 @@ Registered stores today:
 
 ### Two gaps found by reading, not assumed
 
-**Gap 1: the `~/notes` vault is not a Store at all.** `notes_vault.py` is the only
+**Gap 1: the `$WORKSHOP_NOTES_VAULT` vault is not a Store at all.** `notes_vault.py` is the only
 module touching that filesystem (`:1-17`), it has arbitrary subfolders with Obsidian
 semantics (`:3-4`), and nothing in `stores.py` or `knowledge.py` registers it. Grep
 of `declare(` across `stores.py`/`knowledge.py`/`routes/notes.py` returns only the
@@ -938,7 +938,7 @@ two-segment form, so every current caller is unaffected. `make_uri` (`:63-66`) g
 an optional `path` argument. `check()` needs no change at all: subtree prefix
 matching (`:725-728`) already does the right thing on the longer URI.
 
-**Blocker 2: the `~/notes` vault is not a Store** (Part 1, Gap 1). Fix: register it.
+**Blocker 2: the `$WORKSHOP_NOTES_VAULT` vault is not a Store** (Part 1, Gap 1). Fix: register it.
 
 ```python
 declare("notes-vault", "vault", notes_vault.vault_root(), type="Note")
@@ -957,7 +957,7 @@ nothing here contradicts it and no superseding ADR is needed.
 
 ### Coverage: vault folders versus knowledge scopes
 
-| | Knowledge scopes | `~/notes` vault |
+| | Knowledge scopes | `$WORKSHOP_NOTES_VAULT` vault |
 | --- | --- | --- |
 | Store today | Yes, per scope (`knowledge.py:445`) | **No** |
 | Real subfolders | No, flat per scope (`knowledge.py:92-111`) | Yes, arbitrary (`notes_vault.py:3-4`) |
@@ -1380,7 +1380,7 @@ makes it strictly better.
    exist with its cost visible rather than get added later without the `generative`
    flag.
 
-7. **Register the `~/notes` vault as a Store?**
+7. **Register the `$WORKSHOP_NOTES_VAULT` vault as a Store?**
    **Default: yes** (Part 8). It is the only resource with real folders, so A3 is not
    actually satisfiable without it. This does not contradict ADR 0002, which is about
    where notes live, not who may reach them.

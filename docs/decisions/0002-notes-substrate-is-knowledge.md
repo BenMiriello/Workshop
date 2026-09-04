@@ -36,7 +36,7 @@ discoverable.
 
 Agent-written notes finally appear to the operator and operator notes land where
 agents already read. Learnings stay a distinct concept (deduped corrections and
-guardrails) and are cross-linked, not merged. The out-of-tree `~/notes` vault stays
+guardrails) and are cross-linked, not merged. The out-of-tree `$WORKSHOP_NOTES_VAULT` vault stays
 separate and is only linked from the Notes UI. The two `INTERVENTIONS.md` routes are
 kept alive but unlinked for one release as an escape hatch, then deleted; the
 build-agent `INTERVENTIONS.md` injection is a separate working mechanism and is left

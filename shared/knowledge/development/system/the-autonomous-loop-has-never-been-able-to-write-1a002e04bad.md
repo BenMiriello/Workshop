@@ -7,7 +7,7 @@ Observed: the worker was asked to create a one-line file. It tried `Write` three
 
 **So every previously green thing about the loop was measuring the part before the writes.**
 
-The fix is one flag, `--permission-mode bypassPermissions`. It is documented at the call site in `ralph.sh` and deliberately NOT applied: ticket SEC-A1 records that an autonomous turn already runs as clawd-a, in the docker group, unsandboxed, with full tree write and the OAuth token, and this flag is what makes that reachable. Enable it together with a decision on A1's execution boundary.
+The fix is one flag, `--permission-mode bypassPermissions`. It is documented at the call site in `ralph.sh` and deliberately NOT applied: ticket SEC-A1 records that an autonomous turn already runs as <service-user>, in the docker group, unsandboxed, with full tree write and the OAuth token, and this flag is what makes that reachable. Enable it together with a decision on A1's execution boundary.
 
 Also fixed in the same run (commit 7eb84c1): `--dir` was used relative, and `ralph.sh` cds into the tree it drives, so a relative `--dir` meant a different directory before and after the cd. Symptom was three attempts in five seconds, every path "No such file or directory".
 

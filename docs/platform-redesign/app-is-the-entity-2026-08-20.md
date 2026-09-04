@@ -119,7 +119,7 @@ was right and the cause is structural.
 
 Two of those modules are worse than the count suggests because their names hide
 their owner: `backend/services/environment.py` is the **birds** weather spine
-(and hardcodes `~/birdnet/data/environment.db`), and `backend/services/categorizer.py`
+(and hardcodes `<rig-data>/environment.db`), and `backend/services/categorizer.py`
 is budget/finance-only. Both read as platform code.
 
 **The same split causes both symptoms.** Apps got the launcher and the manifest.

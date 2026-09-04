@@ -47,7 +47,7 @@ and satisfy a gate it cannot see the answer to.
 
 **Tier 3 — one real ticket, in the real repo, supervised.**
 
-    bash scripts/project_ralph.sh --dir /home/clawd-a/workshop \
+    bash scripts/project_ralph.sh --dir ~/workshop \
       --task-id <id> --max-tasks 1 --supervised
 
 `--supervised` lands a passing ticket in `in_review` rather than `done`, so
@@ -91,7 +91,7 @@ happens at 3am. Tier 1 should deliberately provoke each of these:
 The resident runner needs a NAMED tree (ADR 0014), so the commented crontab line
 does not work as written:
 
-    */5 * * * * /home/clawd-a/workshop/scripts/queue_runner_watchdog.sh /home/clawd-a/workshop
+    */5 * * * * ~/workshop/scripts/queue_runner_watchdog.sh ~/workshop
 
 Do not enable it until tier 1's failure tests pass, because a resident loop
 turns a single bad run into a repeating one.

@@ -12,8 +12,8 @@ whole thing: pull, reinstall JS deps only if `mobile/package*` changed, build
 Release, install + launch on the device. It also re-signs, so the same command
 covers a code update and the weekly 7-day re-sign:
 ```bash
-~/Development/Workshop/scripts/mobile-deploy.sh            # code update / re-sign
-~/Development/Workshop/scripts/mobile-deploy.sh --prebuild # only if native config changed
+<mac-checkout>/scripts/mobile-deploy.sh            # code update / re-sign
+<mac-checkout>/scripts/mobile-deploy.sh --prebuild # only if native config changed
 ```
 `--prebuild` wipes the signing Team; set `WORKSHOP_TEAM_ID` (10-char Apple Team
 ID) so it re-signs non-interactively, or open Xcode once to re-pick the Team.
@@ -34,7 +34,7 @@ The manual routine below is the same thing by hand.
 
 **Only when native deps or `app.json` native config change** do you re-prebuild:
 ```bash
-cd ~/Development/Workshop/mobile
+cd <mac-checkout>/mobile
 rm -rf node_modules ios
 npm install --ignore-scripts          # NOT `npm ci` (see expo-font note)
 npx expo prebuild -p ios --clean
@@ -50,7 +50,7 @@ regenerates the project and wipes it). That is the only thing that resets.
    `nvm install --lts && nvm use --lts && nvm alias default 'lts/*'`.
 2. **Ruby + CocoaPods**: system Ruby 2.6 is too old (SIP-locked, EOL). rbenv:
    `brew install rbenv ruby-build && rbenv install 3.3.5 && rbenv global 3.3.5`
-   (+ `eval "$(rbenv init - zsh)"` in `~/.zshrc`), then `gem install cocoapods`.
+   (+ `eval "$(rbenv init - zsh)"` in `your shell rc file`), then `gem install cocoapods`.
 3. **Xcode** must be ≥ the phone's iOS. The device is on iOS 26.5, so Xcode 16.4
    could not deploy (`connected (no DDI)` from `xcrun devicectl list devices`).
    Xcode 26.6 fixed it. Xcode 26 needs macOS ≥ 15.6 (operator went to Tahoe 26).

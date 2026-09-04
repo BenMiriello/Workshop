@@ -35,7 +35,7 @@ scope's learnings. That is the entire delta over a bare project scope.
 
 ## The bridge agent in this model
 
-The bridge agent is a SEPARATE process today (`~/clawdbot/`, its own systemd service, the
+The bridge agent is a SEPARATE process today (`<bridge-checkout>/`, its own systemd service, the
 Discord bridge). It does not import the workshop backend (verified during Stage
 9 scoping), so the workshop rebuild does not touch it and Stage 9 leaves it
 running. Conceptually, though, the bridge agent IS an instance of the Agent primitive:
@@ -90,7 +90,7 @@ Operator questions (2026-07-15): are we based on clawd? what is similar/differen
 do we use a framework to orchestrate agents?
 
 **Not based on clawd.** "Clawd" here is the `clawdbot` bridge (a Discord <-> Claude
-Code bridge with cron supervision, `~/clawdbot/`) running under the `the service user`
+Code bridge with cron supervision, `<bridge-checkout>/`) running under the `the service user`
 Linux user; the bridge agent runs on it. Workshop is a SEPARATE, standalone product: its
 own FastAPI backend + React frontend + task/agent pipeline. What they share is
 the HOST (`the service user` user), some infra conventions, and historically Letta (being

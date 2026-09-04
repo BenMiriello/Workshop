@@ -13,13 +13,13 @@ list of those.
 | file | what it is |
 |---|---|
 | `HANDOFF.md` | The design agent's own handoff, covering sessions 1 and 2. The most complete single statement of the decided shell. |
-| `../../masini/TRANSCRIPT-session-1.md` | Session 1 verbatim. The original brief, the six named navigation patterns, and the turn where the three-column dock was decided. **Untracked** — see the note below. |
-| `../../masini/TRANSCRIPT-session-2.md` | Session 2 verbatim. Motion, per-app memory, the mobile bar-one iterations, the branch-picker reversals. **Untracked.** |
-| `../../masini/TRANSCRIPT-session-3.md` | Session 3, reconstructed from the operator's paste. The root layer, and the four-scopes answer for Activity. **Untracked.** |
+| `../../instance-audits/TRANSCRIPT-session-1.md` | Session 1 verbatim. The original brief, the six named navigation patterns, and the turn where the three-column dock was decided. **Untracked** — see the note below. |
+| `../../instance-audits/TRANSCRIPT-session-2.md` | Session 2 verbatim. Motion, per-app memory, the mobile bar-one iterations, the branch-picker reversals. **Untracked.** |
+| `../../instance-audits/TRANSCRIPT-session-3.md` | Session 3, reconstructed from the operator's paste. The root layer, and the four-scopes answer for Activity. **Untracked.** |
 
 > The three transcripts are raw unedited voice dictation by one operator, in his
 > own voice and full of asides about his own setup. They are design INPUT, not
-> platform documentation, so on 2026-08-27 they moved to `docs/masini/`, which
+> platform documentation, so on 2026-08-27 they moved to `docs/instance-audits/`, which
 > `.gitignore` excludes. They are still on the instance that recorded them and
 > are still the wording of record for the two shell docs; a fresh clone simply
 > does not carry someone's dictation. `HANDOFF.md` below is the tracked

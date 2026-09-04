@@ -309,7 +309,7 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   made Stop a no-op and leaked every process) — and, independently, found two
   live gaps in the ALREADY-SHIPPED bwrap layer: the grant set bound the whole
   `$XDG_RUNTIME_DIR` read-write (including `docker.sock`, reachable via
-  `clawd-a`'s existing group membership) and `_proc_alive`'s identity check
+  `<service-user>`'s existing group membership) and `_proc_alive`'s identity check
   never recognized bwrap's own pid as the turn (bwrap forks rather than
   exec-replacing), which broke restart-adoption for every scoped turn since
   Layer 1 went default-on. Fixed both same-day, uid-layer or not. Built:
@@ -317,7 +317,7 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   through `build_streaming.py`'s spawn/retire/kill/liveness/`session_alive`
   paths on the uid actually used (recorded at spawn, not recomputed later),
   gated by `WORKSHOP_TURN_USER` (unset = off, FAILS CLOSED on a broken
-  precondition rather than silently running as `clawd-a`) and carved out for
+  precondition rather than silently running as `<service-user>`) and carved out for
   a turn scoped to the platform's own repo (`systemctl --user` cannot cross a
   uid boundary, and `apply.sh` needs it — named, not silent).
   `scripts/setup_turn_user.sh` is the one-time root setup step (idempotent,
@@ -367,7 +367,7 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   runs UNCONFINED (the granted systemd socket spawns in the manager's context, not
   the turn's namespace) -- that is both the way to run the verify from an
   unconfined parent AND a noted capability of the dev role's systemd grant. Proved
-  it two ways: an sh worker (pwd=/workspace, only clawd-a home, host tree absent,
+  it two ways: an sh worker (pwd=/workspace, only <service-user> home, host tree absent,
   wrote its file) and a real `claude -p` agent that wrote NOTE.md and COMMITTED it
   (4c5010d) unattended, confined. The worker the loop runs IS a claude process, so
   that is the thing that had to work, and it does. (3) Built the per-scope EXECUTION
@@ -906,7 +906,7 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   one; AgentBuild was never catalogued, the same shape as the fifth private tool
   list found on 2026-08-23. Four file APIs remain and `/apps/{id}/files*` has
   zero callers. `scopeLabel` has no `app` case, so the tree reads "app: budget"
-  beside "Project: budget" and "Agent: masini". And `check_no_app_names` is
+  beside "Project: budget" and "Agent: <bridge-agent>". And `check_no_app_names` is
   FAILING on clean HEAD at 319 against a pinned 309, which gates reviewer.sh and
   therefore rejects unrelated work, the same shape as the three gates found on
   2026-08-22.
@@ -926,7 +926,7 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   to the latest implementation/version". Repo is NOT public (his correction).
   LETTA, THE ACTUAL ANSWER TO HIS QUESTION: the server is still RUNNING. Two
   `letta server` processes owned by ROOT since Jul 21 on :8283, plus a
-  docker-proxy, under the SYSTEM docker daemon. clawd-a's rootless daemon holds
+  docker-proxy, under the SYSTEM docker daemon. <service-user>'s rootless daemon holds
   only workshop-db and gengui, which is why `docker ps` shows nothing and why
   the 2026-07-18 audit said this one needs the operator. Nothing in the tree
   talks to it: no LETTA_URL reader, no letta package in the venv.

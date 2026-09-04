@@ -245,7 +245,7 @@ names. De-hardcode or retire it during stage 7.
 
 **Two modules hide their owner behind a generic name.**
 `backend/services/environment.py` is the **birds** weather spine and hardcodes
-`~/birdnet/data/environment.db`. `backend/services/categorizer.py` is
+`<rig-data>/environment.db`. `backend/services/categorizer.py` is
 budget/finance only. Both read as platform code. There will be others; check
 what a module actually imports, not what it is called.
 
@@ -270,7 +270,7 @@ unblocking the prefix.
 silently reverted a `git rm --cached` mid-session here. Use a detached worktree.
 
 **Backend tests: `test_chat_personas_are_install_gated` fails inside the agent
-sandbox** because `WORKSHOP_ROOT` resolves to `/home/clawd-a/workshop`, which is
+sandbox** because `WORKSHOP_ROOT` resolves to `~/workshop`, which is
 not mounted at that path there. It passes with `WORKSHOP_APP_AGENTS_DIR` pointed
 at the tree. Not a regression; do not "fix" it.
 

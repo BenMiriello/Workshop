@@ -185,7 +185,7 @@ Collected for the redesign; assessed in §5 once the vocabulary audit lands.
 Project records additionally carry an `autonomy` field that is a dict
 (`{"mode": "manual"}`) on one record and null on the other six, and a `dir`
 field holding an absolute machine-local filesystem path
-(`/home/clawd-a/workshop/projects/<slug>`), which cannot survive a second host
+(`~/workshop/projects/<slug>`), which cannot survive a second host
 let alone a second tenant.
 
 ---

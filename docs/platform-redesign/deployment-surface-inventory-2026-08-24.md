@@ -21,8 +21,8 @@ over-claimed:
 - Postgres has row-level security on `app`, `project`, `run`, `worktree`. Connecting as
   `workshop_app` with no tenant context returns 0 rows. Row **counts** below are
   `pg_stat_user_tables.n_live_tup` planner estimates, not `SELECT count(*)`.
-- `/workspace` is a bind of `/home/clawd-a/workshop`, which is why stored paths read
-  `/home/clawd-a/workshop/...`.
+- `/workspace` is a bind of `~/workshop`, which is why stored paths read
+  `~/workshop/...`.
 
 ---
 
@@ -279,7 +279,7 @@ runs without it. Nothing regenerates a compose file except a fresh `start_app`.
 
 **Measured test-isolation leak, active during this audit**: `.runtime/compose/` also
 contains `test-app.yml` and `test-app-with-deps.yml`, mtime 2026-08-24 14:02, whose bind
-mounts point at `/tmp/pytest-of-clawd-a/pytest-1/test_compose_gen_*/src`. Their mtimes
+mounts point at `/tmp/pytest-of-<service-user>/pytest-1/test_compose_gen_*/src`. Their mtimes
 advanced twice during the audit, traced to `pytest tests/` (pid 821451). The
 `compose_gen` tests write into the real runtime compose root. Two fictional app slugs now
 sit permanently in production state.
@@ -349,12 +349,13 @@ Measured:
   with Docker Desktop CLI plugins. `docker compose version` gives `v2.34.0-desktop.1`.
 - The client targets **`unix:///run/user/1003/docker.sock`**, i.e. **rootless docker under
   uid 1003**.
-- `id` gives `uid=1003(clawd-a) gid=1003 groups=1003,65534(nogroup)`. The operator user is
+- `id` gives `uid=1003(<service-user>) gid=1003 groups=1003,65534(nogroup)`. The operator user is
   **not** in a `docker` group. Rootless is the whole mechanism.
 - No podman, no podman-compose, no nerdctl.
 - The daemon IS running, proven indirectly: `/proc/4366/cgroup` and `/proc/4839/cgroup`
   both read
-  `0::/user.slice/user-1003.slice/user@1003.service/user.slice/docker-64008f127ca3....scope`.
+  a rootless cgroup path of the form
+  `0::/user.slice/user-<uid>.slice/user-<uid>.service/user.slice/docker-<id>.scope`.
   Those two pids are `bun run dev -- --port 8080 --strictPort --host 0.0.0.0 --base
   /base-apps/run/gengui/proxy/frontend/` and its vite child, started 21 July, still alive,
   both with RSS 0 (fully paged out).
@@ -980,9 +981,9 @@ multi-tenant design cannot inherit.
     (`compose_gen.py:213`, `f"{abs_cwd}:/app"`). The generated compose file is only valid
     on the machine that generated it, for that user.
 18. `.runtime/compose/gengui.yml` literally contains
-    `/home/clawd-a/workshop/projects/gengui/frontend:/app`.
+    `~/workshop/projects/<slug>/frontend:/app`.
 19. `notes-app`'s manifest carries the example value
-    `/home/clawd-a/workshop/projects/notes-app/vault`.
+    `~/workshop/projects/<slug>/vault`.
 20. `rsync_ssh` requires `SSH_KEY_PATH`, an absolute path to a private key on this host
     (`rsync_ssh.py:50`).
 

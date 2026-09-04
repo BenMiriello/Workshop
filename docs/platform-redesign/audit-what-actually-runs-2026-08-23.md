@@ -34,8 +34,8 @@ tickets already marked `done`.
 
 ```
 $ ps aux | grep queue_runner
-clawd-a  1060001  bash /workspace/scripts/queue_runner.sh --dir /workspace          (started 10:42 today)
-clawd-a  1169974  bash /home/clawd-a/workshop/scripts/queue_runner.sh --dir /home/clawd-a/workshop  (started Aug22)
+<service-user>  1060001  bash /workspace/scripts/queue_runner.sh --dir /workspace          (started 10:42 today)
+<service-user>  1169974  bash ~/workshop/scripts/queue_runner.sh --dir ~/workshop  (started Aug22)
 ```
 
 Both target the same tree through two different path strings. The
@@ -45,7 +45,7 @@ the path STRING:
 ```
 $ python -c "from services import work_driver as w; ..."
 /workspace              -> 508c753f681d | queue-runner-508c753f681d.lock   resident: True
-/home/clawd-a/workshop  -> 09978cb2b5d3 | queue-runner-09978cb2b5d3.lock   resident: True
+~/workshop  -> 09978cb2b5d3 | queue-runner-09978cb2b5d3.lock   resident: True
 ```
 
 `backend/services/work_driver.py:89` derives the lock name from `queue_key(dir_str)`.
@@ -57,7 +57,7 @@ worktree modes, alternating every ~30s:
 ```
 $ tail .runtime/ralph.log
 [11:39:38] sweep start dir=/workspace              ... worktrees=0
-[11:40:04] sweep start dir=/home/clawd-a/workshop  ... worktrees=1
+[11:40:04] sweep start dir=~/workshop  ... worktrees=1
 ```
 
 Side effect: **357 stale lock files** accumulate in `.runtime/`
@@ -87,9 +87,9 @@ work. It is because the sweep's success leg is never reached (§1.4).
 | slug | role | template | trigger | can it fire? |
 |---|---|---|---|---|
 | `development-maker` | maker | None | `[]` | no trigger at all |
-| `masini` | triager | None | `discord`, `disabled_reason: "discord trigger has no channels"` | disabled |
+| `<bridge-agent>` | triager | None | `discord`, `disabled_reason: "discord trigger has no channels"` | disabled |
 | `memory-keeper` | keeper | None | `cron 0 */6 * * *` | no dispatcher exists (§1.5) |
-| `masini-commute` | None | None | `manual` | operator-only |
+| `<bridge-agent>-commute` | None | None | `manual` | operator-only |
 
 - **Every agent carries `template: None`.** The adoption path built in R3 has
   never been exercised on this instance. This confirms
@@ -139,7 +139,7 @@ not installed. `scripts/queue_runner_watchdog.sh` is not in it either.
 $ tail -1 .runtime/dispatch.log
 [2026-08-04T22:02:21-07:00] [dispatch] autonomy engaged (...); dispatching nothing
 $ ls -la .runtime/dispatch.log
--rw-r--r-- 1 clawd-a clawd-a 19445 Aug  4 22:02
+-rw-r--r-- 1 <service-user> <service-user> 19445 Aug  4 22:02
 ```
 
 The dispatcher last ran 19 days ago and its last non-refusal
@@ -859,7 +859,7 @@ Evidence: `crontab -l` -> `/var/spool/cron: No such file or directory`;
 `infra/cron/workshop.crontab` contains three lines and `dispatch_triggers.sh` is
 not one of them; `.runtime/dispatch.log` last written 2026-08-04;
 `.runtime/trigger-state.json` has one key frozen at `2026-07-18T18:00:01Z`.
-Consequence: memory-keeper 36 days frozen, note-triager never fired, `masini`
+Consequence: memory-keeper 36 days frozen, note-triager never fired, `<bridge-agent>`
 disabled.
 **Fix:** add `dispatch_triggers.sh` (and `queue_runner_watchdog.sh`) to
 `infra/cron/workshop.crontab` and run `scripts/install_cron.sh`.
@@ -887,7 +887,7 @@ add acceptance criteria and `touches` globs to the `code` tickets.
 **7. Two resident queue runners share one tree, and 357 lock files have never
 been reaped.**
 Evidence: `ps` shows `queue_runner.sh --dir /workspace` and
-`--dir /home/clawd-a/workshop`; `work_driver.queue_key` hashes the path string, so
+`--dir ~/workshop`; `work_driver.queue_key` hashes the path string, so
 they get different locks and `is_resident` is `True` for both. They alternate in
 `.runtime/ralph.log` with different worktree modes (`worktrees=0` vs `worktrees=1`).
 `ls .runtime/ | grep -c 'queue-runner-.*\.lock'` -> `357`.

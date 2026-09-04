@@ -255,7 +255,7 @@ role whose job that is exists in the closed enum:
 
 Measured 2026-08-27: **one occurrence of "triager" in 11,957 job records, and it
 is the job that wrote the document defining the role.** The only declared
-triager is `agents/masini.md`, marked "INERT UNTIL FLIPPED LIVE".
+triager is `agents/<bridge-agent>.md`, marked "INERT UNTIL FLIPPED LIVE".
 `primitive-roles-2026-07-18.md` was already corrected on 2026-08-23 with
 "the triager has never fired once".
 

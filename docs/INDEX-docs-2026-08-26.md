@@ -101,7 +101,7 @@ The durable decision layer. 19 accepted, 9 proposed, 1 template, 1 stray.
   2026-07-18 - accepted. One entity, one status, one source; never two status
   indicators for the same entity in one view.
 - [`0010-notes-vault-is-read-only-to-agents.md`](decisions/0010-notes-vault-is-read-only-to-agents.md)
-  2026-07-18 - accepted. `~/notes` is read-only to any `agent` identity, enforced
+  2026-07-18 - accepted. `$WORKSHOP_NOTES_VAULT` is read-only to any `agent` identity, enforced
   at three independent layers.
 - [`0011-context-memory-is-managed-by-the-model.md`](decisions/0011-context-memory-is-managed-by-the-model.md)
   2026-08-04 - accepted. Do not build compaction, summarisation or eviction; the
@@ -217,7 +217,7 @@ The durable decision layer. 19 accepted, 9 proposed, 1 template, 1 stray.
 
 Five audits plus one living posture doc plus two runbooks. Open items in section 9.
 
-> **Everything under `masini/` is UNTRACKED** (`.gitignore`: `docs/masini/`). Those
+> **Everything under `instance-audits/` is UNTRACKED** (`.gitignore`: `docs/instance-audits/`). Those
 > files audit one operator's own box -- real account names, home directory modes,
 > ACLs, known-fixed weaknesses -- so they are kept on that box and are not shipped
 > as platform documentation. The links below resolve on the instance that wrote
@@ -226,33 +226,33 @@ Five audits plus one living posture doc plus two runbooks. Open items in section
 - [`security-posture.md`](security-posture.md) - last reviewed 2026-07-18 -
   CURRENT, living reference. The trust model and the invariants: identity, network
   minimization, blast-radius containment, and no multi-tenant guardrails.
-- [`masini/security-audit-2026-07-18.md`](masini/security-audit-2026-07-18.md) - 2026-07-18 -
+- [`instance-audits/security-audit-2026-07-18.md`](instance-audits/security-audit-2026-07-18.md) - 2026-07-18 -
   HISTORICAL point-in-time, findings partly open. Host, network, web, edge, mobile.
   Internet surface good; the problems are on the LAN/tailnet plane and in host config.
-  Supersedes `masini/security-audit-2026-06-02.md`.
-- [`masini/security-audit-2026-07-18-agents.md`](masini/security-audit-2026-07-18-agents.md)
+  Supersedes `instance-audits/security-audit-2026-06-02.md`.
+- [`instance-audits/security-audit-2026-07-18-agents.md`](instance-audits/security-audit-2026-07-18-agents.md)
   2026-07-18 - HISTORICAL point-in-time, A1 still open. What an executing agent
   turn can reach: same `claude -p`, no sandbox, `docker` group, full tree.
-- [`masini/security-audit-2026-07-18-connectors.md`](masini/security-audit-2026-07-18-connectors.md)
+- [`instance-audits/security-audit-2026-07-18-connectors.md`](instance-audits/security-audit-2026-07-18-connectors.md)
   2026-07-18 - HISTORICAL, no clear issues. Project-to-GitHub separation is clean;
   a project can never commit into the Workshop repo.
-- [`masini/security-audit-2026-08-11-scope-separation.md`](masini/security-audit-2026-08-11-scope-separation.md)
+- [`instance-audits/security-audit-2026-08-11-scope-separation.md`](instance-audits/security-audit-2026-08-11-scope-separation.md)
   2026-08-11/12 - CURRENT for its open list, section 6 explicitly HISTORICAL.
   Application-layer separation between chat scopes and between users. Section 8 is
   what shipped; sections "Still open" are the live backlog.
 - [`security-remediation-runbook.md`](security-remediation-runbook.md) - 2026-07-18 -
   CURRENT as a backlog. The items from the 07-18 audit needing root, another stack
   owner, or an architecture decision. Exact commands.
-- [`masini/security-fixes-for-sister-instances.md`](masini/security-fixes-for-sister-instances.md)
+- [`instance-audits/security-fixes-for-sister-instances.md`](instance-audits/security-fixes-for-sister-instances.md)
   2026-07-18 - CURRENT if a sister instance exists. What travels by git and what
   each instance must apply by hand.
-- [`masini/security-audit-2026-06-02.md`](masini/security-audit-2026-06-02.md) -
-  SUPERSEDED BY `masini/security-audit-2026-07-18.md`. The clawd-a financial/MCP pass.
-- [`masini/security-invariants.md`](masini/security-invariants.md) - CURRENT for
-  masini only. The rules the nightly `~/clawdbot/security/audit.sh` enforces.
-- [`masini/bringup-playbook.md`](masini/bringup-playbook.md) - 2026-05-17 -
+- [`instance-audits/security-audit-2026-06-02.md`](instance-audits/security-audit-2026-06-02.md) -
+  SUPERSEDED BY `instance-audits/security-audit-2026-07-18.md`. The <service-user> financial/MCP pass.
+- [`instance-audits/security-invariants.md`](instance-audits/security-invariants.md) - CURRENT for
+  <bridge-agent> only. The rules the nightly `<bridge-checkout>/security/audit.sh` enforces.
+- [`instance-audits/bringup-playbook.md`](instance-audits/bringup-playbook.md) - 2026-05-17 -
   HISTORICAL (judged). Per-tenant clawdbot bring-up, drafted for promotion elsewhere.
-- [`masini/security-audit-install-cron.txt`](masini/security-audit-install-cron.txt) -
+- [`instance-audits/security-audit-install-cron.txt`](instance-audits/security-audit-install-cron.txt) -
   the cron install snippet for that audit.
 
 ---
@@ -453,7 +453,7 @@ Contradicts the current design model:
 
 Extracted from the audits. Nothing here is marked done in its source doc.
 
-From `masini/security-audit-2026-07-18.md` (prioritized action list) and
+From `instance-audits/security-audit-2026-07-18.md` (prioritized action list) and
 `security-remediation-runbook.md`:
 
 1. C3 - inbound IPv6 firewall policy unverified. Decides the blast radius of
@@ -480,7 +480,7 @@ From `masini/security-audit-2026-07-18.md` (prioritized action list) and
 Closed in that pass and listed only so they are not re-reported: H1, H6, M4, L1,
 L3, L4.
 
-From `masini/security-audit-2026-07-18-agents.md`:
+From `instance-audits/security-audit-2026-07-18-agents.md`:
 
 12. A2 - `touches`, `latitude` and `grants` are advisory and the agent can rewrite them.
 13. A3 - exfiltration channels remain open despite the egress guard.
@@ -488,7 +488,7 @@ From `masini/security-audit-2026-07-18-agents.md`:
 15. A5 - the personal-data partition is application-layer only.
 16. A6 - app containers run unconfined.
 
-From `masini/security-audit-2026-08-11-scope-separation.md`, "Still open" plus "Still open
+From `instance-audits/security-audit-2026-08-11-scope-separation.md`, "Still open" plus "Still open
 after phase two":
 
 17. `shared/knowledge/` is gated, not partitioned. A second user gets none of the
@@ -531,12 +531,12 @@ Cross-reference: `decisions/0014` cites `[SEC-A1]` (execution identity) and `[SE
   [`auth-redesign/04-critique-and-refinements.md`](auth-redesign/04-critique-and-refinements.md),
   [`proposals/in-app-updates-and-migrations.md`](proposals/in-app-updates-and-migrations.md),
   [`archive/root-todo-legacy-2026-07-15.md`](archive/root-todo-legacy-2026-07-15.md).
-  Security finding M1 in [`masini/security-audit-2026-07-18.md`](masini/security-audit-2026-07-18.md)
+  Security finding M1 in [`instance-audits/security-audit-2026-07-18.md`](instance-audits/security-audit-2026-07-18.md)
   and its runbook entry are about a Letta server that is gone, as is the
   `infra/letta/.env` chmod in L1. `agent-chat-redesign/plan.md` already notes the
   2026-07-15 Stage 9 teardown.
 - **Open Wearables** - replaced. [`health-auto-export-ios.md`](health-auto-export-ios.md)
-  says so directly; `masini/security-audit-2026-07-18.md` finding M2 is still written against
+  says so directly; `instance-audits/security-audit-2026-07-18.md` finding M2 is still written against
   a running open-wearables dev server.
 - **The web Location tab** - removed. [`owntracks-ios.md`](owntracks-ios.md) records why.
 - **The root `TODO.md` prose work queue** - retired 2026-07-15 into `.tasks.json`.

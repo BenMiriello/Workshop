@@ -23,7 +23,7 @@ mismanagement is critical ... Including that Letta is still part of it").
 
 Companion to, and NOT a replacement for:
 - ADR 0002 (the knowledge store is the notes substrate) — upheld.
-- ADR 0010 (the `~/notes` vault is read-only to agents) — upheld, and this doc
+- ADR 0010 (the `$WORKSHOP_NOTES_VAULT` vault is read-only to agents) — upheld, and this doc
   explains why the vault therefore stays out of the default index.
 - ADR 0011 (the model manages the conversation; we manage what enters it) — upheld,
   and sharpened: this doc is entirely about "what enters it".
@@ -131,7 +131,7 @@ Credit where due: the doc's "delete first" item was executed. `chat-distilled.md
 | 2 | Learnings (`learnings.py`) | 29 rows / 18.6K | **yes**, unconditional, `chat.py:1471` | **KEEP, GOVERN** |
 | 3 | Semantic index (`semantic_index.py`) | 4,600 chunks / 19.5M | no — **pulled** by tool | **KEEP, REPAIR** |
 | 4 | Chat + ticket stores | 2,403 events / 26M; 133 tickets | own thread only | **KEEP** — the episodes |
-| 5 | `~/notes` vault | **965 files / 5.5M** | no; 0 chunks indexed | **KEEP, out of scope by ADR 0010** |
+| 5 | `$WORKSHOP_NOTES_VAULT` vault | **965 files / 5.5M** | no; 0 chunks indexed | **KEEP, out of scope by ADR 0010** |
 | 6 | `docs/` | 170 files / 4.3M | no; 3,119 chunks | **KEEP** |
 | 7 | `memory_tree.py` | 42-line YAML, **0 clients** | no | **DELETE** |
 | 8 | Letta `:8283` | **7 agents / 23 memory blocks** | no | **EXPORT, THEN DECOMMISSION** |
@@ -213,7 +213,7 @@ rediscovered as a defect.
 
 No code has depended on Letta since the 2026-07-15 teardown, yet `:8283` is running
 with **7 agents holding 23 memory blocks**, created 2026-05-20 to 2026-06-04, root-owned
-since Jul 21. That is real operator-adjacent content (`masini`, `workshop-overseer`,
+since Jul 21. That is real operator-adjacent content (`<bridge-agent>`, `workshop-overseer`,
 `email-triager`, `plaid-watcher`) that survived the teardown and that nothing reads.
 Export the 23 blocks to `agent:<slug>` knowledge notes with provenance, **then** remove
 the residue: the health probe (`routes/services.py:49-51`), the two env vars injected
@@ -335,7 +335,7 @@ committed and independently verified, not when a worker reported it done.
 
 | **M2/M3** — write-time reconciliation, quality gate, split counters, salience floor | `02ff747`, `41555a5` | 2026-08-16 | Live store 15 to 12 rows. Archived with reasons, not deleted: both `Ralph rejected: *_typecheck_fail` rows ("machine status token, not instructional guidance") and the older duplicate restart guardrail ("superseded at rest by a later revision, sim 0.68"). Provenance 46 to 11 with `provenance_total` kept. GC proved to fire on a stale loop-authored fixture while an operator guardrail survives the same pass. 21 new tests. |
 | **M4** — delete `memory_tree`, `memory_promotion`, the promotion lobe | `6bead5c`, `0e316b0` | 2026-08-16 | Both routes 404 against a live TestClient. `import main` clean. |
-| **M5** — export Letta, then remove its wiring | `6f18268`, `e0e030e` | 2026-08-16 | 18 distinct blocks (22 attachments; `operator-context` is one block shared by 5 agents) exported via `knowledge.put_note` into `agent:masini`, `agent:masini-commute` and `workshop`, each carrying block id, label and holder agents with Letta creation dates. Spot-checked on disk and confirmed retrievable through the index. |
+| **M5** — export Letta, then remove its wiring | `6f18268`, `e0e030e` | 2026-08-16 | 18 distinct blocks (22 attachments; `operator-context` is one block shared by 5 agents) exported via `knowledge.put_note` into `agent:<bridge-agent>`, `agent:<bridge-agent>-commute` and `workshop`, each carrying block id, label and holder agents with Letta creation dates. Spot-checked on disk and confirmed retrievable through the index. |
 | **M6** — the five correctness bugs | `02ff747` (swept), `41555a5` | 2026-08-16 | B3 persona and B4 `role:` listability confirmed and fixed; B5 note corrected against the code. **B1 and B2 were refuted with runtime evidence** and correctly not "fixed" (see below). |
 | Reply truthfulness | `80e5061` | 2026-08-16 | The chat said "Captured a preference" even when the new gate refused the note. Now distinguishes captured / updated / already recorded / not captured with the reason. 5 tests. |
 

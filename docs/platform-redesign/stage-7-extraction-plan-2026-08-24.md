@@ -500,7 +500,7 @@ with commute and must keep working against an absent location.
 
 `services/environment.py` is measured, not guessed: its own docstring opens
 "Environment / weather data spine for the Birds app", it owns
-`~/birdnet/data/environment.db` via `BIRDNET_ENV_DB`, and `_birds_spec` requires
+`<rig-data>/environment.db` via `BIRDNET_ENV_DB`, and `_birds_spec` requires
 route modules `("birds", "environment")`. It reads as platform code and is not in
 the 102 because the roster has no app called `environment`.
 
@@ -675,7 +675,7 @@ rig and commute, and no gate in the repo will ever say so.
 I1 `apps/birds/birdnet.db` and `apps/birds/clips/`, resolved by
 `services/birds_store.py` inside the source tree. The env overrides exist; they
 must be set in the same change that moves the code.
-I2 `~/birdnet/data/environment.db` hardcoded as the default in
+I2 `<rig-data>/environment.db` hardcoded as the default in
 `services/environment.py`.
 
 ### Class J. The mechanism that turns any of the above into a boot failure (1 site)

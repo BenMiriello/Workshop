@@ -105,7 +105,7 @@ Naming those line counts matters, because phases 4 and 5 modify both files.
 
 ### The agent layer is disjoint from the system that runs
 
-- `list_agents()` returns **3** (`masini`, `masini-commute`, `memory-keeper`).
+- `list_agents()` returns **3** (`<bridge-agent>`, `<bridge-agent>-commute`, `memory-keeper`).
   `build_agents.json` holds **8**, every one `state: retired`, last active
   mid-July. There are 4 more definitions under `agents/apps/`.
 - **Zero registry agents have ever produced a job record.** The 7 `agent_id`
@@ -171,7 +171,7 @@ do.** 14 of the 34 open tickets are one security-audit cohort filed 2026-07-18;
 they carry the highest priorities in the store, because a human triaging
 security set them that way, and `next_ready` reads priority before anything
 else. At least six say "needs root" in their own body. The worker runs as
-`clawd-a` and has no root. Several others (`SEC-G1`, `SEC-A5`) are explicitly
+`<service-user>` and has no root. Several others (`SEC-G1`, `SEC-A5`) are explicitly
 operator decisions that were deliberately not probed.
 
 This produces a bind the plan has to resolve rather than inherit:

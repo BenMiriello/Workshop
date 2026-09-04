@@ -619,7 +619,7 @@ Write the artifact spec by discovering it, not by declaring it:
 > app.main:app`, one optional non-secret env requirement, a real health path).
 > Produce an immutable artifact from its source. Run that artifact under the
 > local provider with nothing in the serving path reading
-> `/home/clawd-a/workshop/projects/notes-app`. Then do the same app a second
+> `~/workshop/projects/<slug>`. Then do the same app a second
 > time against Cloudflare, and let it fail, because it is Python, and record
 > exactly what it cost to make it not fail (rewrite? Containers? refuse?).
 

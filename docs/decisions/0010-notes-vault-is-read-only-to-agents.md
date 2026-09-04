@@ -1,4 +1,4 @@
-# 0010. The `~/notes` vault is read-only to agents
+# 0010. The `$WORKSHOP_NOTES_VAULT` vault is read-only to agents
 
 - Status: accepted
 - Date: 2026-07-18
@@ -7,7 +7,7 @@
 
 ## Context
 
-`~/notes` (env-overridable via `WORKSHOP_NOTES_VAULT`) is the operator's
+`$WORKSHOP_NOTES_VAULT` (env-overridable via `WORKSHOP_NOTES_VAULT`) is the operator's
 personal notes vault: their thinking, journal, drafts, reference material.
 The workshop registers it as a Store at `workshop://store/notes/vault`
 (`backend/services/stores.py:261`) so agents can look things up in it, but
@@ -85,7 +85,7 @@ autonomous writes there.
 
 ## Alternatives considered
 
-- **Register `~/notes` as just another knowledge scope.** Rejected. The
+- **Register `$WORKSHOP_NOTES_VAULT` as just another knowledge scope.** Rejected. The
   vault is not a shared substrate; it is the operator's own thinking.
   Confusing "the operator's notes" with "the workshop's notes"
   invites both accidental leakage and incorrect consolidation.

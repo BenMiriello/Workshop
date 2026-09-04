@@ -19,7 +19,7 @@ straight from Xcode. Possible iOS-26.5-vs-Xcode-version gap to resolve.
   and `cloudflared`. The agent commits + pushes from here. It **cannot** run
   Mac/Xcode commands, and its shell egress guard blocks external hosts (so no
   `npm install` against the registry here) — but `git push`/`pull` to GitHub work.
-- **Mac** (`~/Development/Workshop`): builds the iOS client only. The operator
+- **Mac** (`<mac-checkout>`): builds the iOS client only. The operator
   runs Xcode / expo / npm / pod here.
 - **Sync**: both are clones on branch `mobile-app-rebuild`; GitHub is the hub.
   `git config pull.rebase true` is set on both. Habit: `git pull --rebase` before
@@ -32,7 +32,7 @@ straight from Xcode. Possible iOS-26.5-vs-Xcode-version gap to resolve.
 1. **Ruby**: system Ruby 2.6 is too old for CocoaPods (ffi needs ≥3.0) and can't
    be updated in place (SIP, EOL). Installed a real Ruby via `rbenv`:
    `brew install rbenv ruby-build && rbenv install 3.3.5 && rbenv global 3.3.5`
-   (+ `eval "$(rbenv init - zsh)"` in `~/.zshrc`).
+   (+ `eval "$(rbenv init - zsh)"` in `your shell rc file`).
 2. **Homebrew perms**: `/opt/homebrew/share` wasn't writable →
    `sudo chown -R $(whoami) /opt/homebrew/share`.
 3. **CocoaPods 1.17.0**: `gem install cocoapods` under the rbenv Ruby.
@@ -54,7 +54,7 @@ straight from Xcode. Possible iOS-26.5-vs-Xcode-version gap to resolve.
   `No iOS devices available in Simulator.app` — expo CLI device-detection flakiness.
 - **Next: build from Xcode directly** (pods are installed):
   ```bash
-  cd ~/Development/Workshop/mobile
+  cd <mac-checkout>/mobile
   open ios/*.xcworkspace
   ```
   In Xcode: pick **BGM iPhone** as the run destination → select the app target →
@@ -124,7 +124,7 @@ login wall is live; the app will load it on launch.
 ## Resume checklist (Mac)
 
 ```bash
-cd ~/Development/Workshop/mobile
+cd <mac-checkout>/mobile
 git pull --rebase
 open ios/*.xcworkspace          # build from Xcode; pick BGM iPhone; set Team; Run
 # if ios/ is missing/stale:  rm -rf ios && npx expo prebuild -p ios

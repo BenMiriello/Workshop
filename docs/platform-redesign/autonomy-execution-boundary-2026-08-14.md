@@ -69,7 +69,7 @@ Allow-by-default. Deny rules and hooks still fire.
 - **For:** one flag, works today, nothing else to build.
 - **Against:** every tool not explicitly denied is approved, and the deny list
   is a blocklist, which is the weaker shape. SEC-A1 already records that an
-  autonomous turn runs as clawd-a, in the docker group, unsandboxed, with full
+  autonomous turn runs as <service-user>, in the docker group, unsandboxed, with full
   tree write and the OAuth token. This is the flag that makes that reachable.
 
 ### B. `acceptEdits` + sandboxed Bash
@@ -260,7 +260,7 @@ was decided.
 ### Phase 3 — decide the execution boundary (operator, with SEC-A1)
 
 Phases 1 and 2 make the loop work and make it observable. Neither removes the
-fact that an autonomous turn runs as clawd-a in the docker group. That is
+fact that an autonomous turn runs as <service-user> in the docker group. That is
 SEC-A1 and it is a product decision, now with a concrete menu:
 
 - keep it local and accept the residual risk, with sandbox plus deny list as

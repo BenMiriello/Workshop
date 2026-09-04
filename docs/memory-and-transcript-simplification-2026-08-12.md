@@ -215,7 +215,7 @@ The direction inverts. Nothing is guessed at and inserted; the agent asks.
 
 ## 6. The one thing that is the operator's call
 
-**Does the Notes vault (`~/notes`, 965 files) go in the index?**
+**Does the Notes vault (`$WORKSHOP_NOTES_VAULT`, 965 files) go in the index?**
 
 It is the only store with a clear human owner and a clear purpose, and it is
 personal rather than platform. My recommendation is **not by default**: index it

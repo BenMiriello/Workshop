@@ -76,7 +76,7 @@ What is actually on disk:
 | build agents | `agents.py:755`, full recursive walk | `:781` | `:793` |
 | documents | `docs_index.py:95`, flat `rglob` of `docs/` | `:152` any `.md` in the tree | `:169` `docs/` only |
 
-Plus `notes_vault.py` (the Notes app's `~/notes`), `knowledge.py` (scoped notes), and `stores.py`.
+Plus `notes_vault.py` (the Notes app's `$WORKSHOP_NOTES_VAULT`), `knowledge.py` (scoped notes), and `stores.py`.
 
 So the backend work is **consolidation, not greenfield**, and the first rule of this design is that
 it must not add a fifth. `app_files.py` is the best-reasoned of the four: it refuses to invent a

@@ -116,7 +116,8 @@ no shell edit.
 ## Per-instance data (never tracked)
 
 Instance state lives under `.runtime/` (gitignored) so a clone inherits none of
-it. De-hardcoded from `$HOME/...` to home-relative defaults, overridable:
+it. De-hardcoded from an absolute path under the operator's home to
+home-relative defaults, overridable:
 
 | Data | Location | Override |
 |---|---|---|

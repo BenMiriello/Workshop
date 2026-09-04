@@ -78,7 +78,7 @@ is decorative, which is exactly what happened here.
 ## Consequences
 
 The substrate count goes from eleven to four the platform owns (notes,
-learnings, index, episodes) plus two it reads and does not own (the `~/notes`
+learnings, index, episodes) plus two it reads and does not own (the `$WORKSHOP_NOTES_VAULT`
 vault, `docs/`). `memory_tree`, `memory_promotion` and the learnings promotion
 lobe are deleted rather than left to be rediscovered. Letta's 23 orphaned memory
 blocks are exported to notes before its wiring is removed, so decommissioning

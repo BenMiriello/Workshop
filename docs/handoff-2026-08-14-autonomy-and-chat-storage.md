@@ -196,7 +196,7 @@ same thread**, rather than relying on similarity.
 1. **The permission mode for the autonomous loop.** The one-line fix is
    `--permission-mode bypassPermissions`. It is documented at the call site in
    `ralph.sh` and deliberately **not applied**, because SEC-A1 records that an
-   autonomous turn already runs as clawd-a, in the docker group, unsandboxed,
+   autonomous turn already runs as <service-user>, in the docker group, unsandboxed,
    with full tree write and the OAuth token, and that flag is what makes it
    reachable. The auto-mode classifier also blocked the shell the moment the
    file contained it, which is the same objection.

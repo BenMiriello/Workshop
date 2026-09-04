@@ -20,8 +20,8 @@ Three durable stores, three different failure modes:
 
 - `workshop`: **95 notes** (`shared/knowledge/*.md`)
 - `development`: **34 notes** (`shared/knowledge/development/`)
-- `agent:masini`: 2 notes (`.runtime/agents/masini/knowledge/`)
-- `agent:masini-commute`: 2 notes
+- `agent:<bridge-agent>`: 2 notes (`.runtime/agents/<bridge-agent>/knowledge/`)
+- `agent:<bridge-agent>-commute`: 2 notes
 - `project:commute`: 1 note
 - `project:development`: 1 note
 - `role:reviewer`: 1 note (`shared/knowledge/roles/reviewer/`)
@@ -237,13 +237,13 @@ claims and what is actually true at HEAD. Nothing here was deleted.
 
 **Agent scopes**
 
-- `.runtime/agents/masini/knowledge/letta-human.md` and
-  `.runtime/agents/masini-commute/knowledge/letta-human.md`. Both are
-  byte-identical copies of the `clawd-a` user-scope `CLAUDE.md`, frozen at the
+- `.runtime/agents/<bridge-agent>/knowledge/letta-human.md` and
+  `.runtime/agents/<bridge-agent>-commute/knowledge/letta-human.md`. Both are
+  byte-identical copies of the `<service-user>` user-scope `CLAUDE.md`, frozen at the
   2026-08-16 Letta export. That file reloads from disk on every compaction, so
   these are a snapshot of something that moves.
-- `.runtime/agents/masini-commute/knowledge/letta-persona.md`. Mislabelled: the
-  "persona" block for the **commute** agent is the whole masini **bridge**
+- `.runtime/agents/<bridge-agent>-commute/knowledge/letta-persona.md`. Mislabelled: the
+  "persona" block for the **commute** agent is the whole <bridge-agent> **bridge**
   CLAUDE.md. It also asserts a live-state table as authoritative ("Gmail
   connected, Calendar needs OAuth") and a model ("Opus 4.7, 1M context") from a
   system outside this tree. Treat as an archive artifact, not as current state.
@@ -437,10 +437,10 @@ Every note, one line. `[W]` = workshop scope, `[D]` = development, others named.
 
 **Per-agent and per-project**
 
-- `[agent:masini] letta-persona` supervisor persona, Letta export 2026-08-16.
-- `[agent:masini] letta-human` copy of the clawd-a user-scope CLAUDE.md.
-- `[agent:masini-commute] letta-persona` MISLABELLED, it is the bridge CLAUDE.md.
-- `[agent:masini-commute] letta-human` second copy of the same CLAUDE.md.
+- `[agent:<bridge-agent>] letta-persona` supervisor persona, Letta export 2026-08-16.
+- `[agent:<bridge-agent>] letta-human` copy of the <service-user> user-scope CLAUDE.md.
+- `[agent:<bridge-agent>-commute] letta-persona` MISLABELLED, it is the bridge CLAUDE.md.
+- `[agent:<bridge-agent>-commute] letta-human` second copy of the same CLAUDE.md.
 - `[project:commute] user-note-july-23-mryacgeo` operator wants a near-home train alert, partially buildable now.
 
 ---
@@ -458,7 +458,7 @@ content is "loop verified through the chat". Test residue in the ADR directory.
 - [0003](decisions/0003-github-is-per-project-binding.md) accepted. GitHub is a per-project repo binding on the operator's personal account. Under pressure from `app-is-the-entity-2026-08-20.md`, which retires Project as an entity.
 - [0008](decisions/0008-autonomy-override-semantics.md) accepted. Autonomy override is a file-flag overlay, not a per-agent mutation.
 - [0009](decisions/0009-single-canonical-status-source.md) accepted. One canonical status source per run. Extended in prose by `lease-and-status-authority-2026-08-24.md` and `work-status-contract-2026-08-24.md`.
-- [0010](decisions/0010-notes-vault-is-read-only-to-agents.md) accepted. The `~/notes` vault is read-only to agents.
+- [0010](decisions/0010-notes-vault-is-read-only-to-agents.md) accepted. The `$WORKSHOP_NOTES_VAULT` vault is read-only to agents.
 - [0012](decisions/0012-color-schemes-are-generated-status-is-fixed.md) accepted. Schemes are generated from one model, status color is fixed across them. The mechanism held while the note listing the five names did not.
 - [0013](decisions/0013-public-autodeploy-is-pre-launch.md) accepted. Committing to main publishes; treat that as pre-launch, not production.
 - [0014](decisions/0014-developer-mode-gates-the-resolved-directory.md) accepted. Developer mode gates the resolved directory, not the scope name.

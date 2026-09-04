@@ -56,8 +56,8 @@ is armed. The word survives in the interface; the second entity does not.
 - `memory-keeper` specifically. Its own definition body says "the actual work is
   deterministic and is performed by `scripts/memory_keeper_run.sh`". It is a
   cron script wearing an agent costume. The script stays, as a scheduled job in
-  Settings; the costume goes. Same for `masini` (its Discord trigger has been
-  unroutable since it was written) and `masini-commute` (`role: None`).
+  Settings; the costume goes. Same for `<bridge-agent>` (its Discord trigger has been
+  unroutable since it was written) and `<bridge-agent>-commute` (`role: None`).
 
 ---
 

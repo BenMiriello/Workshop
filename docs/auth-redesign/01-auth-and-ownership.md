@@ -72,7 +72,7 @@ revocable.
 | budget | `.runtime/budget.json`, `.runtime/txn-overrides.json` | Key by owner (per-owner file or `owner_id`); gate + filter. |
 | finance | Plaid live + `finance_cache` | Plaid items must belong to an owner: add `owner_id` to the Plaid item/link records; filter balances/txns by owner. |
 | chat | `.runtime/chat/<thread>.json` | Add `owner_id` to thread; list/read/write filter by owner. |
-| birds | `~/birdnet/data/browser-stations.db` | Model EXISTS (`owner_user_id`, `viewer_id` contextvar, friends). Activate it on the main mount: set viewer from `current_user`; stop defaulting to `None` (= see-all). |
+| birds | `<rig-data>/browser-stations.db` | Model EXISTS (`owner_user_id`, `viewer_id` contextvar, friends). Activate it on the main mount: set viewer from `current_user`; stop defaulting to `None` (= see-all). |
 | environment | `environment.db` | Low sensitivity (weather/astro), but tie to owner or mark explicitly shared-non-personal. |
 
 Migration assigns all existing rows `owner_id = operator.id` (see `03-execution-plan.md`).

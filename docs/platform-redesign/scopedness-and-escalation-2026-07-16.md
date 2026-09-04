@@ -1540,7 +1540,7 @@ last. The critical path to delivering C1/C3 is E1 -> E2, which is small.
    `agent`, minted via `attenuate()` (`permissions.py:647`)** (5.4). Flagged for
    cross-report reconciliation: only Phase E5 depends on it.
 
-5. **Does the interface contract cover the out-of-tree `~/notes` vault?** Out of scope
+5. **Does the interface contract cover the out-of-tree `$WORKSHOP_NOTES_VAULT` vault?** Out of scope
    here, noted because E5's gate would need to know. **Recommend: no.** ADR 0002 keeps it
    separate; the escalation loop covers knowledge scopes and Stores.
 

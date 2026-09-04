@@ -12,7 +12,7 @@ change about it.**
 
 Revision note: the first draft of this doc put `development` underneath
 `workshop`, which was wrong and is corrected in §4.1. It also designed around the
-`~/notes` vault without looking inside it; §9 records what is actually there.
+`$WORKSHOP_NOTES_VAULT` vault without looking inside it; §9 records what is actually there.
 Every file:line, count and timing below was measured on 2026-08-14.
 
 ---
@@ -477,7 +477,7 @@ One tool, `search`, replacing the current pair:
 ## 9. The vault: what it actually is, and why it leaves the design
 
 The first draft carried a "unify the vault surface" workstream on the strength of
-ADR 0010 calling `~/notes` the operator's personal Obsidian vault. Looking inside
+ADR 0010 calling `$WORKSHOP_NOTES_VAULT` the operator's personal Obsidian vault. Looking inside
 it:
 
 - 964 of the 965 files are under `Apple Notes/Notes/`, a **one-time Apple Notes
@@ -595,4 +595,4 @@ before the mechanism is policy written against a guess.
 - Automatic chat distillation: retired in Phase 0 and NOT rebuilt here. If it
   returns it returns on top of §5's per-fact provenance model, which is the
   "proper design" it was deferred to on 2026-08-12.
-- The `~/notes` vault, per §9.
+- The `$WORKSHOP_NOTES_VAULT` vault, per §9.

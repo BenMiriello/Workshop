@@ -62,7 +62,7 @@ false**, and the reason is the platform's own repo:
   explicitly not an App: `backend/services/app_links.py:45` excludes it as
   `_SELF_PROJECT_SLUG`.
 - `workshop` has no app record and no project entry either.
-- `role:reviewer`, `agent:masini` and `global` correspond to no app by design.
+- `role:reviewer`, `agent:<bridge-agent>` and `global` correspond to no app by design.
 
 So Scope is a **superset** of App and cannot fold into it. Scope is also not
 derived: it is authored by hand in at least six pickers, including a free-text
@@ -405,11 +405,11 @@ Every count below is measured, not inferred.
 
 ### 9.5 A named-app dependency the purity gate cannot see
 
-**FIXED 2026-08-27.** `~/notes` WAS hardcoded in platform source:
+**FIXED 2026-08-27.** `$WORKSHOP_NOTES_VAULT` WAS hardcoded in platform source:
 `services/permissions.py:86` (`NOTES_VAULT_ROOT`, module-level, a folder name
 joined onto `Path.home()`),
 `services/stores.py:292`, `services/notes_vault.py:31`. It is operator-visible
-(`Memory.tsx:1381` renders `~/notes` and names Obsidian) and model-visible
+(`Memory.tsx:1381` renders `$WORKSHOP_NOTES_VAULT` and names Obsidian) and model-visible
 (`workshop_query_server.py:85`).
 
 `scripts/check_no_app_names.py` **does not count any of it**, for three

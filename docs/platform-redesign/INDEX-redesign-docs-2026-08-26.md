@@ -851,13 +851,13 @@ is 0 against 2.2G on disk.
   - Rebuild the three surfaces to the design's drawn geometry rather than
     re-deriving them from our own primitives. The PNGs win on appearance.
 - [`navigation-shell-source/`](navigation-shell-source/) (3 tracked files; the three
-  session transcripts moved to the untracked `docs/masini/` on 2026-08-27)
+  session transcripts moved to the untracked `docs/instance-audits/` on 2026-08-27)
   - HISTORICAL (declared: "Nothing here was built, and several parts describe a
     system that does not exist"). BUILT: NOT.
   - Verbatim input the two shell docs were derived from, preserved for wording.
     `README.md` is the map; `HANDOFF.md` is the fullest single statement but its
     §3 bar-one was reversed later in the same file; the three transcripts (moved
-    2026-08-27 to the untracked `docs/masini/`, being raw operator dictation)
+    2026-08-27 to the untracked `docs/instance-audits/`, being raw operator dictation)
     have the six navigation patterns and the dock choice, motion/per-app
     memory/branch-picker reversals, and a session reconstructed from an operator
     paste after a usage limit; `workshop-shell-mockup.dc.html` is the

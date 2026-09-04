@@ -158,7 +158,7 @@ conventional answer in 25.
 ### 1.9 "It is not on my screen." (9 messages)
 
 - 2026-08-26, `05496adf`: "i'm reloading. its not live. on
-  workshop.benmiriello.com." / "its the same as before. i reloaded. nothing is
+  $WORKSHOP_PUBLIC_ORIGIN." / "its the same as before. i reloaded. nothing is
   different." / "bro how could you not even check if what you built was
   accessible or served or not? what else are you not checking or considering if
   that didnt even cross your mind?"

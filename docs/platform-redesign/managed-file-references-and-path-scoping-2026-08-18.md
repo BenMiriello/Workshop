@@ -300,7 +300,7 @@ reviewer gate, not by self-report.
 - Full backend suite green; `apply.sh --check` in sync.
 
 **Layer 1 — scoped execution ([SEC-A1]).**
-- A chat/autonomy turn runs under a dedicated non-`clawd-a` sub-user without the docker
+- A chat/autonomy turn runs under a dedicated non-`<service-user>` sub-user without the docker
   group, inside a filesystem view where only the turn's `scope_root` is reachable at a
   fixed mountpoint.
 - Proof by test AND attended live check: from inside a turn, `cat` of an out-of-scope
@@ -367,7 +367,7 @@ build agent's:
   reachable inside the sandbox while everything outside `scope_root` is not. That is a
   deliberate, attended build, not a tail-end bolt-on.
 
-Also live-relevant: `clawd-a` is not in the `docker` group on this host (the rootless
+Also live-relevant: `<service-user>` is not in the `docker` group on this host (the rootless
 docker migration), which softens part of [SEC-C1]/[SEC-A1] but does not replace the
 execution identity.
 
@@ -392,7 +392,7 @@ before the default flipped (`a955879`).
 **Two gaps in the shipped grant set found and fixed same-day, uid-layer
 review.** Neither depended on the uid layer being on; both were live holes in
 Layer 1 alone: `_grants()` bound the WHOLE `$XDG_RUNTIME_DIR` read-write,
-which contains `docker.sock` (`clawd-a` is a member of the group that owns
+which contains `docker.sock` (`<service-user>` is a member of the group that owns
 it) — reachable from inside every scoped turn despite Layer 1's own
 acceptance criterion saying it must not be. Narrowed to the two paths
 `systemctl --user` actually needs (`<xdg>/systemd`, `<xdg>/bus`). Separately,
@@ -412,7 +412,7 @@ uid owns the pid — the same mechanism the uid layer below depends on.
 gated by its own flag (`WORKSHOP_TURN_USER`, unset = off) that FAILS CLOSED
 rather than degrading: a missing account/wrapper/sudo raises
 `TurnUserUnavailable` and ends the turn, never silently spawns it as
-`clawd-a`. `build_streaming.py`'s spawn, retire, kill, liveness and
+`<service-user>`. `build_streaming.py`'s spawn, retire, kill, liveness and
 `session_alive` paths all thread the uid actually used (recorded at spawn
 time in `meta`/`Turn`, not recomputed later) so Stop, the memory watchdog and
 restart-adoption keep working across the uid boundary — none of that composes
@@ -422,15 +422,15 @@ pre-existing `except Exception: pass` around them would have swallowed that
 and silently done nothing, leaking the process and making Stop a no-op.
 
 **The `~/.claude` ownership question.** A bind mount does not change
-ownership, so binding `clawd-a`'s `~/.claude` (mode 0700, containing
+ownership, so binding `<service-user>`'s `~/.claude` (mode 0700, containing
 `.credentials.json`) into a turn running as a different uid grants nothing
 there except the credential a looser mode would have exposed. Resolution: the
 turn-user gets its OWN home (`/var/lib/workshop-turn`, created by
 `scripts/setup_turn_user.sh`), and only the two world-readable policy files
-(`CLAUDE.md`, `settings.json`) are individually ro-bound in from `clawd-a`'s
+(`CLAUDE.md`, `settings.json`) are individually ro-bound in from `<service-user>`'s
 real `~/.claude` — never the directory itself. Write access to a scope (a
 turn-created file changes owner otherwise) is `workshop-turn` joining
-`clawd-a`'s group plus setgid + `umask 002` on both sides, not ACLs (POSIX
+`<service-user>`'s group plus setgid + `umask 002` on both sides, not ACLs (POSIX
 ACL masks silently degrade `u:x:rwx` to the create mode on many filesystems)
 and not loosening the scope's own owner.
 
@@ -450,7 +450,7 @@ confirmed a real turn still works.
 caller's real uid (`SO_PEERCRED`); it cannot be delegated across a `sudo -u`
 boundary. `apply.sh`, which every dev-turn instruction tells an agent to run
 after a change, needs exactly that. So `scoped_exec.turn_user()` returns
-`None` — runs as `clawd-a`, uid layer off — for a turn whose scope root is the
+`None` — runs as `<service-user>`, uid layer off — for a turn whose scope root is the
 platform's own repo, even with the flag set and the account fully valid,
 rather than shipping a flag nobody could leave on. A small apply broker (a
 socket the backend listens on, on behalf of a turn that cannot restart itself)

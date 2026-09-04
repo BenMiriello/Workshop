@@ -6,7 +6,7 @@ Status: proposal for operator decision · Date: 2026-07-12 · Branch: `simonsays
 
 Two supervisors run this box, with overlapping jobs:
 
-**control-panel** (`~/Documents/control-panel`, config in
+**control-panel** (`<documents>/control-panel`, config in
 `~/.config/control-panel/services.json`) wraps systemd `--user`. Each service is a
 templated unit `control-panel@<name>.service` with an EnvironmentFile
 (`src/core/services/lifecycle.py` shells out to `systemctl --user`). It gives:
@@ -16,7 +16,7 @@ CLI (`register/edit/start/stop/ps/logs`) plus a Flask web UI. It manages ~24
 registrations today, including Workshop itself (`workshop-backend` :8010,
 `workshop-public` :8012).
 
-**Workshop** (`~/Documents/workshop`) contains its own runtime layer, built and
+**Workshop** (`<documents>/workshop`) contains its own runtime layer, built and
 live-verified (`docs/app-platform-runner.md`):
 
 - `backend/services/app_runner.py` — runs a project as an app of N services from a

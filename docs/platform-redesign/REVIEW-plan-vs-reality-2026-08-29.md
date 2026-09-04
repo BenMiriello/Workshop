@@ -753,7 +753,7 @@ same mechanism, a symbol deleted or moved without its tests:
 `8e78ef0d`, a compaction commit, and is very likely collateral from the same
 deletion; it could not be confirmed here because it hangs intermittently.
 `test_dev_mode_gate.py` (5 failures) fails on
-`assert PosixPath('/home/clawd-a/workshop') is None` and `assert 404 == 403`,
+`assert PosixPath('~/workshop') is None` and `assert 404 == 403`,
 which is the ADR-0014 dev gate, the same area as this week's `dev_only` work.
 
 **The bottom line: the suite is 47 red and has been drifting redder all week

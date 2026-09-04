@@ -75,7 +75,7 @@ service and runner (R2), and the templates, groups and adoption path (R3).
   this instance.
 - `find .runtime -iname '*triage*'` returns nothing. `.runtime/trigger-state.json`
   carries zero `triage:` keys. There is no `.runtime/triager/` directory.
-- The only `role: triager` on the instance is `masini`, whose trigger is disabled with
+- The only `role: triager` on the instance is `<bridge-agent>`, whose trigger is disabled with
   `disabled_reason: "discord trigger has no channels"`.
 - `memory-keeper` runs from a crontab line that is commented out, and there is no
   crontab installed on this machine at all. Its watermark reads `2026-07-18T18:00:01Z`:

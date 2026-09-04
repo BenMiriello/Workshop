@@ -41,8 +41,48 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 from wsplatform import paths
+from services import model_prices, token_usage
 
 WINDOW_S = 5 * 3600  # rolling 5-hour window, matching Claude's usage windows
+
+# Row schema version. v1 rows carry a total and nothing else; v2 rows carry the
+# four raw components, the model, and the price version, which is what makes a
+# past row re-evaluable under a different weight or price table.
+ROW_VERSION = 2
+
+COMPONENT_KEYS = ("input", "cache_read", "cache_creation", "output")
+
+# What the `tokens` column HOLDS. Named rather than assumed, because for months
+# it held three incompatible quantities at once and they were summed.
+#
+#   effective       rate-limit shaped: cache reads at token_usage.CACHE_READ_WEIGHT.
+#                   This is what admission compares against, and it is the unit
+#                   the worker has always written. Every v2 writer writes it, so
+#                   the window is one unit for the first time.
+#   spend           volume billed: all four components at parity, over CALLS.
+#   raw-frames      v1 chat rows: a sum over stream FRAMES, so duplicated per
+#                   content block AND counting cache reads at parity. Not
+#                   convertible to anything; roughly an order of magnitude above
+#                   `effective` on the same work.
+#   estimate        a chars/4 guess, from a writer that gets no usage block back.
+#   unknown         a v1 row whose writer we cannot identify from its role.
+UNIT_EFFECTIVE = "effective"
+UNIT_SPEND = "spend"
+UNIT_RAW_FRAMES = "raw-frames"
+UNIT_ESTIMATE = "estimate"
+UNIT_UNKNOWN = "unknown"
+
+# Which unit a PRE-v2 row must have been written in, inferred from its role.
+# This is inference about writers we can read, not a guess: `build_streaming`
+# summed frames for role="chat", `ralph.sh` weighted cache reads at 0.1 for
+# role="worker" and role="reviewer", and the compaction path in `routes/chat.py`
+# has never had a usage block to parse.
+_V1_UNIT_BY_ROLE = {
+    "chat": UNIT_RAW_FRAMES,
+    "worker": UNIT_EFFECTIVE,
+    "reviewer": UNIT_EFFECTIVE,
+    "compaction": UNIT_ESTIMATE,
+}
 
 # Roles whose spend does NOT count toward the autonomous admission ceiling.
 # Interactive chat is never gated by admission, so counting it there let the
@@ -139,7 +179,12 @@ def fmt_tokens(n: float) -> str:
 def record(project: str | None, tokens: int, *, agent: str | None = None,
            job_id: str | None = None, ts: str | None = None,
            task_id: str | None = None, run: str | None = None,
-           role: str | None = None, chat: str | None = None) -> None:
+           role: str | None = None, chat: str | None = None,
+           components: dict | None = None, model: str | None = None,
+           calls: int | None = None, source: str | None = None,
+           unit: str | None = None, cost_usd: float | None = None,
+           models: dict | None = None,
+           vendor_cost_usd: float | None = None) -> None:
     """Append one usage entry. `project` is the scope the tokens are billed to
     (None -> "unbound"). Safe for concurrent shell + backend writers (append is
     atomic for small lines).
@@ -147,7 +192,24 @@ def record(project: str | None, tokens: int, *, agent: str | None = None,
     Optional attribution (all backward-compatible; older entries omitting them
     still load): `task_id` (the ticket the spend served), `run` (the Job/attempt
     id), and `role` ("worker" | "reviewer") so the same scope's worker and
-    auxiliary reviewer spend are distinguishable for postmortems. (research rec 3)"""
+    auxiliary reviewer spend are distinguishable for postmortems. (research rec 3)
+
+    `components` IS THE LOAD-BEARING ADDITION and the reason for `v: 2`.
+    `tokens` is a DERIVED field: it is whichever of the four quantities in
+    `services/token_usage` this writer chose, and a total cannot be revisited.
+    Storing the four raw components means a past row can be re-evaluated under a
+    different weight or a different price table by replaying the file, which is
+    precisely what could not be done with the 6.5 billion tokens of pre-v2
+    history: there is no arithmetic that recovers components from a sum, and the
+    journals they came from are pruned ten turns at a time.
+
+    `model` and `price_version` exist so `cost_usd` is recomputable rather than
+    frozen. The version stamped here is the table in force at WRITE time, so a
+    later price change adds a table and never rewrites what an old row cost.
+
+    THE POSITIONAL `(project, tokens)` SIGNATURE IS LOAD-BEARING. A test
+    monkeypatches it positionally on purpose and several call sites use it that
+    way; everything added here is keyword-only."""
     entry = {
         "ts": ts or _ts_iso(),
         "project": project or "unbound",
@@ -167,12 +229,130 @@ def record(project: str | None, tokens: int, *, agent: str | None = None,
     # interactive turns (role="chat"); autonomous sweeps leave it absent.
     if chat:
         entry["chat"] = chat
+    comp = _clean_components(components)
+    if comp is not None:
+        entry["v"] = ROW_VERSION
+        entry["components"] = comp
+        entry["unit"] = unit or UNIT_EFFECTIVE
+        if model:
+            entry["model"] = model
+            entry["price_version"] = model_prices.CURRENT_VERSION
+        # PER-MODEL COMPONENTS, when the envelope reported them. A turn that
+        # delegates to a cheaper model spends on two price sheets, and one
+        # `model` label on a summed row prices the whole thing at whichever
+        # model happened to be larger. With this the row prices exactly.
+        clean_models = _clean_model_map(models)
+        if clean_models:
+            entry["models"] = clean_models
+            entry.setdefault("price_version", model_prices.CURRENT_VERSION)
+        # The vendor's OWN dollar figure, kept beside ours rather than instead
+        # of it. Ours is recomputable under a corrected table; theirs is the
+        # truth on the day. On four real turns they agreed to the last decimal
+        # (see tests/test_model_prices.py), so a disagreement is a signal that
+        # the table has drifted, and it can only be seen if both are stored.
+        if vendor_cost_usd is not None:
+            try:
+                entry["vendor_cost_usd"] = round(float(vendor_cost_usd), 8)
+            except (TypeError, ValueError):
+                pass
+        if calls is not None:
+            try:
+                entry["calls"] = max(0, int(calls))
+            except (TypeError, ValueError):
+                pass
+        # WHICH SOURCE THE ROW USED, never an `or` that hides the choice. The
+        # CLI's `result` envelope and the deduplicated frame sum disagreed by 3x
+        # on the one turn where both were seen, and the reason is unverified. A
+        # row that names its source can be re-read once that is settled; a row
+        # that silently picked one cannot.
+        if source:
+            entry["source"] = source
+        if cost_usd is None:
+            cost_usd = _price_components(comp, model, clean_models)
+        if cost_usd is not None:
+            try:
+                entry["cost_usd"] = round(float(cost_usd), 6)
+            except (TypeError, ValueError):
+                pass
+    elif unit:
+        # No components (a chars/4 estimate, say). Still say what the number is,
+        # so an estimate is never mistaken for a measurement.
+        entry["unit"] = unit
     LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LEDGER_PATH.open("a") as f:
         f.write(json.dumps(entry) + "\n")
 
 
+def _clean_components(components: dict | None) -> dict[str, int] | None:
+    """The four named component counts, or None if nothing usable was passed.
+
+    Tolerant for the same reason `token_usage.parse` is: this arrives from
+    another process through a JSON file, and a surprising shape must yield "no
+    components" rather than an exception on a turn the operator already had."""
+    if not isinstance(components, dict):
+        return None
+    out: dict[str, int] = {}
+    for k in COMPONENT_KEYS:
+        try:
+            v = int(components.get(k) or 0)
+        except (TypeError, ValueError):
+            v = 0
+        out[k] = v if v > 0 else 0
+    return out if any(out.values()) else None
+
+
+def _clean_model_map(models: dict | None) -> dict[str, dict[str, int]] | None:
+    """`{model_id: components}` with every component validated, or None."""
+    if not isinstance(models, dict):
+        return None
+    out: dict[str, dict[str, int]] = {}
+    for mid, comp in models.items():
+        if not isinstance(mid, str) or not mid:
+            continue
+        c = _clean_components(comp if isinstance(comp, dict) else None)
+        if c:
+            out[mid] = c
+    return out or None
+
+
+def _price_components(components: dict | None, model: str | None,
+                      models: dict | None = None) -> float | None:
+    """Dollars for a row's components, priced per model where we have that.
+
+    Returns None when NOTHING can be priced. A partially priceable row — two
+    models, one of them absent from the table — returns the priced part, which
+    is an undercount and is reported as such by the `unpriced_*` counters
+    beside it, because dropping the whole row would be a larger error than
+    reporting the part we can defend."""
+    if models:
+        total = 0.0
+        priced = False
+        for mid, comp in models.items():
+            c = model_prices.cost_usd(comp, mid)
+            if c is not None:
+                total += c
+                priced = True
+        return total if priced else None
+    if components and model:
+        return model_prices.cost_usd(components, model)
+    return None
+
+
 def _read_entries() -> list[dict]:
+    """Every ledger row, NORMALIZED so a caller never has to guess a row's unit.
+
+    A row written before components existed carries no `v` and no `unit`, and
+    its `tokens` column holds a different quantity depending on which writer
+    produced it: chat summed raw usage over stream FRAMES (inflated ~2x by
+    duplicates and ~7x by counting cache reads at parity), the worker already
+    weighted cache reads at 0.1, and compaction stored a chars/4 estimate. They
+    were added together for months.
+
+    NOTHING IS RESCALED HERE. The measured chat-to-weighted factor is 11.8x-13.6x
+    on two turns, which is a measurement and not a constant, and multiplying by
+    it would produce a number that looks recoverable and is not. The unit is
+    NAMED instead, and `window_usage(unit=...)` refuses to add what it cannot
+    express, reporting the remainder separately. A visible gap is honest."""
     if not LEDGER_PATH.exists():
         return []
     out: list[dict] = []
@@ -181,10 +361,84 @@ def _read_entries() -> list[dict]:
         if not line:
             continue
         try:
-            out.append(json.loads(line))
+            e = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if isinstance(e, dict):
+            out.append(_normalize_row(e))
     return out
+
+
+def _normalize_row(e: dict) -> dict:
+    """One raw row with `v` and `unit` filled in from what it must have been."""
+    if not e.get("v"):
+        e["v"] = 1
+    if not e.get("unit"):
+        e["unit"] = _V1_UNIT_BY_ROLE.get(e.get("role") or "", UNIT_UNKNOWN)
+    return e
+
+
+def row_tokens(row: dict, unit: str | None = None) -> int | None:
+    """`row`'s token count expressed in `unit`, or None if it cannot be.
+
+    `unit=None` returns the stored number verbatim, which is what every reader
+    did before units were named and is what the reporting views still want when
+    they are not making a cross-unit claim.
+
+    A v2 row can be expressed in ANY unit, because it stored the components. A
+    v1 row can only be expressed in the one unit it was written in."""
+    try:
+        stored = int(row.get("tokens") or 0)
+    except (TypeError, ValueError):
+        stored = 0
+    if unit is None:
+        return stored
+    comp = row.get("components")
+    if isinstance(comp, dict):
+        u = token_usage.Usage(
+            input=int(comp.get("input") or 0),
+            cache_read=int(comp.get("cache_read") or 0),
+            cache_creation=int(comp.get("cache_creation") or 0),
+            output=int(comp.get("output") or 0))
+        if unit == UNIT_EFFECTIVE:
+            return token_usage.effective(u)
+        if unit == UNIT_SPEND:
+            return token_usage.spend(u)
+        return None
+    return stored if row.get("unit") == unit else None
+
+
+def row_cost_usd(row: dict) -> float | None:
+    """What `row` cost in dollars, or None if it cannot be priced.
+
+    Recomputed from the stored components at the row's OWN price version rather
+    than trusting the stored figure, so a corrected price table fixes history in
+    place. The stored `cost_usd` is kept as the vendor's own answer where one
+    was reported and is preferred only when there are no components to price."""
+    models = row.get("models")
+    if isinstance(models, dict) and models:
+        total = 0.0
+        priced = False
+        for mid, comp in models.items():
+            c = model_prices.cost_usd(comp, mid, row.get("price_version"))
+            if c is not None:
+                total += c
+                priced = True
+        if priced:
+            return total
+    comp = row.get("components")
+    model = row.get("model")
+    if isinstance(comp, dict) and model:
+        c = model_prices.cost_usd(comp, model, row.get("price_version"))
+        if c is not None:
+            return c
+    raw = row.get("cost_usd")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def usage_for_jobs(job_ids: list[str] | set[str]) -> dict[str, int]:
@@ -237,25 +491,89 @@ def window_rows(now: datetime | None = None, window_s: int = WINDOW_S,
             "project": e.get("project", "unbound"),
             "role": e.get("role"),
             "tokens": int(e.get("tokens") or 0),
+            # Carried through so a caller can re-express or price the row
+            # without a second pass over the file.
+            "v": e.get("v"),
+            "unit": e.get("unit"),
+            "components": e.get("components"),
+            "models": e.get("models"),
+            "model": e.get("model"),
+            "price_version": e.get("price_version"),
+            "cost_usd": e.get("cost_usd"),
+            "vendor_cost_usd": e.get("vendor_cost_usd"),
         })
     rows.sort(key=lambda r: r["t"])
     return rows
 
 
 def window_usage(now: datetime | None = None, window_s: int = WINDOW_S,
-                 exclude_roles: Iterable[str] | None = None) -> dict:
+                 exclude_roles: Iterable[str] | None = None,
+                 unit: str | None = None) -> dict:
     """Token usage over the trailing window: app-wide total + per-project.
 
     `exclude_roles` drops rows whose `role` is in the set. Default None counts
     everything; `can_admit` and the reporting headline both pass
     ADMISSION_EXCLUDED_ROLES so the figure on the screen is the figure the guard
-    used."""
+    used.
+
+    `unit` REFUSES TO ADD WHAT IT CANNOT EXPRESS. Passing one restricts the sum
+    to rows expressible in that unit and returns the rest under `unconvertible`,
+    which the Usage page can show as "before the meter was fixed". Passing None
+    keeps the historical behaviour of summing the stored column verbatim, which
+    is what every existing caller wants and which is honest only because the
+    same rows are what every existing threshold was set against."""
     by_project: dict[str, int] = {}
     total = 0
+    unconvertible = 0
+    unconvertible_rows = 0
     for r in window_rows(now, window_s=window_s, exclude_roles=exclude_roles):
-        by_project[r["project"]] = by_project.get(r["project"], 0) + r["tokens"]
-        total += r["tokens"]
-    return {"app": total, "by_project": by_project, "window_s": window_s}
+        n = row_tokens(r, unit)
+        if n is None:
+            unconvertible += int(r["tokens"])
+            unconvertible_rows += 1
+            continue
+        by_project[r["project"]] = by_project.get(r["project"], 0) + n
+        total += n
+    out = {"app": total, "by_project": by_project, "window_s": window_s}
+    if unit is not None:
+        out["unit"] = unit
+        out["unconvertible"] = unconvertible
+        out["unconvertible_rows"] = unconvertible_rows
+    return out
+
+
+def window_spend_usd(now: datetime | None = None, window_s: int = WINDOW_S,
+                     exclude_roles: Iterable[str] | None = None) -> dict:
+    """What the window COST, in dollars, app-wide and per project.
+
+    `unpriced_rows` and `unpriced_tokens` are reported beside the total and are
+    not folded into it. A row is unpriced when it predates components or names a
+    model the price table does not carry, and calling that $0.00 would report a
+    system spending money as spending none. The dollar figure is an estimate of
+    value consumed at published API rates, not an invoice."""
+    by_project: dict[str, float] = {}
+    total = 0.0
+    priced_rows = 0
+    unpriced_rows = 0
+    unpriced_tokens = 0
+    for r in window_rows(now, window_s=window_s, exclude_roles=exclude_roles):
+        c = row_cost_usd(r)
+        if c is None:
+            unpriced_rows += 1
+            unpriced_tokens += int(r["tokens"])
+            continue
+        priced_rows += 1
+        by_project[r["project"]] = by_project.get(r["project"], 0.0) + c
+        total += c
+    return {
+        "app_usd": round(total, 6),
+        "by_project": {k: round(v, 6) for k, v in by_project.items()},
+        "priced_rows": priced_rows,
+        "unpriced_rows": unpriced_rows,
+        "unpriced_tokens": unpriced_tokens,
+        "price_version": model_prices.CURRENT_VERSION,
+        "window_s": window_s,
+    }
 
 
 def window_excluded(now: datetime | None = None, window_s: int = WINDOW_S) -> dict:
@@ -572,6 +890,82 @@ def status(now: datetime | None = None, window_s: int = WINDOW_S) -> dict:
         ),
         "excluded": excluded,
         "projects": projects,
+        # WHAT IT COST, beside what it consumed. Reported for every window,
+        # capped or not, and carrying its own unpriced counts so a gap in the
+        # price table reads as a gap rather than as thrift. Dollars are an
+        # estimate at published API rates, not an invoice, and that is stated
+        # once beside the totals rather than on every figure.
+        "usd": window_spend_usd(now, window_s=window_s,
+                                exclude_roles=ADMISSION_EXCLUDED_ROLES),
+        "usd_excluded": window_spend_usd(
+            now, window_s=window_s,
+            exclude_roles=[r for r in _all_roles(now, window_s)
+                           if r not in ADMISSION_EXCLUDED_ROLES]),
+    }
+
+
+def _all_roles(now: datetime | None, window_s: int) -> list[str]:
+    """Every role present in the window. Used to invert an exclusion set so the
+    excluded spend can be priced with the same function that prices the rest,
+    rather than a second near-copy of it."""
+    return sorted({str(r.get("role") or "")
+                   for r in window_rows(now, window_s=window_s)})
+
+
+def remaining_for_scope(scope: str | None, now: datetime | None = None,
+                        spent_since: int = 0) -> dict:
+    """How much of the autonomous budget `scope` may still spend, right now.
+
+    THE QUESTION `can_admit` CANNOT ANSWER. Admission returns (ok, reason); a
+    run that wants to stop AT the line rather than after crossing it needs a
+    quantity, and the only place one existed was `status()[projects][scope]
+    [remaining]`, which is None on any window but the standard one.
+
+    `spent_since` IS NOT OPTIONAL FOR A LIVE RUN, and leaving it at 0 is the
+    single easiest way to get this wrong. A worker bills the ledger ONCE, when
+    it exits. Mid-run the ledger has never heard of the run, so a bare query is
+    stale by the entire run so far — which for a long task is most of the
+    answer. A caller mid-flight passes what it has spent and is not yet billed
+    for.
+
+    Returns both the app-wide and the per-scope remainder plus `remaining`, the
+    binding one, so a caller compares against a single number and the reason it
+    binds is still legible."""
+    cfg = load_config()
+    usage = window_usage(now, exclude_roles=ADMISSION_EXCLUDED_ROLES)
+    spent = max(0, int(spent_since or 0))
+    app_total = float(cfg.get("app_total") or 0)
+    fraction = _autonomy_budget_fraction(cfg)
+    if app_total <= 0:
+        return {"scope": scope, "uncapped": True, "remaining": None,
+                "app_remaining": None, "scope_remaining": None,
+                "window_s": WINDOW_S, "spent_since": spent}
+    autonomous_ceiling = app_total * fraction
+    app_remaining = max(0.0, autonomous_ceiling - usage["app"] - spent)
+    scope_remaining = None
+    if scope:
+        used_scope = usage["by_project"].get(scope, 0) + spent
+        demanders = set(usage["by_project"]) | set(cfg.get("projects", {})) | {scope}
+        allowance = plan_budgets(usage["by_project"], demanders, cfg).get(scope)
+        if allowance is not None:
+            scope_remaining = max(0.0, float(allowance) - used_scope)
+        ceil = _project_params(cfg, scope).get("ceil")
+        if ceil is not None:
+            by_ceil = max(0.0, float(ceil) - used_scope)
+            scope_remaining = by_ceil if scope_remaining is None else min(
+                scope_remaining, by_ceil)
+    binding = app_remaining if scope_remaining is None else min(
+        app_remaining, scope_remaining)
+    return {
+        "scope": scope,
+        "uncapped": False,
+        "remaining": int(binding),
+        "app_remaining": int(app_remaining),
+        "scope_remaining": None if scope_remaining is None else int(scope_remaining),
+        "autonomous_ceiling": int(autonomous_ceiling),
+        "app_used": int(usage["app"]),
+        "spent_since": spent,
+        "window_s": WINDOW_S,
     }
 
 
@@ -763,17 +1157,169 @@ def _admission(scope: str | None, now: datetime | None = None,
 # CLI shim (for shell writers: python -m services.usage_ledger record ...)
 # ---------------------------------------------------------------------------
 
+def _usage_from_file(path: str) -> dict:
+    """Components + model out of a file holding a CLI result envelope.
+
+    THE TOLERANT LADDER LIVES HERE NOW, not in shell. `ralph.sh` captured
+    `claude -p --output-format json` with `2>&1`, so a stray warning line can
+    land in the file and break a whole-file parse; it grew a three-step parse
+    ladder inline in a `python3 -c` heredoc, and so did the session-id read and
+    the result-text read beside it. One of those three is enough to maintain.
+
+    Returns zeros rather than raising on anything unreadable: a metering read is
+    never allowed to be the thing that fails a run."""
+    out: dict = {"components": None, "model": None, "source": None}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            txt = f.read()
+    except OSError:
+        return out
+    obj = None
+    try:
+        obj = json.loads(txt)
+    except json.JSONDecodeError:
+        for line in txt.splitlines():
+            line = line.strip()
+            if line.startswith("{") and '"usage"' in line:
+                try:
+                    obj = json.loads(line)
+                    break
+                except json.JSONDecodeError:
+                    continue
+        if obj is None:
+            i = txt.find('{"type"')
+            if i >= 0:
+                try:
+                    obj = json.loads(txt[i:])
+                except json.JSONDecodeError:
+                    obj = None
+    if not isinstance(obj, dict):
+        return out
+    return usage_from_envelope(obj)
+
+
+# The `result` envelope keys, camelCase, that hold the same four counts the
+# streaming `usage` block spells in snake_case.
+_MODEL_USAGE_KEYS = {
+    "input": "inputTokens",
+    "output": "outputTokens",
+    "cache_read": "cacheReadInputTokens",
+    "cache_creation": "cacheCreationInputTokens",
+}
+
+
+def usage_from_envelope(obj: dict) -> dict:
+    """Components, per-model breakdown, model and vendor cost from one envelope.
+
+    `modelUsage` IS THE SOURCE ON A RESULT ENVELOPE, AND `usage` IS NOT.
+    Measured 2026-09-04 over every surviving turn journal on this machine: FOUR
+    of four `result` envelopes carry `usage` with all four counts at ZERO, while
+    `modelUsage` on the same line carries the real per-model counts and
+    `total_cost_usd` carries real dollars ($3.01, $3.71, $0.013, $3.15).
+
+    That is not a rounding problem, it is the meter reading zero. Everything
+    that reads `result.usage` bills nothing: `ralph.sh`'s per-iteration parse
+    (so a worker run records 0 tokens and admission compares against an empty
+    window), and `build_streaming`'s `spend_result`, which is why its `or` chain
+    always falls through to the frame sum. `counting-tokens-2026-08-25.md`
+    section 9 asks whether `result.usage` excludes sidechain usage; on this
+    build the answer is narrower and worse — it excludes everything.
+
+    `modelUsage` is also the better source for a second reason: it is keyed BY
+    MODEL, which is exactly what pricing needs, and a turn that delegates to a
+    cheaper model reports both legs separately. Its own `costUSD` per model is
+    the vendor's answer and it is free.
+
+    Falls back to `usage` when there is no `modelUsage` — an `assistant` stream
+    frame has one and not the other."""
+    out: dict = {"components": None, "models": None, "model": None,
+                 "source": None, "vendor_cost_usd": None}
+    mu = obj.get("modelUsage")
+    if isinstance(mu, dict) and mu:
+        models: dict[str, dict] = {}
+        total = token_usage.Usage()
+        for mid, v in mu.items():
+            if not isinstance(v, dict) or not isinstance(mid, str):
+                continue
+            u = token_usage.Usage(**{
+                k: _nonneg(v.get(src)) for k, src in _MODEL_USAGE_KEYS.items()})
+            if u == token_usage.Usage():
+                continue
+            models[mid] = u.as_dict()
+            total = total + u
+        if models:
+            out["models"] = models
+            out["components"] = total.as_dict()
+            out["source"] = "result"
+            # The heaviest leg names the row. A delegate on a cheaper model is
+            # still priced exactly, from `models`; this is only the label.
+            out["model"] = max(models, key=lambda k: sum(models[k].values()))
+    if out["components"] is None:
+        u = obj.get("usage")
+        if isinstance(u, dict):
+            parsed = token_usage.parse(u)
+            if parsed != token_usage.Usage():
+                out["components"] = parsed.as_dict()
+                out["source"] = "result" if obj.get("type") == "result" else "frames"
+                out["model"] = _model_of(obj)
+    try:
+        c = obj.get("total_cost_usd")
+        out["vendor_cost_usd"] = None if c is None else float(c)
+    except (TypeError, ValueError):
+        out["vendor_cost_usd"] = None
+    return out
+
+
+def _nonneg(v: object) -> int:
+    try:
+        n = int(v)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+    return n if n > 0 else 0
+
+
+def _model_of(obj: dict) -> str | None:
+    """The model id a CLI envelope names, wherever it put it.
+
+    An `assistant` frame carries it on the nested `message`. `<synthetic>` is
+    the CLI's own placeholder on records that report no usage at all, and it is
+    not a model."""
+    m = obj.get("model")
+    if not isinstance(m, str) or not m:
+        msg = obj.get("message")
+        m = msg.get("model") if isinstance(msg, dict) else None
+    if isinstance(m, str) and m and m != "<synthetic>":
+        return m
+    return None
+
+
 def _main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="usage_ledger")
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("record")
     r.add_argument("--project", default=None)
-    r.add_argument("--tokens", type=int, required=True)
+    # NOT required any more: with --usage-json the components ARE the input and
+    # the token count is derived from them here, so the 0.1 cache-read weight
+    # stops being restated in shell. Passing --tokens still works and still wins.
+    r.add_argument("--tokens", type=int, default=None)
     r.add_argument("--agent", default=None)
     r.add_argument("--job-id", default=None)
     r.add_argument("--task-id", default=None)
     r.add_argument("--run", default=None)
     r.add_argument("--role", default=None)
+    r.add_argument("--chat", default=None)
+    r.add_argument("--model", default=None)
+    r.add_argument("--calls", type=int, default=None)
+    r.add_argument("--source", default=None)
+    # A file holding either a raw vendor usage block or a whole CLI result
+    # envelope containing one. A FILE and not an argument: a usage block arrives
+    # inside a multi-megabyte JSON envelope, and passing it through argv is how
+    # a shell writer ends up re-implementing the parse.
+    r.add_argument("--usage-json", dest="usage_json", default=None)
+    rem = sub.add_parser("remaining")
+    rem.add_argument("--project", default=None)
+    # What this run has spent and not yet billed. See remaining_for_scope.
+    rem.add_argument("--spent-since", dest="spent_since", type=int, default=0)
     a = sub.add_parser("admit")  # exit 0 = admit, 1 = deny (for shell gating)
     a.add_argument("--project", default=None)
     # A sweep asking on its own behalf passes its coordinator Job id so its own
@@ -783,8 +1329,44 @@ def _main(argv: list[str]) -> int:
     sub.add_parser("prune")
     args = ap.parse_args(argv)
     if args.cmd == "record":
-        record(args.project, args.tokens, agent=args.agent, job_id=args.job_id,
-               task_id=args.task_id, run=args.run, role=args.role)
+        comp = None
+        models = None
+        vendor = None
+        model = args.model
+        calls = args.calls
+        source = args.source
+        if args.usage_json:
+            parsed = _usage_from_file(args.usage_json)
+            comp = parsed["components"]
+            models = parsed["models"]
+            vendor = parsed["vendor_cost_usd"]
+            model = model or parsed["model"]
+            if source is None and comp is not None:
+                source = parsed["source"]
+        tokens = args.tokens
+        if tokens is None:
+            if comp is None:
+                # NOT a silent zero. A caller that asked for a derived count and
+                # got an unreadable envelope must learn that here, because the
+                # alternative is a run that bills nothing and looks free.
+                print(json.dumps({"error": "record needs --tokens or a readable "
+                                           "--usage-json", "tokens": 0}))
+                return 2
+            tokens = token_usage.effective(token_usage.Usage(**comp))
+        record(args.project, tokens, agent=args.agent, job_id=args.job_id,
+               task_id=args.task_id, run=args.run, role=args.role,
+               chat=args.chat, components=comp, model=model, calls=calls,
+               source=source, models=models, vendor_cost_usd=vendor)
+        # Echo what was written so a shell caller can log the derived figure
+        # rather than recomputing it and disagreeing by a token.
+        print(json.dumps({"tokens": int(tokens), "components": comp,
+                          "model": model, "models": models,
+                          "vendor_cost_usd": vendor,
+                          "cost_usd": _price_components(comp, model,
+                                                        _clean_model_map(models))}))
+    elif args.cmd == "remaining":
+        print(json.dumps(remaining_for_scope(args.project,
+                                             spent_since=args.spent_since)))
     elif args.cmd == "admit":
         # The shell reads BOTH: `.reason` is what it logs and puts on the Job's
         # `evidence.halted`, `.refusal` is the structured record under it.

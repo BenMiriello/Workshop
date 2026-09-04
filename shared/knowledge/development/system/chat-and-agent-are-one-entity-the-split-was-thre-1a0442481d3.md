@@ -11,7 +11,7 @@ Researched 2026-08-27 in response to the operator's observation that the chat/ag
 
 **Two record failures found while measuring:**
 - D4 ("agent-initiated messages do not land in the transcript") was decided once, restated as law twice, and is contradicted by three shipped paths (run_report, question_report, background_runs). No doc reconciles it. The rule was drawn on the wrong axis: the requirement is to keep IRRELEVANT senders out, not all senders.
-- `triager` appears in 1 of 11,957 job records, and that job is the one that wrote the doc defining the role. The only declared triager (agents/masini.md) is marked INERT. The routing role the operator says the system is missing has never executed, and cannot, because there is no thread-to-thread send.
+- `triager` appears in 1 of 11,957 job records, and that job is the one that wrote the doc defining the role. The only declared triager (agents/<bridge-agent>.md) is marked INERT. The routing role the operator says the system is missing has never executed, and cannot, because there is no thread-to-thread send.
 
 **External check:** Temporal, Restate, Step Functions, Inngest, Trigger.dev, LangGraph, OpenAI Agents SDK and A2A all model blocked-on-a-human as a STATE of one entity, via the same primitive used to wait on any external party. None ships a distinct human-process type. A2A puts `input-required` in the same TaskState enum as `working`. The lone dissenter is BPMN (User Task vs Service Task as different elements), whose documented cost is exactly the ambiguity being described: escalating automated work to a human becomes a model change rather than a runtime decision.
 

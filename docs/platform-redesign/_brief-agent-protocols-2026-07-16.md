@@ -73,7 +73,7 @@ condition handling.
   bridge at `/documents`, note-capture in the finalize path,
   `shared/skills/notes-and-docs/SKILL.md`. Plan:
   `docs/platform-redesign/notes-system-plan-2026-07-15.md`.
-- A SEPARATE out-of-tree vault exists at `~/notes` (`services/notes_vault.py`, 411
+- A SEPARATE out-of-tree vault exists at `$WORKSHOP_NOTES_VAULT` (`services/notes_vault.py`, 411
   lines, routes prefix `/notes-app`, frontend `/apps/notes`). Per ADR 0002 it stays
   separate and is only linked from the Notes UI. Decide deliberately whether the
   interface contract covers it, the knowledge scopes, or both.

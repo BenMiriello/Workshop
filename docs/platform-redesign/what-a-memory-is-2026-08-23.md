@@ -288,7 +288,7 @@ Everything in the tree that durably holds text an agent may later read. Counts m
 | 15 | `memory-policy.json` | `.runtime/memory-policy.json` | 1 doc, 3 defaults, **0 items, 0 scopes** |
 | 16 | Agent-scope TODOs | `.runtime/agent-scopes/*/TODO.md` + `.tasks.json` | 3 scopes, 0 tasks in every `.tasks.json` |
 | 17 | Commute notes | `.runtime/commute-notes/*.md` | 64 files, **no backend writer exists** |
-| 18 | Notes vault | `$WORKSHOP_NOTES_VAULT`, default `~/notes` | absent on this host; 1 stub file under `.runtime/users/4242/notes/` |
+| 18 | Notes vault | `$WORKSHOP_NOTES_VAULT`, default `$WORKSHOP_NOTES_VAULT` | absent on this host; 1 stub file under `.runtime/users/4242/notes/` |
 | 19 | Letta remnants | `.runtime/agents/*/knowledge/letta-*.md`, `.runtime/knowledge/archives.json` | 4 note files (live in agent scopes, so their titles ARE injected); `archives.json` has `"passages": {}` and zero readers |
 | 20 | Custom instructions (L3) | `<owner runtime>/custom-instructions.json` | **0 files exist**; would be full text if any did (`custom_instructions.py:41`) |
 

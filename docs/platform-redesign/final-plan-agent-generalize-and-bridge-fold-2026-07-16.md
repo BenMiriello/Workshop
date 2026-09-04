@@ -41,12 +41,12 @@ docs (`operator-asks`, `_brief`, `resource-access-protocol`,
   `plaid-watcher` stay registered and dispatch under the new table.
 - The bridge agent folds IN as an Agent instance (`slug=the bridge agent`, event trigger from
   Discord, autonomy=continuous, grants for Discord + Plaid + google-docs
-  tools). The Discord bridge stays as a THIN event source at `~/clawdbot/` (a
+  tools). The Discord bridge stays as a THIN event source at `<bridge-checkout>/` (a
   three-line poster to the workshop event bus); the persistent `claude -p`
   loop, the tmux session, and the discord-handler subagent all move into the
   workshop's shared pipeline. This shrinks the the bridge agent surface from ~9k LoC of
   runtime + prose to a slug plus a persona plus one trigger.
-- The custom Plaid MCP at `~/clawdbot/plaid-mcp/` MOVES into the workshop tree
+- The custom Plaid MCP at `<bridge-checkout>/plaid-mcp/` MOVES into the workshop tree
   (`backend/mcp/plaid/`), registered as a Store, gated by the resource-grant
   path already in `permissions.py:616-728`.
 - The `clawd` naming decision is DEFERRED again, but tightened: the plan
@@ -164,28 +164,28 @@ from memory.
 
 Verified `find $HOME/<bridge> -type f -not -path '*/.git/*'`:
 
-- `~/clawdbot/CLAUDE.md` (17k). The the bridge agent persona + dispatch protocol +
+- `<bridge-checkout>/CLAUDE.md` (17k). The the bridge agent persona + dispatch protocol +
   Discord playbook + Plaid onboarding + security posture. Mostly duplicative
   of the discord-handler subagent + operator profile.
-- `~/clawdbot/run.sh` (2.8k). The persistent `claude -p --channels` wrapper
+- `<bridge-checkout>/run.sh` (2.8k). The persistent `claude -p --channels` wrapper
   with auto-accept-trust sidekick, --continue loop, systemd-friendly exit.
-- `~/clawdbot/plaid-mcp/` (~1500 files including node_modules). The custom
+- `<bridge-checkout>/plaid-mcp/` (~1500 files including node_modules). The custom
   Node/hono Plaid MCP wrapper. Source files: `server.js`, `onboard.js`,
   `balances.js`, `transactions.js`, `package.json`. `node_modules/` is
   vendored.
-- `~/clawdbot/security/` (2 files). `audit.sh` + install-cron.txt. Nightly
+- `<bridge-checkout>/security/` (2 files). `audit.sh` + install-cron.txt. Nightly
   security audit, per the memory doc.
-- `~/clawdbot/docs/` (3 files). Bringup playbook + security invariants +
+- `<bridge-checkout>/docs/` (3 files). Bringup playbook + security invariants +
   audit history. Documentation, not runtime.
-- `~/clawdbot/archive/`. Pre-migration artifacts.
-- `~/clawdbot/commute-diagnostic.png`. A stray screenshot; delete.
+- `<bridge-checkout>/archive/`. Pre-migration artifacts.
+- `<bridge-checkout>/commute-diagnostic.png`. A stray screenshot; delete.
 
 Systemd unit: `~/.config/systemd/user/the-bridge.service` (verified). Loads
 `~/.config/clawdbot/auth.env` (long-lived `CLAUDE_CODE_OAUTH_TOKEN`), forks a
 tmux session named `clawd-claude` that runs `run.sh`.
 
 Discord-handler subagent: `~/.claude/agents/discord-handler.md` (14k).
-The operational playbook for a Discord turn (dispatched from `~/clawdbot/CLAUDE.md`
+The operational playbook for a Discord turn (dispatched from `<bridge-checkout>/CLAUDE.md`
 per its :19-37 protocol).
 
 ### 2.7 Frontend
@@ -256,7 +256,7 @@ concepts. Merge unit is small and reviewable.
 | `backend/services/agents_registry.py:75-80` | add `_coerce_role(v)` beside `_coerce_depth`/`_coerce_fanout`. Closed enum: `("maker","reviewer","triager","keeper","broker")` plus `None`. Wire it in at :160. Reject unknown roles at write time (`create`/`update`, :389+414) with a 400-friendly `ValueError`. |
 | `scripts/dispatch_triggers.sh:401-424` | replace the `if a.get("role") == "memory":` branch with a Python-side dispatch table. Signature: `ROLE_HANDLERS = {"keeper": _dispatch_keeper, "triager": _dispatch_triager, "reviewer": _dispatch_reviewer, "maker": _dispatch_maker}`. The default (no role) falls to `_dispatch_maker` for a builder-runtime agent and `_dispatch_assistant_loop` for assistant. `broker` never dispatches (demand-only). Each handler returns `(type, scope, assignee)` or None. Preserves the memory-consolidation launch path (calls `memory_keeper_run.sh`). |
 | `agents/workshop-overseer.md` | delete (retire per synthesis Part 5 P0 + Part 6 rejects). Not just `retired: true`; the file itself goes because its function is the workshop-scope `triager`, not a distinct role. |
-| `backend/services/permissions.py` | add a `NOTES_VAULT_ROOT` constant. (As planned this hardcoded a home-directory folder; SUPERSEDED 2026-08-27 -- it derives from `WORKSHOP_NOTES_VAULT` with a `.runtime/` fallback and no home-directory literal.) Register in a new `services/stores.py` (or extend `manifests.py`) as `store_uri="notes://vault"`, backed by the on-disk `~/notes` directory. This is the A3 precondition: the vault becomes addressable, so per-folder policy is expressible. |
+| `backend/services/permissions.py` | add a `NOTES_VAULT_ROOT` constant. (As planned this hardcoded a home-directory folder; SUPERSEDED 2026-08-27 -- it derives from `WORKSHOP_NOTES_VAULT` with a `.runtime/` fallback and no home-directory literal.) Register in a new `services/stores.py` (or extend `manifests.py`) as `store_uri="notes://vault"`, backed by the on-disk `$WORKSHOP_NOTES_VAULT` directory. This is the A3 precondition: the vault becomes addressable, so per-folder policy is expressible. |
 | `scripts/project_ralph.sh:529` | replace `BILL_SCOPE="${SLUG:-$ASSIGNEE}"` with a helper that emits `project:<slug>` when SLUG is set and non-empty (else keep the assignee form, which already carries the `agent:` prefix). Fixes F3. |
 | `scripts/ralph.sh` | no change: it reads BILL_PROJECT unchanged. The prefixing happens upstream. |
 | `backend/services/tasks.py:*` | enforce `touches`: add a `_check_touches(root, tid, path)` helper called from the write path (task_scope committer + the reviewer receipt writer). A task with a non-empty `touches` may only cause file writes matching one of its globs; violations record an evidence line and block the task. A task with `touches=[]` is unrestricted (the default; today's behavior). Wired at the `reviewer.sh` receipt-consumer callsite so no worker path is bypassed. |
@@ -332,7 +332,7 @@ that requires a live cloud model.
 | --- | --- |
 | `backend/services/broker.py` (new) | one class `MediatedBroker`. Method: `adjudicate(identity, uri, verbs, selector, purpose, policy) -> Verdict`. Verdict shape: `{"decision":"allow"|"deny", "grant":<mint_grant result or None>, "mode":"verbatim"|"filtered"|"redacted", "reason": str}`. The call sets `tools_disabled=True` on the underlying `llm_router.call_cloud` invocation (`llm_router.py:427+444`) so the broker cannot fetch the resource itself. Model floor: Sonnet or better; on Sonnet unavailability the broker returns deny (fail-closed). |
 | `backend/services/policy.py` (new) | one dataclass `StorePolicy` living OUTSIDE any store folder: `{store_uri, tier: "open"|"gated"|"mediated", topics_allow: [str], topics_deny: [str], response_modes: ["verbatim"|"filtered"|"redacted"]}`. Loaded from `backend/store-policies.json` (mirrors `resource-grants.json` shape). Not `summarized`; see section 10. |
-| `backend/services/stores.py` (new) | store registry. `~/notes` registers as one entry from P0. Every store carries a policy and (optionally) a reader function. Store reads route through: `check(token, uri, verb)` (mechanical), then if the token names a mediated tier and no in-scope grant exists yet, invoke `broker.adjudicate` to mint or deny. |
+| `backend/services/stores.py` (new) | store registry. `$WORKSHOP_NOTES_VAULT` registers as one entry from P0. Every store carries a policy and (optionally) a reader function. Store reads route through: `check(token, uri, verb)` (mechanical), then if the token names a mediated tier and no in-scope grant exists yet, invoke `broker.adjudicate` to mint or deny. |
 | `backend/routes/stores.py` (new) | `GET /api/stores`, `POST /api/stores/{id}/read?selector=...` (broker-mediated), `POST /api/stores/{id}/write` (grant-checked). |
 | `backend/services/permissions.py:697-728` | already has `check()`. No change. |
 | `frontend/src/pages/Notes.tsx` | wire to `/api/stores/notes:vault` for the notes case. The notes app stops owning its own gate; policy lives in `store-policies.json`. |
@@ -373,15 +373,15 @@ strict sub-steps.
 
 | path | classification | rationale |
 | --- | --- | --- |
-| `~/clawdbot/CLAUDE.md` | REMOVE after PM.3 | Most content duplicates the discord-handler subagent + operator profile. The unique bits (Plaid onboarding, Google Docs quirk notes, completion contract) migrate to the workshop `agents/the bridge agent.md` body during PM.2. |
-| `~/clawdbot/run.sh` | REMOVE after PM.3 | Once the bridge agent rides the workshop's `claude -p` dispatch, the persistent tmux loop is superfluous. |
-| `~/clawdbot/plaid-mcp/{server.js, onboard.js, balances.js, transactions.js, package.json}` | PORT to `backend/mcp/plaid/` | The MCP is genuinely useful. Moves into workshop as a first-class MCP server registered in `llm_router._MCP_SERVER_SPECS`. `plaid-tokens.json` stays in `~/.config/clawdbot/` (host-level secret; KEEP path). |
-| `~/clawdbot/plaid-mcp/node_modules/` | REMOVE from source (regen on install) | Vendored deps; `npm install` at the new location. |
-| `~/clawdbot/security/audit.sh` + `install-cron.txt` | PORT to `scripts/security_audit.sh` | Nightly security check; keep it running, from the workshop repo. |
-| `~/clawdbot/docs/` (bringup, security-invariants, audit history) | PORT to `docs/the bridge agent/` | Historical value; keep in-tree. |
-| `~/clawdbot/archive/` | KEEP in place | Pre-migration junk. Do not delete; do not import. |
-| `~/clawdbot/commute-diagnostic.png` | REMOVE | Stray file. |
-| `~/clawdbot/.git`, `.gitignore` | REMOVE with the tree | Once emptied. |
+| `<bridge-checkout>/CLAUDE.md` | REMOVE after PM.3 | Most content duplicates the discord-handler subagent + operator profile. The unique bits (Plaid onboarding, Google Docs quirk notes, completion contract) migrate to the workshop `agents/the bridge agent.md` body during PM.2. |
+| `<bridge-checkout>/run.sh` | REMOVE after PM.3 | Once the bridge agent rides the workshop's `claude -p` dispatch, the persistent tmux loop is superfluous. |
+| `<bridge-checkout>/plaid-mcp/{server.js, onboard.js, balances.js, transactions.js, package.json}` | PORT to `backend/mcp/plaid/` | The MCP is genuinely useful. Moves into workshop as a first-class MCP server registered in `llm_router._MCP_SERVER_SPECS`. `plaid-tokens.json` stays in `~/.config/clawdbot/` (host-level secret; KEEP path). |
+| `<bridge-checkout>/plaid-mcp/node_modules/` | REMOVE from source (regen on install) | Vendored deps; `npm install` at the new location. |
+| `<bridge-checkout>/security/audit.sh` + `install-cron.txt` | PORT to `scripts/security_audit.sh` | Nightly security check; keep it running, from the workshop repo. |
+| `<bridge-checkout>/docs/` (bringup, security-invariants, audit history) | PORT to `docs/the bridge agent/` | Historical value; keep in-tree. |
+| `<bridge-checkout>/archive/` | KEEP in place | Pre-migration junk. Do not delete; do not import. |
+| `<bridge-checkout>/commute-diagnostic.png` | REMOVE | Stray file. |
+| `<bridge-checkout>/.git`, `.gitignore` | REMOVE with the tree | Once emptied. |
 | `~/.claude/agents/discord-handler.md` | PORT into `agents/the bridge agent.md` body | This IS the bridge agent's persona. It moves in verbatim, minus the outdated Letta-era bits. |
 | `~/.claude/agents/work-reviewer.md` | KEEP as `agents/work-reviewer.md` in workshop scope | Verified `ls ~/.claude/agents`. Genuine reviewer subagent; belongs in the workshop registry now. |
 | `~/.config/systemd/user/the-bridge.service` | REPLACE with `the bridge agent-event-bridge.service` (PM.3) | New service is thin: a tiny Node/Python process that reads Discord events and POSTs to workshop's event bus. No persistent `claude -p` loop, no tmux. |
@@ -423,12 +423,12 @@ strict sub-steps.
    dispatcher.
 7. **Wait ONE FULL OPERATOR DAY** with both services present but only the new
    one enabled, before removing the old tree. This is the safety window.
-8. **Remove `~/clawdbot/`** except for `~/clawdbot/archive/`.
+8. **Remove `<bridge-checkout>/`** except for `<bridge-checkout>/archive/`.
    `the-bridge.service` is deleted (`systemctl --user disable --now`).
 
 ### PM.3 Discord bridge design decision
 
-Verified from operator memory + `~/clawdbot/CLAUDE.md`: the Discord plugin
+Verified from operator memory + `<bridge-checkout>/CLAUDE.md`: the Discord plugin
 today runs INSIDE the persistent `claude -p --channels` process. The plugin's
 `server.ts` receives Discord events and passes them into the claude session as
 `<channel source="discord">` tool-envelopes; the session then dispatches to
@@ -454,7 +454,7 @@ half-measure that keeps two loops running.
 
 ### PM.4 Custom Plaid MCP
 
-Verified `ls ~/clawdbot/plaid-mcp/`. Source: `server.js`, `onboard.js`,
+Verified `ls <bridge-checkout>/plaid-mcp/`. Source: `server.js`, `onboard.js`,
 `balances.js`, `transactions.js`, `package.json`. Moves to
 `backend/mcp/plaid/`. Register in `llm_router._MCP_SERVER_SPECS` under key
 `plaid` with spawn args `node backend/mcp/plaid/server.js`. Grant path uses
@@ -526,7 +526,7 @@ over or remove it so the whole thing works and makes sense."
 | `agents/plaid-watcher.md` + `email-triager.md` | KEEP, correct dispatch | After P0's role table, both dispatch cleanly. Both are event-triggered; verify their event source is wired in `regenerate_subscriptions` (`agents_registry.py:506-548`). Bodies are short (18-20 lines); leave as-is. |
 | `agents/blank-project-*`, `probe-*`, `smoke-fix`, `test1234`, `test2` | REMOVE | Verified: all are test/probe stubs left in the gitignored agents/ dir. `test1234` gives it away. Retire in P0. |
 | `agents/workshop-builder{,-2}.md` | KEEP | These are the two active builder agents. Not touched. |
-| `~/clawdbot/` | REMOVE post-PM safety window | See PM inventory. |
+| `<bridge-checkout>/` | REMOVE post-PM safety window | See PM inventory. |
 | `the-bridge.service` | REMOVE post-PM safety window | Replaced by `the bridge agent-event-bridge.service`. |
 | `~/.claude/agents/discord-handler.md` | REMOVE post-PM.2 | Its content moves into `agents/the bridge agent.md`. The `~/.claude/agents/` file was a Letta-era subagent that the persistent claude session dispatched to; under the new model, the bridge agent IS an agent and the dispatch is the workshop dispatcher. |
 | `~/.claude/agents/work-reviewer.md` | PORT to `agents/work-reviewer.md` | Genuine reviewer subagent; brings the reviewer path into the registry. |
@@ -534,7 +534,7 @@ over or remove it so the whole thing works and makes sense."
 | `_TURNS_DIR` liveness scan in `agents_registry.py:216-262` | KEEP | Real liveness detection for builders. Not Letta-specific. |
 | Old-style `authorize()` operator-only gates | KEEP | `permissions.py:354` operator branch stays default-permissive by the hard rule. The `agent` branch is additive. |
 | `.tasks.json` per-tree lock, TODO.md export, reconcile | KEEP | Section 2 of `tasks.py` confirms these are the canonical durable path. No changes. |
-| `~/notes` vault | REGISTER as store in P0 | Not "old system" per se, but unregistered today. A3 precondition. |
+| `$WORKSHOP_NOTES_VAULT` vault | REGISTER as store in P0 | Not "old system" per se, but unregistered today. A3 precondition. |
 | `services/memory_keeper.py` + `memory_keeper_run.sh` | KEEP, generalize invocation | Under P0's role table, memory-keeper dispatches via `role: keeper` (renamed from `role: memory` in the enum, back-compat shim reads `memory` -> `keeper`). |
 
 ---
@@ -710,7 +710,7 @@ merge unit.
   (new).
 - PM.3: `~/.config/systemd/user/the bridge agent-event-bridge.service` (new).
 - PM.4: `agents/the bridge agent-commute.md`.
-- PM.5: delete `~/clawdbot/` (except archive/), delete
+- PM.5: delete `<bridge-checkout>/` (except archive/), delete
   `~/.config/systemd/user/the-bridge.service`.
 - P3: `backend/services/broker.py` (new), `backend/services/policy.py`
   (new), `backend/services/stores.py`, `backend/routes/stores.py` (new),

@@ -65,7 +65,7 @@ with triggers and have no path to execution.
 | `the bridge agent`, `the bridge agent-commute` | assistant | none | loop | never runs via this dispatcher |
 
 Caveat, not overclaimed: `the bridge agent` and `the bridge agent-commute` have their own tmux bridge
-(`~/clawdbot/`) and may be driven entirely outside this dispatcher. `workshop-overseer`,
+(`<bridge-checkout>/`) and may be driven entirely outside this dispatcher. `workshop-overseer`,
 `email-triager`, and `plaid-watcher` are ghosts: the roster shows them as configured,
 and they are skipped every tick.
 
@@ -217,7 +217,7 @@ proceed. It is a dashboard, not a gate.
 The access report: policy lives outside the resource it protects, never in a folder
 sidecar, because an agent with `write` on the folder could rewrite its own gate. Nothing
 in the other reports contradicts this. **Resolution: adopt.** This is also why the
-`~/notes` vault registration (A3) is a Store-registration problem, not a
+`$WORKSHOP_NOTES_VAULT` vault registration (A3) is a Store-registration problem, not a
 dotfile-in-the-folder problem.
 
 ### 4.5 A conflict worth flagging: `summarized`
@@ -246,7 +246,7 @@ were written, and it deliberately puts the expensive, contested part last.
   table. Fixes D1 and unblocks D5 (the note-triage ant).
 - Retire `workshop-overseer` (recommended by the roles report: it has never run, and the
   overseer function is a `triager` at workshop scope, not a distinct role).
-- Register the `~/notes` vault as a Store. Fixes A3's precondition: it is the only
+- Register the `$WORKSHOP_NOTES_VAULT` vault as a Store. Fixes A3's precondition: it is the only
   resource with real folders, and per-folder policy is unsatisfiable on it today.
 - Decide D3: either enforce `touches` or delete it. Do not leave a documented safety
   field that is decorative.
