@@ -162,12 +162,41 @@ def _project_repo(project_slug: str) -> dict | None:
 
 
 def _canonical_branch(project_slug: str, project_dir: Path) -> str:
-    """The canonical branch name: the tracked `repo.default_branch` when the
-    project is bound to a GitHub remote, else the best-effort local guess."""
+    """The branch a worktree is cut from and merged back into.
+
+    Bound project: the tracked `repo.default_branch`, because the remote is the
+    authority on where work lands. Unbound project: THE BRANCH THE PROJECT'S OWN
+    WORKING TREE IS CHECKED OUT ON.
+
+    THAT SECOND CLAUSE USED TO BE `git_service.main_branch`, AND IT IS WHY THE
+    WHOLE MECHANISM COULD NOT BE TURNED ON. `main_branch` is a NAME heuristic --
+    it answers "main" whenever a ref called `main` resolves, whatever the tree
+    is actually doing -- and it is the right answer for a caller that has no
+    other information. This caller has better information: the checkout in front
+    of it. Measured on this installation 2026-09-04: the shared tree sat on a
+    feature branch **368 commits ahead of `main`**, so every worktree cut here
+    would have started 368 commits stale, and merging one back would have put
+    that stale work on a branch nobody was using. An agent handed a two-week-old
+    checkout is not isolated, it is stranded, and no amount of lease correctness
+    fixes it.
+
+    It also removes a hazard on the way home: `merge_branch` checks this ref out
+    in the project's own working tree, so answering "main" against a tree on
+    another branch moved somebody's checkout out from under them as a side
+    effect of a merge. Answering with the branch already checked out makes that
+    checkout a no-op.
+
+    Falls back to the name heuristic for a detached HEAD or an unreadable tree,
+    which is the case it was always right for.
+    """
     repo = _project_repo(project_slug)
     if repo and repo.get("default_branch"):
         return repo["default_branch"]
-    return git_service.main_branch(project_dir)
+    try:
+        current = git_service.status(project_dir).get("branch")
+    except Exception:
+        current = None
+    return str(current) if current else git_service.main_branch(project_dir)
 
 
 def _branch_name(project_slug: str, branch_slug: str) -> str:

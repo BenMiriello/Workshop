@@ -693,6 +693,19 @@ def merge(thread_id: str, thread: dict | None, provider: Any, *,
     branch. There is no version of that which is the caller's intent, so it is
     named and declined.
 
+    NOT ROUTED THROUGH `work_review.merge_change`, WHICH CALLS ITSELF "THE
+    SINGLE MERGE PATH", and the exception is the absence of a Change rather than
+    a second opinion about merging. That function's job is to pin a change's
+    base sha and record the outcome ON THE CHANGE ROW; a chat's worktree has no
+    change and opening one for it would mint a review artifact for work the
+    person asking is looking at right now. Nor does this consult the merge
+    gates, and that is the same answer the existing human path gives: `POST
+    /tasks/{scope}/{id}/review` with `accept` merges without reading a gate too.
+    Gates gate AUTHORITY THAT IS NOT A PERSON (`services/auto_merge.py`), which
+    is what `merge-policy-levels-2026-08-24.md` §4.1 means by "the policy
+    decides only WHO is allowed to say land it without reading it". Somebody
+    asking for this has read it.
+
     THE PIN IS CLEARED ON SUCCESS. The directory is gone, and a pin to a tree
     that is not there resolves through `plan`'s fallback with an apologetic
     detail line forever. Clearing it puts the chat back on the shared tree,
