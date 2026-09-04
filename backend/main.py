@@ -31,6 +31,11 @@ from routes import presence as presence_routes
 from routes import control as control_routes
 from routes import leases as leases_routes
 from services import app_registry
+# Imported HERE rather than inside `lifespan` like its neighbours: this module is
+# a timer around a shell script (stdlib plus `wsplatform.paths`), so there is no
+# heavy import to defer and no cycle to break, and a function-local import would
+# add one more to the 574 `scripts/check_module_layout.py` is counting down.
+from services import trigger_dispatch as _trigger_dispatch
 import asyncio
 import datetime as _dt
 import logging
@@ -134,6 +139,15 @@ async def lifespan(app: FastAPI):
     from services import semantic_index as _semantic_index
     app.state._bg_index_maintenance = asyncio.create_task(
         _semantic_index.maintenance_loop())
+    # Triggers: fire the declared ones, from HERE, because there is no crontab on
+    # this host and `scripts/dispatch_triggers.sh` had exactly one caller
+    # (`cron_agent.sh`) that only a crontab reaches. So every `cron` and `loop`
+    # trigger in the system was inert while reading as configured, and
+    # `.runtime/trigger-state.json` sat frozen from 2026-07-18 to 2026-09-04.
+    # The loop only ticks: the script still owns every decision, including the
+    # autonomy override that currently stops each tick before it dispatches.
+    app.state._bg_trigger_dispatch = asyncio.create_task(
+        _trigger_dispatch.dispatch_loop())
     # Crash/restart resilience: re-attach to any build turn that was still running
     # when the backend went down. Detached claude subprocesses keep working across
     # a restart; this tails their on-disk journals to completion (or finalizes a
@@ -219,7 +233,12 @@ async def lifespan(app: FastAPI):
     for t in [*getattr(app.state, "_app_bg", []),
               getattr(app.state, "_bg_port_reconcile", None),
               getattr(app.state, "_bg_job_reconcile", None),
-              getattr(app.state, "_bg_queue_drain", None)]:
+              getattr(app.state, "_bg_queue_drain", None),
+              # Named explicitly rather than left to asyncio's exit-time sweep:
+              # this one starts detached sweeps, and a tick that begins while the
+              # process is tearing down would launch work nothing is left to
+              # supervise. The next boot dispatches it a few minutes later.
+              getattr(app.state, "_bg_trigger_dispatch", None)]:
         if t:
             t.cancel()
 
