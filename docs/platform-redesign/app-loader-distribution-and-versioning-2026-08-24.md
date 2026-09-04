@@ -119,14 +119,14 @@ instance that got a hoisted React 19 against frontend's 18. `mobile/` is **not**
 
 ```tsx
 {
-  id: "health",
+  id: "<slug>",
   Settings: HealthSettings,
   crumbs: {},
   routes: () => null,
 },
 ```
 
-`frontend/src/pages/apps/health/HealthSettings.tsx`: **136 lines, one file**, three imports (`react`,
+`frontend/src/pages/apps/<slug>/HealthSettings.tsx`: **136 lines, one file**, three imports (`react`,
 `lucide-react`, `@workshop/ui`), **no stylesheet of its own**, and exactly **one** legacy class use,
 `className="muted"`, once.
 
@@ -459,31 +459,31 @@ and it is the first app that carries a real stylesheet.
 | 10 | **birds** | 44 | 32 | last, largest, the only session provider, the only `import_site`, and the one with the residual stage 4b import list |
 
 budget moves ahead of birds and behind finance: it has the deepest legacy-CSS debt of the small apps
-(16 classes), but `frontend/src/pages/apps/budget/budget.css` already exists and is already imported by
+(16 classes), but `frontend/src/pages/apps/<slug>/budget.css` already exists and is already imported by
 `Budget.tsx:2`, so commit D for budget is a cut and paste into a wired-up file rather than a new seam.
 
 ### 5.3 The steps for health, concretely
 
-1. `mkdir -p apps/health` and write `apps/health/workshop.app.json` with a `ui` block:
+1. `mkdir -p apps/<slug>` and write `apps/<slug>/workshop.app.json` with a `ui` block:
    `{contract: 1, kit: "^0.6", dir: "dist/ui", entry: "app.js", styles: [], settings: [{export: "SettingsPanel", mount: "app.settings", label: "Health"}]}`.
-   `paths.scope_root("app:health")` already resolves to `workshop_root()/apps/health` with no registry change;
+   `paths.scope_root("app:<slug>")` already resolves to `workshop_root()/apps/<slug>` with no registry change;
    `apps/` is gitignored and `git ls-files apps/ | wc -l` is 0, so this puts nothing back in the repo.
-2. `bash scripts/kit_channel.sh sync apps/health`, then install in `apps/health`.
-3. Move `frontend/src/pages/apps/health/HealthSettings.tsx` to `apps/health/src/SettingsPanel.tsx`. Its three
+2. `bash scripts/kit_channel.sh sync apps/<slug>`, then install in `apps/<slug>`.
+3. Move `frontend/src/pages/apps/<slug>/HealthSettings.tsx` to `apps/<slug>/src/SettingsPanel.tsx`. Its three
    imports are unchanged: all three specifiers are in `SHARED` and resolve through the import map at runtime
    and through the installed tarball at build time.
 4. **Replace the one `className="muted"`.** Not with a color alone: the rule is
    `color: var(--muted); font-size: 0.875rem; margin: 0.25rem 0`. Use the kit primitive if one covers it,
    otherwise inline all three declarations against kit tokens. Do **not** copy `.muted` into an app
    stylesheet, because health's whole value as the first migration is that it emits no CSS.
-5. Add `apps/health/src/index.ts` exporting `{contract: 1, kitVersion: "0.6.2", exports: {SettingsPanel}}` and
-   `apps/health/vite.config.js` calling `defineWorkshopApp({outDir: "dist/ui"})`. Build. The preset refuses if
+5. Add `apps/<slug>/src/index.ts` exporting `{contract: 1, kitVersion: "0.6.2", exports: {SettingsPanel}}` and
+   `apps/<slug>/vite.config.js` calling `defineWorkshopApp({outDir: "dist/ui"})`. Build. The preset refuses if
    `ui.kit` and the resolved kit disagree, or if any CSS was emitted against `styles: []`.
-6. `git rm --cached frontend/src/pages/apps/health/HealthSettings.tsx`, delete the health entry and the
+6. `git rm --cached frontend/src/pages/apps/<slug>/HealthSettings.tsx`, delete the health entry and the
    `HealthSettings` lazyPage line from `frontend/src/apps/registry.tsx`.
 7. `python3 scripts/check_no_app_names.py` (expect 101 / 20 / 300; re-pin the baseline **down** with a
    `--because`), `npm run typecheck`, `bash scripts/check_design.sh`, `cd frontend && npm test`,
-   `python3 scripts/check_app_loader.py --app apps/health`, `bash scripts/check_app_loader.sh --built`, then
+   `python3 scripts/check_app_loader.py --app apps/<slug>`, `bash scripts/check_app_loader.sh --built`, then
    `bash scripts/apply.sh`, then open the Settings screen on the built origin and read the screenshot.
 
 ### 5.4 How this interacts with the CSS finding
@@ -538,7 +538,7 @@ and are restated so the open set is in one place.
    or copied into `frontend/dist/apps/<slug>/` at install time. Unchanged recommendation: the backend, because
    it never fights `apply.sh`.
 4. **Whether birds' data move happens with its frontend or separately** (stage 5 section 8 item 3):
-   `apps/birds/birdnet.db` and `apps/birds/clips/` live inside the source tree.
+   `apps/<slug>/birdnet.db` and `apps/<slug>/clips/` live inside the source tree.
 5. **What happens to `frontend/vite.springer.config.ts`** (stage 5 section 8 item 4, stage 4b commit C): the
    standalone birds build names an app in platform source; delete it, move it into the app repo, or keep it
    and accept the violation.

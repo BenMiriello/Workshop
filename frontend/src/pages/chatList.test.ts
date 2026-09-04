@@ -109,7 +109,7 @@ describe("chatTags", () => {
   });
 
   it("omits the branch tag when the thread is not on a branch", () => {
-    expect(chatTags({ context_key: "budget", role: "reviewer" }).map((t) => t.kind))
+    expect(chatTags({ context_key: "ledger", role: "reviewer" }).map((t) => t.kind))
       .toEqual(["scope", "role"]);
   });
 
@@ -138,7 +138,7 @@ describe("spansScopes", () => {
   });
 
   it("is true as soon as two rows differ", () => {
-    expect(spansScopes([row("app:development"), row("app:birds")])).toBe(true);
+    expect(spansScopes([row("app:development"), row("app:atlas")])).toBe(true);
   });
 
   it("counts a missing scope as its own value, not as a match", () => {

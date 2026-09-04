@@ -85,15 +85,15 @@ purpose.
 
 Exact sites:
 
-1. `frontend/src/pages/apps/commute/useCommuteNative.ts:9`
+1. `frontend/src/pages/apps/<slug>/useCommuteNative.ts:9`
    `import type { CommuteActivityState, ActivityStatus } from "@shared/native-bridge";`
 2. `frontend/src/pages/apps/Location.tsx:21`
    `import type { components } from "../../api/schema.gen";`
-3. `frontend/src/pages/apps/birds/standalone/main.tsx:11`
+3. `frontend/src/pages/apps/<slug>/standalone/main.tsx:11`
    `import "../../../../styles.css";`
-4. `frontend/src/pages/apps/birds/standalone/main.tsx:16`
+4. `frontend/src/pages/apps/<slug>/standalone/main.tsx:16`
    `import Birds from "../../Birds";`
-5. `frontend/src/pages/apps/budget/Projection.tsx` importing `../Budget`
+5. `frontend/src/pages/apps/<slug>/Projection.tsx` importing `../Budget`
 
 Two additional hits my first regex pass produced were false positives, and I am
 recording them so the next person does not chase them: the strings
@@ -219,7 +219,7 @@ export {
 } from "./native/types";
 ```
 
-Then in `frontend/src/pages/apps/commute/useCommuteNative.ts`, replace the
+Then in `frontend/src/pages/apps/<slug>/useCommuteNative.ts`, replace the
 `@shared/native-bridge` import with the kit one and rename the local type use.
 
 **Exported surface.**
@@ -303,7 +303,7 @@ here because it is one of the five measured edges and because it is currently
 invisible: `check_no_app_names.py`'s `PLATFORM_DIRS` is
 `("backend/", "frontend/src/", "packages/", "scripts/", "infra/", "mobile/")`,
 so nothing in `frontend/`'s root is scanned, and those two files contain 15
-occurrences of the string `birds` including `/apps/birds` path literals that the
+occurrences of the string `<slug>` including `/apps/<slug>` path literals that the
 gate's own pattern would match if it ever looked. Widening `PLATFORM_DIRS` to
 `frontend/` will raise `literal_sites`; that is a true reading and per the gate's
 own `--because` rule it should be pinned with the reason, not avoided.
@@ -365,7 +365,7 @@ none of it is compile-checked, unverifiable by anything except looking at it.
 
 ### Commit E (optional, structural): fold the app entry files into their directories
 
-`git mv frontend/src/pages/apps/Birds.tsx frontend/src/pages/apps/birds/index.tsx`
+`git mv frontend/src/pages/apps/Birds.tsx frontend/src/pages/apps/<slug>/index.tsx`
 and the same for Budget, Commute, Finance, Location. Update the five importers in
 `frontend/src/apps/registry.tsx` and the two intra-app importers (edges 4 and 5).
 Then narrow `_app_content_patterns` in `check_no_app_names.py` accordingly.
@@ -402,11 +402,11 @@ app-specific build files in platform source that no gate can see.**
 `check_no_app_names.py`'s `PLATFORM_DIRS` starts at `frontend/src/`, so the
 frontend's own root is unscanned. 15 occurrences of `birds` live there,
 including a Vite transform plugin named `rewriteBirdsPaths` that string-replaces
-`/apps/birds` out of every module in that build. Also note the plugin's own
+`/apps/<slug>` out of every module in that build. Also note the plugin's own
 comment: it deliberately depends on the fact that import specifiers spell the
-prefix as `pages/apps/birds` (mid-string) while nav links spell it as
-`"/apps/birds` (right after the quote). Commit E, which renames
-`pages/apps/Birds.tsx` to `pages/apps/birds/index.tsx`, does not disturb that,
+prefix as `pages/apps/<slug>` (mid-string) while nav links spell it as
+`"/apps/<slug>` (right after the quote). Commit E, which renames
+`pages/apps/Birds.tsx` to `pages/apps/<slug>/index.tsx`, does not disturb that,
 but any future change to app path shape can silently corrupt this build.
 
 **Trap 3: `check_no_app_names.py` does not see dynamic imports.** Its TypeScript

@@ -10,7 +10,7 @@ assertion delete exactly what the existing classifier calls app source.
 
 BEING BUILT IS NOT BEING GREEN, and that is the point. Measured 2026-09-01:
 assertion 2 fails in BOTH halves (20x TS2307 in `frontend/src/apps/registry.tsx`
-plus 5 knock-on errors; `ImportError: cannot import name 'location' from
+plus 5 knock-on errors; `ImportError: cannot import name '<slug>' from
 'services'` on the backend), assertion 3 is BLOCKED behind it, and assertions 1
 and 4 still fail at 106 and 3. Assertion 3's own machinery is proven by
 `--harness-selftest`, which builds and boots the same clone with its app source
@@ -161,7 +161,7 @@ installed.
 
 ### 2.3 Result today: ALSO fails, in the backend, and this is new
 
-    ImportError: cannot import name 'location' from 'services'
+    ImportError: cannot import name '<slug>' from 'services'
       backend/services/app_registry.py:54  _has_module("owntracks")
       backend/routes/owntracks.py:17       from services import owntracks, ...
       backend/services/owntracks.py:24     from . import location
@@ -431,7 +431,7 @@ enforced by something rather than asked for.
       "pinned": "2026-08-24",
       "because": "The frontend registry names app pages with literal module specifiers and the backend imports app services from platform routes, so a tree with the app source removed does not compile and does not import.",
       "blocked_on": "docs/platform-redesign/app-separation-and-github-2026-08-20.md section 2, the app loader (import maps + dynamic import of a built ESM bundle). Stage 5 of the handoff.",
-      "signature": "TS2307|cannot import name 'location' from 'services'"
+      "signature": "TS2307|cannot import name '<slug>' from 'services'"
     },
     "shell_boots_with_empty_catalog": {
       "pinned": "2026-08-24",
@@ -666,7 +666,7 @@ fresh-clone: committed content only; uncommitted work in the source tree is not 
       blocked on: app-separation-and-github-2026-08-20.md section 2 (the app loader).
       observed:   102 app-source files removed, then
                   frontend  tsc -b, 18x TS2307 in frontend/src/apps/registry.tsx
-                  backend   ImportError: cannot import name 'location' from 'services'
+                  backend   ImportError: cannot import name '<slug>' from 'services'
                             routes/owntracks.py -> services/owntracks.py -> services.location
       signature matches the pin. This assertion is failing on purpose and on record.
 

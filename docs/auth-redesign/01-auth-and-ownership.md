@@ -10,7 +10,7 @@ Two credential types, both resolving to a `current_user` server-side, both fail-
 - On login/register, the server creates a session row (`auth.db`: `sessions(id, user_id,
   created_at, expires_at, revoked, user_agent)`) and sets an opaque token in an
   **HttpOnly, Secure, SameSite=Strict** cookie scoped to the origin. This mirrors the proven
-  `apps/birds/springer/auth.py` model and is XSS-safe (JS cannot read it, so a script injection
+  `apps/<slug>/springer/auth.py` model and is XSS-safe (JS cannot read it, so a script injection
   cannot exfiltrate the session).
 - Replaces the current localStorage access/refresh JWT for the web surface. localStorage
   tokens are readable by any injected script; for a publicly-exposed app holding bank data,
@@ -93,7 +93,7 @@ multi-tenant story for the platform is future work; until then, admin-only and f
 
 ## 4. Internal / machine callers (least privilege)
 
-Today every internal caller rides loopback with no credential (cron, `apps/commute/scripts/tick.sh`,
+Today every internal caller rides loopback with no credential (cron, `apps/<slug>/scripts/tick.sh`,
 backend self-calls, the Letta tool sandbox via `host.docker.internal`, `/birds/webhook`),
 and two ingest paths use their own HTTP Basic (`owntracks`, `health/ingest`). Redesign:
 

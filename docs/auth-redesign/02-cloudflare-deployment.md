@@ -9,7 +9,7 @@ backend would publish the operator's financial data; do not reorder.
   `~/.cloudflared/cert.pem` (authorized for the <your-domain> zone) and ingress in
   `~/.cloudflared/config.yml` currently routing `birds.<your-domain> -> 127.0.0.1:8001`.
   The tunnel and the springer app are NOT running right now (start them as part of this).
-- The model to copy is `apps/birds/springer/app.py`: a small process that serves a built SPA
+- The model to copy is `apps/<slug>/springer/app.py`: a small process that serves a built SPA
   bundle and gates the API.
 - Cloudflare terminates TLS at the edge; the tunnel carries it encrypted to localhost, so
   `Secure` cookies work and nothing on this box needs a cert.
@@ -87,7 +87,7 @@ Both `--user`, enabled, restart-on-failure. Install via a `scripts/install_servi
 
 - `https://workshop.<your-domain>` serves the login wall; operator signs in and sees the
   full Workshop; data matches the tailnet view.
-- An unauthenticated request to `…/api/finance/*` (or location/budget/health) returns 401.
+- An unauthenticated request to `…/api/<app>/*` (or location/budget/health) returns 401.
 - A second account sees an empty workspace, never the operator's data (verified in
   `03-execution-plan.md` red-team step).
 - The phone's mobile browser works against this origin today (no Mac needed); the native app

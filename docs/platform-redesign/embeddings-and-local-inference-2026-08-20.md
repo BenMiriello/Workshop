@@ -206,7 +206,7 @@ a probe name (`caltrain.gtfs_rt` / `511`) out of global `/api/services/` and
 testing `status === "ok"`, a status the services route **never emits** (it emits
 `up|degraded|down`), so this check is not just coupled, it is broken.
 
-Fix: give Commute its own endpoint, e.g. `GET /api/commute/config` returning
+Fix: give Commute its own endpoint, e.g. `GET /api/<app>/config` returning
 `{ realtime_key_set: bool }`, read from its own credential state. Commute stops
 consuming global `/services` entirely. This is the general rule: an app answers
 "is my integration configured" from its own surface, never by reading a

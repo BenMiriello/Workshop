@@ -11,7 +11,7 @@ heavy inputs an app declares rather than naming `node_modules` in platform code.
 
     bash scripts/shoot.sh /memory                     # first declared viewport
     bash scripts/shoot.sh /memory 1440 900            # an explicit one
-    bash scripts/shoot.sh /apps/birds/files 390 800 scratch/files.png
+    bash scripts/shoot.sh /apps/<slug>/files 390 800 scratch/files.png
     bash scripts/shoot.sh --app projects/notes-app /  # a different app tree
     bash scripts/shoot.sh --config                    # what it resolved, and from where
     bash scripts/shoot.sh --setup                     # bootstrap only; normally implicit

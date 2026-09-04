@@ -22,8 +22,8 @@ describe("threadAgent", () => {
   it("names the agent a re-homed chat was with", () => {
     // The 15 P5 casualties: their transcript stays in the project where their
     // work is, and this is what still says who it was with.
-    expect(threadAgent({ context_key: "project:budget", agent_id: "budget-builder-1" }))
-      .toBe("budget-builder-1");
+    expect(threadAgent({ context_key: "project:ledger", agent_id: "ledger-builder-1" }))
+      .toBe("ledger-builder-1");
   });
 
   it("prefers the responder over the historical record when both are set", () => {
@@ -33,9 +33,9 @@ describe("threadAgent", () => {
 
   it("is null for a chat no agent answers", () => {
     expect(threadAgent(base)).toBeNull();
-    expect(threadAgent({ ...base, context_key: "project:birds" })).toBeNull();
+    expect(threadAgent({ ...base, context_key: "project:atlas" })).toBeNull();
     expect(threadAgent({ ...base, context_key: "development" })).toBeNull();
-    expect(threadAgent({ ...base, context_key: "app:budget" })).toBeNull();
+    expect(threadAgent({ ...base, context_key: "app:ledger" })).toBeNull();
   });
 
   it("treats a bare `agent:` as no agent rather than an empty-named one", () => {

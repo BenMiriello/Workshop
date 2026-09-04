@@ -73,16 +73,16 @@ The architecture below is identical either way; only the shell/bridge mechanics 
 │  │   → loads the Workshop SPA (the SAME frontend       │  │
 │  │     that runs at the tailnet today)                 │  │
 │  │                                                    │  │
-│  │   Workshop shell  ─┬─ /apps/commute   (web)         │  │
-│  │                    ├─ /apps/birds     (web)         │  │
-│  │                    ├─ /apps/budget    (web)         │  │
+│  │   Workshop shell  ─┬─ /apps/<slug>   (web)         │  │
+│  │                    ├─ /apps/<slug>     (web)         │  │
+│  │                    ├─ /apps/<slug>    (web)         │  │
 │  │                    └─ /apps/<new>     (web)         │  │
 │  │                                                    │  │
 │  │   window.WorkshopNative  ← JS capability bridge     │  │
 │  └───────────────┬────────────────────────────────────┘  │
 │                  │ postMessage bridge ↔ RN native modules │
 │  Native modules: │                                       │
-│   • expo-location (background)  → POST /api/location      │  ← FREE
+│   • expo-location (background)  → POST /api/<app>      │  ← FREE
 │   • expo-av (microphone / background audio)              │  ← FREE
 │   • expo-notifications (LOCAL, on-device scheduled)      │  ← FREE
 │   • Live Activities (local-update, no push)             │  ← FREE
@@ -205,7 +205,7 @@ This is where it gets nice — the mobile app mostly *replaces fragile glue we a
 
 | Want | Today | With the app |
 |---|---|---|
-| Background location | OwnTracks app posts to `/api/location/owntracks`, "Significant mode", needs the right tailnet + exact hostname (two outages already) | Native background-geolocation plugin posts to the **same endpoint**. We can **retire OwnTracks** entirely. |
+| Background location | OwnTracks app posts to `/api/<app>/owntracks`, "Significant mode", needs the right tailnet + exact hostname (two outages already) | Native background-geolocation plugin posts to the **same endpoint**. We can **retire OwnTracks** entirely. |
 | Notifications | commute writes `.runtime/commute/notify-commute.txt`, the bridge agent tails it -> Discord | Direct APNs push to your phone. Discord fallback stays as backup. |
 | Live commute status | commute "Now" feed inside the app | **Live Activity**: lock-screen + Dynamic Island showing next train / arrival countdown (your exact Uber example). |
 | Bird audio | Pi Zero in the yard streaming to the Brain | Phone mic as an ad-hoc capture device for the birds pipeline. |

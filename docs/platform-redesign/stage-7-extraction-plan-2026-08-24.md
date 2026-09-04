@@ -29,7 +29,7 @@ python3 scripts/check_no_app_names.py
 ```
 
 The `literals 305` figure in the two 2026-08-24 documents is stale by one commit:
-the three `"app:budget"` fixture strings in `frontend/src/components/chat/uiCardActions.test.ts`
+the three `"app:<slug>"` fixture strings in `frontend/src/components/chat/uiCardActions.test.ts`
 have already been renamed, so the gate is green and no longer rejects unrelated work.
 
 Content split, reproduced exactly:
@@ -271,7 +271,7 @@ Two supporting pieces, both named seams rather than conveniences:
   converts a tested app into an untested one. The glob names no app.
 
 **health went through it, whole** (ticket d65244c4). Its three backend modules,
-three frontend files and three contract assertions are in `apps/health/`, and
+three frontend files and three contract assertions are in `apps/<slug>/`, and
 `backend/services/health_app.py` is gone. Measured after: catalog builds health
 from the `workshop.apps` entry point, `/health/{latest,history,ingest}` mount,
 `npm run typecheck` clean, the bundle emits a `HealthSettings` chunk compiled
@@ -288,7 +288,7 @@ have sent a worker looking for something that no longer existed.
 ### 2.1 health (3 C, 0 H)
 
 **Frontend (1 C)**
-- `frontend/src/pages/apps/health/HealthSettings.tsx`
+- `frontend/src/pages/apps/<slug>/HealthSettings.tsx`
 
 **Backend (2 C)**
 - `backend/routes/health.py` (serves `/health`, ingest under HTTP Basic)
@@ -369,7 +369,7 @@ or budget leaves and finance's background loop imports a module that is gone.
   `backend/services/manifests.py:237-239`,
   `backend/mcp/workshop_query_server.py:93,239`,
   `backend/db/migrations/versions/f3b8d2a17e94_*.py:81`. Most of these are
-  `"app:budget"` or `project:budget` used as an EXAMPLE scope key in a docstring
+  `"app:<slug>"` or `project:<slug>` used as an EXAMPLE scope key in a docstring
   or a description string. They are literals by the gate's definition, they are
   not dependencies, and each should be changed to a fictional id rather than
   deleted.
@@ -428,7 +428,7 @@ the extracted spec keeps the field. Assert it.
   `test_commute_scoring.py`, `backend/tests/test_auth_env.py` (an import site).
 
 **Platform code that must change (P)**
-- `app_registry._commute_spec` and its `require_domain_owner("commute")` mount.
+- `app_registry._commute_spec` and its `require_domain_owner("<slug>")` mount.
 - `frontend/src/App.tsx:167`, the `/commute` legacy redirect. The loader's
   manifest has a `redirects` block for exactly this, so it becomes a declaration.
 - `mobile/app.json:29` "commute alerts" in a permission string. The 2026-08-20
@@ -466,7 +466,7 @@ with commute and must keep working against an absent location.
   the coupling section 3 exists for: `routes/owntracks.py` is mounted by
   `_location_spec`, is not in the 102, and `services/owntracks.py:24` does
   `from . import location`. Removing all 102 leaves this pair behind and
-  `import main` fails with `ImportError: cannot import name 'location' from 'services'`.
+  `import main` fails with `ImportError: cannot import name '<slug>' from 'services'`.
 
 **Tests**
 - `backend/tests/test_http_contract_foundation.py` carries 15 location literals,
@@ -501,11 +501,11 @@ with commute and must keep working against an absent location.
 `services/environment.py` is measured, not guessed: its own docstring opens
 "Environment / weather data spine for the Birds app", it owns
 `<rig-data>/environment.db` via `BIRDNET_ENV_DB`, and `_birds_spec` requires
-route modules `("birds", "environment")`. It reads as platform code and is not in
+route modules `("<slug>", "environment")`. It reads as platform code and is not in
 the 102 because the roster has no app called `environment`.
 
 **The data move is part of this step, not an afterthought.** `birds_store.py`
-resolves the detection database and clips inside `apps/birds/`. `BIRDNET_DB`,
+resolves the detection database and clips inside `apps/<slug>/`. `BIRDNET_DB`,
 `BIRDNET_CLIPS`, `BIRDNET_BROWSER_DB`, `BIRDNET_CLIPS_DIR`, `BIRDNET_ATLAS_CLIPS_DIR`
 and `BIRDNET_ENV_DB` override it (`infra/systemd/instance.env.example:66-71`). If
 the source moves and the env is not set in the same change, the live detection
@@ -521,13 +521,13 @@ re-pointed at fictional modules.
 
 **Frontend (44 C)**
 - `frontend/src/pages/apps/Birds.tsx` and all 43 files under
-  `frontend/src/pages/apps/birds/`, including the `aviary/` subtree (7 files, a
+  `frontend/src/pages/apps/<slug>/`, including the `aviary/` subtree (7 files, a
   vendored voxel engine) and `standalone/main.tsx`.
 
 **Hidden (2 H, and neither is scanned by any gate)**
 - `frontend/springer.html`
 - `frontend/vite.springer.config.ts`, which carries a Vite transform plugin
-  `rewriteBirdsPaths` that string-replaces `/apps/birds` out of every module in a
+  `rewriteBirdsPaths` that string-replaces `/apps/<slug>` out of every module in a
   birds-only build. `check_no_app_names.py`'s `PLATFORM_DIRS` starts at
   `frontend/src/`, so the frontend root is unscanned and these 15 occurrences are
   invisible. Neither file is referenced by `package.json`, `scripts/apply.sh` or
@@ -653,8 +653,8 @@ owntracks-auth, `OPEN_WEARABLES_API_KEY`).
 G3 `infra/systemd/workshop-backend.service:51-52`.
 G4 `mobile/app.json:29`.
 G5 `.gitignore`: at least twelve app-specific lines
-(`apps/birds/public-site/birds-public.json`, `apps/birds/**/*.db`,
-`apps/birds/BIRDSTATION-CONTEXT*.md`, four `/commute/*.json` paths,
+(`apps/<slug>/public-site/birds-public.json`, `apps/<slug>/**/*.db`,
+`apps/<slug>/BIRDSTATION-CONTEXT*.md`, four `/<app>/*.json` paths,
 `/commute/notes/`, `/commute/`, `/backend/mcp/plaid/`, `/agents/apps/`), plus
 comment blocks naming budget, finance, commute and location.
 
@@ -672,7 +672,7 @@ rig and commute, and no gate in the repo will ever say so.
 
 ### Class I. Data and ops paths (2 sites, both invisible)
 
-I1 `apps/birds/birdnet.db` and `apps/birds/clips/`, resolved by
+I1 `apps/<slug>/birdnet.db` and `apps/<slug>/clips/`, resolved by
 `services/birds_store.py` inside the source tree. The env overrides exist; they
 must be set in the same change that moves the code.
 I2 `<rig-data>/environment.db` hardcoded as the default in
@@ -927,7 +927,7 @@ machine and the platform's history keeps every version of every extracted file.
    silent preference rather than an error, which is exactly why this cleanup is
    part of the rollback and not optional.
 4. **The data.** Birds is the only app whose data sits inside the tree
-   (`apps/birds/birdnet.db`, `apps/birds/clips/`). Its move is an ops step guarded
+   (`apps/<slug>/birdnet.db`, `apps/<slug>/clips/`). Its move is an ops step guarded
    by `BIRDNET_DB` and `BIRDNET_CLIPS`. Rollback is unsetting the env, and the
    rule is that the database is COPIED and the old copy left in place until the
    app has run against the new location for a day. Do not move it.
@@ -1054,7 +1054,7 @@ ratio is roughly ten to one and it is the operator's cost.
 
 **D4. Does the birds standalone build survive extraction, and where does it live?**
 `frontend/springer.html` and `frontend/vite.springer.config.ts` build a
-root-mounted birds-only app served by `apps/birds/springer/app.py`. It is a second
+root-mounted birds-only app served by `apps/<slug>/springer/app.py`. It is a second
 product with its own consumers. It can move into the app unchanged, or it can
 become the app's own repo's problem, or it can be retired if the public site now
 comes from somewhere else. Nobody has asked. It is a genuine product question and

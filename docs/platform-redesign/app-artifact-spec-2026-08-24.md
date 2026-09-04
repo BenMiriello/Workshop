@@ -142,7 +142,7 @@ Measured: `.runtime/installed-apps.json` holds eight ids
 `app_registry.py` builds an `AppSpec` for each, and `main.py` mounts their
 routers into the platform process. Four of them (`birds`, `budget`, `commute`,
 `location`) have a directory under `apps/`; the others are route modules only.
-Measured: `apps/birds/workshop.app.json` declares NO services at all; its whole
+Measured: `apps/<slug>/workshop.app.json` declares NO services at all; its whole
 content is a name and a comment explaining that it exists so the Files tab
 resolves the right directory.
 
@@ -618,7 +618,7 @@ is what the call site does after the change, not a promise that it is easy.
 | # | call site | why it keeps resolving a directory |
 |---|---|---|
 | 13 | `app_files.py:140` `project_root()` -> `build_agents._project_dir` | the Files tab edits source. An artifact is not editable |
-| 14 | `app_files.py:210` `_app_declared_root`, `paths.scope_root("app:<slug>")` + `_read_manifest_file` | this is the fix for the measured `app:birds` two-roots defect (`projects/birds` 118 files vs `apps/birds` 30,150 files). It reads the manifest's PRESENCE as a declaration of which directory the app is. Unchanged |
+| 14 | `app_files.py:210` `_app_declared_root`, `paths.scope_root("app:<slug>")` + `_read_manifest_file` | this is the fix for the measured `app:<slug>` two-roots defect (`projects/<slug>` 118 files vs `apps/<slug>` 30,150 files). It reads the manifest's PRESENCE as a declaration of which directory the app is. Unchanged |
 | 15 | `worktrees.py:72`, `_read_manifest_file` and `AppError` | branch worktrees are source. It also becomes the build's input provider (2.1) |
 | 16 | `chat_context.py:1198-1235`, `manifest_dict` / `app_status` / `env_overview` | the L2 build-provider prompt describes what the agent is editing. Change only the OUTPUT: it should name the live release and the deployment address instead of a loopback port, and the "To SEE it" line becomes the address |
 | 17 | `scripts/preview_config.py:170`, `_read_manifest_file` | reads the manifest of a source tree that `app_runner` does not start (its own header says so). Unchanged |

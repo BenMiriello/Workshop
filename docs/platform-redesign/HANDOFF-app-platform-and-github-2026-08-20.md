@@ -250,7 +250,7 @@ budget/finance only. Both read as platform code. There will be others; check
 what a module actually imports, not what it is called.
 
 **Birds' data lives inside the source tree** (`apps/birds/birdnet.db`,
-`apps/birds/clips/`, via `birds_store.py`). `BIRDNET_DB` and `BIRDNET_CLIPS`
+`apps/<slug>/clips/`, via `<slug>_store.py`). `BIRDNET_DB` and `BIRDNET_CLIPS`
 override it, so moving the code is an ops step, but it must happen in the same
 change or the detection database moves with the source.
 

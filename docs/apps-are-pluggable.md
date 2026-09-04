@@ -66,7 +66,7 @@ Workshop keeps a **catalog** of built-in apps (code, tracked) and a per-instance
    apps are actually wired up:
 
    ```json
-   { "installed": ["finance", "budget", "birds", "location", "commute", "health", "wearables"] }
+   { "installed": ["<slug>", "<another-slug>", "..."] }
    ```
 
    A missing/empty file means nothing is installed — the correct state for a fresh

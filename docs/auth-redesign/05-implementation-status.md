@@ -86,7 +86,7 @@ command (operator-only).
   200; `/api/auth/me` and personal APIs 401 unauth; all 10 blocked internal/ingest
   paths 404; a fresh account registered through the proxy got a working
   `workshop_session` cookie, read its own empty partition (200), and was **403 on
-  the operator's `/api/budget`** (full segmentation proven at the edge). Probe
+  the operator's `/api/<app>`** (full segmentation proven at the edge). Probe
   account purged afterward; only the operator partition (`users/6`) remains.
 - **Registration closed** (`WORKSHOP_REGISTRATION_OPEN=0` in `secrets.env`,
   backend restarted) — `POST /api/auth/register` → 403 "registration is closed";

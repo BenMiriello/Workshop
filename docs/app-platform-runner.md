@@ -30,7 +30,7 @@ Lives in the project dir. Absent ⇒ auto-detected (a `deploy.config.yaml` with
 
 ```jsonc
 {
-  "name": "gengui",
+  "name": "<slug>",
   "services": [
     {
       "name": "core",
@@ -38,7 +38,7 @@ Lives in the project dir. Absent ⇒ auto-detected (a `deploy.config.yaml` with
       "build": "bun install",        // optional, run once before start (full host env + this service's env)
       "start": "bun src/index.ts",   // the long-running command; gets PORT (and port_env) in its env
       "port_env": "PORT",            // env var the service reads for its port (default PORT)
-      "health": "/health",           // optional http readiness path; else a TCP connect counts
+      "<slug>": "/<app>",           // optional http readiness path; else a TCP connect counts
       "expose": true,                // the primary UI surface (reflected as the app URL)
       "enabled": true,
       "depends_on": ["core"],        // start order + auto-injected CORE_URL

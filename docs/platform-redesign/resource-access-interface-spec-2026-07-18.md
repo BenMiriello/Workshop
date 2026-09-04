@@ -568,7 +568,7 @@ and appends `[Note: result is partial — 2 items withheld]` to its task output.
 
 ```python
 # in stores.py:register_builtin_stores, already present:
-stores.declare("finance", "plaid-items", Path("~/.config/workshop/plaid-items.json"), type="Finance")
+stores.declare("<slug>", "plaid-items", Path("~/.config/workshop/plaid-items.json"), type="Finance")
 ```
 
 ### Policy row

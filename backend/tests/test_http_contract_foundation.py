@@ -1,10 +1,9 @@
 """ADR 0023 (`docs/decisions/0023-the-http-contract.md`) foundation: the
 registered error handler and the `Page[T]` envelope.
 
-BOTH exemplar conversions were an app's routes and both left with their app --
-the first on 2026-09-04 (`apps/health/tests/`), the second the same day once the
-last app's source went (`apps/location/tests/`). They tested those apps' routes,
-not this ADR, and a fresh clone has no reason to ship them. What stays here is
+BOTH exemplar conversions were an app's routes and both left with their app on
+2026-09-04, into that app's own `apps/<slug>/tests/`. They tested those apps'
+routes, not this ADR, and a fresh clone has no reason to ship them. What stays here is
 the part that is true of every route on every installation: the handler shape,
 the envelope, and the two constants.
 

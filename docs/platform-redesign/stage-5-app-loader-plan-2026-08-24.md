@@ -32,7 +32,7 @@ Of the 305 literals, `frontend/src/apps/registry.tsx` carries 54, and it is also
 
 The other 40 content files are backend modules and agent definitions and are not this stage's business.
 
-The three literals that put the tree over its own baseline right now are **not** the docstring lines `app-separation-why-it-recurs-2026-08-24.md` section 5 names. Measured: they are three `"app:budget"` fixture strings at `frontend/src/components/chat/uiCardActions.test.ts` lines 163, 164 and 165, which were absent 25 commits ago. Renaming them to a fictional app id takes the count to exactly 302 and the gate goes green. That is commit 0 below, and it is a prerequisite for every other commit, because the gate is unconditional in `scripts/reviewer.sh` and while it fails it rejects unrelated work.
+The three literals that put the tree over its own baseline right now are **not** the docstring lines `app-separation-why-it-recurs-2026-08-24.md` section 5 names. Measured: they are three `"app:<slug>"` fixture strings at `frontend/src/components/chat/uiCardActions.test.ts` lines 163, 164 and 165, which were absent 25 commits ago. Renaming them to a fictional app id takes the count to exactly 302 and the gate goes green. That is commit 0 below, and it is a prerequisite for every other commit, because the gate is unconditional in `scripts/reviewer.sh` and while it fails it rejects unrelated work.
 
 The relevant facts about the build, all measured:
 
@@ -109,7 +109,7 @@ export default { contract: 1, exports: { Home, Setup, Shell, SettingsPanel } } s
 
 Three rules, each of which exists because of something in the current registry:
 
-1. **A page component takes no props.** Today `registry.tsx` passes `groupNav={<AppGroupNav />}` and `renderChatDock={makeChatDock("finance")}` into four pages, and those props are the reason the registry has to know the app's id. In the loader they come from context instead (2.4).
+1. **A page component takes no props.** Today `registry.tsx` passes `groupNav={<AppGroupNav />}` and `renderChatDock={makeChatDock("<slug>")}` into four pages, and those props are the reason the registry has to know the app's id. In the loader they come from context instead (2.4).
 2. **The app never constructs a `<Route>`.** It declares `{path, export, layout}` and the shell builds the router elements. This is what makes the mount vocabulary closed, and it is also the mitigation for trap C (section 5.3).
 3. **`contract` is on the default export as well as in the manifest.** The manifest says what the app claims; the bundle says what it actually is. They are checked against each other, because a manifest is hand edited and a bundle is not.
 
@@ -402,12 +402,12 @@ Run `python3 scripts/check_no_app_names.py` before and after every commit and pu
 
 | # | commit | content | imports | literals | note |
 |---|---|---|---|---|---|
-| 0 | fix the failing ratchet: three `"app:budget"` fixture strings in `frontend/src/components/chat/uiCardActions.test.ts` become a fictional id | 102 | 20 | 305 to **302** | Unblocks `reviewer.sh` for everyone. Do this first and alone |
+| 0 | fix the failing ratchet: three `"app:<slug>"` fixture strings in `frontend/src/components/chat/uiCardActions.test.ts` become a fictional id | 102 | 20 | 305 to **302** | Unblocks `reviewer.sh` for everyone. Do this first and alone |
 | 1 | shared runtime entries + import map plugin + `guard.ts` + `importmap.test.ts` | 102 | 20 | 302 | No behaviour change. Trap A mitigated and detected before anything can hit it |
 | 2 | `packages/app-build` (the preset, `SHARED`, the two `closeBundle` refusals) + the fixture app under `tests/fixtures/app-widgets/` | 102 | 20 | 302 | The fixture is a fictional app outside `PLATFORM_DIRS`, so it moves nothing. Trap B mitigated and detected |
 | 3 | backend: the `ui` block via `app_runner._read_manifest_file`, `services/app_ui.py`, `GET /base-apps/contributions`, `GET /base-apps/ui/{slug}/{path}`, `GET /base-apps/runtime`; fix `DEFAULT_KIT` | 102 | 20 | 302 | Nothing consumes it yet, which is fine: it is a read API, not a wired control |
 | 4 | frontend: `contract.ts`, `declarations.ts`, `loader.ts`, `AppRouteHost.tsx`, `AppHost` in the kit, `main.tsx` session-provider await. `registry.tsx` still holds all seven apps and is merged into the declaration list | 102 | 20 | 302 | Dual path on purpose. Prove the loader on the fixture app before touching a real one |
-| 5 | migrate **notes-app**: build it with the preset into `apps/notes-app/dist/ui`, `git rm --cached` its 5 frontend files, delete its registry entry | **97** | 20 | **301** | The smallest app with no provider, no group, no status and one route |
+| 5 | migrate **notes-app**: build it with the preset into `apps/<slug>/dist/ui`, `git rm --cached` its 5 frontend files, delete its registry entry | **97** | 20 | **301** | The smallest app with no provider, no group, no status and one route |
 | 6 | migrate **health** (1 file, 2 literals) and **budget** (3 files, 4 literals) | **93** | 20 | **295** | health is the settings-panel-only case, budget is the plain-page case |
 | 7 | migrate **location** (2 files, 5 literals) and **commute** (4 files, 4 literals) | **87** | 20 | **286** | first `group` pair, and the first `status` endpoint |
 | 8 | migrate **finance** (3 files, 6 literals) | **84** | 20 | **280** | completes the `money` group |
@@ -468,8 +468,8 @@ Four, and none of them has an answer in the tree.
 
 1. **How an out-of-repo app gets `@workshop/ui` and `@workshop/app-build` at build time.** Externalizing means the app needs them only for types and config, but it still needs them. Options: publish both to npm under a scope he owns; run a private registry; depend by git URL or tarball. Until this is settled, an app repo can only build on a machine that has the monorepo checked out, which is most of the point of separation. (Constraint on any answer: an account named in this install's `WORKSHOP_BLOCKED_REPO_OWNERS` is out of scope as a host for anything here — see `services/github.py:reject_blocked`.)
 2. **Where app UI assets are served from.** This plan proposes the backend at `/api/base-apps/ui/...`, which is authenticated and never fights `apply.sh`, at the cost of a proxy hop per asset. The alternative is copying into `frontend/dist/apps/<slug>/` at install time for edge-static immutable serving, which is faster and couples install to a directory `apply.sh` rebuilds. I recommend the first; the second is a real option and the cost is small either way.
-3. **Whether birds' data move happens in step 9 or separately.** The handoff warns that `apps/birds/birdnet.db` and `apps/birds/clips/` live inside the source tree, that `BIRDNET_DB` and `BIRDNET_CLIPS` override it, and that the move "must happen in the same change or the detection database moves with the source". Step 9 moves only frontend files, so it does not force the issue. Deciding to bundle them is his call, not mine.
-4. **Whether the standalone per-app build survives.** `frontend/vite.springer.config.ts` builds a birds-only root-mounted app by rewriting `/apps/birds/...` path literals at build time. Once birds owns its own build, that config is either deleted, or moved into the app's repo, or kept in the platform, and only the first two are consistent with "no platform source file may name a specific app".
+3. **Whether birds' data move happens in step 9 or separately.** The handoff warns that `apps/<slug>/birdnet.db` and `apps/<slug>/clips/` live inside the source tree, that `BIRDNET_DB` and `BIRDNET_CLIPS` override it, and that the move "must happen in the same change or the detection database moves with the source". Step 9 moves only frontend files, so it does not force the issue. Deciding to bundle them is his call, not mine.
+4. **Whether the standalone per-app build survives.** `frontend/vite.springer.config.ts` builds a birds-only root-mounted app by rewriting `/apps/<slug>/...` path literals at build time. Once birds owns its own build, that config is either deleted, or moved into the app's repo, or kept in the platform, and only the first two are consistent with "no platform source file may name a specific app".
 
 ---
 

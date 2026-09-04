@@ -143,7 +143,7 @@ describe("two tabs on one thread", () => {
 describe("resolveScope", () => {
   const base = {
     contextKey: "general",
-    knownScopes: ["general", "development", "budget"],
+    knownScopes: ["general", "development", "ledger"],
     linkedThreadHome: null,
     startNew: false,
     remembered: null,
@@ -158,25 +158,25 @@ describe("resolveScope", () => {
   });
 
   it("does not default to development if it isn't a known scope (dev flag on, backend not in dev mode)", () => {
-    expect(resolveScope({ ...base, knownScopes: ["general", "budget"] }, true)).toBe("general");
+    expect(resolveScope({ ...base, knownScopes: ["general", "ledger"] }, true)).toBe("general");
   });
 
   it("a specifically-scoped surface (a project/app dock) is unaffected", () => {
-    expect(resolveScope({ ...base, contextKey: "budget", knownScopes: [...base.knownScopes] }, true))
-      .toBe("budget");
+    expect(resolveScope({ ...base, contextKey: "ledger", knownScopes: [...base.knownScopes] }, true))
+      .toBe("ledger");
   });
 
   it("an explicit past pick still wins, including picking general on purpose", () => {
     expect(resolveScope({ ...base, remembered: "general" }, true)).toBe("general");
-    expect(resolveScope({ ...base, remembered: "budget" }, true)).toBe("budget");
+    expect(resolveScope({ ...base, remembered: "ledger" }, true)).toBe("ledger");
   });
 
   it("New chat in dev mode starts on development, not general", () => {
-    expect(resolveScope({ ...base, startNew: true, remembered: "budget" }, true)).toBe("development");
+    expect(resolveScope({ ...base, startNew: true, remembered: "ledger" }, true)).toBe("development");
   });
 
   it("a linked thread's home still outranks the dev default", () => {
-    expect(resolveScope({ ...base, linkedThreadHome: "budget" }, true)).toBe("budget");
+    expect(resolveScope({ ...base, linkedThreadHome: "ledger" }, true)).toBe("ledger");
   });
 });
 

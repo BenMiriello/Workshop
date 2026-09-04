@@ -537,7 +537,7 @@ Whole-router dead-from-the-UI (services imported in-process instead):
 
 **Broken callers (frontend calling routes that do not exist):**
 - `GET|POST /api/auth/invite/{token}` at
-  `frontend/src/pages/apps/birds/standalone/main.tsx:77,129`. `backend/routes/auth.py`
+  `frontend/src/pages/apps/<slug>/standalone/main.tsx:77,129`. `backend/routes/auth.py`
   declares no `invite` route; `grep -rn invite backend --include=*.py` finds none.
   Every invite link renders `state = "badinvite"` and redemption always fails.
 - `fetch("/api/agents")` at `frontend/src/pages/ProjectDetail.tsx:538` omits the
@@ -665,7 +665,7 @@ layer `packages/ui/src/fileTree.ts`, but they still duplicate `messageOf`
 | `GET /api/docs/file` `backend/routes/docs_index.py:152` | own `read_text()` at `:161` | **dead** |
 | `GET /api/agents/build/{slug}/file` `backend/routes/agents.py:908` | own `read_text()` at `:915` | yes |
 | `GET /api/projects/{slug}/file` `backend/routes/projects.py:1073` | own `read_text()` at `:1082` | **dead** |
-| `GET /api/notes-app/notes/{note_path}` `backend/routes/notes.py:159` | `notes_vault.read_note:224` | yes |
+| `GET /api/<app>/notes/{note_path}` `backend/routes/notes.py:159` | `notes_vault.read_note:224` | yes |
 | `POST /api/stores/{store_id}/read` `backend/routes/stores.py:219` | `stores.read:581` | yes |
 | `GET /api/knowledge/{scope_key}/notes/{note_id}` `backend/routes/knowledge.py:128` | `knowledge.get_note:768` | yes |
 
@@ -686,7 +686,7 @@ which is the weakest of the four.
    **dead routes** (§4.1); reached indirectly by `GET /api/notes?q=`
    (`backend/routes/notes_all.py:285`), which calls it with `limit=1000` per scope
    and intersects ids: an O(scopes x notes) full read on every list request.
-3. Line-grep, `backend/services/notes_vault.py:405` -> `GET /api/notes-app/search`.
+3. Line-grep, `backend/services/notes_vault.py:405` -> `GET /api/<app>/search`.
 
 Title-substring search is frontend-only and copied **five** times:
 `frontend/src/pages/memory/memoryTree.ts:298`, `frontend/src/pages/Memory.tsx:377`

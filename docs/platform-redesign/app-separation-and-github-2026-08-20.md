@@ -175,7 +175,7 @@ frontend, 3 inbound backend importers) -> budget (**top-level imports finance**)
 -> commute (**top-level imports location**, 90 tests hard-fail on collection) ->
 location (commute imports it) -> finance (deepest inbound web, in-tree MCP
 server, 13 env vars) -> **birds** (eagerly bundled, data lives *inside the source
-tree* at `apps/birds/birdnet.db`, reaches a private platform symbol).
+tree* at `apps/<slug>/birdnet.db`, reaches a private platform symbol).
 
 Two genuine cross-app edges block independent extraction: **budget -> finance**
 and **commute -> location**, both load-time, both ignoring the capability
@@ -496,7 +496,7 @@ get fixed (routed through the Store/capability layer) before or during
 extraction, not after.
 
 Special case: **birds' data lives inside the source tree**
-(`apps/birds/birdnet.db`, `apps/birds/clips/`, via `birds_store.py:30-31`).
+(`apps/<slug>/birdnet.db`, `apps/<slug>/clips/`, via `<slug>_store.py:30-31`).
 `BIRDNET_DB` and `BIRDNET_CLIPS` overrides exist, so this is an ops step, but it
 must be done in the same change or the detection database moves with the code.
 

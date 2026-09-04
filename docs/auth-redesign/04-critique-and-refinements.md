@@ -1,7 +1,7 @@
 # Critique + refinements (pre-build review)
 
 Written 2026-06-25 after reading the actual code (`deps_auth.py`, `deps_user.py`,
-`auth_store.py`, `jwt_tokens.py`, `routes/auth.py`, `apps/birds/springer/auth.py`, `main.py`, and the
+`auth_store.py`, `jwt_tokens.py`, `routes/auth.py`, `apps/<slug>/springer/auth.py`, `main.py`, and the
 full personal-router inventory). The four design docs are directionally correct; these are the
 concrete corrections that make the build match reality. Where this doc and the earlier docs
 disagree, **this doc wins** (the earlier docs were written before the code audit).
@@ -61,7 +61,7 @@ include-level `dependencies=[require_token]` cannot simply become `require_user`
 - **location**: `/location/latest|history` → `require_user` (owner-scoped). `/location/update`
   → the mobile app's native producer uses a **device token** (resolves to a user) → `require_user`
   also covers it. `/location/owntracks` (third-party iOS app, HTTP Basic) → keep Basic but bind
-  the credential to the owner (`require_ingest("location", owner)`).
+  the credential to the owner (`require_ingest("<slug>", owner)`).
 - **health**: `/health/latest|history` → `require_user`. `/health/ingest` (Health Auto Export,
   Basic) → Basic bound to owner.
 - **push**: `/push/register|status` → `require_user` (the app is the signed-in user).
@@ -110,7 +110,7 @@ reader. Grep first; the audit found only a self-reference. Remove it.
 ## R9 — Migration ordering inside Phase 3 (do not break the running system)
 
 Order strictly: (1) mint + write all caller tokens to `secrets.env` and update every caller
-(cron `apps/commute/scripts/tick.sh`/`apps/commute/scripts/notes.sh`, the backend self-calls in `commute/reason.py` and
+(cron `apps/<slug>/scripts/tick.sh`/`apps/<slug>/scripts/notes.sh`, the backend self-calls in `commute/reason.py` and
 `commute/llm.py` to `/relay/*`, the Letta `sandbox_wrappers.py` → `/tools/*`, BirdNET-Go →
 `/birds/webhook`, OwnTracks/Health Basic → owner), (2) verify a real commute tick + a real
 BirdNET detection + a relay call still land WITH the tokens and loopback-trust still present,

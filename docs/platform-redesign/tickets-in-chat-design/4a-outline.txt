@@ -161,7 +161,7 @@
                 <span style{color:var(--fg); font-weight:600}>
                   | Read
                 <span style{font-size:11.5px; opacity:.85}>
-                  | apps/birds/retention.py
+                  | apps/<slug>/retention.py
               <div style{background:var(--inset); color:var(--muted); border-radius:7px; font-size:12px; border:1px solid var(--border); padding:5px 8px; gap:6px}>
                 <svg >
                   <path >

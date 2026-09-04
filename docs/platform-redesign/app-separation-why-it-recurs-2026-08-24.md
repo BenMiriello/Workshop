@@ -148,7 +148,7 @@ That was wrong and is retracted.** The failure was real (302 -> 305) but I
 attributed it by grepping app names in files added since the pin, found three
 hits in a docstring, and matched the coincidence of the number three instead of
 asking the checker which sites it counted. `--json` names them: three
-`"app:budget"` fixture strings at
+`"app:<slug>"` fixture strings at
 `frontend/src/components/chat/uiCardActions.test.ts:163-165`. The checker never
 counted the docstring; its patterns match quoted strings and paths, not prose.
 Renamed to a fictional id, the count is 302 and the gate passes. Recorded rather
@@ -176,7 +176,7 @@ scan starts at `frontend/src/`.
 `backend/routes/owntracks.py` is platform code serving `/location` and importing
 `services.location`, and neither file appears in the 102. Building a tree with
 all 102 app-source files removed therefore fails on the BACKEND as well, with
-`ImportError: cannot import name 'location' from 'services'`, one exception
+`ImportError: cannot import name '<slug>' from 'services'`, one exception
 class too narrow for `app_registry._has_module` to catch. **So driving `content`
 to zero would not by itself make a clone build.** That is the sharpest argument
 in this document for section 4: a count can be satisfied while the requirement

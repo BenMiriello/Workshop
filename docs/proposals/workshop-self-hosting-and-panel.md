@@ -209,7 +209,7 @@ lifecycle** — exactly the gengui shape `app_runner` was built for:
   "name": "lovelace",
   "services": [
     { "name": "core",     "cwd": "core",     "start": "npm run dev",
-      "health": "/health", "env": { "JUDGE_ENABLED": "true",
+      "<slug>": "/<app>", "env": { "JUDGE_ENABLED": "true",
       "REDIS_URL": "redis://127.0.0.1:6379" } },
     { "name": "face",     "cwd": ".",        "start": "bash -c 'source ai-env/bin/activate && python core/services/ai/face_service.py --port $PORT'" },
     { "name": "frontend", "cwd": "frontend", "start": "npm run dev",

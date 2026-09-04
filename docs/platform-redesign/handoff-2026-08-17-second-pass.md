@@ -172,7 +172,7 @@ been fixed the same day.
 
 17 declarations to 5. `fmtTs` x3 now call `lib/time.ts` `timeAbsolute`, and
 three new pure modules hold the rest (`lib/bytes.ts`, `lib/sha.ts`,
-`pages/apps/birds/specColor.ts`).
+`pages/apps/<slug>/specColor.ts`).
 
 **Two same-named helpers were not the same function, and one was a bug.**
 `Memory.tsx`'s `fmtBytes` had no GB tier, so a 2 GiB chat attachment rendered as

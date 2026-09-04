@@ -20,7 +20,7 @@ Full background: `docs/mobile-app-proposal.md` (why + cost), `docs/mobile-app-im
 
 Verified before handoff: `mobile/` tsc 0, `frontend/` tsc 0, design gate clean, backend
 **107 tests pass**. Frontend mobile widths checked headless at 390px (no horizontal overflow
-on login/apps/commute/budget/settings).
+on login/apps/<slug>/<slug>/settings).
 
 Built and working (software side):
 - **Shell** (`mobile/`): WebView loads the SPA; native bridge dispatcher (`native/bridge.ts`)
@@ -93,7 +93,7 @@ Tailscale Serve). The Mac only builds/runs the iOS client.
 - **Branch.** `mobile-app-rebuild` was forked from `birds-redesign`, so it carries that
   branch's birds + autonomy history as its base; do mobile work here, not on
   `birds-redesign` (which other agents still use for birds). Some birds files (e.g.
-  `frontend/src/pages/apps/birds/LiveFeed.tsx`) had uncommitted WIP on the Linux box that is
+  `frontend/src/pages/apps/<slug>/LiveFeed.tsx`) had uncommitted WIP on the Linux box that is
   NOT on this branch. Stage only your own files; keep commits isolated.
 - **Design system is law** for any `frontend/` or `mobile/` change: `frontend/CLAUDE.md`
   (primitives in `src/ui`, tokens, lucide icons not emoji, no em-dashes, run

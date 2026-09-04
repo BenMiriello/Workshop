@@ -48,7 +48,7 @@ Backend: one FastAPI (`:8000` → `:8446`). Secure routers gate off-host callers
 per-app authorization** — any in-workshop page can call any `/api/*` route. So today
 Birds and Finance share an origin *and* an unrestricted backend. If Birds is exposed
 to a friend on the shared origin, that friend's browser context can reach
-`/api/finance/*`. **This is the core thing to fix before any external sharing.**
+`/api/<app>/*`. **This is the core thing to fix before any external sharing.**
 
 ---
 
@@ -60,12 +60,12 @@ Each app declares itself in one place (`apps.json`, backend-owned):
 ```jsonc
 {
   "apps": {
-    "finance":  { "title": "Finance",  "sensitivity": "private", "api_prefixes": ["/finance", "/budget", "/plaid"] },
-    "location": { "title": "Location", "sensitivity": "private", "api_prefixes": ["/location"],
+    "<slug>":  { "title": "Finance",  "sensitivity": "private", "api_prefixes": ["/<app>", "/<app>", "/plaid"] },
+    "<slug>": { "title": "Location", "sensitivity": "private", "api_prefixes": ["/<app>"],
                   "provides": ["location.read"] },
-    "commute":  { "title": "Commute",  "sensitivity": "private", "api_prefixes": ["/commute"],
+    "<slug>":  { "title": "Commute",  "sensitivity": "private", "api_prefixes": ["/<app>"],
                   "needs": ["location.read"] },
-    "birds":    { "title": "Yard Birds","sensitivity": "shareable","api_prefixes": ["/birds"],
+    "<slug>":    { "title": "Yard Birds","sensitivity": "shareable","api_prefixes": ["/<app>"],
                   "provides": ["birds.read"], "needs": [] }
   }
 }
@@ -81,7 +81,7 @@ A separate `grants.json` (operator-edited only, in Settings → Platform):
 ```jsonc
 {
   "grants": [
-    { "from": "location", "to": "commute", "capability": "location.read", "mode": "read" }
+    { "from": "<slug>", "to": "<slug>", "capability": "location.read", "mode": "read" }
   ]
 }
 ```
@@ -124,7 +124,7 @@ apps/<name>/
 - **Shared primitives**: `frontend/src/ui` + `src/styles/tokens.*` already exist and are
   mandatory (`frontend/CLAUDE.md`). Promote them to a workspace package
   (`@workshop/ui`) so `apps/*` import the *same* components as the main frontend —
-  today `apps/commute` re-implements styles inline, which is the divergence to kill.
+  today `apps/<slug>` re-implements styles inline, which is the divergence to kill.
 - **Integrated mount**: main frontend lazy-imports `apps/<name>/src` at `/apps/<name>`.
 - **Standalone mount**: `standalone.tsx` builds the same tree on its own origin.
 
@@ -137,7 +137,7 @@ the chat can't become a side-channel around isolation.
 ### 4.3 The Birds-for-friends path (concrete)
 Birds is `shareable`. To share: build its standalone mount on its own origin with a guest
 token scoped to `birds.read`. Finance/Location/Commute are `private` and never mounted on
-that origin. Result: a friend's link reaches only `/api/birds/*`; there is no route, token,
+that origin. Result: a friend's link reaches only `/api/<app>/*`; there is no route, token,
 or origin from which they can touch Finance.
 
 ---
@@ -177,15 +177,15 @@ This is purely a rendering + asset task.
 ## 6. Commute → in-workshop port (first migration, do this first)
 
 Today Commute is a separate origin (`:8444`) the launcher links out to. Two commute UIs
-exist: the rich `apps/commute/CommutePages.tsx` (820 lines, just upgraded to the anchor
+exist: the rich `apps/<slug>/CommutePages.tsx` (820 lines, just upgraded to the anchor
 model) and a thin config-only `frontend/src/pages/Commute.tsx` that punts to the external app.
 
-Target: Commute mounts at `/apps/commute` in the main frontend, design-system-compliant,
+Target: Commute mounts at `/apps/<slug>` in the main frontend, design-system-compliant,
 launcher card switched from external `href` to internal `to`. This is the **first instance**
 of §4 (one codebase, integrated mount). Steps:
-1. Promote `apps/commute/src` to import `@workshop/ui` primitives (replace inline styles +
+1. Promote `apps/<slug>/src` to import `@workshop/ui` primitives (replace inline styles +
    raw hex like `#16a34a`/`#f59e0b` → status tokens). `check_design.sh` must pass.
-2. Lazy-route it at `/apps/commute`; redirect legacy `/commute` → `/apps/commute`.
+2. Lazy-route it at `/apps/<slug>`; redirect legacy `/<app>` → `/apps/<slug>`.
 3. Launcher: Commute card → internal route; keep `:8444` as the standalone mount (proves the
    two-mount model) or retire it.
 4. Carry over the anchor-model schedule editor already written.
@@ -222,9 +222,9 @@ Each phase is independently shippable and leaves the system working.
 ## Status log
 
 - **2026-06-06:** Phase 0 done. Phase 1 **complete** — Commute is fully integrated as a
-  native Workshop page: its source moved to `frontend/src/pages/apps/commute/`, it uses
+  native Workshop page: its source moved to `frontend/src/pages/apps/<slug>/`, it uses
   the `@workshop/ui` primitives (PageHeader, Tabs, Stepper, AppGroupNav), and the
-  standalone `:8444` PWA project (`apps/commute/`) + its `frontends_watchdog` entry +
+  standalone `:8444` PWA project (`apps/<slug>/`) + its `frontends_watchdog` entry +
   the `@commute` alias were **retired**. One codebase, one origin, like every other app.
   (If a phone-installable Commute PWA is wanted again, add it as a standalone mount of
   the same `frontend` tree rather than a forked project.)

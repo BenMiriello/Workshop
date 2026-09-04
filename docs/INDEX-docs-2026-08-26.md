@@ -511,7 +511,7 @@ after phase two":
 24. Single-`domain_owner` ingest paths (location, health, commute) each need a per-user
     credential before they can be per-user.
 25. `apps/<key>/` is tracked source shared by everyone, which is wrong for
-    `apps/birds/birdnet.db`, one database for all users.
+    `apps/<slug>/birdnet.db`, one database for all users.
 
 Cross-reference: `decisions/0014` cites `[SEC-A1]` (execution identity) and `[SEC-A2]`
 (stop representing scope as a security boundary). Those are items 3 and 19 above.

@@ -36,7 +36,7 @@ tsc, `scripts/check_design.sh`) and is committed on `mobile-app-rebuild`. Read
   finance/budget/location/commute/health/birds/chat; no client param widens scope.
 
 ## Phase 3 — Internal callers + remove the IP-trust/fail-open
-- Give cron, `apps/commute/scripts/tick.sh`, backend self-calls, and the Letta tool sandbox scoped
+- Give cron, `apps/<slug>/scripts/tick.sh`, backend self-calls, and the Letta tool sandbox scoped
   service tokens (operator-owned); wire ingest tokens for `/location/update`, `/push/register`,
   `/birds/webhook`; bind owntracks/health Basic creds to the owner; scope `/tools/*`.
 - Delete loopback + CGNAT trust and the fail-open branch from `deps_auth.py`; move every
@@ -60,14 +60,14 @@ tsc, `scripts/check_design.sh`) and is committed on `mobile-app-rebuild`. Read
 
 ## Red-team verification (the proof, run at the end of Phase 3 and again after Phase 5)
 Each MUST fail (401/403 or empty), scripted and recorded:
-1. Unauthenticated GET of `/api/finance/*`, `/api/location/latest`, `/api/budget/*`,
-   `/api/health/latest` -> 401.
+1. Unauthenticated GET of `/api/<app>/*`, `/api/<app>/latest`, `/api/<app>/*`,
+   `/api/<app>/latest` -> 401.
 2. From loopback (`curl 127.0.0.1:8000/...`) with no token -> 401 (proves IP trust is gone).
 3. A second member account: GET every personal endpoint -> empty / 403, never operator data.
    Attempt to widen via `?viewer_id=1`, `?owner_id=1`, forged headers -> still scoped to self.
 4. Expired/garbage/absent cookie and garbage bearer -> 401, never fail-open.
 5. A service/ingest token used outside its scope (e.g. the location-ingest token hitting
-   `/api/finance`) -> 403.
+   `/api/<app>`) -> 403.
 6. Confirm `WORKSHOP_OPERATOR_EMAIL` is consulted at NO request-time path (grep; it only
    appears in the one-time migration).
 

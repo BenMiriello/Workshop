@@ -93,7 +93,7 @@ straight from Xcode. Possible iOS-26.5-vs-Xcode-version gap to resolve.
 
 `workshop-backend` (:8000), `workshop-public` edge (:8002), and `cloudflared` are
 all active. Through the edge: SPA `200`, `/api/auth/me` `401`, login endpoint live,
-`/api/auth/device-token` `401` unauth, `/api/location/update` `401` unauth. The
+`/api/auth/device-token` `401` unauth, `/api/<app>/update` `401` unauth. The
 login wall is live; the app will load it on launch.
 
 ## Broader Workshop state (context, not blocking mobile)

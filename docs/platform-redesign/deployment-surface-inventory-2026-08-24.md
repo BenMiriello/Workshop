@@ -151,7 +151,7 @@ manifest fallback.
 | `/workspace/projects/gengui/workshop.app.json` | 4362 | 2026-07-05 | 3 services (core disabled, frontend enabled plus expose, inference-worker disabled), 3 deps, 6 env_requirements |
 | `/workspace/projects/notes-app/workshop.app.json` | 645 | 2026-07-13 | 1 service `api`, uvicorn, enabled plus expose, 1 optional env requirement |
 | `/workspace/projects/_templates/fastapi-capability-provider/workshop.app.json` | 356 | 2026-07-11 | the notes-app shape with `{{slug}}` |
-| `/workspace/apps/birds/workshop.app.json` | 554 | 2026-08-23 | `{"name": "birds"}` plus a comment. **Declares no services at all.** It exists only so `app_files._resolve_app` points the Files tab at `apps/birds`. It is not runnable and was never intended to be. |
+| `/workspace/apps/<slug>/workshop.app.json` | 554 | 2026-08-23 | `{"name": "<slug>"}` plus a comment. **Declares no services at all.** It exists only so `app_files._resolve_app` points the Files tab at `apps/<slug>`. It is not runnable and was never intended to be. |
 
 No `workshop.app.jsonc` exists anywhere. The `.jsonc` half of `MANIFEST_NAMES` and its
 comment-stripping branch (`app_runner.py:185-189`) have never had an input.
@@ -551,7 +551,7 @@ to (2).
 The measured consequence of that split is already written up in
 `shared/knowledge/development/an-app-resolves-to-two-different-roots-depending-1a02fe8d022.md`
 (2026-08-23): `app:birds` resolves to `projects/birds` (118 files, empty `src/`) for the
-Files tab and to `apps/birds` (30,150 files, 2.2G) for the knowledge store. **The real app
+Files tab and to `apps/<slug>` (30,150 files, 2.2G) for the knowledge store. **The real app
 is unreachable from the UI.**
 
 Also measured: DB `project` estimates 2 rows while `.runtime/projects.json` holds 7. The
@@ -888,8 +888,8 @@ Ordered by confidence, all measured.
 19. `/marketplace` (routed, no nav row, its one link is conditional on a state that has
     never existed).
 20. `/projects/:slug/run` (AppPreview), linked only when a service is already running.
-21. The `apps/birds` tree, per the 2026-08-23 note: the Files tab shows `projects/birds`
-    (118 files) while the app is `apps/birds` (30,150 files).
+21. The `apps/<slug>` tree, per the 2026-08-23 note: the Files tab shows `projects/<slug>`
+    (118 files) while the app is `apps/<slug>` (30,150 files).
 22. `/deploys` and `/deploys/:id` have no breadcrumb node in `appNav.tsx` `NODES`;
     `appNav.tsx:56` still carries a `/settings/base-apps` node for a route that is now a
     redirect (`App.tsx:193`).

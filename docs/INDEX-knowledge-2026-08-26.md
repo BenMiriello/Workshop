@@ -27,7 +27,7 @@ Three durable stores, three different failure modes:
 - `role:reviewer`: 1 note (`shared/knowledge/roles/reviewer/`)
 
 Empty knowledge directories, i.e. scopes that exist and have learned nothing:
-`apps/birds`, `projects/birds`, `projects/budget`, `projects/location`,
+`apps/<slug>`, `projects/<slug>`, `projects/<slug>`, `projects/<slug>`,
 `projects/gengui`, `projects/notes-app`, `.runtime/agents/development-maker`,
 `.runtime/agents/notes-app-maker`.
 

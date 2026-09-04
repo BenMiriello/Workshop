@@ -460,8 +460,8 @@ const IC = {
 const APPS = [
   { id: "atlas", letter: "A", name: "atlas", ref: "main" },
   { id: "ledger", letter: "L", name: "ledger", ref: "wip" },
-  { id: "finance", letter: "F", name: "finance", ref: "main" },
-  { id: "commute", letter: "C", name: "commute", ref: "v2" },
+  { id: "<slug>", letter: "F", name: "<slug>", ref: "main" },
+  { id: "<slug>", letter: "C", name: "<slug>", ref: "v2" },
 ];
 
 const PAGE_SETS = {
@@ -518,9 +518,9 @@ const CHATS = {
     ["ingest retry backoff", "the queue drains but rows land twice when the worker restarts", "18 turns", "2h", "atlas"],
     ["month end close", "the reconciliation view double counts late refunds", "11 turns", "5h", "ledger"],
     ["pr triage rules", "label first, then size, then assign", "13 turns", "4h", "reviewer"],
-    ["category rules", "groceries and dining kept colliding", "14 turns", "1d", "finance"],
+    ["category rules", "groceries and dining kept colliding", "14 turns", "1d", "<slug>"],
     ["schema v2 pass", "renamed source_id and kept a view for the old name", "7 turns", "1d", "atlas"],
-    ["route scoring", "weight transfers heavier than walking", "9 turns", "3d", "commute"],
+    ["route scoring", "weight transfers heavier than walking", "9 turns", "3d", "<slug>"],
     ["weekly sweep", "what shipped, what stalled, what to drop", "5 turns", "4d", "workshop"],
   ],
 };

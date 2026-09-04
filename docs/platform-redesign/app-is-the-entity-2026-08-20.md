@@ -327,8 +327,8 @@ manifest, never a branch in platform code.
 - **Two enumerating registries.** `backend/services/app_registry.py:497`
   (`_CATALOG_FACTORIES`, 8 ids + 8 factories + app-specific startup loops) and
   `frontend/src/apps/registry.tsx:148` (the same 8, with icons, groups, lazy page
-  imports and three status probes that fetch `/api/finance/cache`,
-  `/api/birds/summary`, `/api/location/latest`). The frontend one also imports
+  imports and three status probes that fetch `/api/<app>/cache`,
+  `/api/<app>/summary`, `/api/<app>/latest`). The frontend one also imports
   `BirdsShell` and `RecorderProvider` **eagerly**.
 - **Special cases inside generic code.** `stores.py` ships a `FinanceAdapter`
   and declares the notes vault unconditionally; `permissions.py` holds
@@ -337,7 +337,7 @@ manifest, never a branch in platform code.
   `event_dispatch.py` has a literal `if source == "plaid"`; `App.tsx` carries a
   commute-only redirect; `agentTriggers.ts` and `AutonomyPanel.tsx` each hold a
   duplicate hardcoded event-source list.
-- **The operator's own content, tracked in git.** `apps/birds/**` (his Pi rig and
+- **The operator's own content, tracked in git.** `apps/<slug>/**` (his Pi rig and
   public site), `agents/apps/*.md`, `backend/mcp/plaid/**`,
   `infra/cron/workshop.crontab:37-55` (**his actual commute times and home/work
   windows**), and `mobile/app.json:14-34`, whose iOS permission strings ship to

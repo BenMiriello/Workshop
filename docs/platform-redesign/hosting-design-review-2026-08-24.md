@@ -235,7 +235,7 @@ says "a dev-preview proxy, not a production origin."
 Proxying to a declared EXTERNAL address therefore needs, at minimum: an origin
 model, a hostname or route, TLS, an authentication story for the external
 address, and an inbound path for a host that is not publicly routable. For the
-bird station specifically (measured: `apps/birds`, 30,150 files, 2.2 GB, a
+bird station specifically (measured: `apps/<slug>`, 30,150 files, 2.2 GB, a
 Raspberry Pi rig on the operator's LAN) that is a tunnel, not a proxy. The
 reframing of the bird station as an escape-hatch app rather than a tier is
 genuinely good. The cost estimate attached to it is not.

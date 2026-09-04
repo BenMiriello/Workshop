@@ -8,7 +8,7 @@ Measured 2026-08-23.
 
 Consequences measured on the live tree:
 
-- The Birds Files tab serves `projects/birds` (118 files, 976K, empty `src/`) while the Birds app is `apps/birds` (30,150 files, 2.2G). The real app is unreachable from the UI.
+- The Birds Files tab serves `projects/<slug>` (118 files, 976K, empty `src/`) while the Birds app is `apps/<slug>` (30,150 files, 2.2G). The real app is unreachable from the UI.
 - `app:X` and `project:X` are unrelated SIBLINGS in `scope_tree`, so four apps produced eight scope rows. `_default_parent`'s docstring claims apps have no project binding, but `app_links.linked_project_slug` supplies exactly that and `_resolve_app` already uses it.
 - `project:commute` holds 2 real operator notes that the Commute app's Memory tab cannot see.
 

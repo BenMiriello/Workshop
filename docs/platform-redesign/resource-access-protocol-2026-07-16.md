@@ -1053,7 +1053,7 @@ mint:
 
 ```python
 permissions.mint_grant(
-    from_app="finance", to="agent:bill-triage",
+    from_app="<slug>", to="agent:bill-triage",
     store_uri="workshop://store/finance/plaid-items",
     verbs=["search"],
     caveats={

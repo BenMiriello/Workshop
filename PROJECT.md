@@ -887,7 +887,7 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   THE BIGGEST FINDING WAS ON THE FILES SIDE AND NOBODY HAD LOOKED. `_resolve_app`
   says "an app's files ARE its linked project's working tree". So the Birds
   Files tab serves projects/birds: 118 files, 976K, an empty src/ and June
-  Playwright logs. The Birds app is apps/birds: 30,150 files, 2.2G, with pi/,
+  Playwright logs. The Birds app is apps/<slug>: 30,150 files, 2.2G, with pi/,
   brain/, bridge/, analyzer/, publish/. None of it is reachable from anywhere in
   the UI. That sentence was true when a project was where an app got built and
   is the retired model per app-is-the-entity-2026-08-20.md.

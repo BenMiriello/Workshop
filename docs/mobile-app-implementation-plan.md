@@ -74,7 +74,7 @@ export interface WorkshopNative {
     cancel(id: string): Promise<void>;
   };
   liveActivity: {                            // local-update version is FREE
-    start(a: { id: string; kind: "commute"; state: object }): Promise<void>;
+    start(a: { id: string; kind: "<slug>"; state: object }): Promise<void>;
     update(id: string, state: object): Promise<void>;
     end(id: string): Promise<void>;
   };
@@ -127,7 +127,7 @@ capability to its Expo module below.
 ### Phase 2 — Bridge skeleton + first capability *(1–2 days)*
 - Implement §2a stub injection + §2b transport + RN dispatcher.
 - First capability end-to-end: `location.getCurrent()` (`expo-location`, foreground).
-- Add `frontend/src/native/bridge.ts` to the web app; make `/apps/location` prefer
+- Add `frontend/src/native/bridge.ts` to the web app; make `/apps/<slug>` prefer
   `native()` and fall back to web geolocation.
 - **Acceptance:** location page shows a native fix when run in the app; web fix in a browser.
 

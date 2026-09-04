@@ -266,7 +266,7 @@ credential has to arrive.
    all.** They are the personal-finance planner: Plaid balances, debts, savings
    goals, a monthly allocation waterfall (`budget_engine.py:1-13`,
    `budget_store.py:1-12`, `default_plan()` at `:50-147`). They share the word
-   "budget" and nothing else. Nothing in this design touches them.
+   "<slug>" and nothing else. Nothing in this design touches them.
 2. **The live index holds 12,691 chunks, not 12,652.** It grew. Same owner, same
    model, same 384 dimensions.
 3. **`usage_ledger` has no model or provider dimension whatsoever**, so "what

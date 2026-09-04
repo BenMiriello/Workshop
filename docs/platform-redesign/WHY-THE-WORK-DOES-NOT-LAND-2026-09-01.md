@@ -612,7 +612,7 @@ not touched.
 **§8.2 item 5 — the fresh-clone assertion:** its two unimplemented halves now run
 for real. They fail, and the 2026-08-24 prediction is confirmed exactly: 20x
 `TS2307` from literal module specifiers in `registry.tsx`, and
-`ImportError: cannot import name 'location' from 'services'` from platform code.
+`ImportError: cannot import name '<slug>' from 'services'` from platform code.
 So driving `no_app_source` to zero would still not make a stranger's clone build.
 
 **§8.2 item 6 — the missing basic tools:** durable wakeup, clock and notify,

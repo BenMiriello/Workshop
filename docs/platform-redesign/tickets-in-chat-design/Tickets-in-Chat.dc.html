@@ -127,7 +127,7 @@
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="m9 18 6-6-6-6"></path></svg>
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>
                   <span style="font-weight:600;color:var(--fg);flex:none">Read</span>
-                  <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.85">apps/birds/retention.py</span>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.85">apps/<slug>/retention.py</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:7px;background:var(--inset);padding:5px 8px;font-size:12px;color:var(--muted);min-width:0">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="m9 18 6-6-6-6"></path></svg>
@@ -741,7 +741,7 @@
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="m9 18 6-6-6-6"></path></svg>
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>
                   <span style="font-weight:500;color:var(--fg)">read</span>
-                  <span style="font-family:'JetBrains Mono',monospace;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">apps/birds/retention.py</span>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">apps/<slug>/retention.py</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--muted);border:1px solid var(--border);border-radius:7px;padding:6px 9px;background:var(--card)">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="m9 18 6-6-6-6"></path></svg>
@@ -1678,7 +1678,7 @@
         <div style="flex:1;overflow:hidden;display:flex;justify-content:center;padding:26px 0 20px">
           <div style="width:100%;max-width:720px;display:flex;flex-direction:column;gap:22px;padding:0 24px;box-sizing:border-box">
             <div style="align-self:flex-end;max-width:76%;background:var(--accent-soft);padding:10px 14px;border-radius:14px;font-size:14px;line-height:1.55">The birds app is keeping every raw recording. Storage is at 84%. What are the options?</div>
-            <div style="max-width:90%;font-size:14px;line-height:1.65;text-wrap:pretty">Three, roughly. Keep the spectrograms and drop raw audio after 30 days — that is about 90% of the volume. Downsample raw to 16&nbsp;kHz mono, which halves it and keeps re-analysis possible. Or move anything older than 90 days onto the external drive.<br><br>The retention job in <span style="font-family:'JetBrains Mono',monospace;font-size:13px;background:var(--field);padding:1px 5px;border-radius:4px">apps/birds/retention.py</span> already has hooks for the first two.</div>
+            <div style="max-width:90%;font-size:14px;line-height:1.65;text-wrap:pretty">Three, roughly. Keep the spectrograms and drop raw audio after 30 days — that is about 90% of the volume. Downsample raw to 16&nbsp;kHz mono, which halves it and keeps re-analysis possible. Or move anything older than 90 days onto the external drive.<br><br>The retention job in <span style="font-family:'JetBrains Mono',monospace;font-size:13px;background:var(--field);padding:1px 5px;border-radius:4px">apps/<slug>/retention.py</span> already has hooks for the first two.</div>
             <div style="align-self:flex-end;max-width:76%;background:var(--accent-soft);padding:10px 14px;border-radius:14px;font-size:14px;line-height:1.55">Do the 30-day one. Check nothing else reads the raw files first.</div>
             <div style="max-width:90%;font-size:14px;line-height:1.65">Filed both. The audit runs first and the retention change waits on it.</div>
           </div>
