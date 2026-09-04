@@ -1961,7 +1961,17 @@ def set_thread_context_tokens(thread_id: str, tokens: int,
     finalized at 03:20:39, writing its pre-compact 467k back over the cleared
     meter, which then read 47% on a freshly compacted chat for ten minutes
     until the next turn happened to end. Passing None skips the check, for
-    callers that have no session to speak of."""
+    callers that have no session to speak of.
+
+    A DROPPED WRITE IS LOGGED, NOT SILENT. It used to return the thread dict
+    unchanged, exactly as a successful write does, so a caller could not tell
+    the difference and neither could anyone reading a log. On 2026-09-04 a whole
+    investigation went down the wrong path on the theory that this fence was
+    silently eating every write on resumed threads; it was not (the real cause
+    was a compaction clearing the meter with nothing to restore it), and the
+    reason that theory could not be checked in five minutes is that a fence
+    which drops a write leaves no trace. WARNING, with both sessions named, so
+    the next such theory is settled by grep."""
     if measured_session is not None:
         t = get_thread(thread_id)
         if t is None:
@@ -1971,6 +1981,12 @@ def set_thread_context_tokens(thread_id: str, tokens: int,
         if isinstance(sessions, dict):
             owned.update(sessions.values())
         if measured_session not in owned:
+            log.warning(
+                "thread %s: DROPPED a context measurement of %d tokens taken "
+                "against session %s; the thread now owns %s. The window that "
+                "number describes is detached, so it is a fact about nothing.",
+                thread_id, max(0, int(tokens)), measured_session,
+                sorted(s for s in owned if s) or "no session")
             return t
     return _patch(thread_id, context_tokens=max(0, int(tokens)))
 

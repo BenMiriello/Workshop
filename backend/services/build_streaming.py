@@ -1473,6 +1473,58 @@ def _ctx_tokens_from_usage(u: object) -> int:
     )
 
 
+# How often a mid-turn reading is written through to the thread record. The
+# reading changes on every model step and an agentic turn here makes hundreds,
+# but the thread record is a whole-file rewrite, so writing each one would turn
+# the meter into a disk load. 60s is far finer than the gap it closes (a turn
+# runs for an hour) and far coarser than the step rate.
+_THREAD_CTX_WRITE_EVERY_S = 60.0
+
+
+def _persist_thread_context(turn: "Turn", meta: dict, state: dict,
+                            ctx: int) -> None:
+    """Write a fresh main-conversation reading onto the THREAD, mid-turn.
+
+    WHY THIS IS NOT ONLY A FINALIZE CONCERN, measured 2026-09-04 on the
+    operator's own thread. `GET /context` reads three sources in order: the
+    RUNNING turn's live snapshot, then the thread's stored `context_tokens`,
+    then an estimate from the stored transcript. The stored value was written
+    only at commit. So:
+
+      - a compaction turn ends with no usable reading and correctly CLEARS the
+        stored value (a pre-compact number pinned the meter at its old figure,
+        which is what made /compact read as a no-op);
+      - nothing then restores it until the NEXT turn commits;
+      - between those two events the meter falls all the way through to the
+        transcript estimate, which undercounts badly.
+
+    Measured on that thread: the estimate said 21,242 tokens (2%) while the
+    model was reporting 234,014 (23%) on the same conversation — 11x low, and
+    the operator asked, reasonably, whether context was working at all. Two of
+    its three completed turns were compactions, so it had been in that hole
+    since the first of them.
+
+    Writing through mid-turn closes it: the very next model call after a
+    compaction restores a real number within seconds, and it stays right while
+    the turn runs rather than only after it lands.
+
+    The session fence still applies — a measurement is a fact about one live
+    window, and a fold that detached that window mid-turn wins. What is new is
+    that losing the fence is now LOGGED by chat_store rather than dropped
+    silently.
+    """
+    now = time.time()
+    last = state.get("thread_ctx_written_at")
+    if last is not None and (now - float(last)) < _THREAD_CTX_WRITE_EVERY_S:
+        return
+    state["thread_ctx_written_at"] = now
+    try:
+        chat_store.set_thread_context_tokens(
+            turn.thread_id, ctx, measured_session=meta.get("session_id"))
+    except Exception as e:  # pragma: no cover — the meter must not cost a turn
+        log.debug("turn %s: mid-turn context persist failed: %s", turn.id, e)
+
+
 def usage_scope_for_thread(thread_id: str) -> str:
     """The ledger scope a chat turn bills to: a bare project slug, matching the
     values autonomous sweeps already write ("workshop", "demo-x"). The knowledge
@@ -2955,6 +3007,10 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                     # GET /context serves the LAST turn's number. One small
                     # event per model step, only when the number changed.
                     _push(turn, "context", {"tokens": ctx})
+                    # AND ONTO THE THREAD, which is what the meter reads BETWEEN
+                    # turns. See _persist_thread_context: the finalize-only write
+                    # leaves a real hole after a compaction.
+                    _persist_thread_context(turn, meta, state, ctx)
             # Spend accumulates across tool rounds: each assistant message is a
             # separate API call and is billed separately. (Contrast last_ctx,
             # which is overwritten because only the latest window size matters.)
