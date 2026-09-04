@@ -105,9 +105,32 @@ page.on("pageerror", (e) => problems.push("pageerror: " + String(e).slice(0, 240
 page.on("requestfailed", (r) => problems.push("requestfailed: " + r.url().slice(0, 160)));
 
 const url = cfg.origin + (target.startsWith("/") ? target : "/" + target);
-await page.goto(url, { waitUntil: "networkidle", timeout: cfg.timeout_ms || 45000 })
+// `domcontentloaded`, NOT `networkidle`.
+//
+// A STREAMING SURFACE NEVER GOES IDLE, so `networkidle` is not a slow wait on
+// one, it is a wait that cannot finish. A chat route holds an open SSE stream
+// for as long as it is mounted; `page.goto` sat there until it timed out at
+// 45s and the shot was taken of whatever had rendered by then, with a `goto:`
+// problem attached. Measured 2026-09-03 on /chat/development at both widths.
+//
+// That is not a chat quirk. Any live-updating page has the property, and the
+// completion gate inherits it: a turn that changed a streaming surface could
+// not satisfy the screenshot check by shooting the surface it changed, which
+// is exactly when a screenshot is worth having.
+//
+// So: wait for the document, then settle. `settle_ms` was already the knob for
+// "let the page finish drawing" and it now carries the whole job, with a floor
+// rather than a default of 0, because 0 was only ever safe alongside a network
+// wait that has been removed. An app that needs longer raises it in its own
+// preview config.
+await page.goto(url, { waitUntil: "domcontentloaded", timeout: cfg.timeout_ms || 45000 })
   .catch((e) => problems.push("goto: " + e.message.slice(0, 200)));
-await page.waitForTimeout(cfg.settle_ms || 0);
+// The network wait is gone, so give the page a chance to be quiet on its own:
+// whichever comes first, genuine idle or the settle budget. A page that is
+// still streaming simply spends the budget, which is the point.
+await page.waitForLoadState("networkidle", { timeout: cfg.settle_ms || 2500 })
+  .catch(() => {});
+await page.waitForTimeout(cfg.settle_ms || 2500);
 fs.mkdirSync(path.dirname(out), { recursive: true });
 await page.screenshot({ path: out });
 await browser.close();
