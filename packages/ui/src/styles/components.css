@@ -4048,108 +4048,15 @@ span.ws-filterchip__open { cursor: default; }
   .ws-spin { animation-duration: 2.4s; }
 }
 
-/* ---- NOTES app (pages/apps/notes) --------------------------------------- */
-.ws-note-layout {
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  gap: var(--space-4);
-  align-items: start;
-  margin-top: var(--space-4);
-}
-@media (max-width: 720px) {
-  .ws-note-layout { grid-template-columns: 1fr; }
-}
+/* The NOTES app's 102 lines of layout used to sit here. They were the one
+   place this kit named a specific app, so every installation shipped them
+   whether or not it had that app. They moved out with the app itself on
+   2026-09-04 (ticket 668a18f3) and are `apps/notes-app/ui/notes.css` now,
+   imported by that app's own module.
 
-.ws-note-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-inset);
-  padding: var(--space-2);
-  max-height: 70vh;
-}
-.ws-note-search {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-left: var(--space-2);
-  color: var(--muted);
-}
-.ws-note-search .ws-input { flex: 1; }
-.ws-note-list {
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.ws-note-row,
-.ws-note-hit,
-.ws-note-backlink {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
-  color: var(--fg);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-.ws-note-row:hover,
-.ws-note-hit:hover,
-.ws-note-backlink:hover { background: var(--bg); }
-.ws-note-row.is-active,
-.ws-note-hit.is-active { background: var(--accent-soft); color: var(--accent); }
-.ws-note-row svg { color: var(--muted); flex: none; }
-.ws-note-row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.ws-note-hit,
-.ws-note-backlink { flex-direction: column; align-items: flex-start; gap: 0; }
-
-.ws-note-main { min-width: 0; }
-/* The heading half of a note's header. It shares a wrapping `ws-row--between`
-   with the Edit/Rename/Delete group, so it needs `min-width: 0` for its own
-   ellipsis and word-break to engage: a flex item's automatic minimum size is
-   its content, and without this the title simply pushed the buttons past the
-   right edge at 390px instead of shrinking. */
-.ws-note-head { min-width: 0; flex: 1 1 auto; }
-.ws-note-title {
-  font-size: var(--fs-xl);
-  font-weight: 600;
-  margin: 0;
-  overflow-wrap: anywhere;   /* a long unbroken slug breaks rather than overflows */
-}
-.ws-note-meta {
-  font-size: var(--fs-xs);
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-.ws-note-backlink-path { font-size: var(--fs-sm); color: var(--fg); }
-
-.ws-note-editor {
-  width: 100%;
-  min-height: 50vh;
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  line-height: 1.6;
-  resize: vertical;
-}
-
-/* Unresolved wikilink in the rendered preview — dashed + muted, click to create. */
-.ws-md a[href^="#wl-missing:"] {
-  color: var(--muted);
-  text-decoration: underline dashed;
-  text-underline-offset: 2px;
-}
+   Left as a note rather than deleted silently, because the next person to
+   go looking for `.ws-note-layout` in the kit should find out where it went
+   in one grep instead of concluding it was lost. */
 
 /* ---- Context modal --------------------------------------------------------
    The breakdown behind the composer's context meter. Rows are a label / tokens

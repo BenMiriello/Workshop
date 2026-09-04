@@ -72,19 +72,17 @@ _VERBS = ("read", "list", "search", "append", "write")
 # Public alias — services/policy.py validates an operator's verbs_max against it.
 VERBS = _VERBS
 
-# The OPERATOR's notes vault. Durable user data OUTSIDE the repo working tree, so
-# it is not reachable by "it's in the tree, therefore it's fair game" reasoning —
-# it has to be addressed as a Store to be reachable at all (services/stores.py
-# registers it; services/notes_vault.py owns the filesystem access). Same env
-# override `notes_vault.operator_vault_root()` honors.
+# An app's durable user data lives OUTSIDE the repo working tree, so it is not
+# reachable by "it's in the tree, therefore it's fair game" reasoning: it has to
+# be addressed as a Store to be reachable at all (services/stores.py registers
+# what each installed app declares).
 #
-# The operator's, specifically: the Store registry is instance-level (declared
-# once at startup, before any request pins an owner), whereas the vault is now
-# per-owner — `notes_vault.vault_root()` returns `.runtime/users/<id>/notes/` for
-# anyone else. So this constant names one real directory for the addressing
-# One app's vault root USED TO BE DECLARED HERE, and it is now declared by that
-# app (`notes_vault.NOTES_VAULT_ROOT`). This is platform code and nothing in
-# this file ever read it; an app's storage path is the app's to state.
+# One app's vault root used to be a constant HERE, in platform code that never
+# read it. The operator named that on 2026-09-03 as the shape the app-name gate
+# could not see -- a constant NAMED for an app rather than containing its name.
+# It is the app's to state and it states it. This paragraph described that
+# constant in the present tense for a day after it left, and then went on
+# naming the module that owned it for another; both are gone now.
 
 OPERATOR = "operator"
 AGENT = "agent"
