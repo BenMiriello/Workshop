@@ -15,9 +15,11 @@ import { queryKeys } from "../lib/queryKeys";
 // the backend reverse proxy (the app sets its base to WORKSHOP_PROXY_BASE so
 // assets resolve).
 //
-// Publishing a build to a hosted target (Cloudflare Pages, etc.) is a separate
-// concept and lives in DeploysPanel — running the app locally IS NOT the same
-// thing as shipping it to a hosted origin.
+// Publishing a build to a hosted target is a separate concept and currently has
+// no home: the deploy subsystem that used to claim it was deleted on 2026-09-04
+// (ticket `726d75a9`) having never run once. Running the app locally IS NOT the
+// same thing as shipping it to a hosted origin, and this panel only does the
+// former. The model of record for the latter is hosting-apps-design-2026-08-24.
 
 type ManifestService = {
   name: string; cwd: string; build: string | null; start: string;
