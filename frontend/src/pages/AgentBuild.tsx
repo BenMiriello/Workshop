@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "react-router-dom";
 import {
   File, Folder, FolderOpen, GitCommit, Play, RefreshCw, RotateCcw, Save, Square,
@@ -6,6 +7,7 @@ import {
   Pencil, PanelsTopLeft, ScrollText, StickyNote, X,
 } from "lucide-react";
 import type { BuildAgent } from "@shared/types";
+import { queryKeys } from "../lib/queryKeys";
 import {
   Button,
   Card,
@@ -279,9 +281,10 @@ function NewBranchModal({
 
 export default function AgentBuild() {
   const { slug = "" } = useParams();
-  const [agent, setAgent] = useState<BuildAgent | null>(null);
+  const qc = useQueryClient();
+  // `err` is the BRIEF read's slot and nothing else now. The agent's own load
+  // failure is the query's, and the two used to share this one variable.
   const [err, setErr] = useState<string | null>(null);
-  const [tree, setTree] = useState<TreeNode[] | null>(null);
 
   const [pickedPath, setPickedPath] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>("");
@@ -309,17 +312,15 @@ export default function AgentBuild() {
   const [systemPrompt, setSystemPrompt] = useState<string>("");
   const [systemPromptDirty, setSystemPromptDirty] = useState(false);
 
-  // Interventions
-  const [interventions, setInterventions] = useState<string>("");
+  // Interventions. Display-only here (the box below renders the text; the only
+  // write is the POST that appends one), so the server's copy IS the value and
+  // there is nothing local to keep in step with it.
   const [newIntervention, setNewIntervention] = useState("");
 
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState(false);
 
   // Diff tab state
-  const [diffSummary, setDiffSummary] = useState<string>("");
-  const [diffFiles, setDiffFiles] = useState<{ status: string; path: string; diff: string }[] | null>(null);
-  const [diffLoading, setDiffLoading] = useState(false);
   const [revertPath, setRevertPath] = useState<string | null>(null);
   const [reverting, setReverting] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
@@ -327,18 +328,18 @@ export default function AgentBuild() {
   const [commitResult, setCommitResult] = useState<string | null>(null);
 
   // Preview tab state
-  const [preview, setPreview] = useState<PreviewStatus | null>(null);
   const [customCmd, setCustomCmd] = useState("");
   const [previewPort, setPreviewPort] = useState<number>(8501);
   const [previewBusy, setPreviewBusy] = useState(false);
-  const [previewLog, setPreviewLog] = useState("");
+  // The log line a FAILED start writes. The running process's log is served and
+  // read below; this is the one thing the server has no copy of.
+  const [startFailure, setStartFailure] = useState("");
 
   // Branches. THE PIN IS THE AGENT'S, NOT THIS PAGE'S, and that is the whole
   // fix: this used to be a `useState` that nothing but the <Select> ever read,
   // so choosing a branch moved a variable and changed nothing about where the
   // agent's turns ran. It now renders `agent.branch_slug` and writes through
   // PATCH /api/agents/build/{slug}, which re-derives the agent's cwd.
-  const [worktrees, setWorktrees] = useState<Worktree[] | null>(null);
   const [pinBusy, setPinBusy] = useState(false);
   const [pinErr, setPinErr] = useState<string | null>(null);
   const [newBranchOpen, setNewBranchOpen] = useState(false);
@@ -347,6 +348,30 @@ export default function AgentBuild() {
   const [renamePurpose, setRenamePurpose] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameErr, setRenameErr] = useState<string | null>(null);
+
+  // THE AGENT AND ITS TREE, one entry. Two endpoints, but one question ("what
+  // is this build agent and what files does it have"), asked together, always
+  // rendered together, and invalidated by the same writes. The tree read is
+  // allowed to fail on its own and answer an empty list, which is what the
+  // `tR.ok ? ... : { tree: [] }` it replaces did; the AGENT read failing is the
+  // whole page's error, which is why only that one throws.
+  const buildQuery = useQuery({
+    queryKey: queryKeys.agents.build(slug),
+    queryFn: async (): Promise<{ agent: BuildAgent; tree: TreeNode[] }> => {
+      const [aR, tR] = await Promise.all([
+        fetch(`/api/agents/build/${slug}`),
+        fetch(`/api/agents/build/${slug}/tree`),
+      ]);
+      if (!aR.ok) {
+        throw new Error(`agent: ${shortHttpError(aR.status, aR.statusText, await aR.text().catch(() => ""))}`);
+      }
+      const tj = tR.ok ? await tR.json() : { tree: [] };
+      return { agent: (await aR.json()) as BuildAgent, tree: (tj.tree || []) as TreeNode[] };
+    },
+  });
+  const agent = buildQuery.data?.agent ?? null;
+  const tree = buildQuery.data?.tree ?? null;
+  const loadErr = buildQuery.isError ? String(buildQuery.error) : null;
 
   useCrumbLabel(agent?.name || null);
 
@@ -370,14 +395,17 @@ export default function AgentBuild() {
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const updated: BuildAgent = await r.json();
-      setAgent(updated);
+      qc.setQueryData<{ agent: BuildAgent; tree: TreeNode[] }>(
+        queryKeys.agents.build(agent.slug),
+        (prev) => (prev ? { ...prev, agent: updated } : prev),
+      );
       setRenameOpen(false);
     } catch (e) {
       setRenameErr(String(e));
     } finally {
       setRenameBusy(false);
     }
-  }, [agent, renameName, renamePurpose]);
+  }, [agent, renameName, renamePurpose, qc]);
 
   // Move the agent onto another branch, or back to the project's main tree.
   // Takes effect from the NEXT turn (a running turn's cwd was fixed when its
@@ -394,49 +422,70 @@ export default function AgentBuild() {
         body: JSON.stringify({ branch_slug: next }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setAgent(await r.json());
+      const updated: BuildAgent = await r.json();
+      qc.setQueryData<{ agent: BuildAgent; tree: TreeNode[] }>(
+        queryKeys.agents.build(slug),
+        (prev) => (prev ? { ...prev, agent: updated } : prev),
+      );
     } catch (e) {
       setPinErr(String(e));
     } finally {
       setPinBusy(false);
     }
-  }, [slug]);
+  }, [slug, qc]);
 
-  const loadAll = useCallback(async () => {
+  // THE STEERING DOCS. Interventions is display-only, so it is simply the
+  // server's copy. The brief is NOT: it seeds an editor with a dirty flag, and
+  // a background refetch landing on top of unsaved typing is the one thing this
+  // page must not do, so it stays a one-shot read into local draft state.
+  const interventionsQuery = useQuery({
+    queryKey: queryKeys.agents.buildInterventions(slug),
+    queryFn: async (): Promise<string> => {
+      const r = await fetch(`/api/agents/build/${slug}/interventions`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+      return ((await r.json())?.content as string) || "";
+    },
+  });
+  const interventions = interventionsQuery.data ?? "";
+
+  const loadBrief = useCallback(async () => {
     try {
-      const [aR, tR, bR, iR] = await Promise.all([
-        fetch(`/api/agents/build/${slug}`),
-        fetch(`/api/agents/build/${slug}/tree`),
-        fetch(`/api/agents/build/${slug}/brief`),
-        fetch(`/api/agents/build/${slug}/interventions`),
-      ]);
-      if (!aR.ok) throw new Error(`agent: ${shortHttpError(aR.status, aR.statusText, await aR.text().catch(() => ""))}`);
-      setAgent(await aR.json());
-      const tj = tR.ok ? await tR.json() : { tree: [] };
-      setTree(tj.tree || []);
+      const bR = await fetch(`/api/agents/build/${slug}/brief`);
       setSystemPrompt((bR.ok ? await bR.json() : { content: "" }).content || "");
       setSystemPromptDirty(false);
-      setInterventions((iR.ok ? await iR.json() : { content: "" }).content || "");
     } catch (e) {
       setErr(String(e));
     }
   }, [slug]);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+  useEffect(() => { void loadBrief(); }, [loadBrief]);
 
-  // Load worktrees once we know the project slug.
-  useEffect(() => {
-    if (!agent?.project_slug) {
-      setWorktrees([]);
-      return;
-    }
-    let cancelled = false;
-    fetch(`/api/worktrees/${agent.project_slug}`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((list: Worktree[]) => { if (!cancelled) setWorktrees(list || []); })
-      .catch(() => { if (!cancelled) setWorktrees([]); });
-    return () => { cancelled = true; };
-  }, [agent?.project_slug]);
+  /** Re-read everything this page shows. What Reset session owed `loadAll`. */
+  const reloadAll = useCallback(async () => {
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: queryKeys.agents.build(slug) }),
+      qc.invalidateQueries({ queryKey: queryKeys.agents.buildInterventions(slug) }),
+      loadBrief(),
+    ]);
+  }, [qc, slug, loadBrief]);
+
+  // The trees this agent's project has on disk. Keyed by the PROJECT, not by
+  // this agent: two makers on one project are looking at one list.
+  const worktreesQuery = useQuery({
+    queryKey: queryKeys.projects.worktrees(agent?.project_slug ?? ""),
+    enabled: !!agent?.project_slug,
+    queryFn: async (): Promise<Worktree[]> => {
+      const r = await fetch(`/api/worktrees/${agent!.project_slug}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+      return ((await r.json()) || []) as Worktree[];
+    },
+  });
+  // [] rather than null while there is no project to ask about, and on a failed
+  // read: the picker renders "no branches" either way, which is what the old
+  // `.catch(() => setWorktrees([]))` produced.
+  const worktrees = agent?.project_slug
+    ? (worktreesQuery.isPending ? null : (worktreesQuery.data ?? []))
+    : [];
 
   const dropIntervention = useCallback(async () => {
     const text = newIntervention.trim();
@@ -449,11 +498,10 @@ export default function AgentBuild() {
         body: JSON.stringify({ text }),
       });
       if (r.ok) {
-        const iR = await fetch(`/api/agents/build/${slug}/interventions`);
-        if (iR.ok) setInterventions((await iR.json()).content || "");
+        await qc.invalidateQueries({ queryKey: queryKeys.agents.buildInterventions(slug) });
       }
     } catch { /* surface via reload */ }
-  }, [newIntervention, slug]);
+  }, [newIntervention, slug, qc]);
 
   const pickFile = useCallback(async (path: string) => {
     setPickedPath(path);
@@ -502,28 +550,35 @@ export default function AgentBuild() {
     setResetting(true);
     try {
       await fetch(`/api/agents/build/${slug}/session/reset`, { method: "POST" });
-      await loadAll();
+      await reloadAll();
     } finally {
       setResetting(false);
       setConfirmReset(false);
     }
-  }, [slug, loadAll]);
+  }, [slug, reloadAll]);
 
-  const loadDiff = useCallback(async () => {
-    setDiffLoading(true);
-    try {
+  // READ WHEN THE TAB IS OPEN, which `enabled` states directly. It used to be an
+  // effect watching `paneTab`, and the diff of a tree nobody is looking at is a
+  // request nobody asked for.
+  type DiffFile = { status: string; path: string; diff: string };
+  const diffQuery = useQuery({
+    queryKey: queryKeys.agents.buildDiff(slug),
+    enabled: paneTab === "diff",
+    queryFn: async (): Promise<{ files: DiffFile[]; summary: string }> => {
       const r = await fetch(`/api/agents/build/${slug}/diff`);
-      const j = r.ok ? await r.json() : { files: [], summary: "(error)" };
-      setDiffFiles(j.files || []);
-      setDiffSummary(j.summary || "");
-    } finally {
-      setDiffLoading(false);
-    }
-  }, [slug]);
-
-  useEffect(() => {
-    if (paneTab === "diff") loadDiff();
-  }, [paneTab, loadDiff]);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+      const j = await r.json();
+      return { files: (j.files || []) as DiffFile[], summary: (j.summary as string) || "" };
+    },
+  });
+  const diffFiles = diffQuery.data?.files ?? null;
+  // "(error)" is what the old `r.ok ? ... : { summary: "(error)" }` put in this
+  // slot, and it is still what a failed read says.
+  const diffSummary = diffQuery.isError ? "(error)" : (diffQuery.data?.summary ?? "");
+  const diffLoading = diffQuery.isFetching;
+  const loadDiff = useCallback(async () => {
+    await qc.invalidateQueries({ queryKey: queryKeys.agents.buildDiff(slug) });
+  }, [qc, slug]);
 
   const revertFile = useCallback(async () => {
     if (!revertPath) return;
@@ -542,28 +597,42 @@ export default function AgentBuild() {
     }
   }, [revertPath, slug, loadDiff, pickedPath, pickFile]);
 
-  const loadPreview = useCallback(async () => {
-    try {
+  // THE PREVIEW PROCESS, on a cadence rather than a hand-rolled timer. This was
+  // a raw `setInterval` around two fetches, which is the legacy mechanism ADR
+  // 0025 retires and the frontend-state ratchet counts. `refetchInterval` is
+  // the same 5 seconds, and it pauses with the tab instead of firing into a
+  // hidden one.
+  const previewQuery = useQuery({
+    queryKey: queryKeys.agents.buildPreview(slug),
+    refetchInterval: 5_000,
+    queryFn: async (): Promise<{ status: PreviewStatus | null; log: string }> => {
       const [sR, lR] = await Promise.all([
         fetch(`/api/agents/build/${slug}/preview/status`),
         fetch(`/api/agents/build/${slug}/preview/log`),
       ]);
-      const s: PreviewStatus | null = sR.ok ? await sR.json() : null;
+      const st: PreviewStatus | null = sR.ok ? await sR.json() : null;
       const l = lR.ok ? await lR.json() : { log: "" };
-      setPreview(s);
-      setPreviewLog(l.log || "");
-      if (s) {
-        if (s.suggested_port && !previewPort) setPreviewPort(s.suggested_port);
-        if (!s.running && s.suggested_port && previewPort === 8501) setPreviewPort(s.suggested_port);
-      }
-    } catch { /* ignore */ }
-  }, [slug, previewPort]);
+      return { status: st, log: (l.log as string) || "" };
+    },
+  });
+  const preview = previewQuery.data?.status ?? null;
+  // A failed start's message wins while it is set, because it is the newest
+  // thing that happened and the server has no copy of it.
+  const previewLog = startFailure || (previewQuery.data?.log ?? "");
+  const loadPreview = useCallback(async () => {
+    await qc.invalidateQueries({ queryKey: queryKeys.agents.buildPreview(slug) });
+  }, [qc, slug]);
 
+  // The suggested port, adopted once the probe answers. Kept as an effect
+  // because it seeds an INPUT the operator can then change; deriving it would
+  // overwrite their typing on the next poll.
   useEffect(() => {
-    loadPreview();
-    const t = setInterval(loadPreview, 5_000);
-    return () => clearInterval(t);
-  }, [loadPreview]);
+    if (!preview) return;
+    if (preview.suggested_port && !previewPort) setPreviewPort(preview.suggested_port);
+    if (!preview.running && preview.suggested_port && previewPort === 8501) {
+      setPreviewPort(preview.suggested_port);
+    }
+  }, [preview, previewPort]);
 
   const startPreview = useCallback(async (commandOverride?: string) => {
     setPreviewBusy(true);
@@ -575,7 +644,9 @@ export default function AgentBuild() {
         body: JSON.stringify({ command: cmd, port: previewPort }),
       });
       if (!r.ok) {
-        setPreviewLog(`(start failed: ${shortHttpError(r.status, r.statusText, await r.text().catch(() => ""))})`);
+        setStartFailure(`(start failed: ${shortHttpError(r.status, r.statusText, await r.text().catch(() => ""))})`);
+      } else {
+        setStartFailure("");
       }
       await loadPreview();
     } finally {
@@ -615,15 +686,15 @@ export default function AgentBuild() {
     }
   }, [slug, commitMessage, loadDiff]);
 
-  if (err) {
+  if (loadErr) {
     return (
       <div>
         <PageHeader title="Build agent" />
         <StateBlock
           variant="error"
           title="Couldn't load agent"
-          hint={<code>GET /api/agents/build/{slug} ({err})</code>}
-          action={<Button size="sm" onClick={loadAll}>Retry</Button>}
+          hint={<code>GET /api/agents/build/{slug} ({loadErr})</code>}
+          action={<Button size="sm" onClick={() => { void reloadAll(); }}>Retry</Button>}
         />
       </div>
     );
@@ -673,7 +744,7 @@ export default function AgentBuild() {
             <Button size="sm" variant="ghost" onClick={openRename}>
               <Pencil aria-hidden /> Rename
             </Button>
-            <Button size="sm" variant="ghost" onClick={loadAll}>
+            <Button size="sm" variant="ghost" onClick={() => { void reloadAll(); }}>
               <RefreshCw aria-hidden /> Refresh
             </Button>
             {agent.claude_session && (
@@ -999,6 +1070,11 @@ export default function AgentBuild() {
             )}
             {paneTab === "prompt" && (
               <Card style={{ padding: "var(--space-3)" }}>
+                {err && (
+                  <Notice tone="error" detail={err} where={`/api/agents/build/${slug}/brief`}>
+                    Couldn't read the system prompt. The box below is empty, not blank.
+                  </Notice>
+                )}
                 <Row between style={{ marginBottom: "0.5rem" }}>
                   <span className="ws-card__meta">System prompt, read first every turn.</span>
                   <Button size="sm" variant="primary" onClick={saveSystemPrompt} disabled={!systemPromptDirty}>
@@ -1088,11 +1164,12 @@ export default function AgentBuild() {
             // agent moves onto it. Creating one and leaving the agent where it
             // was is the shape that made this control feel inert.
             void pinBranch(s);
-            // Refresh worktrees list
-            fetch(`/api/worktrees/${agent.project_slug}`)
-              .then((r) => (r.ok ? r.json() : []))
-              .then((list: Worktree[]) => setWorktrees(list || []))
-              .catch(() => { /* ignore */ });
+            // The list gained a branch.
+            if (agent.project_slug) {
+              void qc.invalidateQueries({
+                queryKey: queryKeys.projects.worktrees(agent.project_slug),
+              });
+            }
           }}
         />
       )}

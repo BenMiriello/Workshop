@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2, Plus, Bot, Brain, MessageSquare, Clock, StickyNote, ListChecks, Activity } from "lucide-react";
 import type { Project } from "@shared/types";
 import { ActionBar, Badge, Button, Card, Checkbox, ConfirmDialog, Field, Input, Notice, PageHeader, Row, SectionLabel, Segmented, Select, Skeleton, StateBlock, StatusDot, StatusPill, Stack, Tag, Textarea, catFor, type SegmentedOption, useCrumbLabel, shortHttpError, timeAbsolute } from "@workshop/ui";
@@ -256,17 +256,22 @@ function CreateAgent() {
   const [purpose, setPurpose] = useState("");
   const [persona, setPersona] = useState("");
   const [human, setHuman] = useState("");
-  const [projects, setProjects] = useState<Project[] | null>(null);
   const [projectSlug, setProjectSlug] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch("/api/projects/")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((p: Project[]) => setProjects(p))
-      .catch(() => setProjects([]));
-  }, []);
+  // The picker's options. A failed read lands on [] rather than null, which is
+  // what the `.catch(() => setProjects([]))` this replaces did: an empty picker
+  // says "no projects to bind to", and the form still submits without one.
+  const projectsQuery = useQuery({
+    queryKey: queryKeys.projects.list(),
+    queryFn: async (): Promise<Project[]> => {
+      const r = await fetch("/api/projects/");
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+      return (await r.json()) as Project[];
+    },
+  });
+  const projects = projectsQuery.isPending ? null : (projectsQuery.data ?? []);
 
   // maker + project => a Claude Code coding session with a tree; everything else
   // answers from its definition. Derived, never a separate control: both halves
@@ -390,26 +395,27 @@ function freshNoteId(title: string): string {
 
 function AgentNotes({ slug }: { slug: string }) {
   const scope = `agent:${slug}`;
-  const [notes, setNotes] = useState<KnowledgeNote[] | null>(null);
-  const [notesErr, setNotesErr] = useState<string | null>(null);
+  const qc = useQueryClient();
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [posting, setPosting] = useState(false);
   const [postErr, setPostErr] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setNotesErr(null);
-    try {
+  // This scope's notes, on the shared key. The Memory page reads the same route
+  // for the same scope, so writing a note here has somewhere to invalidate to
+  // rather than refreshing one component's private copy.
+  const notesQuery = useQuery({
+    queryKey: queryKeys.memory.notes(scope),
+    queryFn: async (): Promise<KnowledgeNote[]> => {
       const r = await fetch(`/api/memory/scopes/${encodeURIComponent(scope)}/notes`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setNotes(await r.json());
-    } catch (e) {
-      setNotesErr(String(e));
-      setNotes([]);
-    }
-  }, [scope]);
-
-  useEffect(() => { load(); }, [load]);
+      return (await r.json()) as KnowledgeNote[];
+    },
+  });
+  // A failed read still renders the list region as empty and says why above it,
+  // which is what the old `setNotes([])` in the catch produced.
+  const notes = notesQuery.isPending ? null : (notesQuery.data ?? []);
+  const notesErr = notesQuery.isError ? String(notesQuery.error) : null;
 
   const post = useCallback(async () => {
     const t = title.trim();
@@ -418,24 +424,22 @@ function AgentNotes({ slug }: { slug: string }) {
     setPostErr(null);
     try {
       const id = freshNoteId(t);
-      const r = await fetch(
-        `/api/memory/scopes/${encodeURIComponent(scope)}/notes/${encodeURIComponent(id)}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: t, content: body, hook: "" }),
-        },
-      );
+      const url = `/api/memory/scopes/${encodeURIComponent(scope)}/notes/${encodeURIComponent(id)}`;
+      const r = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: t, content: body, hook: "" }),
+      });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setTitle("");
       setBody("");
-      await load();
+      await qc.invalidateQueries({ queryKey: queryKeys.memory.notes(scope) });
     } catch (e) {
       setPostErr(String(e));
     } finally {
       setPosting(false);
     }
-  }, [title, body, scope, load]);
+  }, [title, body, scope, qc]);
 
   return (
     <section>
@@ -476,7 +480,7 @@ function AgentNotes({ slug }: { slug: string }) {
               variant="error"
               title="Couldn't load notes"
               hint={<code>GET /api/memory/scopes/{scope}/notes ({notesErr})</code>}
-              action={<Button size="sm" onClick={load}>Retry</Button>}
+              action={<Button size="sm" onClick={() => { void notesQuery.refetch(); }}>Retry</Button>}
             />
           ) : notes.length === 0 ? (
             <StateBlock
@@ -512,14 +516,10 @@ function AgentNotes({ slug }: { slug: string }) {
 function ExistingAgent({ agentId }: { agentId: string }) {
   const nav = useNavigate();
   const qc = useQueryClient();
-  const [agent, setAgent] = useState<AgentDetailData | null>(null);
+  // `err` is the SAVE's error slot as well as the read's, so it stays local:
+  // a rejected PUT has to be able to say so under a record that loaded fine.
   const [err, setErr] = useState<string | null>(null);
-  const [jobs, setJobs] = useState<Job[] | null>(null);
   const [confirmRetire, setConfirmRetire] = useState(false);
-
-  // Phase-4 grants minted to this agent, plus the broker (GrantPicker) mount.
-  const [grants, setGrants] = useState<ResourceGrant[] | null>(null);
-  const [grantsErr, setGrantsErr] = useState<string | null>(null);
   const [grantPickerOpen, setGrantPickerOpen] = useState(false);
 
   // Draft (edit-mode). Nested triggers are managed manually so dirty detection
@@ -534,48 +534,59 @@ function ExistingAgent({ agentId }: { agentId: string }) {
   const [dDelegatable, setDDelegatable] = useState(false);
   const [dTriggers, setDTriggers] = useState<Trigger[]>([]);
 
-  useCrumbLabel(agent?.name || null);
-
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
+  // THE RECORD. Three independent reads, three entries, one owner each. They
+  // were three `useState` + `useEffect` pairs with their own error slots and
+  // their own reload callbacks, which is the shape this page's Save had to
+  // remember to call by hand.
+  const agentQuery = useQuery({
+    queryKey: queryKeys.agents.detail(agentId),
+    queryFn: async (): Promise<AgentDetailData> => {
       const r = await fetch(`/api/agents/${encodeURIComponent(agentId)}`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const a: AgentDetailData = await r.json();
-      setAgent(a);
-    } catch (e) {
-      setErr(String(e));
-    }
-  }, [agentId]);
+      return (await r.json()) as AgentDetailData;
+    },
+  });
+  const agent = agentQuery.data ?? null;
+  const loadErr = agentQuery.isError ? String(agentQuery.error) : null;
 
-  useEffect(() => { load(); }, [load]);
+  const JOBS_LIMIT = 25;
+  const jobsQuery = useQuery({
+    queryKey: queryKeys.agents.jobs(agentId, JOBS_LIMIT),
+    // AgentJobsOut, named from the generated client. `{ jobs, count }` is this
+    // route's real envelope and NOT the one GET /api/jobs moved to, so reading
+    // it by hand here looked identical to the call sites that had silently gone
+    // stale. Naming it is what tells the two apart.
+    queryFn: async (): Promise<Job[]> => {
+      const r = await fetch(`/api/agents/${encodeURIComponent(agentId)}/jobs?limit=${JOBS_LIMIT}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+      const d = (await r.json()) as components["schemas"]["AgentJobsOut"];
+      return (d?.jobs ?? []) as Job[];
+    },
+  });
+  // A failed history read renders as "no runs yet" and does not take the page
+  // down with it, which is what the old `.catch(() => setJobs([]))` did.
+  const jobs = jobsQuery.isPending ? null : (jobsQuery.data ?? []);
 
-  useEffect(() => {
-    fetch(`/api/agents/${encodeURIComponent(agentId)}/jobs?limit=25`)
-      // AgentJobsOut, named from the generated client. `{ jobs, count }` is
-      // this route's real envelope and NOT the one GET /api/jobs moved to, so
-      // reading it by hand here looked identical to the call sites that had
-      // silently gone stale. Naming it is what tells the two apart.
-      .then(async (r) => (r.ok ? ((await r.json()) as components["schemas"]["AgentJobsOut"]) : null))
-      .then((d) => setJobs(d?.jobs ?? []))
-      .catch(() => setJobs([]));
-  }, [agentId]);
-
-  const loadGrants = useCallback(async () => {
-    setGrantsErr(null);
-    setGrants(null);
-    try {
+  const grantsQuery = useQuery({
+    queryKey: queryKeys.grants.all(),
+    queryFn: async (): Promise<components["schemas"]["GrantsDocument"]> => {
       const r = await fetch("/api/grants");
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const data: components["schemas"]["GrantsDocument"] = await r.json();
-      const to = `agent:${agentId}`;
-      setGrants((data.resource_grants ?? []).filter((g) => g.to === to));
-    } catch (e) {
-      setGrantsErr(String(e));
-    }
-  }, [agentId]);
+      return (await r.json()) as components["schemas"]["GrantsDocument"];
+    },
+  });
+  // The document is read whole and filtered HERE. Filtering in the queryFn
+  // would make this page's entry hold a different value from every other
+  // reader's under the same key, which is the collision queryKeys.ts exists to
+  // stop: the key names the endpoint's answer, not one caller's slice of it.
+  const grants = useMemo(() => {
+    if (!grantsQuery.data) return null;
+    const to = `agent:${agentId}`;
+    return (grantsQuery.data.resource_grants ?? []).filter((g) => g.to === to) as ResourceGrant[];
+  }, [grantsQuery.data, agentId]);
+  const grantsErr = grantsQuery.isError ? String(grantsQuery.error) : null;
 
-  useEffect(() => { loadGrants(); }, [loadGrants]);
+  useCrumbLabel(agent?.name || null);
 
   const personaValue = useMemo(() => agent?.definition ?? "", [agent]);
 
@@ -647,7 +658,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
       setEditing(false);
       setFlash(true);
       setTimeout(() => setFlash(false), 2000);
-      await load();
+      await qc.invalidateQueries({ queryKey: queryKeys.agents.detail(agentId) });
       void qc.invalidateQueries({ queryKey: queryKeys.agents.list() });
     } catch (e) {
       setErr(String(e));
@@ -665,15 +676,19 @@ function ExistingAgent({ agentId }: { agentId: string }) {
     nav("/roles");
   };
 
-  if (err && !agent) {
+  // THE READ's failure, not the save's. `err` also holds a rejected PUT, and a
+  // save that failed must not replace the record it failed to write with an
+  // empty "couldn't load" page; that notice belongs beside the form, which is
+  // where it already renders.
+  if (loadErr && !agent) {
     return (
       <div>
         <PageHeader title="Agent" />
         <StateBlock
           variant="error"
           title="Couldn't load agent"
-          hint={<code>GET /api/agents/{agentId} ({err})</code>}
-          action={<Button size="sm" onClick={load}>Retry</Button>}
+          hint={<code>GET /api/agents/{agentId} ({loadErr})</code>}
+          action={<Button size="sm" onClick={() => { void agentQuery.refetch(); }}>Retry</Button>}
         />
       </div>
     );
@@ -1016,7 +1031,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
               variant="error"
               title="Couldn't load grants"
               hint={<code>/api/grants</code>}
-              action={<Button onClick={loadGrants}>Retry</Button>}
+              action={<Button onClick={() => { void grantsQuery.refetch(); }}>Retry</Button>}
             />
           ) : grants === null ? (
             <Card style={{ padding: "var(--space-3)" }}><p className="ws-muted">Loading…</p></Card>
@@ -1119,7 +1134,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
         open={grantPickerOpen}
         onClose={() => setGrantPickerOpen(false)}
         to={`agent:${agent.slug}`}
-        onGranted={() => loadGrants()}
+        onGranted={() => { void qc.invalidateQueries({ queryKey: queryKeys.grants.all() }); }}
       />
 
       <ConfirmDialog

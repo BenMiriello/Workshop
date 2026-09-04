@@ -104,6 +104,25 @@ export const queryKeys = {
     all: () => ["agents"] as const,
     list: () => ["agents", "list"] as const,
     maker: (agentId: string) => ["agents", agentId, "maker"] as const,
+    /** `GET /api/agents/{id}` -- one agent's definition, triggers and flags. */
+    detail: (agentId: string) => ["agents", agentId, "detail"] as const,
+    /**
+     * `GET /api/agents/{id}/jobs?limit=` -- that agent's run history. The limit
+     * is IN the key because it is in the request: a page asking for 25 and a
+     * page asking for 100 are asking two different questions, and serving the
+     * shorter answer to the longer question is a silent truncation.
+     */
+    jobs: (agentId: string, limit: number) => ["agents", agentId, "jobs", limit] as const,
+    /** `GET /api/agents/build/{slug}` and the four reads that open with it. */
+    build: (slug: string) => ["agents", slug, "build"] as const,
+    /** `GET /api/agents/build/{slug}/file?path=` -- one file out of the tree. */
+    buildFile: (slug: string, path: string) => ["agents", slug, "build", "file", path] as const,
+    /** `GET /api/agents/build/{slug}/interventions` -- the steering notes. */
+    buildInterventions: (slug: string) => ["agents", slug, "build", "interventions"] as const,
+    /** `GET /api/agents/build/{slug}/diff` -- the working tree's whole diff. */
+    buildDiff: (slug: string) => ["agents", slug, "build", "diff"] as const,
+    /** `GET /api/agents/build/{slug}/preview/{status,log}` -- one fact, two reads. */
+    buildPreview: (slug: string) => ["agents", slug, "build", "preview"] as const,
     autonomyStatus: () => ["agents", "autonomy", "status"] as const,
     autonomyControls: () => ["agents", "autonomy", "status", "controls"] as const,
   },
@@ -132,7 +151,33 @@ export const queryKeys = {
   },
 
   projects: {
+    /**
+     * `GET /api/projects/` -- every project. No slug slot, and it cannot
+     * collide with the per-slug keys below: those carry a third element, so
+     * even a project literally named "list" addresses a different tuple.
+     */
+    list: () => ["projects", "list"] as const,
     autonomy: (slug: string) => ["projects", slug, "autonomy"] as const,
+    /** `GET /api/worktrees/{slug}` -- the trees this project has on disk. */
+    worktrees: (slug: string) => ["projects", slug, "worktrees"] as const,
+  },
+
+  /**
+   * `GET /api/memory/scopes/{scope}/notes`. Keyed by SCOPE, which is what the
+   * route is addressed by: an agent's notes and a project's notes are two
+   * lists, not one list filtered twice.
+   */
+  memory: {
+    notes: (scope: string) => ["memory", "notes", scope] as const,
+  },
+
+  /**
+   * `GET /api/grants` -- the whole grants document. It is read whole and
+   * filtered by the caller (an agent page wants the grants pointed at itself),
+   * so there is one entry rather than one per filter.
+   */
+  grants: {
+    all: () => ["grants"] as const,
   },
 
   /**
