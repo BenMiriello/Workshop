@@ -392,6 +392,64 @@ def test_the_holder_can_commit_from_inside_the_sandbox(workshop):
     assert "work from the chat" in out
 
 
+# --- nobody opts in -----------------------------------------------------------
+
+@needs_bwrap
+def test_the_first_write_makes_the_worktree_and_nobody_asked_for_it(workshop,
+                                                                    monkeypatch):
+    """The clause the last six worktrees died of.
+
+    Six trees were made on 2026-08-22/23, all merged cleanly, and none since --
+    because the only trigger that was ever armed was the autonomous sweep, whose
+    last iteration was 2026-08-23 13:22. The interactive trigger
+    (`_maybe_write_blocked` -> `_auto_create_worktree_for_chat`) is the first
+    line of that function, behind `WORKSHOP_TREE_LEASE_MOUNT`, and has therefore
+    never run once in production. An opt-in gets abandoned; this asserts there
+    is nothing to opt into.
+
+    The EROFS is REAL. A chat with no worktree resolves to the shared tree, the
+    mount refuses its write because it holds no lease, and the string the tool
+    prints is what the platform gets to work with -- so the string is produced
+    by bwrap here rather than written by this test.
+    """
+    from services import build_streaming, chat_context, chat_store
+
+    rc, _out, err = _in_sandbox(str(workshop["proj"]), "thread-a",
+                                "echo edit > /workspace/README.md && echo WROTE")
+    assert rc != 0, "the shared tree was writable by a chat holding no lease"
+
+    pinned: list = []
+    monkeypatch.setattr(chat_store, "get_thread", lambda tid: _thread(
+        tid, "Chat toolbar fixes"))
+    monkeypatch.setattr(chat_store, "set_thread_branch",
+                        lambda tid, slug: pinned.append((tid, slug)) or {})
+    monkeypatch.setattr(chat_context, "get_provider",
+                        lambda key: workshop["provider"])
+    said: list = []
+    monkeypatch.setattr(build_streaming, "write_to_turn",
+                        lambda tid, text, *a, **kw: said.append(text))
+
+    turn = build_streaming.Turn(id="turn-1", thread_id="thread-a",
+                                agent_slug="probe")
+    build_streaming._maybe_write_blocked(turn, {"thread_id": "thread-a"},
+                                         {"text": err})
+
+    assert turn.write_offer is not None, (
+        "a real EROFS did not produce a worktree; nothing else would have")
+    assert turn.write_offer["branch_slug"] == "chat-toolbar-fixes"
+    assert pinned == [("thread-a", "chat-toolbar-fixes")], "the chat was not pinned"
+    assert said and "chat-toolbar-fixes" in said[0].lower().replace(" ", "-") or \
+        "Chat toolbar fixes" in said[0]
+    # And the tree it was given is real, and is the one the next turn resolves to.
+    made = worktrees.branch_dir("probe", "chat-toolbar-fixes")
+    assert os.path.isdir(made)
+    nxt = chat_worktree.plan(_thread("thread-a", "Chat toolbar fixes",
+                                     "chat-toolbar-fixes"),
+                             workshop["provider"],
+                             fallback_cwd=str(workshop["proj"]))
+    assert nxt.cwd == str(made), "the next turn does not run in the tree just made"
+
+
 # --- the return trip ----------------------------------------------------------
 
 def test_an_unpinned_chat_is_told_there_is_nothing_to_merge(workshop):
