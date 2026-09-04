@@ -206,6 +206,12 @@ def _project_of(provider: Any) -> str | None:
     return str(getattr(provider, "slug", "")) or None
 
 
+# PUBLIC ALIAS. `build_streaming` needs the same answer on the write-blocked
+# path and had grown its own copy of the rule, which was the pre-fix version of
+# it. One name, so the next caller asks rather than re-derives.
+project_of = _project_of
+
+
 def _pinned_branch(thread: dict | None, provider: Any) -> str | None:
     """Which branch this chat is pinned to, from whichever record owns the pin.
 

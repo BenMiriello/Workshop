@@ -717,12 +717,29 @@ def _auto_create_worktree_for_chat(thread_id: str) -> dict | None:
         thread = chat_store.get_thread(thread_id)
         if not thread:
             return None
-        context_key = (thread.get("context_key") or "")
-        if not context_key.startswith("project:"):
-            return None
         if thread.get("branch_slug"):
             return None
-        project_slug = context_key[len("project:"):]
+        # ASK `chat_worktree`, DO NOT RE-DERIVE. This used to read
+        # `context_key.startswith("project:")` and slice the slug off the key,
+        # which is a bug `chat_worktree._project_of` already documents at length
+        # and already fixed: `DevelopmentContextProvider` is a project provider
+        # that deliberately keys itself `development` rather than
+        # `project:development` (ADR 0014), so the key test excluded the one
+        # chat that cuts more branches than any other -- the platform's own.
+        #
+        # The whole point of the write-blocked path is that a chat which writes
+        # gets a worktree WITHOUT BEING ASKED. Excluding the operator's own chat
+        # from it meant the one place a person would meet this feature was the
+        # manual picker the design exists to delete, and it is a large part of
+        # why `WORKSHOP_TREE_LEASE_MOUNT` could not be armed.
+        #
+        # Same rule fixed in two places, re-broken in the second, which is what
+        # re-deriving instead of asking costs.
+        from services import chat_context, chat_worktree
+        provider = chat_context.get_provider(thread.get("context_key"))
+        project_slug = chat_worktree.project_of(provider)
+        if not project_slug:
+            return None
         title = (thread.get("title") or "").strip() or None
         created = worktrees.allocate_task_worktree(
             project_slug, thread_id, title=title,
