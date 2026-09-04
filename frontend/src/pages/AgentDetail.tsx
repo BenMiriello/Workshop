@@ -543,7 +543,10 @@ function ExistingAgent({ agentId }: { agentId: string }) {
     queryFn: async (): Promise<AgentDetailData> => {
       const r = await fetch(`/api/agents/${encodeURIComponent(agentId)}`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      return (await r.json()) as AgentDetailData;
+      // AgentDetail, named from the generated client. `AgentDetailData` adds
+      // the one field this page edits on top of it; the WIRE shape is the
+      // route's own model and is what the boundary asserts.
+      return (await r.json()) as components["schemas"]["AgentDetail"] & AgentDetailData;
     },
   });
   const agent = agentQuery.data ?? null;

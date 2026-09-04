@@ -7,6 +7,7 @@ import {
   Pencil, PanelsTopLeft, ScrollText, StickyNote, X,
 } from "lucide-react";
 import type { BuildAgent } from "@shared/types";
+import type { components } from "../api/schema.gen";
 import { queryKeys } from "../lib/queryKeys";
 import {
   Button,
@@ -366,7 +367,10 @@ export default function AgentBuild() {
         throw new Error(`agent: ${shortHttpError(aR.status, aR.statusText, await aR.text().catch(() => ""))}`);
       }
       const tj = tR.ok ? await tR.json() : { tree: [] };
-      return { agent: (await aR.json()) as BuildAgent, tree: (tj.tree || []) as TreeNode[] };
+      // BuildAgentDetail, named from the generated client: this route's own
+      // model, rather than the shared type re-asserted at the wire.
+      const a = (await aR.json()) as components["schemas"]["BuildAgentDetail"] & BuildAgent;
+      return { agent: a, tree: (tj.tree || []) as TreeNode[] };
     },
   });
   const agent = buildQuery.data?.agent ?? null;
@@ -394,7 +398,7 @@ export default function AgentBuild() {
         body: JSON.stringify({ name: renameName.trim(), purpose: renamePurpose.trim() }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const updated: BuildAgent = await r.json();
+      const updated = (await r.json()) as components["schemas"]["BuildAgentDetail"] & BuildAgent;
       qc.setQueryData<{ agent: BuildAgent; tree: TreeNode[] }>(
         queryKeys.agents.build(agent.slug),
         (prev) => (prev ? { ...prev, agent: updated } : prev),
@@ -422,7 +426,7 @@ export default function AgentBuild() {
         body: JSON.stringify({ branch_slug: next }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const updated: BuildAgent = await r.json();
+      const updated = (await r.json()) as components["schemas"]["BuildAgentDetail"] & BuildAgent;
       qc.setQueryData<{ agent: BuildAgent; tree: TreeNode[] }>(
         queryKeys.agents.build(slug),
         (prev) => (prev ? { ...prev, agent: updated } : prev),

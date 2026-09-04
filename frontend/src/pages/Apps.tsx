@@ -26,7 +26,6 @@ type ServiceProbe = {
   latency_ms?: number | null;
   notes?: string | null;
 };
-type ServicesResp = { services: ServiceProbe[] };
 
 // Card status tone maps to the design-system status kinds (or null for neutral
 // muted text). "warn" doubles for degraded; "err" for unreachable.
@@ -478,7 +477,10 @@ export default function Apps() {
     queryFn: async (): Promise<ServiceProbe[]> => {
       const r = await fetch("/api/services/");
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      return ((await r.json()) as ServicesResp).services || [];
+      // ServiceRegistry, named from the generated client rather than a local
+      // re-description of the envelope.
+      const d = (await r.json()) as components["schemas"]["ServiceRegistry"];
+      return (d.services || []) as ServiceProbe[];
     },
     retry: false,
   });
