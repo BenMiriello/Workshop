@@ -394,17 +394,50 @@ def tracked_files(root: Path = ROOT) -> list[str]:
     )
 
 
+# The platform's OWN project, which is not an app and must not be scanned as
+# one. This installation hosts its own source as a project, so the slug appears
+# in the same registry the apps do -- but it names the platform, and `git grep`
+# for it hits 251 tracked files, almost all of them the ordinary English word.
+# Scanning it would bury the real count under noise, which is the failure mode
+# this file's header calls out: a number that is wrong upward gets disbelieved
+# and then ignored.
+_PLATFORM_SCOPES = frozenset({"development"})
+
+
 def roster(baseline: dict) -> list[str]:
-    """Catalog + install list + everything the baseline already watches."""
+    """Every app this installation knows about, from EVERY place one is declared.
+
+    THE ROSTER IS THE WHOLE GATE. An app that is not on it is not scanned, so
+    its name in platform source counts zero and the total reads clean for a
+    violation that is sitting right there. That is not hypothetical: on
+    2026-09-03 this function read one registry, `gengui` was declared only in
+    another, and seven platform files naming it counted nothing.
+
+    Three sources, unioned, because this tree has three registries that do not
+    agree with each other (app-is-the-entity-2026-08-20.md section 9 is the
+    merge, and it is not built):
+
+      1. the app DECLARATIONS in the tree  -- what the catalog can build
+      2. `.runtime/installed-apps.json`    -- what is mounted here
+      3. `.runtime/projects.json`          -- what has a working tree here
+
+    Plus `watched` from the baseline, which is sticky on purpose so an app that
+    leaves the catalog is still scanned for the leftovers it left behind.
+    """
     names: set[str] = set(baseline.get("watched", []))
 
-    registry = ROOT / "backend" / "services" / "app_registry.py"
-    if registry.exists():
-        body = registry.read_text(errors="replace")
-        block = re.search(r"_CATALOG_FACTORIES\s*=\s*\((.*?)\n\)", body, re.S)
-        if block:
-            names.update(re.findall(r"""\(\s*["']([a-z0-9][a-z0-9-]*)["']""", block.group(1)))
+    # 1. The declarations. This used to parse `_CATALOG_FACTORIES` out of
+    #    app_registry.py; that tuple was removed on 2026-09-01 when the catalog
+    #    started discovering apps instead of listing them, so the pattern
+    #    silently matched nothing and this source went dead. The id is read from
+    #    each declaration, which is where it now lives.
+    for decl in sorted((ROOT / "backend" / "services").glob("*_app.py")):
+        body = decl.read_text(errors="replace")
+        m = re.search(r"""\bid\s*=\s*["']([a-z0-9][a-z0-9-]*)["']""", body)
+        if m:
+            names.add(m.group(1))
 
+    # 2 and 3. The two instance registries.
     installed = ROOT / ".runtime" / "installed-apps.json"
     if installed.exists():
         try:
@@ -412,7 +445,19 @@ def roster(baseline: dict) -> list[str]:
         except (ValueError, OSError):
             pass
 
-    return sorted(n for n in names if n)
+    projects = ROOT / ".runtime" / "projects.json"
+    if projects.exists():
+        try:
+            data = json.loads(projects.read_text())
+            entries = data.get("projects", data)
+            if isinstance(entries, dict):
+                names.update(entries.keys())
+            elif isinstance(entries, list):
+                names.update(e.get("slug") for e in entries if isinstance(e, dict))
+        except (ValueError, OSError, AttributeError):
+            pass
+
+    return sorted(n for n in names if n and n not in _PLATFORM_SCOPES)
 
 
 def scan(apps: list[str], root: Path = ROOT) -> dict:
