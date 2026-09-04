@@ -32,9 +32,15 @@
 #   7  — reviewer returned `block-for-decision`: a strict-latitude run whose gate
 #        could not establish completeness. The caller blocks the task with the
 #        reviewer's reason and lets the operator decide. Re-firing cannot fix it.
-#   8  — RESERVED for the budget-cap pause (ticket 70860d58): the run committed
-#        its work and stopped at the cap, resumable. Not emitted here yet; the
-#        number is spoken for so this file and that one cannot both claim it.
+#   8  : BUDGET-CAP PAUSE (ticket 70860d58). Before each iteration the run asks
+#        the ledger how much of its scope's budget is left, subtracts what it has
+#        spent and not yet billed, and compares that against the cost of its OWN
+#        last iteration. If the next one would cross the cap it does not start:
+#        it commits what exists inside the task's touches lane, writes a resume
+#        bookmark on the ticket (session id, branch, iteration) and exits 8.
+#        NOT a failure. The caller parks the ticket without burning an attempt
+#        and a later sweep resumes with --resume-session. See scripts/
+#        project_ralph.sh's rc=8 leg.
 #   9  — DISPLACED: the heartbeat was fenced, so this run no longer holds the
 #        ticket's claim (an operator edit, a reclaim, or a preempt). NOT a task
 #        failure. The caller must not consume an attempt, must not block or park
@@ -132,6 +138,15 @@ STORE_DIR=""      # --store-dir <dir>: scope dir whose .tasks.json holds the cla
 RUN_ID=""         # --run <job_id>: the child Job (attempt) id, for usage-ledger
                   # attribution (role/task_id/run). Empty for a standalone ralph.
 RUN_TOKENS=0      # accumulated real tokens (input+cache+output) across iterations
+ITER_TOKENS=0     # the LAST iteration's cost, and the budget pause's predictor.
+                  # Initialized here because the pause check reads it at the top
+                  # of the loop, before the assignment further down, and `set -u`
+                  # makes an unset name in an arithmetic test an error.
+RESUME_SESSION="" # --resume-session <id>: continue a run this ticket paused at
+                  # the budget cap. Iteration 1 resumes that session instead of
+                  # starting a fresh one, so the committed work is not redone.
+RESUME_ITER=0     # --resume-iter <n>: the iteration the paused run reached, for
+                  # the log and the next bookmark. Advisory; nothing depends on it.
 LATITUDE_ARG=""   # --latitude <strict|standard|open>: the INVOCATION level of the
                   # latitude cascade (invocation > task > scope > default). Empty
                   # = this run states no preference and inherits.
@@ -157,6 +172,8 @@ while [[ $# -gt 0 ]]; do
     --claim-token)   CLAIM_TOKEN="$2"; shift 2 ;;
     --store-dir)     STORE_DIR="$2"; shift 2 ;;
     --run)           RUN_ID="$2"; shift 2 ;;
+    --resume-session) RESUME_SESSION="$2"; shift 2 ;;
+    --resume-iter)   RESUME_ITER="$2"; shift 2 ;;
     --latitude)      LATITUDE_ARG="$2"; shift 2 ;;
     *)               TASK="$1"; shift ;;
   esac
@@ -357,9 +374,30 @@ BOOKKEEPING_RE='^(\.runtime/|\.tasks\.json|TODO\.md$)'
 # behalf. A worker that committed properly hits the early return and this is a
 # no-op.
 maybe_autocommit() {
-  local landed now_dirty new_paths n touches
+  local landed
   landed=$(cd "$DIR" && git rev-list "$BASELINE..HEAD" 2>/dev/null | tr -d '[:space:]')
   [[ -n "$landed" ]] && return 0
+  commit_lane "ralph: $(echo "$TASK" | head -c 72 | tr '\n' ' ')" || return 0
+  "$WORKSHOP/scripts/log_learning.sh" \
+    "Ralph: worker completed the task but left its changes UNCOMMITTED — the loop auto-committed them. Always commit before emitting the sentinel (prompt rule 5); the completion gate reads the git log, not the working tree." \
+    "ralph" 2>/dev/null || true
+  return 0
+}
+
+# Commit whatever the worker has left uncommitted INSIDE THE TASK'S DECLARED
+# LANE, with the message given. Returns 0 if a commit was made, 1 if not.
+#
+# Split out of maybe_autocommit for the budget-cap pause (70860d58), which needs
+# the same lane discipline and explicitly NOT the same guards: maybe_autocommit
+# fires only after the reviewer approves and early-returns if anything already
+# landed since BASELINE, so it never runs at an ordinary mid-run boundary and a
+# pause would otherwise leave the tree dirty and the work unrecorded. The lane
+# rule below is the part that must be shared, for the reason recorded in it: a
+# shared tree makes "newly dirty" insufficient evidence that THIS run wrote a
+# file, and committing someone else's edit under the worker's name happened once
+# already, on 2026-07-18.
+commit_lane() {  # $1=commit message
+  local now_dirty new_paths n touches msg="$1"
 
   # "Newly dirty" is NOT sufficient evidence that this run wrote a file: the tree
   # is shared, so an operator or a concurrent session editing alongside the sweep
@@ -415,7 +453,7 @@ except Exception:
                          <(printf '%s\n' "$untracked") || true)
     if [[ -z "$(printf '%s' "$new_paths" | tr -d '[:space:]')" ]]; then
       log "worker left changes uncommitted, task declares no touches lane, and nothing NEW was created — declining to auto-commit (cannot tell this run's edits to existing files from a concurrent editor's)"
-      return 0
+      return 1
     fi
     log "no touches lane: rescuing only newly-created files"
   fi
@@ -432,10 +470,10 @@ for line in sys.stdin:
         print(p)
 " "$touches" 2>/dev/null || true)
   fi
-  [[ -z "$(printf '%s' "$new_paths" | tr -d '[:space:]')" ]] && return 0
+  [[ -z "$(printf '%s' "$new_paths" | tr -d '[:space:]')" ]] && return 1
   (cd "$DIR" && printf '%s\n' "$new_paths" | while IFS= read -r p; do
      [[ -n "$p" ]] && git add -- "$p"
-   done) || return 0
+   done) || return 1
   # `--only -- <paths>`: commit EXACTLY the paths we selected, ignoring whatever
   # else sits in the index. A bare `git commit` takes the whole index, so a file
   # a previous task's worker ran `git add` on (and never committed) rides along
@@ -443,13 +481,123 @@ for line in sys.stdin:
   # landed inside the next ticket's commit, and the touches gate then correctly
   # blocked that ticket for writing outside its lane.
   (cd "$DIR" && git -c user.name='ralph' -c user.email='ralph@workshop.local' \
-     commit -q --only -m "ralph: $(echo "$TASK" | head -c 72 | tr '\n' ' ')" \
-     -- $(printf '%s ' $new_paths) >>"$LOG" 2>&1) || return 0
+     commit -q --only -m "$msg" \
+     -- $(printf '%s ' $new_paths) >>"$LOG" 2>&1) || return 1
   n=$(printf '%s\n' "$new_paths" | grep -c . || true)
-  log "auto-committed $n file(s) the worker left uncommitted"
-  "$WORKSHOP/scripts/log_learning.sh" \
-    "Ralph: worker completed the task but left its changes UNCOMMITTED — the loop auto-committed them. Always commit before emitting the sentinel (prompt rule 5); the completion gate reads the git log, not the working tree." \
-    "ralph" 2>/dev/null || true
+  log "committed $n file(s) the worker left uncommitted"
+  return 0
+}
+
+# The pause half of the budget cap (70860d58): land the work, write the
+# bookmark, and say plainly what happened.
+#
+# A PAUSE MUST NOT LOOK LIKE A FAILURE OR LIKE A FINISH. The ticket goes
+# `parked` (the caller does that; there is deliberately no ninth status token —
+# the eight live in five places and adding one for a single bit of information
+# is a separate, larger change), and the bookmark is what lets the sweep tell
+# this apart from a thrash-park: a thrash-park has no `resume` evidence.
+#
+# RESUME IS BEST EFFORT AND SAYS SO. A model session can expire or grow too
+# large to resume, and a long pause makes that likelier. That is why the branch
+# and the commits are recorded too: if the session cannot be resumed the next
+# attempt still starts from real code rather than from nothing, which is better
+# than today even when resume fails. It must never be reported as a clean resume
+# when it is not.
+# Would the NEXT iteration cross this scope's usage cap? Sets BUDGET_LEFT and
+# returns 0 to pause, 1 to carry on.
+#
+# Three inputs, and each is a correction to an earlier design of this ticket:
+#   - THE REMAINDER, not a verdict. `can_admit` returns (ok, reason) and cannot
+#     say how much is left; `remaining` can, and only it can answer "would one
+#     more step fit".
+#   - MINUS WHAT THIS RUN HAS SPENT. Billing happens ONCE, at exit, so mid-run
+#     the ledger has never heard of this run and a bare query is stale by the
+#     entire run so far. On a long task that is most of the answer.
+#   - AGAINST ITS OWN LAST ITERATION, never a whole-task estimate. Re-measured
+#     over all 168 billed runs in .runtime/ralph.log: min 24,559, median
+#     107,215, p90 579,416, max 1,045,598 — a 43x spread. A design whose
+#     correctness depends on that estimate is wrong. One step of this same work
+#     predicts the next step; the whole task does not.
+#
+# A METERING FAILURE MUST NEVER STOP THE QUEUE. An unreadable answer, an
+# uncapped config, or no previous iteration to predict from all mean "carry on":
+# the ordinary wall, iteration and run-token guards still bound the run, and a
+# ledger hiccup that silently parked every ticket would be far worse than an
+# overshoot bounded by one iteration.
+BUDGET_LEFT=""
+should_pause_at_cap() {
+  BUDGET_LEFT=""
+  # No billing scope is a manual ralph, which bills nothing and has no cap.
+  [[ -n "$BILL_PROJECT" ]] || return 1
+  # Iteration 1 has no previous iteration to predict from, and admission has
+  # already gated the start.
+  (( iter > 1 )) || return 1
+  (( ITER_TOKENS > 0 )) || return 1
+  BUDGET_LEFT=$( (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.usage_ledger \
+      remaining --project "$BILL_PROJECT" --spent-since "$RUN_TOKENS" 2>/dev/null) \
+    | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)          # unreadable: print nothing, do not pause
+if d.get('uncapped') or d.get('remaining') is None:
+    raise SystemExit(0)          # no cap configured: nothing to stop at
+print(int(d['remaining']))
+" 2>/dev/null || echo "")
+  [[ -n "$BUDGET_LEFT" ]] || return 1
+  (( BUDGET_LEFT < ITER_TOKENS )) || return 1
+  return 0
+}
+
+PAUSE_BRANCH=""; PAUSE_ITER=0; PAUSE_REMAINING=0; PAUSED=0
+pause_at_cap() {  # $1=tokens left when the decision was made
+  local head_before head_after committed=0 ref
+  PAUSED=1
+  PAUSE_REMAINING="${1:-0}"
+  # `iter` was already incremented for the iteration that will now NOT run, so
+  # the iteration actually REACHED is one less. A bookmark that overstates it
+  # would make a resumed run look further along than it is.
+  PAUSE_ITER=$(( iter > 0 ? iter - 1 : 0 ))
+  PAUSE_BRANCH=$(cd "$DIR" && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  head_before=$(cd "$DIR" && git rev-parse HEAD 2>/dev/null || echo "")
+  if commit_lane "ralph: paused at the usage cap — $(echo "$TASK" | head -c 60 | tr '\n' ' ')"; then
+    committed=1
+  fi
+  head_after=$(cd "$DIR" && git rev-parse HEAD 2>/dev/null || echo "")
+  accum_worker_commits
+  if (( committed == 1 )); then
+    log "paused: committed the working tree inside the task's lane at ${head_after:0:12} on branch ${PAUSE_BRANCH:-<none>}"
+  elif [[ -n "$head_before" && "$head_before" != "$BASELINE" ]]; then
+    log "paused: nothing left uncommitted; earlier commits stand at ${head_before:0:12} on branch ${PAUSE_BRANCH:-<none>}"
+  else
+    log "paused: nothing was committed by this run (no work inside the declared lane); the resume bookmark still records the session so the next attempt continues rather than restarting"
+  fi
+  # The bookmark. `ref` is JSON so a reader parses it rather than scraping a
+  # sentence, and `--kind resume` is what the sweep selects on.
+  [[ -z "$TASK_ID" || -z "$STORE_DIR" ]] && return 0
+  ref=$(SESSION_ID="$SESSION_ID" PAUSE_BRANCH="$PAUSE_BRANCH" \
+        PAUSE_ITER="$PAUSE_ITER" PAUSE_HEAD="$head_after" \
+        BILL_PROJECT="$BILL_PROJECT" RUN_ID="$RUN_ID" \
+        PAUSE_REMAINING="$PAUSE_REMAINING" RUN_TOKENS="$RUN_TOKENS" \
+        python3 -c "
+import json, os
+print(json.dumps({
+    'session': os.environ.get('SESSION_ID') or '',
+    'branch': os.environ.get('PAUSE_BRANCH') or '',
+    'iteration': int(os.environ.get('PAUSE_ITER') or 0),
+    'head': os.environ.get('PAUSE_HEAD') or '',
+    'scope': os.environ.get('BILL_PROJECT') or '',
+    'run': os.environ.get('RUN_ID') or '',
+    'remaining_at_pause': int(os.environ.get('PAUSE_REMAINING') or 0),
+    'run_tokens': int(os.environ.get('RUN_TOKENS') or 0),
+}))
+" 2>/dev/null || echo "")
+  [[ -z "$ref" ]] && return 0
+  python3 "$PTASKS" note "$STORE_DIR" "$TASK_ID" \
+    "paused at the usage budget cap after iteration $PAUSE_ITER; work committed, resumable" \
+    --kind resume --ref "$ref" >/dev/null 2>>"$LOG" || true
+  log "wrote resume bookmark: session=${SESSION_ID:-<none>} branch=${PAUSE_BRANCH:-<none>} iter=$PAUSE_ITER"
   return 0
 }
 
@@ -820,6 +968,12 @@ LAST_RESULT=""     # last NON-EMPTY worker .result text seen, so the receipt sum
 # receipt as worker_commits; project_ralph.sh reads it to build evidence.files.
 WORKER_COMMITS_FILE="$DIR/.runtime/ralph-worker-commits-$$.lst"
 : > "$WORKER_COMMITS_FILE"  # create empty; cleaned up with the runtime dir on exit
+# One parsed usage line per iteration, summed into a single ledger row at exit.
+# Per ITERATION rather than per run because that is the granularity the pause
+# predicts from, and because a run whose iterations used different models spends
+# on two price sheets.
+USAGE_ACCUM="$DIR/.runtime/ralph-usage-$$.jsonl"
+: > "$USAGE_ACCUM"
 ITER_HEAD_PRE=""   # HEAD captured just before each claude invocation
 
 # Collect commits that appeared between ITER_HEAD_PRE and the current HEAD into
@@ -905,6 +1059,34 @@ while (( iter < MAX_ITER )); do
   REMAINING=$(( MAX_WALL - ELAPSED ))
   PER_ITER_TIMEOUT=$(( REMAINING < 1500 ? REMAINING : 1500 ))
 
+  # ---- BUDGET-CAP PAUSE (ticket 70860d58) ------------------------------------
+  # STOP AT THE LINE RATHER THAN DISCOVERING IT AFTER CROSSING. Admission is a
+  # gate on STARTING a run; nothing stopped a run already in flight from
+  # spending past the cap, and the run-token guard further down only fires on a
+  # non-passing iteration and kills the run as thrash, discarding its work.
+  #
+  # Three things this compares, and each is a correction to an earlier design:
+  #   - THE REMAINDER, not a verdict. `can_admit` returns (ok, reason) and
+  #     cannot say how much is left; `remaining` can.
+  #   - MINUS WHAT THIS RUN HAS SPENT. Billing happens ONCE, at exit, so
+  #     mid-run the ledger has never heard of this run and a bare query is
+  #     stale by the entire run so far.
+  #   - AGAINST ITS OWN LAST ITERATION, not a whole-task estimate. Re-measured
+  #     over all 168 billed runs in .runtime/ralph.log: min 24,559, median
+  #     107,215, p90 579,416, max 1,045,598 — a 43x spread. A design whose
+  #     correctness depends on that estimate is wrong. One step of the same work
+  #     predicts the next step; the whole task does not.
+  #
+  # Skipped on iteration 1: there is no previous iteration to predict from, and
+  # admission has already gated the start. Skipped without a --bill-project,
+  # which is a manual ralph that bills nothing and therefore has no cap.
+  if should_pause_at_cap; then
+    log "BUDGET PAUSE at iter=$iter: ${BUDGET_LEFT} tokens left for scope=$BILL_PROJECT (after subtracting this run's unbilled $RUN_TOKENS), and the last iteration cost $ITER_TOKENS. Stopping before the next one crosses the cap."
+    pause_at_cap "$BUDGET_LEFT"
+    exit_code=8
+    break
+  fi
+
   log "=== iter $iter/$MAX_ITER (elapsed=${ELAPSED}s, per-iter-timeout=${PER_ITER_TIMEOUT}s) ==="
 
   # Build the iteration prompt. First iteration: full task. Subsequent: "continue,
@@ -917,6 +1099,29 @@ while (( iter < MAX_ITER )); do
 
 $TASK"
     RESUME_FLAG=()
+    # RESUMING A RUN THAT PAUSED AT THE CAP (70860d58). Continuing the paused
+    # session is what makes the pause free: the model still holds what it
+    # learned, so it does not re-read the tree and re-derive the plan it already
+    # committed. The prompt says where it stopped rather than restating the task
+    # from the top, which would invite exactly the redo this exists to avoid.
+    #
+    # BEST EFFORT, AND THE FALLBACK IS REAL. A session can expire or grow too
+    # large to resume; `claude --resume` then fails, the ordinary env-failure
+    # leg releases the attempt, and the next attempt starts from the COMMITTED
+    # work on the recorded branch rather than from nothing. That is still better
+    # than today, and it is not reported as a clean resume.
+    if [[ -n "$RESUME_SESSION" ]]; then
+      RESUME_FLAG=(--resume "$RESUME_SESSION")
+      SESSION_ID="$RESUME_SESSION"
+      ITER_PROMPT="This run was PAUSED at the usage budget cap after iteration ${RESUME_ITER:-?}, not stopped for any fault. Budget is available again. Your previous work is COMMITTED on this branch — check \`git log\` before doing anything, and continue from there rather than starting over.
+
+$RALPH_INSTRUCTIONS
+
+## Task (unchanged)
+
+$TASK"
+      log "resuming paused session $RESUME_SESSION (paused after iteration ${RESUME_ITER:-?})"
+    fi
   else
     REASONS=$(echo "$last_reviewer_json" | python3 -c "import json,sys; print(', '.join(json.load(sys.stdin).get('reasons',[])))" 2>/dev/null || echo "unknown")
     STUBS=$(echo "$last_reviewer_json" | python3 -c "
@@ -1000,45 +1205,35 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
   ITER_DUR=$(( $(date +%s) - ITER_START ))
   set -e
 
-  # Sum this iteration's real context+output tokens (usage.input_tokens +
-  # cache_read + cache_creation + output_tokens) into the run total. Robust to a
-  # stray non-JSON line (e.g. a warning) landing in the file via 2>&1: try whole,
-  # then the line carrying "usage", then from the first result object.
-  ITER_TOKENS=$(python3 -c "
-import json
-tok = 0
+  # METER THIS ITERATION THROUGH THE ONE SEAM. What used to be here was an
+  # inline `python3 -c` reading `.usage` and applying the 0.1 cache-read weight
+  # in shell. It was wrong twice over:
+  #
+  #  (1) It read `result.usage`, which on this CLI build is ALL ZEROS. Measured
+  #      2026-09-04 over every surviving turn journal: four of four `result`
+  #      envelopes report input/cache_read/cache_creation/output all 0, while
+  #      `modelUsage` on the same line carries the real counts and
+  #      `total_cost_usd` carries real dollars. So every iteration billed 0, the
+  #      ledger recorded nothing for worker runs, and admission compared against
+  #      an empty window. `read-usage` prefers `modelUsage`.
+  #  (2) The 0.1 weight was restated here, in bash, away from the module that
+  #      defines it. Two spellings of one constant is how they drift.
+  #
+  # The parsed line is appended to USAGE_ACCUM so the single billing call at
+  # exit can record real components per model rather than one integer.
+  ITER_USAGE=$( (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.usage_ledger \
+                   read-usage --usage-json "$ITER_OUT" 2>/dev/null) || echo '{}')
+  ITER_TOKENS=$(printf '%s' "$ITER_USAGE" | python3 -c "
+import json, sys
 try:
-    txt = open('$ITER_OUT').read()
-    obj = None
-    try:
-        obj = json.loads(txt)
-    except Exception:
-        for line in txt.splitlines():
-            line = line.strip()
-            if line.startswith('{') and '\"usage\"' in line:
-                try:
-                    obj = json.loads(line); break
-                except Exception:
-                    pass
-        if obj is None:
-            i = txt.find('{\"type\"')
-            if i >= 0:
-                try:
-                    obj = json.loads(txt[i:])
-                except Exception:
-                    obj = None
-    u = (obj or {}).get('usage') or {}
-    # Weight cache-read tokens at 0.1: the subscription rate limits count a cache
-    # read far below a fresh input token, so metering them at parity trips the
-    # budget long before the real quota is spent (review L3). Fresh input, cache
-    # creation, and output stay at parity.
-    tok = (int(u.get('input_tokens', 0))
-           + int(0.1 * int(u.get('cache_read_input_tokens', 0)))
-           + int(u.get('cache_creation_input_tokens', 0)) + int(u.get('output_tokens', 0)))
+    print(int((json.load(sys.stdin) or {}).get('tokens') or 0))
 except Exception:
-    tok = 0
-print(tok)
+    print(0)
 " 2>/dev/null || echo 0)
+  [[ -z "$ITER_TOKENS" ]] && ITER_TOKENS=0
+  if (( ITER_TOKENS > 0 )); then
+    printf '%s\n' "$ITER_USAGE" >> "$USAGE_ACCUM"
+  fi
   RUN_TOKENS=$((RUN_TOKENS + ITER_TOKENS))
 
   # Capture this iteration's final assistant text (.result) and remember the last
@@ -1072,8 +1267,12 @@ print(res[:1500])
   # --resume THIS run's session rather than --continue the cwd's newest one. (F12)
   # Robust to a stray non-JSON line landing in the file via 2>&1 (same ladder as
   # the token parse: whole file, then a line carrying session_id, then first obj).
-  if [[ -z "$SESSION_ID" ]]; then
-    SESSION_ID=$(python3 -c "
+  # Re-read on iteration 1 even when SESSION_ID is already set, because a resumed
+  # run seeded it from the bookmark and `claude --resume` may answer with a
+  # different id. A stale id here would be written into the NEXT pause bookmark
+  # and the resume after that would target a session this run never used.
+  if [[ -z "$SESSION_ID" ]] || (( iter == 1 )); then
+    CAPTURED_SESSION=$(python3 -c "
 import json
 sid = ''
 try:
@@ -1101,7 +1300,10 @@ except Exception:
     sid = ''
 print(sid)
 " 2>/dev/null || echo "")
-    [[ -n "$SESSION_ID" ]] && log "captured session_id=$SESSION_ID for --resume on later iters"
+    if [[ -n "$CAPTURED_SESSION" ]]; then
+      SESSION_ID="$CAPTURED_SESSION"
+      log "captured session_id=$SESSION_ID for --resume on later iters"
+    fi
   fi
 
   log "iter $iter: claude exit=$CLAUDE_EXIT, output bytes=$(stat -c %s "$ITER_OUT" 2>/dev/null || echo 0), tokens=$ITER_TOKENS, dur=${ITER_DUR}s"
@@ -1336,9 +1538,23 @@ if [[ -n "$BILL_PROJECT" && "$RUN_TOKENS" -gt 0 ]]; then
   BILL_ATTR=(--role worker)
   [[ -n "$TASK_ID" ]] && BILL_ATTR+=(--task-id "$TASK_ID")
   [[ -n "$RUN_ID" ]] && BILL_ATTR+=(--run "$RUN_ID")
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.usage_ledger record \
-     --project "$BILL_PROJECT" --tokens "$RUN_TOKENS" "${BILL_ATTR[@]}" >/dev/null 2>&1) || true
-  log "billed $RUN_TOKENS tokens to usage ledger (scope=$BILL_PROJECT role=worker task=${TASK_ID:-none} run=${RUN_ID:-none})"
+  # --usage-accum carries the four raw components per model, summed across this
+  # run's iterations, so the row can be repriced later and can answer in dollars.
+  # --tokens still wins for the `tokens` column: it includes the nominal charge
+  # for a timeout-killed iteration that produced no envelope, which has no
+  # components and would otherwise vanish from the admission window.
+  [[ -s "$USAGE_ACCUM" ]] && BILL_ATTR+=(--usage-accum "$USAGE_ACCUM")
+  BILL_OUT=$( (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.usage_ledger record \
+     --project "$BILL_PROJECT" --tokens "$RUN_TOKENS" "${BILL_ATTR[@]}" 2>/dev/null) || echo "")
+  BILL_COST=$(printf '%s' "$BILL_OUT" | python3 -c "
+import json, sys
+try:
+    c = (json.load(sys.stdin) or {}).get('cost_usd')
+except Exception:
+    c = None
+print('unpriced' if c is None else f'\${c:.4f}')
+" 2>/dev/null || echo unpriced)
+  log "billed $RUN_TOKENS tokens ($BILL_COST) to usage ledger (scope=$BILL_PROJECT role=worker task=${TASK_ID:-none} run=${RUN_ID:-none})"
 fi
 
 log "=== done iter=$iter exit_code=$exit_code (tokens=$RUN_TOKENS) ==="
@@ -1351,6 +1567,8 @@ log "=== done iter=$iter exit_code=$exit_code (tokens=$RUN_TOKENS) ==="
 if [[ -n "$RECEIPT_PATH" ]]; then
   ( RECEIPT_PATH="$RECEIPT_PATH" EXIT_CODE="$exit_code" ITERATIONS="$iter" \
     TOKENS="$RUN_TOKENS" SESSION_ID="$SESSION_ID" \
+    PAUSED="$PAUSED" PAUSE_BRANCH="$PAUSE_BRANCH" PAUSE_ITER="$PAUSE_ITER" \
+    PAUSE_REMAINING="$PAUSE_REMAINING" BILL_PROJECT="$BILL_PROJECT" \
     REVIEWER_JSON="$last_reviewer_json" LAST_ITER_OUT="$LAST_ITER_OUT" \
     LAST_RESULT="$LAST_RESULT" WORKER_COMMITS_FILE="${WORKER_COMMITS_FILE:-}" \
     python3 - <<'PYEOF'
@@ -1417,6 +1635,18 @@ receipt = {
     "summary": summary,
     "worker_commits": worker_commits,
 }
+# The resume bookmark, on the receipt as well as on the ticket. The ticket note
+# is what a later sweep SELECTS on; this is what the caller's rc=8 leg reads
+# without a second store round-trip, the same way it already reads session_id.
+if os.environ.get("PAUSED") == "1":
+    receipt["paused"] = {
+        "reason": "usage-budget-cap",
+        "session": os.environ.get("SESSION_ID") or "",
+        "branch": os.environ.get("PAUSE_BRANCH") or "",
+        "iteration": int(os.environ.get("PAUSE_ITER") or 0),
+        "scope": os.environ.get("BILL_PROJECT") or "",
+        "remaining_at_pause": int(os.environ.get("PAUSE_REMAINING") or 0),
+    }
 try:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(receipt, f)

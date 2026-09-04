@@ -381,6 +381,25 @@ build_receipt_evidence() {  # $1=receipt_file $2=baseline $3=head $4=commits(new
 
 # Allocate an isolated, locked worktree for one task. Echoes "<dir>\t<branch_slug>"
 # on success, nothing on failure (caller falls back to the project dir).
+# The on-disk directory of an EXISTING branch slug, or nothing. Used only by the
+# budget-cap resume path, which must reattach the paused run's tree rather than
+# allocate a second one. Goes through `worktrees.branch_dir` so the path is
+# derived in the one place that owns worktree layout.
+branch_dir_for() {  # $1=branch_slug
+  [[ -n "${1:-}" ]] || return 0
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" <<'PYEOF' 2>>"$LOG"
+import sys
+from services import worktrees
+try:
+    d = worktrees.branch_dir(sys.argv[1], sys.argv[2])
+    if d and d.is_dir():
+        print(d)
+except Exception as e:
+    print(f"[branch_dir_for] {e}", file=sys.stderr)
+PYEOF
+)
+}
+
 alloc_task_worktree() {  # $1=task_id $2=task_title
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" "$2" <<'PYEOF' 2>>"$LOG"
 import sys
@@ -511,6 +530,57 @@ record_claim_check() {  # $1=change_id
   [[ -n "${1:-}" ]] || return 0
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.claim_check \
      --change-id "$1") >>"$LOG" 2>&1 || true
+}
+
+# The oldest ticket parked with a live budget-cap resume bookmark, as
+# `{id, session, branch, iteration, head}` — or nothing.
+#
+# WHAT MAKES A BOOKMARK LIVE. The LAST `resume` evidence entry on a ticket is
+# the current one; anything written after it (a `receipt`, an `acceptance`) means
+# that ticket has since been worked again, so the bookmark is spent and resuming
+# against it would replay a stale session. That check is the whole reason this
+# reads evidence ORDER rather than just filtering by kind.
+#
+# Oldest-first because a paused session decays: the longer it waits the likelier
+# it is to be unresumable, and the whole value of the pause is the session still
+# being there.
+resume_candidate() {
+  python3 "$PTASKS" list-json "$DIR" 2>>"$LOG" | python3 -c "
+import json, sys
+try:
+    tasks = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+if not isinstance(tasks, list):
+    raise SystemExit(0)
+best = None
+for t in tasks:
+    if not isinstance(t, dict) or t.get('status') != 'parked':
+        continue
+    ev = t.get('evidence') or []
+    if not ev or not isinstance(ev, list):
+        continue
+    last = ev[-1]
+    if not isinstance(last, dict) or last.get('kind') != 'resume':
+        continue          # worked again since the pause: the bookmark is spent
+    try:
+        mark = json.loads(last.get('ref') or '{}')
+    except Exception:
+        mark = {}
+    if not isinstance(mark, dict):
+        continue
+    ts = str(last.get('ts') or '')
+    if best is None or ts < best[0]:
+        best = (ts, {
+            'id': t.get('id'),
+            'session': mark.get('session') or '',
+            'branch': mark.get('branch') or '',
+            'iteration': mark.get('iteration') or 0,
+            'head': mark.get('head') or '',
+        })
+if best and best[1]['id']:
+    print(json.dumps(best[1]))
+" 2>>"$LOG" || true
 }
 
 # Reap worktrees whose branch already merged into the canonical base. Best-effort.
@@ -1159,6 +1229,10 @@ while (( n < MAX_TASKS )); do
   # A run-now (--task-id) targets exactly that id: read its record, require it to
   # be `todo` (anything else means another sweep owns it or it is not runnable),
   # and let the atomic claim below be the final authority. Both reconcile first.
+  # Cleared every pass: these carry a paused run's bookmark into the ralph
+  # invocation below, and a stale one from the PREVIOUS task in this sweep would
+  # resume the wrong session against the wrong ticket.
+  NEXT=""; RESUME_SESSION=""; RESUME_ITER=""; RESUME_BRANCH=""
   if [[ -n "$TASK_ID_ARG" ]]; then
     NEXT=$(python3 "$PTASKS" list-json "$DIR" --include-done 2>>"$LOG" \
              | jq -c --arg id "$TASK_ID_ARG" 'map(select(.id==$id)) | .[0] // empty' 2>>"$LOG")
@@ -1174,8 +1248,38 @@ while (( n < MAX_TASKS )); do
       exit 7
     fi
   else
+    # A PAUSED TICKET IS PICKED UP BEFORE A FRESH ONE (ticket 70860d58).
+    #
+    # A run that stopped at the usage cap left committed work, a live model
+    # session and a branch, and every hour that passes makes the session likelier
+    # to have expired or grown unresumable. Starting a NEW ticket ahead of it
+    # spends the budget that just came back on work that has no sunk cost, and
+    # strands the work that does. So: resume first, then take new work.
+    #
+    # `parked` is the pause's status because there is deliberately no ninth
+    # status token; the `resume` evidence is what distinguishes a pause from a
+    # thrash-park, and this is the only reader of that distinction.
+    RESUME_PICK=$(resume_candidate)
+    if [[ -n "$RESUME_PICK" ]]; then
+      RESUME_TASK_ID=$(printf '%s' "$RESUME_PICK" | jq -r '.id // empty' 2>/dev/null)
+      RESUME_SESSION=$(printf '%s' "$RESUME_PICK" | jq -r '.session // empty' 2>/dev/null)
+      RESUME_ITER=$(printf '%s' "$RESUME_PICK" | jq -r '.iteration // empty' 2>/dev/null)
+      RESUME_BRANCH=$(printf '%s' "$RESUME_PICK" | jq -r '.branch // empty' 2>/dev/null)
+      # Un-park it so the atomic claim below (todo -> doing) can take it. This is
+      # exactly what an operator un-parking the ticket does; going through the
+      # same door means the claim stays the single point of mutual exclusion and
+      # a concurrent sweep that gets there first simply wins the race as usual.
+      if ptasks_tx set-status "$DIR" "$RESUME_TASK_ID" todo; then
+        NEXT=$(python3 "$PTASKS" list-json "$DIR" 2>>"$LOG" \
+                 | jq -c --arg id "$RESUME_TASK_ID" 'map(select(.id==$id)) | .[0] // empty' 2>>"$LOG")
+        log "resuming paused task=$RESUME_TASK_ID (session=${RESUME_SESSION:-none} branch=${RESUME_BRANCH:-none} paused after iteration ${RESUME_ITER:-?})"
+      else
+        NEXT=""
+        RESUME_SESSION=""; RESUME_ITER=""; RESUME_BRANCH=""
+      fi
+    fi
     # Dependency-aware, assignee-scoped next task (reconciles the store first).
-    NEXT=$(python3 "$PTASKS" next-ready "$DIR" "${ASSIGNEE_FLAG[@]}" "${UNATTENDED_FLAG[@]}" 2>>"$LOG")
+    [[ -z "$NEXT" ]] && NEXT=$(python3 "$PTASKS" next-ready "$DIR" "${ASSIGNEE_FLAG[@]}" "${UNATTENDED_FLAG[@]}" 2>>"$LOG")
   fi
   TASK_ID=$(jf "$NEXT" id)
   TASK_TEXT=$(jf "$NEXT" text)
@@ -1287,7 +1391,25 @@ while (( n < MAX_TASKS )); do
   WORK_DIR="$DIR"; WT_MODE=0; WT_BRANCH_SLUG=""
   PR_TITLE=""; PR_BODY=""
   if [[ "$WT_ENABLED" == "1" ]]; then
-    ALLOC=$(alloc_task_worktree "$TASK_ID" "$TASK_TEXT")
+    # REATTACH, DO NOT RE-BRANCH, when resuming a run that paused at the cap.
+    # `branch_slug_for_work` names a tree after the WORK and appends a
+    # deterministic suffix only on collision, so re-allocating for the same
+    # ticket would mint `<name>-2` and start from the base branch — leaving the
+    # paused run's commits on an orphan branch nothing references, which is
+    # exactly the eleven-unfindable-branches failure of 2026-08-23. The bookmark
+    # records the branch; if its directory is still there, that IS the tree.
+    ALLOC=""
+    if [[ -n "$RESUME_BRANCH" ]]; then
+      RESUME_SLUG="${RESUME_BRANCH##*/}"
+      RESUME_DIR=$(branch_dir_for "$RESUME_SLUG")
+      if [[ -n "$RESUME_DIR" && -d "$RESUME_DIR" ]]; then
+        ALLOC=$(printf '%s\t%s' "$RESUME_DIR" "$RESUME_SLUG")
+        log "task=$TASK_ID reattaching the paused run's worktree $RESUME_DIR (branch $RESUME_BRANCH)"
+      else
+        log "task=$TASK_ID paused branch $RESUME_BRANCH has no worktree on disk; allocating a fresh one. The paused commits are still on that branch and are named on the ticket, so they are recoverable, but this run does NOT continue from them."
+      fi
+    fi
+    [[ -z "$ALLOC" ]] && ALLOC=$(alloc_task_worktree "$TASK_ID" "$TASK_TEXT")
     WT_DIR=$(printf '%s' "$ALLOC" | cut -f1)
     WT_BRANCH_SLUG=$(printf '%s' "$ALLOC" | cut -f2)
     if [[ -n "$WT_DIR" && -d "$WT_DIR" ]]; then
@@ -1384,8 +1506,16 @@ print(len(crit))
   # loop (Fix 2). --store-dir is the project DIR (where .tasks.json lives) even in
   # worktree mode, where --dir is the isolated worktree. The heartbeat presents
   # CLAIM_TOKEN so it composes with the Fix-1 fence.
+  # A resumed run continues the session the paused run left rather than starting
+  # a fresh one, which is the half of 70860d58 that makes the pause free: the
+  # model still holds what it worked out and does not re-derive the plan it
+  # already committed. Empty for every ordinary task, so the argv is unchanged.
+  RESUME_FLAGS=()
+  if [[ -n "$RESUME_SESSION" ]]; then
+    RESUME_FLAGS=(--resume-session "$RESUME_SESSION" --resume-iter "${RESUME_ITER:-0}")
+  fi
   set +e
-  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" WORKSHOP_GRANT_TOKEN="$GRANT_TOKEN" "$RALPH" "$TASK_TEXT" --dir "$WORK_DIR" --baseline-rev "$BASELINE" --max-iter "$EFF_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --learn-scope "$LEARN_SCOPE" --receipt "$RECEIPT_FILE" --store-dir "$DIR" --task-id "$TASK_ID" --claim-token "${CLAIM_TOKEN:-}" --run "$CHILD_JOB" >> "$LOG" 2>&1
+  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" WORKSHOP_GRANT_TOKEN="$GRANT_TOKEN" "$RALPH" "$TASK_TEXT" --dir "$WORK_DIR" --baseline-rev "$BASELINE" --max-iter "$EFF_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --learn-scope "$LEARN_SCOPE" --receipt "$RECEIPT_FILE" --store-dir "$DIR" --task-id "$TASK_ID" --claim-token "${CLAIM_TOKEN:-}" --run "$CHILD_JOB" "${RESUME_FLAGS[@]}" >> "$LOG" 2>&1
   RC=$?
   set -e
   [[ -n "$EFF_MODEL" ]] && unset ANTHROPIC_MODEL
@@ -1650,6 +1780,51 @@ print(len(crit))
       log "task=$TASK_ID BLOCKED for decision (strict latitude): $BLOCK_REASON"
       BLOCKED=$((BLOCKED+1))
       job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE" ;;
+    8)
+      # BUDGET-CAP PAUSE (ticket 70860d58). ralph stopped BEFORE starting an
+      # iteration that would have crossed the scope's usage cap. It committed
+      # what was in the task's lane and wrote a `resume` bookmark on the ticket
+      # carrying the session id, the branch and the iteration it reached.
+      #
+      # THIS IS NOT A FAILURE AND MUST NOT BE PRICED LIKE ONE. Nothing went
+      # wrong: the cap worked, and it worked the expensive way round — stopping
+      # at the line instead of discovering it after crossing. So no attempt is
+      # burned, tasks_failed is not incremented (the circuit breaker would
+      # otherwise cool a scope off for running out of budget, which is the one
+      # thing guaranteed to happen again), and the child Job ends `cancelled`
+      # rather than `failed`, matching the rc=9 leg for the same reason.
+      #
+      # PARKED, not a ninth status token. The eight statuses live in
+      # backend/services/tasks.py, backend/db/legacy_map.py and at least eight
+      # frontend switch statements, and adding one for a single bit of
+      # information is a separate, larger change. What the sweep actually needs
+      # is to tell a pause from a thrash-park, and the `resume` evidence gives
+      # it that: a thrash-park has none.
+      #
+      # THE BRANCH SURVIVES CLEANUP WITHOUT A GUARD HERE, and that is checked
+      # rather than assumed: cleanup_merged_worktrees reaps only branches whose
+      # tip is an ANCESTOR of the canonical base (services/worktrees.cleanup_merged),
+      # and a paused branch carries unmerged commits, so it is `kept`.
+      PAUSE_ITER_N=$(jq -r '.paused.iteration // 0' "$RECEIPT_FILE" 2>/dev/null)
+      PAUSE_SESSION=$(jq -r '.paused.session // ""' "$RECEIPT_FILE" 2>/dev/null)
+      PAUSE_LEFT=$(jq -r '.paused.remaining_at_pause // 0' "$RECEIPT_FILE" 2>/dev/null)
+      if (( COMMITTED == 1 )); then PAUSE_WORK="its work is committed on the task branch"; else PAUSE_WORK="it had nothing uncommitted to land"; fi
+      note_unmerged_branch
+      python3 "$PTASKS" note "$DIR" "$TASK_ID" \
+        "paused at the usage budget cap after iteration ${PAUSE_ITER_N:-?} with ${PAUSE_LEFT:-0} tokens left in the window; ${PAUSE_WORK}. No attempt was consumed. A later sweep resumes this ticket first, continuing session ${PAUSE_SESSION:-<none>} rather than restarting. Run: $CHILD_JOB" \
+        --kind acceptance >/dev/null 2>>"$LOG"
+      # Give the attempt back: the run did not fail, it deferred. Without this a
+      # ticket unlucky enough to hit the cap three times exhausts max_attempts
+      # and blocks with a reason that is simply false.
+      ptasks_tx set-status "$DIR" "$TASK_ID" parked --restore-attempt --expect-claim-token "${CLAIM_TOKEN:-}" || true
+      PARKED=$((PARKED+1))
+      job_finish_child "$CHILD_JOB" cancelled "$RC" "$EVIDENCE"
+      log "task=$TASK_ID PAUSED at the usage cap after iteration ${PAUSE_ITER_N:-?} (session=${PAUSE_SESSION:-none}); parked with a resume bookmark, attempt restored"
+      # Stop the sweep. The cap is scope-wide, so the next ticket would meet the
+      # same wall; continuing would park the whole backlog one ticket at a time.
+      HALT_REASON="the usage budget cap was reached mid-run; the ticket is parked with a resume bookmark"
+      rm -f "$RECEIPT_FILE" 2>/dev/null || true
+      break ;;
     9)
       # DISPLACED. ralph's heartbeat was fenced, so that run stopped because it no
       # longer held this ticket's claim: an operator edit, a reclaim, or a preempt

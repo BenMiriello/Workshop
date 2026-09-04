@@ -121,11 +121,18 @@ def test_the_exit_code_is_documented_in_the_contract():
 
 def test_the_displaced_code_does_not_collide_with_the_budget_pause():
     """Ticket 70860d58 independently claims 8 for the budget-cap pause. Two
-    meanings on one code is a silent misroute, so 8 is reserved by name here and
-    displaced took 9."""
+    meanings on one code is a silent misroute, so displaced took 9.
+
+    8 was RESERVED by name here until the pause landed on 2026-09-04; the
+    reservation's own note said to update this once it did. What has to stay
+    true is that 8 is documented and is NOT displacement — the collision this
+    test exists to prevent — not the word "RESERVED", which was only ever a
+    placeholder for the real meaning."""
     header = RALPH.read_text()[:6000]
-    assert "#   8  " in header and "RESERVED" in header
+    assert "#   8  " in header
     assert "70860d58" in header
+    assert "BUDGET-CAP PAUSE" in header
+    assert DISPLACED_RC != 8
 
 
 def test_the_sweep_has_its_own_leg_for_displacement():

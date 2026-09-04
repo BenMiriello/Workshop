@@ -1270,6 +1270,72 @@ def usage_from_envelope(obj: dict) -> dict:
     return out
 
 
+def accumulate_usage(path: str) -> dict:
+    """Sum a jsonl of `read-usage` outputs into one run's totals.
+
+    Per-model, because a run whose iterations used different models (a `--quick`
+    task pins a cheaper one) spends on two price sheets, and a summed row with
+    one label prices it all as whichever was larger.
+
+    `calls` counts ITERATIONS that reported usage, not API calls. It is the
+    per-step cost predictor `70860d58` uses: the cost of this run's own last
+    step is a far better predictor of its next step than any whole-task
+    percentile, and the measured spread over 168 real runs (24,559 to 1,045,598,
+    a 43x range) is what makes the whole-task estimate useless."""
+    out: dict = {"components": None, "models": None, "model": None,
+                 "source": "result", "vendor_cost_usd": None, "calls": 0}
+    total = token_usage.Usage()
+    models: dict[str, token_usage.Usage] = {}
+    vendor = 0.0
+    saw_vendor = False
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(e, dict):
+            continue
+        comp = _clean_components(e.get("components"))
+        if comp is None:
+            continue
+        out["calls"] += 1
+        total = total + token_usage.Usage(**comp)
+        per_model = _clean_model_map(e.get("models"))
+        if per_model:
+            for mid, c in per_model.items():
+                models[mid] = models.get(mid, token_usage.Usage()) + \
+                    token_usage.Usage(**c)
+        elif isinstance(e.get("model"), str) and e["model"]:
+            mid = e["model"]
+            models[mid] = models.get(mid, token_usage.Usage()) + \
+                token_usage.Usage(**comp)
+        v = e.get("vendor_cost_usd")
+        if v is not None:
+            try:
+                vendor += float(v)
+                saw_vendor = True
+            except (TypeError, ValueError):
+                pass
+    if total == token_usage.Usage():
+        return out
+    out["components"] = total.as_dict()
+    if models:
+        out["models"] = {k: v.as_dict() for k, v in models.items()}
+        out["model"] = max(out["models"],
+                           key=lambda k: sum(out["models"][k].values()))
+    if saw_vendor:
+        out["vendor_cost_usd"] = vendor
+    return out
+
+
 def _nonneg(v: object) -> int:
     try:
         n = int(v)  # type: ignore[arg-type]
@@ -1316,6 +1382,14 @@ def _main(argv: list[str]) -> int:
     # inside a multi-megabyte JSON envelope, and passing it through argv is how
     # a shell writer ends up re-implementing the parse.
     r.add_argument("--usage-json", dest="usage_json", default=None)
+    # A jsonl file of `read-usage` outputs, one per iteration. A multi-iteration
+    # run bills ONCE at exit, so the components have to be accumulated across
+    # iterations somewhere; accumulating them in shell would mean shell adding
+    # per-model dictionaries, which is how the 0.1 weight ended up restated in
+    # bash in the first place.
+    r.add_argument("--usage-accum", dest="usage_accum", default=None)
+    ru = sub.add_parser("read-usage")  # parse only; records nothing
+    ru.add_argument("--usage-json", dest="usage_json", required=True)
     rem = sub.add_parser("remaining")
     rem.add_argument("--project", default=None)
     # What this run has spent and not yet billed. See remaining_for_scope.
@@ -1343,6 +1417,16 @@ def _main(argv: list[str]) -> int:
             model = model or parsed["model"]
             if source is None and comp is not None:
                 source = parsed["source"]
+        elif args.usage_accum:
+            parsed = accumulate_usage(args.usage_accum)
+            comp = parsed["components"]
+            models = parsed["models"]
+            vendor = parsed["vendor_cost_usd"]
+            model = model or parsed["model"]
+            if calls is None and parsed["calls"]:
+                calls = parsed["calls"]
+            if source is None and comp is not None:
+                source = parsed["source"]
         tokens = args.tokens
         if tokens is None:
             if comp is None:
@@ -1364,6 +1448,16 @@ def _main(argv: list[str]) -> int:
                           "vendor_cost_usd": vendor,
                           "cost_usd": _price_components(comp, model,
                                                         _clean_model_map(models))}))
+    elif args.cmd == "read-usage":
+        parsed = _usage_from_file(args.usage_json)
+        comp = parsed["components"]
+        parsed["tokens"] = (0 if comp is None
+                            else token_usage.effective(token_usage.Usage(**comp)))
+        print(json.dumps(parsed))
+        # Exit 1 on "nothing measurable here", so a caller can tell an
+        # unreadable envelope from a genuinely free iteration. Those are
+        # different facts and only one of them is a bug.
+        return 0 if comp is not None else 1
     elif args.cmd == "remaining":
         print(json.dumps(remaining_for_scope(args.project,
                                              spent_since=args.spent_since)))
