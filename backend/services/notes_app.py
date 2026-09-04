@@ -20,7 +20,7 @@ REQUIRES = ("notes",)
 
 def app_spec() -> AppSpec:
     from routes import notes
-    from services import notes_store_adapter, notes_vault, permissions
+    from services import notes_store_adapter, notes_vault
     spec = AppSpec(
         id="notes-app",
         # `notes:vault`, not `notes-app:vault`. The URI predates this
@@ -51,10 +51,10 @@ def app_spec() -> AppSpec:
         # registered below, so a store exists exactly while the app that owns it
         # is installed" -- so the file contradicted itself, and an installation
         # without this app still declared a store over a folder in the user's
-        # home directory. The path still comes from `permissions.NOTES_VAULT_ROOT`
+        # home directory. The path comes from `notes_vault.NOTES_VAULT_ROOT`
         # and nothing about the folder changes; what changes is that the store
         # exists only while the app does.
-        stores=(("vault", lambda: permissions.NOTES_VAULT_ROOT, "Note", False),),
+        stores=(("vault", lambda: notes_vault.NOTES_VAULT_ROOT, "Note", False),),
         # Searchable, but only when asked for by name: `vault` is deliberately
         # absent from index_collectors_default.
         index_collectors={"vault": notes_vault.collect_index_chunks},

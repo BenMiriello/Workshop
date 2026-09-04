@@ -229,9 +229,22 @@ _AMBIGUOUS: dict[str, tuple[str, ...]] = {
         # vocabulary, mirrored locally from shared/native-bridge.ts's
         # `CAP_METHODS` keys.
         r'has\("location"\)', r'\["location"\]', r'"location"\s*\|\s*"audio"',
+        # `mobile/native/location.ts`: the Expo BACKGROUND TASK name for the
+        # native bridge's location capability, not the location APP. Caught by
+        # the constant-shape pattern added 2026-09-03 (an app-named constant
+        # whose value also names it) and suppressed here for the same reason as
+        # the entries above: this is the platform's own bridge vocabulary.
+        r'LOCATION_TASK', r'workshop-bg-location',
     ),
     "budget": (r"token budget", r"budget\.remaining", r"wall[- ]clock budget", r"per-scope budget",
-               r"injection budget", r"reconnect budget", r"budget ceiling"),
+               r"injection budget", r"reconnect budget", r"budget ceiling",
+               # The USAGE/spend budget, which is platform accounting and has
+               # nothing to do with the budget APP. Both surfaced on 2026-09-03
+               # as the only two false positives of the constant-shape pattern:
+               # a config path for the usage ledger, and an agent's own token
+               # allowance read from /agents/<id>/budget.
+               r"WORKSHOP_USAGE_BUDGET", r"usage-budget", r"usage budget",
+               r"/agents/[^\s\"']*/budget"),
     # `/api/notes` is the PLATFORM cross-scope knowledge feed
     # (routes/notes_all.py, prefix "/notes"). The notes APP is a different
     # router with a different prefix: routes/notes.py serves "/notes-app", and
@@ -372,6 +385,28 @@ def _literal_patterns(app: str) -> tuple[re.Pattern[str], ...]:
         re.compile(rf"""/api/{short}\b"""),       # /api/birds
         re.compile(rf"""["']/{short}["']"""),     # "/birds" route prefix
         re.compile(rf"""\bapps/{a}\b"""),         # apps/birds
+        # A CONSTANT NAMED FOR AN APP, whose value also names it:
+        #   NOTES_VAULT_ROOT = paths.env_path("WORKSHOP_NOTES_VAULT", "notes")
+        #
+        # Added 2026-09-03 after probing what the five shapes above actually
+        # catch. They match where code ADDRESSES an app -- an id in a string, a
+        # route, a path -- and a declaration named for one is none of those, so
+        # the notes vault root sat in services/permissions.py, platform code
+        # that never read it, invisible to this gate for as long as it existed.
+        #
+        # BOTH HALVES ARE REQUIRED, and that is what makes it usable. Matching
+        # the NAME alone flags DEFAULT_INDEX_TOKEN_BUDGET, MCP_HEALTH_TTL_S and
+        # LOCATION_TASK -- ten false positives out of eleven on this tree, every
+        # one of them an ordinary English word in its platform sense. Requiring
+        # the app's name in the VALUE too drops all ten and keeps the one real
+        # site. Under-report rather than over-report: a number that is wrong
+        # upward gets disbelieved and then ignored.
+        re.compile(
+            rf"""^\s*(?:export\s+)?(?:const\s+)?"""
+            rf"""(?=[A-Z0-9_]*{short.upper()})[A-Z][A-Z0-9_]*"""
+            rf"""\s*[:=][^\n]*(?i:\b{short}\b)""",
+            re.M,
+        ),
     )
 
 

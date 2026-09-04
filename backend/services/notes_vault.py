@@ -27,6 +27,25 @@ from pathlib import Path
 from wsplatform import paths
 
 
+# THE OPERATOR'S VAULT ROOT, and it lives in THIS APP because it is this app's
+# storage. It sat in services/permissions.py -- platform code -- until
+# 2026-09-03, defining one app's directory in a file that never read it: the
+# only consumers were this module and this app's own declaration. It was
+# invisible to scripts/check_no_app_names.py because that gate matches five
+# CODE shapes (a quoted id, "app:<id>", /api/<id>, a "/<id>" prefix, apps/<id>)
+# and a CONSTANT NAMED FOR AN APP is none of them.
+#
+# NO HOME-DIRECTORY DEFAULT. This joined a folder name onto `Path.home()`, which
+# is one operator's folder written into platform source: it kept working
+# perfectly on the machine that has it and was wrong on every other, and it is
+# exactly what `home_path_sites` counts. `paths.env_path` keeps the documented
+# override and derives the fallback from the runtime directory instead, so an
+# install that has not configured a vault gets `.runtime/notes` -- the same
+# place every NON-operator owner's vault already lives (`vault_root` below)
+# rather than a stranger's home.
+NOTES_VAULT_ROOT = paths.env_path("WORKSHOP_NOTES_VAULT", "notes")
+
+
 def operator_vault_root() -> Path:
     """The operator's own vault: `$WORKSHOP_NOTES_VAULT`.
 
@@ -58,7 +77,7 @@ def vault_root() -> Path:
     - any other owner -> `.runtime/users/<owner_id>/notes/`, the same partition
       `chat_store` and the other per-owner stores use.
 
-    Note this is where the vault DIVERGES from `permissions.NOTES_VAULT_ROOT`,
+    Note this is where the vault DIVERGES from `NOTES_VAULT_ROOT` above,
     which names the operator's vault specifically for the instance-level Store
     declaration (`services/stores.py`). See
     the 2026-08-11 scope-separation security audit section 3.
