@@ -2481,8 +2481,13 @@ async def set_thread_tree(thread_id: str, body: ThreadTreeIn):
     elif body.action in ("join", "new_branch"):
         offer = chat_worktree.pin_offer(project, current_ref=worktrees.default_ref(project))
         try:
+            # The chat's own title names the tree. Without it this path cut
+            # `t-<hex>` branches, which is the defect §3 of
+            # `worktree-as-the-place-2026-08-28.md` calls the one that makes the
+            # menu read as noise.
             chosen = chat_worktree.apply_choice(project, offer, body.action,
                                             branch=body.branch,
+                                            title=t.get("title"),
                                             allocated_by=f"chat:{thread_id}")
         except ValueError as e:
             raise HTTPException(400, str(e))

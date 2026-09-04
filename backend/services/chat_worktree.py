@@ -508,7 +508,8 @@ def pin_offer(project_slug: str | None, *, current_ref: str,
 
 
 def apply_choice(project_slug: str, offer: dict, action: str, *,
-                 branch: str | None = None, allocated_by: str | None = None) -> dict:
+                 branch: str | None = None, title: str | None = None,
+                 allocated_by: str | None = None) -> dict:
     """Take one of the offered actions and return the branch to pin.
 
     `session_defaults.choose` is what validates it, and it is the ONLY way to
@@ -516,6 +517,14 @@ def apply_choice(project_slug: str, offer: dict, action: str, *,
     the back door, which is section 10.3's rule that joining is never automatic.
     Naming a new branch is `services/worktrees.py`'s policy and is not
     re-derived here (section 13.2).
+
+    `title` IS THE NAME OF THE WORK, and passing it is what §3 of
+    `worktree-as-the-place-2026-08-28.md` asks for: "no worktree is ever created
+    without a human-readable name". This path used to slugify the work id and
+    nothing else, which is why five of the records on this installation are
+    called `t-26c69d40` and one is called `d4875115`. The title is the chat's
+    own title; when a chat genuinely has none the work id is still used, because
+    a nameless tree beats no tree.
     """
     chosen = session_defaults.choose(offer, action, branch=branch)
     if chosen["action"] == "join":
@@ -523,8 +532,13 @@ def apply_choice(project_slug: str, offer: dict, action: str, *,
     # NORMALIZED BY THE BRANCHES LAYER, not here. Section 10.4's work id is
     # `uuid4().hex[:8]`, which starts with a digit more often than not, and
     # `create_branch` requires a slug that starts with a letter.
-    slug = worktrees.branch_slug_for(
-        str(chosen.get("ticket_id") or chosen.get("work_id")))
-    created = worktrees.create_branch(project_slug, slug, allocated_by=allocated_by)
+    work_id = str(chosen.get("ticket_id") or chosen.get("work_id") or "")
+    display_name = (title or "").strip() or None
+    slug = worktrees.branch_slug_for_work(project_slug, title=display_name,
+                                          work_id=work_id)
+    created = worktrees.create_branch(project_slug, slug,
+                                      allocated_by=allocated_by,
+                                      display_name=display_name)
     return {"branch_slug": created["branch_slug"], "created": True,
+            "display_name": display_name,
             "branch": created["branch"], "dir": created["dir"]}

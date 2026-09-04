@@ -48,6 +48,8 @@ Public surface:
   provision_worktree(scope, owner) -> dict
   list_branches(project_slug) -> list[dict]
   branch_slug_for(value) -> str         an arbitrary work id, as a branch slug
+  branch_slug_for_work(project_slug, *, title, work_id) -> str
+                                        a unit of work, as a FREE branch slug
   live_branches() -> dict            every tree there is, joined with its record
   merge_branch(project_slug, branch_slug, *, message="") -> dict
   discard_branch(project_slug, branch_slug, *, force=False) -> dict
@@ -284,10 +286,10 @@ def allocate_task_worktree(project_slug: str, task_id: str, *,
     behavior). The worktree is locked so a crashed agent's stale index cannot
     wedge sibling worktrees.
 
-    When `title` is supplied the branch slug is derived from the title (kebab-
-    normalized), so the branch reads as the work rather than as a hex id. A
-    collision with an existing directory appends a 5-char suffix from the task
-    id; the pair (title, task_id) is therefore always deterministic.
+    The branch slug comes from `branch_slug_for_work`, which is the naming rule
+    for every path that makes a tree: the title when there is one, so the branch
+    reads as the work rather than as a hex id, with a short deterministic suffix
+    only when that name is already taken.
 
     Returns {branch, branch_slug, dir, worktree_id}.
 
@@ -298,13 +300,9 @@ def allocate_task_worktree(project_slug: str, task_id: str, *,
     have one re-derived for it.
     """
     project_slug = _validate_slug(project_slug, "project_slug")
-    raw_slug = _kebab_branch_slug(title if title else task_id)
-    candidate = _branch_path(project_slug, raw_slug)
-    if title and candidate.exists():
-        # Collision: same title used for a different task. Append a short but
-        # deterministic suffix from the task id so the pair is always unique.
-        raw_slug = (raw_slug[:42].rstrip("-") + "-" + task_id[:5])[:48]
-    branch_slug = _validate_slug(raw_slug, "title" if title else "task_id")
+    display_name = (title or "").strip() or None
+    branch_slug = branch_slug_for_work(project_slug, title=display_name,
+                                       work_id=task_id)
     project_dir = _project_dir(project_slug)
     branch = _branch_name(project_slug, branch_slug)
     target = _branch_path(project_slug, branch_slug)
@@ -344,11 +342,11 @@ def allocate_task_worktree(project_slug: str, task_id: str, *,
             base_sha=git_service.rev_parse(project_dir, branch, verify=True),
             ticket_id=(ticket_id if ticket_id is not None else task_id),
             allocated_by=allocated_by,
-            display_name=(title.strip() if title else None))
+            display_name=display_name)
 
     return {"branch": branch, "branch_slug": branch_slug, "dir": str(target),
             "worktree_id": None if record is None else record["id"],
-            "display_name": (title.strip() if title else None)}
+            "display_name": display_name}
 
 
 def list_branches(project_slug: str) -> list[dict]:
@@ -1121,6 +1119,82 @@ def branch_slug_for(value: str) -> str:
     times in ten -- could not name a branch at all.
     """
     return _kebab_branch_slug(value)
+
+
+def _slug_is_taken(project_slug: str, branch_slug: str) -> bool:
+    """Is this slug already spoken for, on disk or by a live record?
+
+    THE DISK IS THE AUTHORITY and the record is the second opinion. A directory
+    under the branches root means `git worktree add` will refuse, which is the
+    hard constraint. A live record with no directory is `PRESENCE_GONE`, and
+    reusing its slug would collide with the partial unique index on live rows --
+    the allocation would still succeed (records are best-effort) but it would go
+    unrecorded, which is the one outcome `worktree_records` exists to prevent.
+
+    Best-effort on the record half: no database is not a taken slug.
+    """
+    if _branch_path(project_slug, branch_slug).exists():
+        return True
+    return _record(worktree_records.record_for_branch,
+                   project_slug, branch_slug) is not None
+
+
+def _disambiguators(work_id: str):
+    """Short, deterministic suffixes for a slug that is already taken.
+
+    The first is five characters of the work id, so the pair (title, work_id)
+    always lands on the same branch name -- a retry of the same allocation asks
+    for the same slug rather than accumulating trees. The numbered ones after it
+    exist because the five-character prefix can itself repeat.
+    """
+    normalized = _kebab_branch_slug(work_id)
+    if normalized.startswith("t-"):
+        normalized = normalized[2:]
+    tail = normalized[:5].strip("-") or "x"
+    yield tail
+    for n in range(2, 100):
+        yield f"{tail}-{n}"
+
+
+def branch_slug_for_work(project_slug: str, *, title: str | None = None,
+                         work_id: str = "") -> str:
+    """The branch slug for one unit of work: named after the work, not its id.
+
+    THIS IS THE RULE FROM §3 OF `worktree-as-the-place-2026-08-28.md` -- "no
+    worktree is ever created without a human-readable name" -- and it lives here
+    rather than in each caller for the reason `branch_slug_for` gives: naming is
+    this module's policy and a second derivation elsewhere is the same branch
+    name computed two ways. `allocate_task_worktree` (the ticket path) and
+    `chat_worktree.apply_choice` (the offer path) both go through it, which is
+    why the offer path stopped minting `t-<hex>`.
+
+    A title gives `chat-toolbar-fixes`; no title falls back to the work id,
+    which is what an unnamed unit of work has and is better than refusing to
+    make a tree. A slug that is already taken gets a short deterministic
+    suffix -- only on collision, so the common case reads as the work.
+    """
+    project_slug = _validate_slug(project_slug, "project_slug")
+    # A blank title is the same fact as no title -- a chat that has not been
+    # named yet carries "" or a run of spaces, not None -- and slugifying it
+    # would name the tree `t`.
+    title = (title or "").strip() or None
+    label = "title" if title else "work_id"
+    base = _validate_slug(_kebab_branch_slug(title or work_id), label)
+    if not _slug_is_taken(project_slug, base):
+        return base
+    if not title:
+        # The id path keeps its old contract: an id names exactly one tree, so
+        # a second allocation under the same id is a caller error and
+        # `create_branch`/`allocate_task_worktree` raise "already exists" on it.
+        # Only a TITLE can legitimately repeat across two units of work.
+        return base
+    for suffix in _disambiguators(work_id):
+        candidate = (base[:47 - len(suffix)].rstrip("-") + "-" + suffix)[:48]
+        if not _slug_is_taken(project_slug, candidate):
+            return _validate_slug(candidate, label)
+    raise ValueError(
+        f"no free branch slug for {title!r} in {project_slug}: "
+        f"{base!r} and every disambiguation of it are taken")
 
 
 def default_ref(project_slug: str) -> str:
