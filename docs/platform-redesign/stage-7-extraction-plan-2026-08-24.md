@@ -189,23 +189,22 @@ is left. It now deletes nothing, because the clone never had any.
 **The order changed and the plan's reasoning is what changed it.** Section 1
 sequences the seven one at a time, consumer before provider, so nothing left in
 the tree needs an app that has gone. That is correct for the PLATFORM and
-insufficient for the APPS: budget imports finance's cache, plaid bridge, persona
-and MCP config, and commute's engine reads location's store and persona. Doing
+insufficient for the APPS: in each of the two dependent pairs the consumer
+imports the provider's cache, bridge, persona and MCP config directly. Doing
 those apart leaves a step where the consumer's import names a module that has
-moved. So they went as PAIRS — budget+finance, commute+location — and each
-dependency is now declared twice, at two layers answering different questions:
-`needs: ["finance.read"]` on the AppSpec is the capability the permission layer
-reads, `dependencies = ["workshop-app-finance"]` in pyproject is the import,
-which is the only layer that can install it.
+moved. So each pair went TOGETHER, and each dependency is now declared twice, at
+two layers answering different questions: `needs` on the AppSpec is the
+capability the permission layer reads, `dependencies` in pyproject is the
+import, which is the only layer that can install it.
 
 Things that moved and are on no file list in section 2:
 
-- `backend/mcp/plaid/` -> `apps/finance/mcp/plaid/`. Untracked, but inside the
-  platform and spawned by one app.
-- `frontend/vite.springer.config.ts` and `frontend/springer.html` ->
-  `apps/birds/standalone-build/`. TRACKED platform files whose whole purpose was
-  one app. Nothing invoked them from a script, which is why nothing broke and
-  also why the build command is now written down.
+- An app's MCP server directory under `backend/mcp/`. Untracked, but inside
+  the platform and spawned by exactly one app.
+- One app's second Vite config and its HTML entry, which were TRACKED platform
+  files at the frontend root whose whole purpose was that app. They are in the
+  app's own `standalone-build/` now. Nothing invoked them from a script, which
+  is why nothing broke and also why the build command is now written down.
 - Four platform assertions using one app as their example
   (`test_paths_are_portable.py`, `test_auth_env.py`), and one in
   `test_ownership.py` that was the last platform file importing an app module.
@@ -215,10 +214,10 @@ Things that moved and are on no file list in section 2:
 **Two silent failure modes found doing it, both worth carrying forward.**
 
 1. `routes/X.py` and `services/X.py` share a stem, so any mechanical rename maps
-   both onto one module. Commute's engine import became a self-import; location's
-   router resolved to its store. NEITHER FAILED AT IMPORT. Both failed at catalog
-   build, where `_build_catalog` logs and skips a declaration that raises — so
-   the app simply was not in the catalog, with one INFO line to say so.
+   both onto one module. In one app an engine import became a self-import; in
+   another the router resolved to the store. NEITHER FAILED AT IMPORT. Both
+   failed at catalog build, where `_build_catalog` logs and skips a declaration
+   that raises — so the app simply was not in the catalog, with one INFO line.
 2. A module that lived in `services/` and wrote `from . import ownership` meant
    `services.ownership`. After the move `.` is the app package. Same shape,
    same silence.

@@ -16,7 +16,8 @@ docs/platform-redesign/app-is-the-entity-2026-08-20.md): an app declares what it
 is and the platform reads the declaration. A deploy for another user must
 contain zero trace of this operator's apps.
 
-WHY THIS EXISTS RATHER THAN TRUSTING check_pluggable_apps.sh. That gate reports
+WHY THIS EXISTS RATHER THAN TRUSTING THE OLDER PLUGGABLE-APPS GATE (retired
+2026-09-04, kept for the record at scripts/retired/). That gate reported
 `pluggable-apps: clean` and inspects FIVE files: main.py, llm_router.py,
 chat_context.py, app_registry.py, Apps.tsx. It never looks at
 frontend/src/pages/apps/ (61 tracked files), apps/ (43), backend/mcp/plaid/,
@@ -467,16 +468,47 @@ def roster(baseline: dict) -> list[str]:
     """
     names: set[str] = set(baseline.get("watched", []))
 
-    # 1. The declarations. This used to parse `_CATALOG_FACTORIES` out of
-    #    app_registry.py; that tuple was removed on 2026-09-01 when the catalog
-    #    started discovering apps instead of listing them, so the pattern
-    #    silently matched nothing and this source went dead. The id is read from
-    #    each declaration, which is where it now lives.
+    # 1. The declarations, wherever they currently are.
+    #
+    # THIS SOURCE HAS NOW GONE DEAD TWICE, the same way both times: it read a
+    # place declarations used to be, kept returning nothing, and said nothing
+    # about it. First it parsed `_CATALOG_FACTORIES` out of app_registry.py,
+    # removed 2026-09-01. Then it globbed `backend/services/*_app.py`, which
+    # matched zero files from 2026-09-04, when every app left this repo -- the
+    # extraction this gate exists to measure is the event that blinded it.
+    #
+    # So it reads BOTH places now and asserts it found something. An app that
+    # is not on the roster is not scanned, and its name in platform source
+    # counts zero: a roster that quietly empties turns this gate into a
+    # function that returns "clean" for every input.
+    found_declarations = 0
     for decl in sorted((ROOT / "backend" / "services").glob("*_app.py")):
         body = decl.read_text(errors="replace")
         m = re.search(r"""\bid\s*=\s*["']([a-z0-9][a-z0-9-]*)["']""", body)
         if m:
             names.add(m.group(1))
+            found_declarations += 1
+
+    # An EXTRACTED app declares itself in its own manifest, which is the file
+    # the platform already reads to render its card.
+    apps_dir = ROOT / "apps"
+    if apps_dir.is_dir():
+        for manifest in sorted(apps_dir.glob("*/workshop.app.json")):
+            try:
+                name = (json.loads(manifest.read_text()) or {}).get("name")
+            except (ValueError, OSError):
+                continue          # a broken manifest is the app's problem
+            if name:
+                names.add(name)
+                found_declarations += 1
+
+    if not found_declarations:
+        print("check_no_app_names: WARNING -- no app DECLARATION was found in "
+              "backend/services/*_app.py or apps/*/workshop.app.json. The roster "
+              "is running on `watched` alone, so an app installed since the last "
+              "re-pin is NOT being scanned. This is how the gate went blind on "
+              "2026-09-03; fix the source rather than trusting the count.",
+              file=sys.stderr)
 
     # 2 and 3. The two instance registries.
     installed = ROOT / ".runtime" / "installed-apps.json"

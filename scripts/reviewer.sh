@@ -358,34 +358,27 @@ if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(frontend|packages/ui)/src/.*\.tsx$
   fi
 fi
 
-# 4.6 Pluggable-app invariant — apps must not be welded back into platform-core
-#     files, and per-instance data must stay untracked (docs/apps-are-pluggable.md).
-#     Gated: only runs when the diff touches the specific files the script inspects,
-#     eliminating the unconditional repo-wide scan cost on unrelated diffs.
-APPS_CHECK="skipped"
-_APPS_CORE="backend/main.py backend/services/llm_router.py backend/services/app_registry.py backend/services/chat_context.py frontend/src/pages/Apps.tsx"
-_APPS_FORBIDDEN="projects.json build_agents.json backend/apps.json commute/schedule.json commute/legs.json commute/targets.json commute/sources/registry.json"
-_APPS_RELEVANT=false
-for _apf in $_APPS_CORE $_APPS_FORBIDDEN; do
-  if printf '%s\n' "$CHANGED_ALL" | grep -qxF "$_apf"; then
-    _APPS_RELEVANT=true; break
-  fi
-done
-if ! $_APPS_RELEVANT && printf '%s\n' "$CHANGED_ALL" | grep -qE '^commute/notes/'; then
-  _APPS_RELEVANT=true
-fi
-if $_APPS_RELEVANT; then
-  if [[ -x "$WORKSHOP/scripts/check_pluggable_apps.sh" ]]; then
-    if bash "$WORKSHOP/scripts/check_pluggable_apps.sh" >/dev/null 2>&1; then
-      APPS_CHECK="ok"
-    else
-      APPS_CHECK="fail"
-    fi
-  else
-    AMBIGUOUS+=("pluggable_apps_check_unavailable")
-  fi
-fi
-unset _APPS_CORE _APPS_FORBIDDEN _APPS_RELEVANT _apf
+# 4.6 RETIRED 2026-09-04: the pluggable-app invariant, as measured by
+#     scripts/check_pluggable_apps.sh.
+#
+# It inspected FIVE files and printed "pluggable-apps: clean" for five weeks
+# while 143 tracked files of one operator's apps sat in this tree. Two other
+# comments in this file already cite it by name as the reason they run
+# unconditionally, which is the clearest possible statement that nobody
+# believed it.
+#
+# It is retired rather than fixed because the thing it was trying to prove is
+# now proven twice over, by checks that cannot be scoped away:
+#
+#   4.6c-iiib  check_no_app_names.py   -- unconditional, scans every tracked
+#              file, and as of 2026-09-04 reads content_files 0 / import_sites 0
+#   4.6c-x     check_fresh_clone.sh    -- clones the repo and asks what came
+#              out, which is the one question no in-tree grep can answer
+#
+# APPS_CHECK stays as a key, permanently "retired", because the JSON verdict
+# this script emits is read by other tooling and silently dropping a field is
+# how a consumer starts reading a missing key as a pass.
+APPS_CHECK="retired"
 
 # 4.5b The backend test suite, as a ratchet.
 #
@@ -605,7 +598,7 @@ fi
 
 # 4.6c-iiib No platform source file may name a specific app (CLAUDE.md; §6 of
 # docs/platform-redesign/app-is-the-entity-2026-08-20.md). STILL UNCONDITIONAL,
-# and deliberately so: check_pluggable_apps.sh below is gated to five files and
+# and deliberately so: the gate retired at 4.6 was scoped to five files and
 # reported "clean" for five weeks while 143 tracked files of one operator's
 # apps sat in the platform tree. A rule this central cannot be enforced only on
 # diffs that happen to touch the right path. It RUNS on every diff, docs-only
@@ -798,7 +791,7 @@ _delta_check RESPONSE_TYPES_CHECK "check_response_types.py" "response_types_base
 
 # 4.6c-x THE FRESH-CLONE ASSERTION: what a stranger's clone actually contains.
 # UNCONDITIONAL, like the two whole-tree checks above it, and for the same
-# reason -- the gate this one supplements (check_pluggable_apps.sh) was scoped
+# reason -- the gate this one replaced (retired at 4.6 on 2026-09-04) was scoped
 # to five files and reported "clean" for five weeks while the violation grew.
 #
 # This is the check `docs/INDEX-knowledge-2026-08-26.md:542` has cited as the
@@ -1103,6 +1096,7 @@ if [[ "$DESIGN_CHECK" == "fail" ]]; then
   REASONS+=("design_violations")
   COMPLETE="false"
 fi
+# Can no longer be "fail" (4.6 is retired); kept so a re-introduced gate wires in.
 if [[ "$APPS_CHECK" == "fail" ]]; then
   REASONS+=("pluggable_app_violations")
   COMPLETE="false"
