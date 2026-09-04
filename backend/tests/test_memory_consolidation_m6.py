@@ -276,9 +276,26 @@ class TestB5TheGpuNoteIsTrue:
     NOTE_ID = "deep-search-dies-with-the-gpu-no-lexical-fallbac-1a001d05335"
 
     def _body(self) -> str:
+        """FOUND, not assumed. This joined a FLAT
+        `shared/knowledge/<id>.md`, and the knowledge layer has since become
+        scope-partitioned (`shared/knowledge/<scope>/<kind>/<id>.md`), so all
+        three tests in this class had been failing on FileNotFoundError against
+        a note that was present the whole time -- long enough to be pinned as
+        known debt, which is how a red test stops being read.
+
+        A note is addressed by its id; where the layer puts that id is the
+        layer's business and has changed once already. Skips when the note is
+        genuinely absent: these assert the CONTENT of one instance's knowledge,
+        and a fresh clone has none, so a failure there would say "broken" when
+        the only true statement is "not this instance".
+        """
         from wsplatform import paths
-        p = paths.workshop_root() / "shared" / "knowledge" / f"{self.NOTE_ID}.md"
-        return p.read_text()
+
+        root = paths.workshop_root() / "shared" / "knowledge"
+        hits = sorted(root.rglob(f"{self.NOTE_ID}.md")) if root.is_dir() else []
+        if not hits:
+            pytest.skip(f"this instance has no knowledge note {self.NOTE_ID}")
+        return hits[0].read_text()
 
     def test_the_note_no_longer_asserts_the_two_false_claims(self):
         body = self._body()
@@ -303,11 +320,28 @@ class TestB5TheGpuNoteIsTrue:
         assert "out of memory" in body
 
     def test_the_index_line_matches_the_corrected_note(self):
+        """The index line is what a chat turn actually SEES -- the note's title
+        is injected into every turn's KNOWLEDGE block -- so a corrected note
+        with a stale index line still ships the falsehood.
+
+        Searches every MEMORY.md under the knowledge root for the same reason
+        `_body` searches for the note: the layer is scope-partitioned now, so
+        the index that carries this line is `<scope>/MEMORY.md`, not the flat
+        root file this used to read. `next()` over the wrong file raised
+        StopIteration, which is an unreadable failure for "the line is not
+        here".
+        """
         from wsplatform import paths
-        index = (paths.workshop_root() / "shared" / "knowledge" / "MEMORY.md").read_text()
-        line = next(ln for ln in index.splitlines() if self.NOTE_ID in ln)
-        assert "no lexical fallback" not in line
-        assert "degrades to lexical" in line
+
+        root = paths.workshop_root() / "shared" / "knowledge"
+        lines = [ln for index in sorted(root.rglob("MEMORY.md"))
+                 for ln in index.read_text().splitlines()
+                 if self.NOTE_ID in ln] if root.is_dir() else []
+        if not lines:
+            pytest.skip(f"this instance does not index {self.NOTE_ID}")
+        for line in lines:
+            assert "no lexical fallback" not in line
+            assert "degrades to lexical" in line
 
     def test_search_really_does_degrade_to_lexical(self, tmp_path, monkeypatch):
         """The claim the corrected note makes, asserted against the code rather

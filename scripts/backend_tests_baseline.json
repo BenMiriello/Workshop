@@ -1,5 +1,5 @@
 {
-  "_comment": "Known-failing backend tests. A ratchet: entries may be removed, never added without a deliberate decision. See check_backend_tests.py. 2026-09-04: removed the edge blocked-path websocket test from this list. It was not a code defect -- it asserted that '/tools' is on the edge blocklist, which it is not and shows no sign of ever having been. The test now derives the prefix from _BLOCKED_PREFIXES, so it tests the property rather than a memorised list, and it passes. 19 -> 18.",
+  "_comment": "Known-failing backend tests. A ratchet: entries may be removed, never added without a deliberate decision. See check_backend_tests.py. 2026-09-04: removed the edge blocked-path websocket test from this list. It was not a code defect -- it asserted that '/tools' is on the edge blocklist, which it is not and shows no sign of ever having been. The test now derives the prefix from _BLOCKED_PREFIXES, so it tests the property rather than a memorised list, and it passes. 19 -> 18. Also removed the three TestB5TheGpuNoteIsTrue entries: not code defects either. They read shared/knowledge/<id>.md and shared/knowledge/MEMORY.md, and the knowledge layer became scope-partitioned (<scope>/<kind>/<id>.md) underneath them, so all three failed with FileNotFoundError/StopIteration against a note that was present the whole time. They find the note by id now and skip when this instance has none. 18 -> 15.",
   "failures": [
     "tests/test_chat_turn_lifecycle.py::TestAPromptThatCannotBeDeliveredEndsTheRun::test_the_run_ends_rather_than_idling_forever",
     "tests/test_db_schema.py::test_no_composite_set_null_nulls_its_discriminator",
@@ -8,9 +8,6 @@
     "tests/test_dev_mode_gate.py::TestDoor6AutonomyRunEndpoint::test_it_refuses_before_opening_a_job",
     "tests/test_dev_mode_gate.py::TestDoor6AutonomyRunEndpoint::test_the_endpoint_refuses_with_a_reason_the_ui_can_show",
     "tests/test_doc_status.py::TestRealDocsRegression::test_none_of_the_corrected_docs_still_read_as_misleading",
-    "tests/test_memory_consolidation_m6.py::TestB5TheGpuNoteIsTrue::test_the_index_line_matches_the_corrected_note",
-    "tests/test_memory_consolidation_m6.py::TestB5TheGpuNoteIsTrue::test_the_note_no_longer_asserts_the_two_false_claims",
-    "tests/test_memory_consolidation_m6.py::TestB5TheGpuNoteIsTrue::test_the_note_records_what_is_true_now",
     "tests/test_next_ready_unattended.py::test_dependencies_still_gate_unattended",
     "tests/test_next_ready_unattended.py::test_ordering_within_the_eligible_set_is_still_priority_first",
     "tests/test_next_ready_unattended.py::test_the_root_ticket_case",
