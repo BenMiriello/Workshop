@@ -45,6 +45,7 @@
 // durable cross-device copy and the arbiter.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { HttpError, withTransientRetry } from "@workshop/ui";
 import { userStorage } from "./storage";
 
 /** A file already uploaded and sitting in the composer. */
@@ -126,18 +127,48 @@ async function serverGet(key: string): Promise<DraftValue | null> {
   } catch { return null; }
 }
 
+function putDraft(p: DraftPayload): Promise<Response> {
+  return fetch(`/api/chat/drafts/${encodeURIComponent(p.key)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text: p.text, ts: p.ts, client_id: p.client_id,
+      attachments: p.attachments || [],
+    }),
+    keepalive: true,
+  }).then((r) => {
+    // Typed so the retry below can tell a restart window from a real refusal.
+    // A keystroke write never looks at this; a CLEAR does.
+    if (!r.ok) throw new HttpError(r.status, `draft PUT ${r.status}`);
+    return r;
+  });
+}
+
 function serverPut(p: DraftPayload) {
   try {
-    void fetch(`/api/chat/drafts/${encodeURIComponent(p.key)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text: p.text, ts: p.ts, client_id: p.client_id,
-        attachments: p.attachments || [],
-      }),
-      keepalive: true,
-    });
+    void putDraft(p).catch(() => {});
   } catch { /* offline — localStorage already holds it */ }
+}
+
+/** THE CLEAR IS THE ONE DRAFT WRITE NOTHING SUPERSEDES.
+ *
+ *  Every other write here is fire-and-forget on purpose: a keystroke write that
+ *  is lost is replaced by the next keystroke 600ms later, so retrying it would
+ *  be spending requests on a value that is already stale. A CLEAR has no next
+ *  write. If it is dropped, the server keeps holding text the operator sent, at
+ *  a timestamp older than this browser's tombstone -- invisible here, because
+ *  localStorage remembers the clear, and visible on ANY OTHER SURFACE, which
+ *  adopts it as the newest thing anyone said about that composer.
+ *
+ *  That is the standing report: "I often will send a message in chat then the
+ *  text remains in the input even after it's submitted even days later." The
+ *  server's own clear-on-accept covers the send that lands; this covers the one
+ *  that does not, and the restart window in which neither request gets through.
+ *  Same schedule as every other retry in the app. */
+function serverClear(p: DraftPayload) {
+  try {
+    void withTransientRetry(() => putDraft(p)).catch(() => {});
+  } catch { /* offline — the local tombstone still stands on this device */ }
 }
 
 /** Drop-in replacement for useState<string>("") for a chat composer.
@@ -331,7 +362,9 @@ export function useDraft(key: string): {
     // and lands when the message is accepted, and this one covers the window
     // before that — including a send that never reaches the server at all,
     // where the text lives on in the outbox and must not ALSO be in the box.
-    serverPut({ key: forKey, text: "", ts, client_id: CLIENT_ID, attachments: [] });
+    // Retried, unlike a keystroke write, because nothing comes after it to put
+    // it right. See serverClear.
+    serverClear({ key: forKey, text: "", ts, client_id: CLIENT_ID, attachments: [] });
   }, []);
 
   return { draft, setDraft, attachments, setAttachments, clearForSend };

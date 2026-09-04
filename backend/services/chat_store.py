@@ -1200,6 +1200,38 @@ def set_thread_effort(thread_id: str, effort: str | None) -> dict | None:
 # ---- messages --------------------------------------------------------------
 
 
+# HOW MUCH OF THE FIRST MESSAGE STANDS IN FOR A NAME.
+#
+# It was 60 characters, hard, mid-word, with no ellipsis, and every list that
+# renders a title already clips its own overflow: `.ws-chat-row__title` is
+# `white-space: nowrap; overflow: hidden; text-overflow: ellipsis`. So the row
+# had six hundred pixels of empty space to the right of a sentence that had been
+# chopped at "...write one sentence abo". Reported by the operator: "the chat
+# text/message preview itself in the chat card in chats is still truncated
+# unnecessarily. can use its full row if its long enough."
+#
+# The cap that is left is a STORAGE bound, not a layout one -- a seed title is
+# read into a list row and must not carry a paragraph -- and it is wide enough
+# that the surface, which knows how much room it has, is the thing that decides
+# where the text ends. When it does bite, it bites at a word boundary, because a
+# cut mid-word reads as a bug even with an ellipsis after it.
+SEED_TITLE_MAX = 160
+
+
+def seed_title_from(content: str) -> str:
+    """The first line of the first message, as a stand-in title."""
+    line = (content or "").strip().split("\n")[0].strip()
+    if not line:
+        return "New chat"
+    if len(line) <= SEED_TITLE_MAX:
+        return line
+    cut = line[:SEED_TITLE_MAX]
+    spaced = cut.rsplit(" ", 1)[0]
+    # A single word longer than the cap has no boundary to fall back to; keeping
+    # the hard cut is better than returning nothing.
+    return (spaced if len(spaced) >= SEED_TITLE_MAX // 2 else cut).rstrip()
+
+
 def append_message(thread_id: str, role: str, content: str, meta: dict | None = None,
                    client_id: str | None = None) -> dict:
     """Append one message. Idempotent on `client_id` when the caller supplies one.
@@ -1223,7 +1255,7 @@ def append_message(thread_id: str, role: str, content: str, meta: dict | None = 
                                       meta=meta, ts=_now_iso())
     if role == "user" and not m.get("_seed_title") \
             and m.get("title") in (None, "", "New chat"):
-        _patch(thread_id, _seed_title=content.strip().split("\n")[0][:60] or "New chat")
+        _patch(thread_id, _seed_title=seed_title_from(content))
     # NAME IT NOW, NOT WHEN THE TURN ENDS. The message the chat is about has just
     # arrived, so everything the namer needs is already here.
     #

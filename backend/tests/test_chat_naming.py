@@ -543,3 +543,40 @@ class TestOneNamingTaskPerThread:
 
         asyncio.run(main())
         assert started == [tid, tid]
+
+
+class TestSeedTitleLength:
+    """The stand-in title is a preview of the first message, so it may not be
+    shorter than the row that shows it.
+
+    It was capped at 60 characters, cut mid-word, with no ellipsis, while every
+    surface that renders a title already clips its own overflow. On a 1440px
+    chat list that left roughly six hundred pixels of empty row to the right of
+    "...Then write one sentence abo". Operator: "the chat text/message preview
+    itself in the chat card in chats is still truncated unnecessarily. can use
+    its full row if its long enough."
+    """
+
+    def test_a_sentence_a_row_can_hold_is_not_cut(self):
+        from services.chat_store import seed_title_from
+        line = ("Run 'sleep 25; echo hi' in bash. Then write one sentence about "
+                "it and stop, nothing else at all")
+        assert seed_title_from(line) == line
+
+    def test_only_the_first_line_stands_in_for_a_name(self):
+        from services.chat_store import seed_title_from
+        assert seed_title_from("the ask\n\nand a page of detail after it") == "the ask"
+
+    def test_a_very_long_line_is_cut_at_a_word_boundary(self):
+        from services.chat_store import seed_title_from, SEED_TITLE_MAX
+        out = seed_title_from("word " * 200)
+        assert len(out) <= SEED_TITLE_MAX
+        assert out.endswith("word")
+
+    def test_one_unbroken_word_still_gets_cut(self):
+        from services.chat_store import seed_title_from, SEED_TITLE_MAX
+        assert seed_title_from("x" * 400) == "x" * SEED_TITLE_MAX
+
+    def test_an_empty_message_names_the_chat_rather_than_nothing(self):
+        from services.chat_store import seed_title_from
+        assert seed_title_from("   \n  ") == "New chat"
