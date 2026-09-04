@@ -196,6 +196,12 @@ export function useChatThread({
     try {
       const list = await withTransientRetry(() => chatApi.listThreads());
       setThreads(list);
+      // THE LIST CAME BACK, so the notice saying it had not is no longer true.
+      // A reader that can fail has to be able to report its own recovery or the
+      // banner it raised outlives the outage; the slot is held by source
+      // (chat/problemState), so this clears this reader's entry and nothing
+      // else. Reported 2026-09-04: connection warnings that get stuck.
+      onError(null);
       return list;
     } catch (e) {
       onError({

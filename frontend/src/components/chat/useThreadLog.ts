@@ -343,6 +343,14 @@ export function useThreadLog({
       failuresRef.current = 0;
       outageSinceRef.current = 0;
       setStale((prev) => (prev ? false : prev));
+      // AND THE FAILURE THIS READ RAISED IS OVER TOO. Saying so is the whole
+      // recovery path for it: the slot is held by source (chat/problemState),
+      // so this clears only what this reader put there and cannot swallow a
+      // refused rename or a blocked write. Without it, a transcript read that
+      // failed during a blip left "Couldn't load this conversation" over a chat
+      // that had been working again for minutes -- the stuck warning the
+      // operator reported on 2026-09-04.
+      onErrorRef.current(null);
     } catch (e) {
       // Transient by nature (this runs on a timer), and ONE failure says
       // nothing: a hiccup between two polls is not worth a word.
@@ -478,6 +486,10 @@ export function useThreadLog({
           requestedAt,
           hasMore: page.has_more ?? false,
         });
+        // Opened cleanly. Any load failure this reader was still showing (from
+        // the thread just left, or from a retry that has now succeeded) is not
+        // true any more. See the same call in `sync`.
+        onErrorRef.current(null);
       } catch (e) {
         if (!cancelled) {
           onErrorRef.current({

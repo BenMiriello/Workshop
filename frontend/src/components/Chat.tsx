@@ -41,6 +41,10 @@ import { linkIntentKey } from "./chat/threadIntent";
 import { useSendPipeline, wasFirstExchange } from "./chat/useSendPipeline";
 import { logPlaceholder, noRealContent } from "./chat/chatLogState";
 import { placementFor, type ChatProblem } from "./chat/chatProblem";
+import {
+  NO_PROBLEMS, clearProblems, currentProblem, reportProblem,
+  type ProblemSource, type ProblemState,
+} from "./chat/problemState";
 import { scopeSwitch } from "./chat/scopeSwitch";
 import { STALE_TEXT } from "./chat/staleNotice";
 import { indicatorElapsed } from "./chat/turnStatus";
@@ -154,12 +158,39 @@ export default function Chat({
   }, [boundSlug]);
   const effectiveMode: ChatMode = mode ?? deriveMode(contextKey, boundAgent);
   const navigate = useNavigate();
-  // THE CHAT'S ONE PROBLEM SLOT. Everything in it is chat-scoped by definition —
-  // anything caused by a specific message is said under that message instead
-  // (see chat/chatProblem for the routing rule, chat/UnsentNote for the note).
-  // It carries the endpoint that failed and, where retrying is a real action, a
-  // retry, because that is what the error state owes the operator.
-  const [err, setErr] = useState<ChatProblem | null>(null);
+  // THE CHAT'S PROBLEM SLOT, held BY SOURCE. Everything in it is chat-scoped by
+  // definition — anything caused by a specific message is said under that
+  // message instead (see chat/chatProblem for the routing rule,
+  // chat/UnsentNote for the note). It carries the endpoint that failed and,
+  // where retrying is a real action, a retry, because that is what the error
+  // state owes the operator.
+  //
+  // IT USED TO BE ONE `useState`, WRITTEN BY SIX HOOKS AND CLEARED BY NOBODY,
+  // which is how a connection warning outlived the blip that caused it. The
+  // rule is chat/problemState; the binders below are all this component does
+  // with it. A reader that can fail now also reports its own recovery, through
+  // the same callback, and only its own entry goes.
+  const [problems, setProblems] = useState<ProblemState>(NO_PROBLEMS);
+  const reportFrom = useCallback(
+    (source: ProblemSource) => (p: ChatProblem | null) =>
+      setProblems((prev) => reportProblem(prev, source, p)),
+    [],
+  );
+  // One stable callback per source. Stable because they reach hooks that hold
+  // them in refs and memos keyed on identity.
+  const scopeError = useMemo(() => reportFrom("scope"), [reportFrom]);
+  const threadsError = useMemo(() => reportFrom("threads"), [reportFrom]);
+  const logError = useMemo(() => reportFrom("log"), [reportFrom]);
+  const turnError = useMemo(() => reportFrom("turn"), [reportFrom]);
+  // The operator's own writes: stop, rename, delete, compact, a refused
+  // command. Every inline handler in this file reports here.
+  const setErr = useMemo(() => reportFrom("action"), [reportFrom]);
+  const shownProblem = currentProblem(problems);
+  const err = shownProblem?.problem ?? null;
+  const dismissProblem = useCallback(() => {
+    if (!shownProblem) return;
+    setProblems((prev) => reportProblem(prev, shownProblem.source, null));
+  }, [shownProblem]);
   // NOTHING SITS ABOVE THE LOG ANY MORE. There used to be a `FiledBar` here
   // saying "Filed in X" over the transcript, and the ticket card in the answer
   // now says the same thing in the place the filing happened. Two of them was
@@ -200,7 +231,7 @@ export default function Chat({
 
   const scopeState = useChatScope({
     contextKey, effectiveMode, scoped, initialThreadId, startNew,
-    onError: setErr,
+    onError: scopeError,
   });
   const {
     scope, selectedModel, setSelectedModel, setSelectedEffort, setSelectedPermissionMode,
@@ -232,7 +263,7 @@ export default function Chat({
     setSelectedModel,
     setSelectedEffort,
     setSelectedPermissionMode,
-    onError: setErr,
+    onError: threadsError,
     onLeaveForList: () => navigate("/chats"),
   });
   const { activeId, activeIdRef, loadingThreads } = thread;
@@ -276,7 +307,15 @@ export default function Chat({
   }, [variant, activeId, loadingThreads]);
 
   // The conversation itself: one store, fed by one endpoint from a cursor.
-  const log = useThreadLog({ threadId: activeId, onError: setErr });
+  // A NEW CONVERSATION INHERITS NONE OF THE LAST ONE'S COMPLAINTS. Every entry
+  // in the slot is about the chat that was open — a poll that stopped landing
+  // on it, a rename it refused, a write its run could not make — and none of
+  // them is a fact about the one being opened. This is the only blanket clear
+  // there is; every other way an entry leaves is its own source resolving it or
+  // the operator dismissing it.
+  useEffect(() => { setProblems(clearProblems); }, [activeId]);
+
+  const log = useThreadLog({ threadId: activeId, onError: logError });
   const {
     state, stateRef, dispatch, transcript, sync, turnActive, liveShown, hydrated,
     stale, branch, loadOlder, loadingOlder, olderError,
@@ -397,7 +436,7 @@ export default function Chat({
       const msgs = committedMessages(stateRef.current);
       if (msgs[msgs.length - 1]?.meta?.notes?.length) onAction?.();
     },
-    onError: setErr,
+    onError: turnError,
   });
 
   // STOP ENDS THE RUN. It used to close this tab's socket and nothing else: the
@@ -467,7 +506,7 @@ export default function Chat({
       if (!activeIdRef.current) thread.adoptThreadId(id);
       void thread.refreshThreads();
     },
-    onFatal: setErr,
+    onFatal: turnError,
   });
 
   // A SPOKEN MESSAGE IS A MESSAGE. The server now writes it to the thread the
@@ -1594,7 +1633,8 @@ export default function Chat({
           whether the thing that failed was this message, this thread or the
           backend. It is the same `StateBlock variant="error"` the egress notice
           and the log's error state use now. */}
-      {chatProblem && !logShowsProblem && <ChatProblemBlock problem={chatProblem} />}
+      {chatProblem && !logShowsProblem
+        && <ChatProblemBlock problem={chatProblem} onDismiss={dismissProblem} />}
       {/* THIS BROWSER HAS STOPPED HEARING THE BACKEND. It belongs in this slot
           and not in the log, because it is a fact about the connection rather
           than about any message: nothing in the transcript is wrong, it has

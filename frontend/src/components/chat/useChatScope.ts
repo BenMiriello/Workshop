@@ -151,7 +151,12 @@ export function useChatScope({
       // be able to say so. Only the failure path (`providerList` undefined)
       // leaves the previous list alone.
       if (providerList) setProviders(providerList);
-      if (isError) {
+      if (!isError) {
+        // The list read succeeded, so the "picker may be showing stale options"
+        // notice this reader raised is spent. Only this reader's entry goes;
+        // see chat/problemState.
+        onError(null);
+      } else {
         // NOT non-essential, which is what this used to claim. This list is the
         // live source for the model picker; when it fails the picker silently
         // falls back to the frontend's hardcoded MODEL_LABELS, which can offer

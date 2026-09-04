@@ -26,7 +26,7 @@ import { problemBlock, type ChatProblem } from "./chatProblem";
 // the routing rule.
 
 export default function ChatProblemBlock({
-  problem, icon, shape = "line", className,
+  problem, icon, shape = "line", className, onDismiss,
 }: {
   problem: ChatProblem;
   /** Overrides the default alert triangle when the failure has a more specific
@@ -35,12 +35,23 @@ export default function ChatProblemBlock({
   /** "region" only when nothing else is on screen. See above. */
   shape?: "line" | "region";
   className?: string;
+  /** Take this one off the screen. Offered where the failure has no Retry,
+   *  which is exactly the set that cannot resolve itself: a blocked write, a
+   *  tree taken by another session, a refused command. Those have no condition
+   *  to recover, so without this they are stuck by construction, and getting
+   *  stuck is what the operator reported on 2026-09-04. A failure that DOES
+   *  carry a Retry keeps the one control: retrying is the useful move, and the
+   *  reader that raised it clears it when the condition heals (see
+   *  chat/problemState). */
+  onDismiss?: () => void;
 }) {
   const { title, detail } = problemBlock(problem);
   const endpoint = problem.endpoint || null;
   const retry = problem.retry
     ? <Button size="sm" variant="ghost" onClick={problem.retry}>Retry</Button>
-    : undefined;
+    : onDismiss
+      ? <Button size="sm" variant="ghost" onClick={onDismiss}>Dismiss</Button>
+      : undefined;
 
   if (shape === "line") {
     return (
