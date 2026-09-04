@@ -651,6 +651,36 @@ else
   AMBIGUOUS+=("prompt_layers_check_unavailable")
 fi
 
+# 4.6c-iiid THE PROMPT HAS A BUDGET AND THIS IS WHERE IT IS ENFORCED.
+#
+# The four-layer contract specifies who owns each layer and in what order they
+# assemble, and never assigns a byte budget to a layer or an owner to the total.
+# So every block author capped their own block -- five did it unprompted, with a
+# written rationale beside the constant -- and nobody owned the sum. The block
+# whose author did not cap it read a growing store whole, and a fresh chat
+# opened with a 114,192-char prefix before the operator typed anything.
+#
+# The runtime half only LOGS, deliberately: a fuse that fires on the operator
+# mid-sentence is a fuse that gets disabled. Review is the only point at which
+# an over-budget prefix can actually be fixed, so it is the only point where
+# blocking is useful rather than destructive. This is that point.
+#
+# CHANGE-GATED, unlike the two checks above it, because it measures a specific
+# enumerated file set rather than a rule about all source: a diff that touches
+# none of the prompt-assembly modules cannot move any of its three counts.
+PROMPT_SIZE_CHECK="skipped"
+if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/(services/(chat_context|orientation|custom_instructions|app_persona|knowledge|standing|workspace_digest|skills)|routes/chat)\.py$'; then
+  if [[ -f "$WORKSHOP/scripts/check_prompt_size.py" ]]; then
+    if python3 "$WORKSHOP/scripts/check_prompt_size.py" >/dev/null 2>&1; then
+      PROMPT_SIZE_CHECK="ok"
+    else
+      PROMPT_SIZE_CHECK="fail"
+    fi
+  else
+    AMBIGUOUS+=("prompt_size_check_unavailable")
+  fi
+fi
+
 # 4.6c-iiie THE PLAN WE ALREADY WROTE, AS A GATE.
 #
 # `docs/platform-redesign/threads-branches-and-pages-2026-08-29.md` section 7 is
@@ -1148,6 +1178,10 @@ if [[ "$PROMPT_LAYERS_CHECK" == "fail" ]]; then
   REASONS+=("installation_fact_in_platform_prompt")
   COMPLETE="false"
 fi
+if [[ "$PROMPT_SIZE_CHECK" == "fail" ]]; then
+  REASONS+=("prompt_budget_got_worse")
+  COMPLETE="false"
+fi
 if [[ "$TICKET_ACCEPTANCE_CHECK" == "fail" ]]; then
   REASONS+=("ticket_without_executable_acceptance")
   COMPLETE="false"
@@ -1269,7 +1303,7 @@ export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK AP
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
 export DEAD_SURFACE_CHECK
-export PLAN_LANDED_CHECK TICKET_ACCEPTANCE_CHECK FRESH_CLONE_CHECK DEV_MODE_OFF_CHECK FRONTEND_STATE_CHECK RESPONSE_TYPES_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK
+export PLAN_LANDED_CHECK TICKET_ACCEPTANCE_CHECK FRESH_CLONE_CHECK DEV_MODE_OFF_CHECK FRONTEND_STATE_CHECK RESPONSE_TYPES_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK PROMPT_SIZE_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK
 RESULT_JSON=$(python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job

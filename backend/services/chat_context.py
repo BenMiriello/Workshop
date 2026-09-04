@@ -2867,3 +2867,312 @@ def contract_update_block(contract: str) -> str:
         "earlier copy is out of date, so follow this one.\n\n"
         + contract
     )
+
+
+# ---------------------------------------------------------------------------
+# The prompt budget registry
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS, and it is a gap in the contract rather than a bug in any
+# block. The four-layer contract specifies AUTHORITY -- who owns L0 to L3, what
+# order they assemble in, what is confidential -- and never assigns a byte
+# budget to a layer or names an owner for the total. So every block author
+# capped their own block, five of them did it unprompted with a written
+# rationale beside the constant, and nobody owned the sum. The one block whose
+# author did not cap it read a growing store whole, and there was nothing for it
+# to fail against and nothing above it to notice.
+#
+# Measured 2026-08-25: a brand-new development chat opened with a 114,192-char
+# prefix before the operator typed anything, 68% of it that one uncapped block.
+#
+# THE REGISTRY IS DECLARATIVE ON PURPOSE. Its whole value is that the total can
+# be summed WITHOUT running the assembler: the assembled size depends on
+# instance-local store content, so a number you can only get by executing is a
+# number no gate can pin. `scripts/check_prompt_size.py` reads this BY PARSING
+# THE SOURCE and ratchets on it, so PROMPT_BLOCKS must stay a literal tuple of
+# plain PromptBlock(...) calls. A block missing from here is invisible to that
+# gate, which is the one failure mode of this design: adding a prefix block
+# means adding a row.
+#
+# It does NOT enforce anything at runtime. Trimming is block-local, done by each
+# block's own author, because a tail-chop across layer boundaries would cut the
+# operator's own custom instructions to fit an oversized platform block and
+# invert the authority order the contract exists to establish. The assembler
+# logs and assembles anyway: a fuse that fires on the operator is a fuse that
+# gets disabled, and then the budget is gone along with the measurement.
+
+CHARS_PER_TOKEN = 4  # the repo's own convention; see routes/chat._CHARS_PER_TOKEN
+
+# What a row's `cap` is denominated in.
+#   static  the block IS a fixed module constant. Its size is its cap, because
+#           only an edit can change it and an edit is reviewable -- which is
+#           what check_prompt_size's `static_chars` count measures.
+#   chars   a hard character cap the block applies to itself.
+#   tokens  the same, denominated in tokens; converts at CHARS_PER_TOKEN.
+#   count   a cap on ITEMS, not bytes. NOT a byte budget: six tickets is six
+#           titles or six essays. A count-capped block is reported as UNCAPPED
+#           by the gate, deliberately, because the sum needs a summable number
+#           and a slice is not a cap.
+CAP_STATIC, CAP_CHARS, CAP_TOKENS, CAP_COUNT = "static", "chars", "tokens", "count"
+
+
+class PromptBlock:
+    """One block of the assembled chat prefix, and what bounds it.
+
+    `cap` is a DOTTED PATH to the constant that bounds the block, never a copy
+    of its value. Restating a cap here is how the registry and the code start
+    disagreeing, and a registry that disagrees with the code is worse than none:
+    the gate would go on passing while the prompt grew.
+
+    `drops` is the second half of the obligation and is not decoration. A cap
+    alone produces silent truncation, which is worse than no cap, because the
+    agent cannot tell a store that is EMPTY from one that was CUT. A row whose
+    block cannot say what it dropped and on what rule records None, which is a
+    real finding about that block rather than a gap in this file.
+    """
+
+    __slots__ = ("name", "kind", "source", "cap", "cap_unit", "drops", "note")
+
+    def __init__(self, name: str, kind: str, source: str,
+                 cap: str | None, cap_unit: str,
+                 drops: str | None = None, note: str = "") -> None:
+        self.name = name
+        self.kind = kind
+        self.source = source
+        self.cap = cap
+        self.cap_unit = cap_unit
+        self.drops = drops
+        self.note = note
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<PromptBlock {self.name} cap={self.cap} unit={self.cap_unit}>"
+
+    def cap_chars(self) -> int | None:
+        """This block's cap in CHARS, or None when it has no byte budget.
+
+        Resolved lazily, by import, for two reasons. The cap constants live in
+        modules `chat_context` cannot import at module scope without a cycle --
+        `learnings_context` and `ambient_digest` already do their imports inside
+        the function for exactly that reason. And a lazily resolved path fails
+        LOUDLY when a constant is renamed, where a copied number would silently
+        keep reporting the old value. `learnings.py` was renamed to
+        `standing.py` between this being designed and being built, which is not
+        a hypothetical.
+        """
+        if self.cap is None:
+            return None
+        raw = _resolve_dotted(self.cap)
+        if raw is None:
+            return None
+        if self.cap_unit == CAP_STATIC:
+            return len(raw) if isinstance(raw, str) else None
+        if self.cap_unit == CAP_COUNT:
+            return None  # a count is not a byte budget; see CAP_COUNT
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return n * CHARS_PER_TOKEN if self.cap_unit == CAP_TOKENS else n
+
+
+def _resolve_dotted(path: str) -> object | None:
+    """`services.standing._BLOCK_TOKEN_BUDGET` -> its value, or None.
+
+    None rather than an exception: the registry is read by a review-time gate
+    and by a runtime log line, and neither may be the thing that breaks. An
+    unresolvable cap is reported as uncapped, which fails the ratchet upward and
+    is therefore visible rather than silently forgiving.
+    """
+    mod_path, _, attr = path.rpartition(".")
+    if not mod_path or not attr:
+        return None
+    try:
+        import importlib
+        mod = importlib.import_module(mod_path)
+    except Exception:
+        return None
+    return getattr(mod, attr, None)
+
+
+# In ASSEMBLY ORDER, matching routes/chat._build_prompt top to bottom. The order
+# is not cosmetic: everything down to the conversation is the cache-stable
+# prefix, and the volatile tail after it is placed last so it cannot invalidate
+# the cache above. A new row goes where its block goes.
+PROMPT_BLOCKS: tuple[PromptBlock, ...] = (
+    PromptBlock(
+        "platform_kernel", "static", "chat_context.PLATFORM_KERNEL",
+        "services.chat_context.PLATFORM_KERNEL", CAP_STATIC,
+        drops=None, note="L0. Fixed text; only an edit changes it."),
+    PromptBlock(
+        "role_preamble", "derived", "chat_context.role_preamble()",
+        None, CAP_CHARS,
+        drops=None,
+        note="Composed from module constants (delegation, UI cards, style, "
+             "capabilities). Bounded by those constants, which static_chars "
+             "measures, but assembled conditionally so its own size is not one "
+             "number. UNCAPPED: it has no byte budget of its own."),
+    PromptBlock(
+        "runtime_briefing", "derived", "chat_context.runtime_briefing()",
+        None, CAP_CHARS,
+        drops=None,
+        note="A template filled with this installation's declared facts. Small "
+             "and bounded by the template, but nothing states the bound. "
+             "UNCAPPED."),
+    PromptBlock(
+        "orientation_manifest", "derived", "orientation.manifest_text()",
+        None, CAP_CHARS,
+        drops=None,
+        note="L1. Generated from the tool surface, so it grows with the number "
+             "of tools rather than with a store. UNCAPPED."),
+    PromptBlock(
+        "persona", "derived", "provider.persona()",
+        None, CAP_CHARS,
+        drops=None,
+        note="L2, plus the project-local agent rules read from the scope "
+             "directory. Those are operator-written and have no cap, so this "
+             "row is the one nearest to the original defect. UNCAPPED."),
+    PromptBlock(
+        "capability_note", "derived", "provider.capability_note()",
+        None, CAP_CHARS,
+        drops=None,
+        note="Derived from the permissions framework; size is a function of the "
+             "grant list. UNCAPPED."),
+    PromptBlock(
+        "standing_notes", "store", "standing.block()",
+        "services.standing._BLOCK_TOKEN_BUDGET", CAP_TOKENS,
+        drops="lowest-ranked notes first, across the read-union of layers"),
+    PromptBlock(
+        "ambient_digest", "store", "workspace_digest.digest_for_provider()",
+        "services.workspace_digest.CAP_TASKS", CAP_COUNT,
+        drops="oldest and lowest-priority tickets beyond the cap",
+        note="Capped on ITEMS, not bytes: six tickets is six titles or six "
+             "essays. Reported as uncapped until it declares a char bound."),
+    PromptBlock(
+        "working_state", "store", "knowledge working-state note",
+        "services.knowledge.WORKING_STATE_MAX_CHARS", CAP_CHARS,
+        drops="truncated at the write as well as at the read"),
+    PromptBlock(
+        "knowledge_index", "store", "knowledge.layered_index_block()",
+        "services.knowledge.DEFAULT_LAYERED_INDEX_TOKEN_BUDGET", CAP_TOKENS,
+        drops="note titles beyond the budget, narrowest layer kept last"),
+    PromptBlock(
+        "skills", "store", "skills.descriptions_block()",
+        None, CAP_CHARS,
+        drops=None,
+        note="Name plus description per installed skill; grows with the skill "
+             "catalog, which is a store. UNCAPPED."),
+    PromptBlock(
+        "custom_instructions", "store", "provider.custom_prompt()",
+        None, CAP_CHARS,
+        drops=None,
+        note="L3, the operator's own text. UNCAPPED and deliberately last to "
+             "be considered for a cap: it is the layer the contract protects, "
+             "and capping the operator to fit platform text is the inversion "
+             "the design exists to prevent. If anything is trimmed it is not "
+             "this."),
+    PromptBlock(
+        "conversation", "store", "the thread transcript",
+        "routes.chat.PROMPT_CEILING_TOKENS", CAP_TOKENS,
+        drops="oldest messages first, whole messages only, with the count named "
+              "in the prompt",
+        note="Not part of the cache-stable prefix budget: this is the fuse on "
+             "HISTORY and is three orders of magnitude larger. Listed so the "
+             "registry is the whole prompt rather than a selection."),
+    PromptBlock(
+        "live_context", "store", "provider.live_context()",
+        None, CAP_CHARS,
+        drops=None,
+        note="THE ORIGINAL DEFECT. Reads a project brief plus an append-only "
+             "log whole. Unbounded by construction: nothing in the system "
+             "removes an entry, so no cap chosen today is still right in six "
+             "months. Ticket 1f0d6dcd caps it and adds the drop notice; it is "
+             "blocked on the log becoming searchable first, because cutting a "
+             "store nothing can retrieve is worse than paying for it. "
+             "UNCAPPED."),
+)
+
+# The conversation fuse bounds HISTORY, not the assembled prefix, and it is 600k
+# tokens against a prefix budget of ~11k. Summing it into the prefix total would
+# swamp every other row and make the ceiling meaningless, so the prefix sum
+# excludes it BY NAME rather than by a magnitude heuristic.
+PREFIX_EXCLUDED_BLOCKS = ("conversation",)
+
+# The assembled prefix a turn may reach before the assembler says so. Derived
+# rather than chosen: the measured residual with every existing cap applied,
+# plus one budget for the block that never had one, rounded up for headroom.
+# A LOG threshold, never a refusal.
+PREFIX_WARN_CHARS = int(os.environ.get("WORKSHOP_PREFIX_WARN_CHARS", "46000"))
+
+
+def prefix_budget() -> dict:
+    """The declared budget, summed without running the assembler.
+
+    `capped_chars` sums only the rows that HAVE a byte budget, so it is a floor
+    on the declared total and not the total. `uncapped` names the rows that have
+    none; while that list is non-empty the sum is incomplete, and a ceiling
+    computed over an incomplete sum reads as passing when it is not measuring.
+    That is why the gate does not enforce the ceiling until `uncapped` is empty.
+    """
+    capped: dict[str, int] = {}
+    uncapped: list[str] = []
+    for b in PROMPT_BLOCKS:
+        if b.name in PREFIX_EXCLUDED_BLOCKS:
+            continue
+        n = b.cap_chars()
+        if n is None:
+            uncapped.append(b.name)
+        else:
+            capped[b.name] = n
+    return {
+        "capped_chars": sum(capped.values()),
+        "by_block": capped,
+        "uncapped": uncapped,
+        "warn_chars": PREFIX_WARN_CHARS,
+        "blocks": len(PROMPT_BLOCKS) - len(PREFIX_EXCLUDED_BLOCKS),
+    }
+
+
+def prefix_breakdown(parts: list[str]) -> list[tuple[str, int]]:
+    """(block name, chars) for an assembled prompt's parts, largest first.
+
+    NAMES COME FROM THE TEXT, not from a parallel list the assembler has to
+    maintain. Almost every block opens with its own `=== HEADER ===` line,
+    because they were written to be legible to the model, and that makes them
+    legible here for free. The alternative -- tagging each append with a name --
+    is a second thing to keep in step with the first, and a breakdown that
+    drifts from the assembly is worse than one that is occasionally coarse.
+
+    A part with no header is reported by position and by its first few words,
+    which is enough to act on: the question this answers is "which block is
+    big", and the unlabelled ones are the fixed platform text at the top.
+    """
+    out: list[tuple[str, int]] = []
+    for i, p in enumerate(parts):
+        if not p:
+            continue
+        head = p.split("\n", 1)[0].strip()
+        if head.startswith("===") and head.endswith("==="):
+            name = head.strip("= ").strip()
+        else:
+            name = f"#{i} {head[:40]}"
+        out.append((name, len(p)))
+    out.sort(key=lambda r: -r[1])
+    return out
+
+
+def prefix_chars(parts: list[str]) -> int:
+    """The assembled prefix size: everything except the conversation and the
+    operator's own turn.
+
+    The conversation is excluded for the reason PREFIX_EXCLUDED_BLOCKS gives --
+    it is bounded by a fuse three orders of magnitude larger, and including it
+    would swamp the number this threshold is about. The operator's turn is
+    excluded because it is the thing being paid FOR.
+    """
+    total = 0
+    for p in parts:
+        head = p.split("\n", 1)[0].strip()
+        if head.startswith("=== CONVERSATION SO FAR") or head.startswith("=== NOW REPLY"):
+            continue
+        total += len(p)
+    return total

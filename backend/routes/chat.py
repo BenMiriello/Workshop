@@ -1820,7 +1820,42 @@ def _build_prompt(
         "Reply as the assistant. Output only your reply text (plus a plan-patch block if a "
         "change was requested). No 'You:' prefix."
     )
+    _warn_if_over_prefix_budget(parts, provider)
     return "\n\n".join(parts)
+
+
+def _warn_if_over_prefix_budget(parts: list[str],
+                                provider: chat_context.ContextProvider) -> None:
+    """One WARN with the per-block breakdown when the prefix is over budget.
+
+    LOG, NEVER TRIM AND NEVER FAIL, and the split is the whole point. Trimming
+    is block-local, done by each block's own author under its own declared cap,
+    because a tail-chop here would cut the operator's custom instructions --
+    assembled late and lowest in the authority order -- to fit an oversized
+    platform block, silently inverting the order the four-layer contract exists
+    to establish. And failing a turn over a budget is how the budget gets
+    removed: a fuse that fires on the operator is a fuse that gets disabled, and
+    the measurement goes with it.
+
+    Review is the only point where an over-budget prefix can actually be FIXED,
+    so review is the only point where blocking helps. That is
+    `scripts/check_prompt_size.py`; this is the runtime half that tells a person
+    the real number, which the static gate deliberately cannot see because it
+    depends on store content nothing tracks.
+    """
+    try:
+        total = chat_context.prefix_chars(parts)
+        if total <= chat_context.PREFIX_WARN_CHARS:
+            return
+        rows = chat_context.prefix_breakdown(parts)[:8]
+        log.warning(
+            "prompt prefix over budget for %s: %d chars (~%dk tokens) against a "
+            "%d budget. Largest blocks: %s",
+            provider.key, total, total // _CHARS_PER_TOKEN // 1000,
+            chat_context.PREFIX_WARN_CHARS,
+            "; ".join(f"{n}={c}" for n, c in rows))
+    except Exception as e:  # pragma: no cover - measuring must not cost a turn
+        log.debug("prompt budget check failed: %s", e)
 
 
 def _link_build_skills(provider) -> None:
