@@ -255,6 +255,90 @@ def _all_owner_ids() -> list[int]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# `armed = on-ready-ticket`
+# ---------------------------------------------------------------------------
+# THE FIELD THAT DECIDED NOTHING. `chat_thread.armed` landed with four values
+# and a check constraint, the PATCH route validated it, the UI could set it --
+# and no reader existed anywhere in the tree, so an operator could arm a thread
+# and change nothing at all. This is the reader for one of those values.
+#
+# IT RIDES THE SEED, IT IS NOT A SCHEDULER. A thread that should take a turn is
+# a thread holding a continuation seed; that is already true for a finished
+# background run and for a due wake-up, and the loop below already starts those
+# turns exactly when the thread is idle. So this adds a producer of seeds, not a
+# second way to start a turn -- which is also why "is the thread busy" is not
+# re-decided here.
+#
+# WHAT MAY BE PICKED UP IS DELIBERATELY NARROW. `tasks.next_ready(root,
+# unattended=True)` is the whole predicate, and it is a conjunction of five
+# independent consents: the scope is armed (`scope_execution.is_armed_root`,
+# fail-closed at reactive), the ticket is `todo` with its dependencies met, its
+# `execution` is `code`, `ticket_readiness.check` passes on its spec, and -- new
+# here -- a thread was armed to receive it. No second predicate is written,
+# because a second predicate is a second answer.
+READY_TICKET_ARMED = "on-ready-ticket"
+
+
+def ready_ticket_seed(task: dict) -> str:
+    """What an armed thread is told when its scope has ready work.
+
+    Names the ticket and stops. The thread has its own context, its own role and
+    the whole ticket store; restating the ticket body here would be a second copy
+    of it that goes stale the moment anyone edits the real one.
+    """
+    tid = str(task.get("id") or "")[:8]
+    title = (task.get("text") or "").strip().splitlines()
+    return (f"Ticket {tid} is ready in this scope: "
+            f"{title[0] if title else '(no title)'}\n\n"
+            "Work it if it is still the right next thing, or say why it is not.")
+
+
+def seed_ready_ticket_threads() -> int:
+    """Seed a continuation for every `on-ready-ticket` thread whose scope has
+    ready work. Returns how many were seeded. The owner must already be pinned.
+
+    ONE AT A TIME PER THREAD, the same rule `wakeups.fire_due` follows: a thread
+    already holding a seed, or already running a turn, is skipped rather than
+    given a second reason to wake. Nothing here clears a seed -- the drain below
+    does that when the turn it armed actually starts.
+    """
+    from services import chat_store, task_scope, tasks
+
+    seeded = 0
+    try:
+        rows = chat_store.list_threads()
+    except Exception as e:  # pragma: no cover - defensive: one owner is not the pass
+        log.warning("could not list threads for the ready-ticket pass: %s", e)
+        return 0
+    for row in rows:
+        tid = row.get("id")
+        if not tid or row.get("armed") != READY_TICKET_ARMED:
+            continue
+        try:
+            if chat_queue.read_continuation(tid) is not None:
+                continue
+            if chat_store.active_turn_id(tid):
+                continue
+            # `root_for_context`, not a path built from the scope key: it is the
+            # chokepoint that asks whether this owner may reach the scope at all
+            # and whether the scope resolves to the platform's own tree (ADR
+            # 0014). A scope it refuses yields None and the thread is skipped.
+            root = task_scope.root_for_context(row.get("context_key"))
+            if root is None:
+                continue
+            task = tasks.next_ready(root, unattended=True)
+            if not task:
+                continue
+            request_continuation(tid, seed=ready_ticket_seed(task),
+                                 dedupe_id=f"ready-ticket-{task.get('id')}")
+            seeded += 1
+            log.info("armed thread %s seeded on ready ticket %s", tid, task.get("id"))
+        except Exception as e:  # pragma: no cover - one bad thread is not the pass
+            log.warning("ready-ticket pass failed for %s: %s", tid, e)
+    return seeded
+
+
 async def continuation_loop(*, interval: float = 5.0) -> None:
     """Start the turn for any thread holding a continuation seed, once it is idle.
 
@@ -288,6 +372,14 @@ async def continuation_loop(*, interval: float = 5.0) -> None:
                         _wakeups.fire_due()
                     except Exception as e:  # pragma: no cover - defensive
                         log.warning("wake-up pass failed: %s", e)
+                    # A thread armed `on-ready-ticket` becomes a seed the moment
+                    # its scope has work that passes every unattended gate, and
+                    # is then an ordinary continuation. Same argument as the
+                    # wake-up above: the producer is new, the wake path is not.
+                    try:
+                        seed_ready_ticket_threads()
+                    except Exception as e:  # pragma: no cover - defensive
+                        log.warning("ready-ticket pass failed: %s", e)
                     for tid in chat_queue.threads_with_continuation():
                         try:
                             await drain_continuation(tid, reason="continuation")
