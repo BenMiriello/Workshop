@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -91,16 +92,51 @@ def test_a_deleted_file_still_checkpoints(repo):
 def test_platform_repo_is_never_auto_committed_from_a_subdirectory():
     """The guard is containment, not identity.
 
-    Every one of these resolves to the platform repo, and `git add -A` from any
-    of them is repo-wide. `projects/*` carry their own .git, so they are their
-    own tree and remain checkpointable.
+    A subdirectory of the platform repo resolves to the platform repo, and
+    `git add -A` from any of them is repo-wide. A NESTED repo is its own tree
+    and stays checkpointable: `projects/*` always carried their own `.git`, and
+    `apps/` acquired one on 2026-09-04.
+
+    The subdirectory list is DERIVED, not typed. It used to name four, one of
+    which (`apps`) became a nested repo, and this test then failed for having
+    memorised a layout rather than for the property changing. Asking the tree
+    what is in it means the next directory added or split out needs no edit
+    here.
     """
     root = dev_mode.WORKSHOP_ROOT
-    for sub in ("", "backend", "shared", "apps"):
-        p = root / sub if sub else root
-        if not p.exists():
+    assert dev_mode.is_in_self_repo(root) is True, "the root itself must be protected"
+
+    def _is_its_own_tree(d):
+        """Ask git, do not look for a `.git` entry.
+
+        `backend/.git` is an EMPTY DIRECTORY on this checkout and git ignores
+        it, so a presence test called `backend` a nested repo and this test
+        failed on a stale artefact rather than on the property. Whether a
+        directory is its own tree is `rev-parse --show-toplevel == itself`,
+        which is a different question from `is_in_self_repo` (does it equal the
+        PLATFORM root) and so does not make this tautological.
+        """
+        r = subprocess.run(["git", "-C", str(d), "rev-parse", "--show-toplevel"],
+                           capture_output=True, text=True)
+        return r.returncode == 0 and Path(r.stdout.strip()).resolve() == d.resolve()
+
+    checked = nested = 0
+    for p in sorted(root.iterdir()):
+        if not p.is_dir() or p.name.startswith("."):
+            continue
+        if _is_its_own_tree(p):
+            # Committing there cannot reach the platform's index, which is the
+            # only thing this predicate defends.
+            assert dev_mode.is_in_self_repo(p) is False, \
+                f"{p} is its own git tree and must not be treated as this repo"
+            nested += 1
             continue
         assert dev_mode.is_in_self_repo(p) is True, f"{p} must be protected"
+        checked += 1
+    assert checked, "no plain subdirectory of the platform repo was checked"
+    assert nested, ("no nested repo was checked -- `projects/` or `apps/` should "
+                    "be one, and without one this test only proves half its point")
+
     assert dev_mode.is_in_self_repo("/tmp") is False
 
 

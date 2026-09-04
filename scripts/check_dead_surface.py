@@ -80,7 +80,9 @@ from __future__ import annotations
 
 import argparse
 import ast
+import functools
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -124,17 +126,55 @@ def _tracked_files(tree: Path) -> list[Path]:
     a gate that only sees committed files would let every new one through on
     the run that introduced it.
     """
+    files: list[Path] = []
     if (tree / ".git").exists():
         try:
             out = subprocess.run(
                 ["git", "ls-files", "-z", "--cached", "--others",
                  "--exclude-standard"],
                 cwd=tree, capture_output=True, check=True).stdout
-            return [tree / n.decode() for n in out.split(b"\0") if n]
+            files = [tree / n.decode() for n in out.split(b"\0") if n]
         except (subprocess.SubprocessError, OSError, UnicodeDecodeError):
-            pass
-    return [p for p in tree.rglob("*")
-            if p.is_file() and "node_modules" not in p.as_posix()]
+            files = []
+    if not files:
+        files = [p for p in tree.rglob("*")
+                 if p.is_file() and "node_modules" not in p.as_posix()]
+    return files + _nested_repo_files(tree)
+
+
+_NESTED_REPOS = ("apps",)
+
+
+def _nested_repo_files(tree: Path) -> list[Path]:
+    """Tracked files of the nested repositories that hold installed content.
+
+    THE CORPUS IS WHAT MAKES THIS CHECK MEAN ANYTHING. Every question here is
+    "does anything reach this?", and a caller the scan cannot see is a caller
+    that does not count. On 2026-09-04 the operator's apps moved into `apps/`,
+    which is its OWN git repository and therefore invisible to the platform's
+    `git ls-files` -- so a platform module or API area whose only callers were
+    app code became unreachable in one step, having lost no caller at all.
+
+    Their own `git ls-files` is used for the same reason the platform's is: one
+    app's directory holds 30,151 files, almost all gitignored recordings, and
+    walking it turns a two-second scan into minutes.
+
+    A fresh clone has no `apps/`, adds nothing, and is unaffected.
+    """
+    out: list[Path] = []
+    for name in _NESTED_REPOS:
+        repo = tree / name
+        if not (repo / ".git").exists():
+            continue
+        try:
+            res = subprocess.run(
+                ["git", "ls-files", "-z", "--cached", "--others",
+                 "--exclude-standard"],
+                cwd=repo, capture_output=True, check=True).stdout
+        except (subprocess.SubprocessError, OSError):
+            continue
+        out.extend(repo / n.decode() for n in res.split(b"\0") if n)
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -177,12 +217,94 @@ def _knip(tree: Path) -> tuple[list[str] | None, str]:
         if not out:
             tail = (res.stderr or "").strip().splitlines()[-10:]
             return None, "knip produced no output:\n    " + "\n    ".join(tail)
-        return sorted(json.loads(out).get("files", [])), ""
+        files = sorted(json.loads(out).get("files", []))
+        return [f for f in files if f not in _referenced_by_an_app(tree)], ""
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         return None, f"could not run knip: {exc}"
     finally:
         for dst in linked:
             dst.unlink(missing_ok=True)
+
+
+_APP_SHELL_IMPORT_RE = re.compile(r"""["']@shell/([^"']+)["']""")
+
+
+@functools.lru_cache(maxsize=8)
+def _referenced_by_an_app(tree: Path) -> frozenset[str]:
+    """Platform frontend modules that an INSTALLED APP imports.
+
+    knip only sees npm workspaces, and `apps/` is not one -- it is a separate
+    repository the platform deliberately does not track. So on 2026-09-04, when
+    every app's frontend moved there, every shell module whose only importers
+    were app pages became "unreferenced" in one step: the app shell helpers, the
+    chat docks. None of them died; their callers moved out of the room knip is
+    standing in.
+
+    This is the ONE thing that changed about reachability, so it is the one
+    thing corrected here rather than by declaring five modules as
+    deliberately-dead, which would have been false and would have hidden them
+    the next time they really did die.
+
+    An app reaches a shell module through exactly one specifier shape,
+    `@shell/<path-under-frontend-src>` -- the named seam declared in
+    frontend/vite.config.ts and frontend/tsconfig.json. Anything else is not a
+    reference this function should invent.
+    """
+    apps = tree / "apps"
+    if not apps.is_dir():
+        return frozenset()          # a fresh clone has no apps; nothing to add
+    out: set[str] = set()
+    for ui in sorted(apps.glob("*/ui")):
+        for f in ui.rglob("*"):
+            if f.suffix not in (".ts", ".tsx", ".js", ".jsx"):
+                continue
+            try:
+                text = f.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for spec in _APP_SHELL_IMPORT_RE.findall(text):
+                stem = f"frontend/src/{spec}"
+                for cand in (stem, stem + ".ts", stem + ".tsx",
+                             stem + "/index.ts", stem + "/index.tsx"):
+                    if (tree / cand).exists():
+                        out.add(cand)
+    # TRANSITIVELY. A module an app imports pulls in what IT imports, and those
+    # are just as reachable. Without this pass the seam module cleared and the
+    # two modules it imports stayed "dead" -- reachability is a closure, and
+    # correcting only the first hop moves the false positive one edge along
+    # rather than removing it.
+    return frozenset(_reachable_from(tree, out))
+
+
+def _reachable_from(tree: Path, seeds: set[str]) -> set[str]:
+    """`seeds` plus everything they reach through relative imports."""
+    seen: set[str] = set()
+    queue = list(seeds)
+    while queue:
+        rel = queue.pop()
+        if rel in seen:
+            continue
+        seen.add(rel)
+        try:
+            text = (tree / rel).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        base = Path(rel).parent
+        for spec in _TS_IMPORT_RE.findall(text):
+            stem = os.path.normpath(str(base / spec))
+            for cand in (stem, stem + ".ts", stem + ".tsx",
+                         stem + "/index.ts", stem + "/index.tsx"):
+                if (tree / cand).exists() and cand not in seen:
+                    queue.append(cand)
+                    break
+        for spec in _APP_SHELL_IMPORT_RE.findall(text):
+            stem = f"frontend/src/{spec}"
+            for cand in (stem, stem + ".ts", stem + ".tsx",
+                         stem + "/index.ts", stem + "/index.tsx"):
+                if (tree / cand).exists() and cand not in seen:
+                    queue.append(cand)
+                    break
+    return seen
 
 
 # --------------------------------------------------------------------------
@@ -437,6 +559,38 @@ def _glob_discovered(mods: dict[str, tuple[Path, bool]]) -> set[str]:
     return out
 
 
+def _app_imported_names(tree: Path) -> set[str]:
+    """Every module name an INSTALLED APP's Python imports, absolute only.
+
+    An extracted app runs in the same interpreter as the platform and imports
+    platform modules by their real names (`from services.app_spec import
+    AppSpec`). It is not under `backend/`, so `_backend_modules` never sees it
+    and its imports never counted -- and on 2026-09-04 a platform module whose
+    only importers were app personas became "unimported" having lost nothing.
+
+    Relative imports are deliberately NOT resolved: inside an app they resolve
+    to the app's own modules, which this function is not asked about.
+    """
+    found: set[str] = set()
+    for path in _nested_repo_files(tree):
+        if path.suffix != ".py":
+            continue
+        try:
+            parsed = ast.parse(_read_tracked(path) or "")
+        except (OSError, SyntaxError, ValueError):
+            continue
+        for node in ast.walk(parsed):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    found.add(alias.name)
+            elif isinstance(node, ast.ImportFrom) and not node.level:
+                base = node.module or ""
+                found.add(base)
+                for alias in node.names:
+                    found.add(f"{base}.{alias.name}" if base else alias.name)
+    return found
+
+
 def _imported_names(mods: dict[str, tuple[Path, bool]]) -> set[str]:
     """Every module name a NON-TEST backend file imports, relatives resolved."""
     found: set[str] = set()
@@ -515,7 +669,8 @@ def _external_refs(corpus: list[tuple[str, str]], module: str,
 
 def _scan_backend(tree: Path, rules: dict, tracked: list[Path]) -> dict:
     mods = _backend_modules(tree)
-    imported = _imported_names(mods) | _glob_discovered(mods)
+    imported = (_imported_names(mods) | _glob_discovered(mods)
+                | _app_imported_names(tree))
     allowed = set((rules.get("backend_modules_allowed") or {}).keys())
     corpus = _external_corpus(tree, tracked)
     per_module: dict[str, dict] = {}

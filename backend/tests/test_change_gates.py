@@ -124,11 +124,19 @@ def test_every_check_the_reviewer_ran_becomes_a_gate_that_says_what_it_found(
     # missing and a gate that did not apply read identically to a person.
     skipped = [g for g in gates if g["status"] == "skipped"]
     assert skipped, "a scratch tree should skip most of the path-gated checks"
+    # FOUR honest reasons a gate is quiet, and "retired" is the fourth, added
+    # 2026-09-04. It differs from the other three in tense: they are facts about
+    # THIS diff and may not hold next time, while a retirement is a fact about
+    # the check and is permanent. Both still have to say so -- the failure this
+    # loop exists to prevent is a gate that is quiet without a reason, and a
+    # check deleted from the reviewer without a word here reads exactly like one
+    # that ran and found nothing.
     for gate in skipped:
         assert gate["detail"], f"{gate['name']} skipped without saying why"
         assert ("did not apply" in gate["detail"]
                 or "could not run" in gate["detail"]
-                or "declared no machine-checkable" in gate["detail"]), \
+                or "declared no machine-checkable" in gate["detail"]
+                or gate["detail"].startswith("retired")), \
             gate["detail"]
 
     # Every status is one the column accepts, and every gate is stamped with

@@ -99,6 +99,16 @@ GATE_CHECKS: tuple[_Check, ...] = (
            "no new inline hex, emoji or not-allowed on added .tsx lines",
            "no changed .tsx under frontend/src or packages/ui/src",
            ("design_check_unavailable",)),
+    # RETIRED 2026-09-04, and kept in this table on purpose. The check it read
+    # (`scripts/check_pluggable_apps.sh`) inspected five files and reported
+    # clean for five weeks while 143 tracked files of one operator's apps sat in
+    # the tree; it is now at `scripts/retired/`. Two unconditional checks cover
+    # what it claimed: `no_app_names` and the fresh-clone assertion.
+    #
+    # The entry stays because a gate that vanishes from this table vanishes from
+    # the review surface, and a reader cannot tell "this was retired" from "this
+    # was never run". `retired` renders as its own status saying which checks
+    # replaced it.
     _Check("pluggable_apps", "pluggable_apps",
            "no app welded back into a platform-core file, no per-instance "
            "data tracked",
@@ -187,7 +197,23 @@ GATE_NAMES: tuple[str, ...] = (
 # (`db/models.GATE_STATUSES`). `skip` and `skipped` are both emitted: the
 # hardcoding check defaults to the former, everything else to the latter.
 _STATUS = {"ok": "pass", "pass": "pass", "fail": "fail",
-           "skip": "skipped", "skipped": "skipped"}
+           "skip": "skipped", "skipped": "skipped",
+           # A check that has been retired. Distinct from `skipped` (did not
+           # apply to this diff) because the answer is permanent and is about
+           # the check, not about the diff. Maps to `skipped` in the stored
+           # vocabulary -- `db/models.GATE_STATUSES` is a closed set and a
+           # retirement is not worth a migration -- but carries its own detail.
+           "retired": "skipped"}
+
+# Retired checks, and what replaced each. Read for the detail line so the review
+# surface can say why a gate is permanently quiet instead of implying it might
+# run next time.
+_RETIRED_BECAUSE = {
+    "pluggable_apps": ("retired 2026-09-04: it inspected five files and reported "
+                       "clean while the violation grew. Covered now by the "
+                       "no-app-names and fresh-clone checks, which are "
+                       "unconditional and scan the whole tree."),
+}
 
 
 def _dig(payload: dict, dotted: str) -> Any:
@@ -332,6 +358,9 @@ def gates_from_reviewer(payload: dict) -> list[dict]:
             detail = check.describes
         elif status == "fail":
             detail = _reason_for(reasons, check.gate) or f"failed: {check.describes}"
+        elif raw == "retired":
+            detail = _RETIRED_BECAUSE.get(
+                check.gate, "retired: this check no longer runs")
         else:
             hit = [tok for tok in check.ambiguity if tok in ambiguous]
             detail = (f"could not run ({hit[0]}): it had input to judge and no "

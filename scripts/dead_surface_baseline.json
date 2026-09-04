@@ -1,5 +1,5 @@
 {
-  "_because": "Initial pin, 2026-09-01: the measured state of the tree on the day the gate landed. Nothing here is approved; it is the debt the ratchet now stops growing.",
+  "_because": "2026-09-04: the corpus grew, so the counts fell. This checker asks 'does anything reach this?', and on 2026-09-04 the operator's apps moved into apps/, its own git repository, invisible to the platform's git ls-files. Five platform surfaces then read as dead having lost no caller at all: the app shell helpers and both chat docks (imported by app module.tsx through the @shell/ seam), services.app_persona (imported by three app personas), and the relay API area. The fix was to the SCAN, not to the pins -- nested-repo tracked files are in the corpus now, app Python imports count as imports, and reachability through @shell/ is followed transitively. Pinning those five as deliberately-dead would have been false and would have hidden them the next time they really did die. Net: frontend 4->1, backend 19->17, api areas 3->2.",
   "top_level_routes_absent_from_nav": {
     "/marketplace": {},
     "/stores": {}
@@ -18,8 +18,6 @@
     "db.prune_test_threads": {},
     "db.repair_branch_heads": {},
     "db.repair_chain_order": {},
-    "scripts.atlas_backfill_embeddings": {},
-    "scripts.migrate_plaid_per_user": {},
     "scripts.migrate_to_owned": {},
     "services.dispatch_grants": {},
     "services.memory_keeper": {},
@@ -30,7 +28,6 @@
     "workshop_public_app": {}
   },
   "unreferenced_frontend_modules": {
-    "frontend/src/lib/devMode.bundleProbe.ts": {},
-    "frontend/src/pages/apps/birds/specLocalize.verify.ts": {}
+    "frontend/src/lib/devMode.bundleProbe.ts": {}
   }
 }

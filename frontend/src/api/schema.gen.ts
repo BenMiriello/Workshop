@@ -15518,7 +15518,7 @@ export interface components {
             /** Query */
             query: string;
             /** Results */
-            results: components["schemas"]["routes__notes__SearchHit"][];
+            results: components["schemas"]["notes_app__routes__SearchHit"][];
         };
         /**
          * ServiceLog
@@ -18130,6 +18130,35 @@ export interface components {
             /** Text */
             text?: string | null;
         };
+        /** Backlinks */
+        notes_app__routes__Backlinks: {
+            /** Backlinks */
+            backlinks: components["schemas"]["Backlink"][];
+            /** Count */
+            count: number;
+            /** Path */
+            path: string;
+        };
+        /** NoteDeleted */
+        notes_app__routes__NoteDeleted: {
+            /** Deleted */
+            deleted: boolean;
+            /** Path */
+            path: string;
+        };
+        /**
+         * SearchHit
+         * @description One MATCHING LINE, not one matching note: a note that matches twice
+         *     appears twice, which is why `limit` bounds lines rather than files.
+         */
+        notes_app__routes__SearchHit: {
+            /** Line */
+            line: number;
+            /** Path */
+            path: string;
+            /** Snippet */
+            snippet: string;
+        };
         /**
          * DiffFile
          * @description One changed file. `status` is git's two-character XY porcelain code;
@@ -18391,35 +18420,6 @@ export interface components {
         routes__model_providers_routes__CredentialIn: {
             /** Value */
             value: string;
-        };
-        /** Backlinks */
-        routes__notes__Backlinks: {
-            /** Backlinks */
-            backlinks: components["schemas"]["Backlink"][];
-            /** Count */
-            count: number;
-            /** Path */
-            path: string;
-        };
-        /** NoteDeleted */
-        routes__notes__NoteDeleted: {
-            /** Deleted */
-            deleted: boolean;
-            /** Path */
-            path: string;
-        };
-        /**
-         * SearchHit
-         * @description One MATCHING LINE, not one matching note: a note that matches twice
-         *     appears twice, which is why `limit` bounds lines rather than files.
-         */
-        routes__notes__SearchHit: {
-            /** Line */
-            line: number;
-            /** Path */
-            path: string;
-            /** Snippet */
-            snippet: string;
         };
         /** FileWriteIn */
         routes__projects__FileWriteIn: {
@@ -29887,7 +29887,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["routes__notes__Backlinks"];
+                    "application/json": components["schemas"]["notes_app__routes__Backlinks"];
                 };
             };
             /** @description Validation Error */
@@ -30057,7 +30057,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["routes__notes__NoteDeleted"];
+                    "application/json": components["schemas"]["notes_app__routes__NoteDeleted"];
                 };
             };
             /** @description Validation Error */

@@ -2,20 +2,26 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["scripts/shoot.mjs"],
-      "project": ["scripts/*.mjs"]
+      "entry": [
+        "scripts/shoot.mjs"
+      ],
+      "project": [
+        "scripts/*.mjs"
+      ]
     },
     "frontend": {
       "entry": [
         "src/main.tsx",
-        "src/pages/apps/birds/standalone/main.tsx",
         "vite.config.ts",
-        "vite.springer.config.ts",
         "**/*.test.ts",
         "**/*.test.tsx"
       ],
-      "project": ["src/**/*.{ts,tsx}"],
-      "ignore": ["src/api/schema.gen.ts"]
+      "project": [
+        "src/**/*.{ts,tsx}"
+      ],
+      "ignore": [
+        "src/api/schema.gen.ts"
+      ]
     },
     "packages/ui": {
       "entry": [
@@ -27,9 +33,15 @@
         "**/*.test.ts",
         "**/*.test.tsx"
       ],
-      "project": ["src/**/*.{ts,tsx,mjs}"]
+      "project": [
+        "src/**/*.{ts,tsx,mjs}"
+      ]
     }
   },
-  "ignoreDependencies": [".*"],
-  "ignoreBinaries": [".*"]
+  "ignoreDependencies": [
+    ".*"
+  ],
+  "ignoreBinaries": [
+    ".*"
+  ]
 }

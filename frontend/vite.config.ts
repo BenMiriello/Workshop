@@ -232,6 +232,25 @@ export default defineConfig({
       ...optionalAliases(),
     ],
   },
+  // VITEST. The `include` is widened past this package on purpose. An extracted
+  // app's frontend lives in `apps/<slug>/ui/`, outside this workspace, and when
+  // the apps moved out on 2026-09-04 their unit tests moved with them and
+  // stopped being collected -- silently, since a vitest run that finds fewer
+  // files still reports success.
+  //
+  // The Python half of exactly this problem was solved the same day, by
+  // `testpaths = tests ../apps/*/tests` in backend/pytest.ini. This is the
+  // TypeScript half of it, and it names no app for the same reason that line
+  // does not.
+  //
+  // On a fresh clone `apps/` does not exist, the pattern matches nothing, and
+  // the run is this package's alone.
+  test: {
+    include: [
+      "src/**/*.{test,spec}.{ts,tsx}",
+      "../apps/*/ui/**/*.{test,spec}.{ts,tsx}",
+    ],
+  },
   server: {
     // Bound to loopback, NOT 0.0.0.0: this dev server proxies /api to the
     // finance/agent backend, so a LAN-reachable bind exposed bank data to the

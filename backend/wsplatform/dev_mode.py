@@ -120,13 +120,20 @@ def is_in_self_repo(path: str | Path) -> bool:
     """True if `path` lies INSIDE the platform's git repo, at any depth.
 
     `is_self_dir` asks whether a path IS the root, which is the wrong question
-    for anything about committing. `backend/`, `shared/`, `apps/` and
-    `branches/` all resolve to the platform repo, and `git add -A` is repo-wide
-    no matter which subdirectory it runs from -- so a turn working in any of
-    them passed the exact-equality check and then auto-committed the entire
-    monorepo, including whatever every other agent had open at that moment.
-    Observed 2026-08-13 in commit cf3eabd. `projects/*` are excluded correctly
-    either way: they carry their own .git, so their toplevel is themselves.
+    for anything about committing. `backend/`, `shared/` and `branches/` all
+    resolve to the platform repo, and `git add -A` is repo-wide no matter which
+    subdirectory it runs from -- so a turn working in any of them passed the
+    exact-equality check and then auto-committed the entire monorepo, including
+    whatever every other agent had open at that moment. Observed 2026-08-13 in
+    commit cf3eabd.
+
+    A NESTED REPO IS ITS OWN TREE and is deliberately not protected here:
+    `projects/*` always carried their own `.git`, and `apps/` acquired one on
+    2026-09-04 when the operator's apps left this repo. Committing there commits
+    that repo and cannot reach the platform's index, which is the whole thing
+    this predicate is defending. This paragraph used to list `apps/` among the
+    paths that resolve to the platform repo; that was true until it wasn't, and
+    the rule below never needed editing because it asks git rather than a list.
 
     Resolved through git rather than by string prefix so a symlinked or bind-
     mounted path cannot sneak past, and so a nested repo is correctly treated as
