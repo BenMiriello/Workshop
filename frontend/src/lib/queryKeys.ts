@@ -200,4 +200,14 @@ export const queryKeys = {
   inbox: {
     list: (limit: number) => ["inbox", limit] as const,
   },
+
+  /**
+   * WHICH BUILD THE EDGE IS SERVING. One conditional GET of `/index.html`,
+   * answered 304 from an ETag when nothing changed, read for the hashed entry
+   * script inside it. No argument: there is one document and one answer, and
+   * every tab asking is asking the same question.
+   */
+  build: {
+    entry: () => ["build", "entry"] as const,
+  },
 } as const;
