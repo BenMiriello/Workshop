@@ -48,7 +48,24 @@ _PASSING_CRITERION = [{"criterion": "the change carries its gates",
 
 # A canonical stub marker. reviewer.sh fails `new_stubs` on it, unconditionally
 # and on every tree, which is what makes the FAILING gate below deterministic.
-_STUBBED_SOURCE = "def unfinished():\n    # TODO: finish this\n    return None\n"
+#
+# ASSEMBLED, not written out, for the same reason `scripts/done_gate.py` spells
+# its own pattern table in halves: the stub scan reads the whole working-tree
+# text of every CHANGED file, so a literal here made this test module
+# unmaintainable -- any edit to it failed the gate on a marker the file exists
+# to fabricate. Hit on 2026-09-04. The assembled value is byte-identical, which
+# `test_the_fixture_is_still_a_real_stub_marker` below asserts.
+_STUBBED_SOURCE = "def unfinished():\n    # " + "TODO" + ": finish this\n    return None\n"
+
+
+def test_the_fixture_is_still_a_real_stub_marker():
+    """The fixture is assembled rather than written out, so assert it still IS
+    what it claims: `reviewer.sh` must fail `new_stubs` on this exact text, and
+    a clever refactor of the concatenation that changed a byte would make every
+    gate test below pass for the wrong reason."""
+    assert _STUBBED_SOURCE == "def unfinished():\n    # TO" "DO: finish this\n    return None\n"
+    import re
+    assert re.search(r"\bTO" "DO:", _STUBBED_SOURCE), "no longer a canonical stub marker"
 
 
 def _git(cwd: Path, *args: str) -> str:

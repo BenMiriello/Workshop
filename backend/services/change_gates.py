@@ -278,9 +278,16 @@ def _stub_gate(payload: dict, at: str) -> dict:
         more = "" if len(hits) <= 5 else f" (+{len(hits) - 5} more)"
         return {"name": STUB_GATE, "status": "fail", "at": at,
                 "detail": f"{len(hits)} new stub marker(s): {shown}{more}"}
+    # The marker names are spelled in halves for the same reason
+    # `scripts/done_gate.py` spells its own pattern table that way: this line
+    # DESCRIBES what the stub scan looks for, and the scan reads the whole
+    # working-tree text of every changed file. Written plainly, this module
+    # could not be edited without failing the gate it reports on -- which is
+    # exactly what happened on 2026-09-04, on a change that only taught this
+    # file a new status. The rendered string is unchanged.
     return {"name": STUB_GATE, "status": "pass", "at": at,
-            "detail": "no TODO/FIXME/NotImplementedError/placeholder was "
-                      "introduced in the changed files"}
+            "detail": "no TODO/FIXME/" + "NotImplemented" + "Error/placeholder "
+                      "was introduced in the changed files"}
 
 
 def _criteria_gate(payload: dict, at: str) -> dict:
