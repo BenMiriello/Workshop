@@ -275,6 +275,12 @@ class Turn:
     # name of its own rather than the integer 0 standing in for it. See
     # docs/decisions/0018.
     cut_head: list[str] = field(default_factory=list)
+    # The prompt size the model last reported for THIS turn, so the composer's
+    # meter can move while the turn runs instead of showing the previous turn's
+    # number for however long it takes. Pushed on the wire as a `context` event
+    # AND persisted into the live snapshot, because the wire only reaches a tab
+    # that is streaming right now.
+    context_tokens: int = 0
     # Can a message be handed to this turn while it runs? False for two kinds:
     #
     #   A SLASH COMMAND (`/compact`, `/clear`, `/model`) runs, reports, and exits
@@ -2895,7 +2901,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         try:
             chat_store.update_turn(
                 turn.thread_id, turn.id, turn.segments, _turn_content(turn),
-                turn.cut_head, journal_offset=offset)
+                turn.cut_head, journal_offset=offset,
+                context_tokens=turn.context_tokens)
         except Exception as e:  # pragma: no cover — defensive
             log.debug("turn %s: incremental persist failed: %s", turn.id, e)
 
@@ -2924,6 +2931,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                 ctx = _ctx_tokens_from_usage(payload.get("usage"))
                 if ctx and ctx != state["last_ctx"]:
                     state["last_ctx"] = ctx
+                    turn.context_tokens = ctx
                     # The meter's live feed. Without this the reading exists
                     # only in `state` until finalize, so the composer meter
                     # cannot move during a turn no matter what the client does:

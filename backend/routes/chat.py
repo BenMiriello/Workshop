@@ -1332,33 +1332,51 @@ async def spawn_task(thread_id: str, body: SpawnTask):
     # several seconds" is that, and the answer is that a button must not wait
     # for it. The canonical-hash tier is pure computation and stays.
     from services import task_dedup
-    result = task_dedup.dedup_add(
-        root, text=text, acceptance=acceptance,
-        priority=body.priority or 0,
-        effort=(body.effort or "").strip() or None,
-        type=(body.type or "").strip() or None,
-        source={"kind": "chat", "ref": thread_id},
-        # The operator asked for the work; the ASSISTANT wrote the spec. `source`
-        # records the first, `scoped_by` the second, and conflating them is what
-        # makes a bad spec untraceable — the field would say the operator wrote a
-        # paragraph a model actually wrote. Distilled-from-thread specs are the
-        # main way tickets get filed, so this is the common case, not an edge.
-        scoped_by="agent:chat",
-        # `todo`, both for "File ticket" and "File and run". This endpoint is only
-        # ever reached by the operator clicking a button in the ticket-drafts
-        # dialog or on a task-proposal card, having read and often edited the
-        # draft first. That click IS the approval, and making it land as a `draft`
-        # for a second approval would be the "say the magic word" step the
-        # operator has explicitly rejected.
-        #
-        # `draft` is for filings NOBODY looked at: a task-patch block the
-        # assistant emitted mid-reply (services/task_scope), the triager turning
-        # a note into a ticket, and imports from an external tracker.
-        status="todo",
-        # SOMEONE IS WATCHING A SPINNER, so the comparison that costs seconds
-        # runs after this returns (below) instead of inside it.
-        semantic=False,
-    )
+    try:
+        result = task_dedup.dedup_add(
+            root, text=text, acceptance=acceptance,
+            priority=body.priority or 0,
+            effort=(body.effort or "").strip() or None,
+            type=(body.type or "").strip() or None,
+            source={"kind": "chat", "ref": thread_id},
+            # The operator asked for the work; the ASSISTANT wrote the spec. `source`
+            # records the first, `scoped_by` the second, and conflating them is what
+            # makes a bad spec untraceable — the field would say the operator wrote a
+            # paragraph a model actually wrote. Distilled-from-thread specs are the
+            # main way tickets get filed, so this is the common case, not an edge.
+            scoped_by="agent:chat",
+            # `todo`, both for "File ticket" and "File and run". This endpoint is only
+            # ever reached by the operator clicking a button in the ticket-drafts
+            # dialog or on a task-proposal card, having read and often edited the
+            # draft first. That click IS the approval, and making it land as a `draft`
+            # for a second approval would be the "say the magic word" step the
+            # operator has explicitly rejected.
+            #
+            # `draft` is for filings NOBODY looked at: a task-patch block the
+            # assistant emitted mid-reply (services/task_scope), the triager turning
+            # a note into a ticket, and imports from an external tracker.
+            status="todo",
+            # SOMEONE IS WATCHING A SPINNER, so the comparison that costs seconds
+            # runs after this returns (below) instead of inside it.
+            semantic=False,
+            # THE ACCEPTANCE GATE DOES NOT APPLY TO THIS PATH, because the surfaces
+            # that reach it (the task-proposal card, the ticket dialog) carry only
+            # scope/title/body and have NO field for a structured executable
+            # acceptance. Holding a chat filing to `require_acceptance` therefore
+            # refused EVERY click, and the refusal ValueError escaped as a 500:
+            # tickets were simply unfileable from chat. An operator clicking File
+            # IS the approval, and the executable finish line is enforced where a
+            # worker actually runs (the reviewer gate), not at file time. The
+            # direct Work-UI create (POST /api/tasks) DOES carry an acceptance
+            # field and stays gated. See services/ticket_format for the gate and
+            # services/ticket_readiness for the soft body-label checklist the card
+            # still surfaces as a non-blocking nudge.
+            require_acceptance=False,
+        )
+    except ValueError as e:
+        # Any producer refusal (an empty spec, a future gate) is a clean 422, never
+        # an unhandled 500. tasks_all.create does the same for POST /api/tasks.
+        raise HTTPException(422, str(e))
     # The semantic comparison, off the request. It LINKS a near-duplicate rather
     # than merging one, because a merge decided after the operator has watched
     # his ticket appear would take it away again.
@@ -2289,6 +2307,41 @@ async def thread_context(thread_id: str):
     model = _resolve_model(None, t, provider)
     stored = t.get("context_tokens")
     measured = int(stored) if isinstance(stored, (int, float)) and stored > 0 else 0
+
+    # THE RUNNING TURN'S OWN READING WINS, when there is one.
+    #
+    # `context_tokens` on the thread is written at COMMIT, so during a turn it
+    # is the previous turn's number. That is invisible on a short turn and
+    # badly wrong on a long one: an agentic turn here routinely runs for an
+    # hour and grows the prompt by an order of magnitude, and the meter sat on
+    # the number from before it started the whole time, then jumped when the
+    # turn landed. The operator read 2% during a 90-minute turn that finished at
+    # 24% and reasonably concluded the meter was broken.
+    #
+    # The live reading already existed: the driver pushes a `context` event on
+    # the wire every time the model reports a new prompt size. But the wire only
+    # reaches a tab that is streaming at that moment, so a reload, a second tab,
+    # or a reconnect after a backend restart all fell back to this endpoint and
+    # got the stale number. It is now persisted into the live snapshot beside
+    # the segments, which is what makes it readable here.
+    live_used = 0
+    try:
+        run = chat_log.active_turn(thread_id)
+        if run:
+            live_used = int(((run.get("live") or {}).get("meta") or {})
+                            .get("context_tokens") or 0)
+    except Exception:  # pragma: no cover - the meter must not break the composer
+        live_used = 0
+    if live_used > 0:
+        window = _window_for(model, live_used)
+        return {
+            "used_tokens": live_used,
+            "window_tokens": window,
+            "pct": min(100, round(live_used / window * 100)),
+            "model": model,
+            "source": "live",
+        }
+
     # Let the measurement correct a stale table (see `_window_for`).
     window = _window_for(model, measured)
 

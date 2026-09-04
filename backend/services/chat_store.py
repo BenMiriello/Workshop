@@ -1655,7 +1655,8 @@ def begin_turn(thread_id: str, turn_id: str, model: str | None = None,
 
 def update_turn(thread_id: str, turn_id: str, segments: list[dict], content: str,
                 cut_head: list[str] | None = None,
-                journal_offset: int | None = None) -> None:
+                journal_offset: int | None = None,
+                context_tokens: int | None = None) -> None:
     """Overwrite the running turn's live snapshot. No-op if it is not the active
     turn any more (it finished, or something took the thread over).
 
@@ -1698,12 +1699,16 @@ def update_turn(thread_id: str, turn_id: str, segments: list[dict], content: str
     # recorded `at_segment 0` with a cut id, the backend restarted at 21:40:32,
     # and the live snapshot thereafter carried 56 segments and no `cut_head` at
     # all. See docs/decisions/0018.
-    if not cut_head:
+    if not cut_head or not context_tokens:
         prev = chat_log.read_live(thread_id)
         if prev is not None and prev.get("turn_id") == turn_id:
-            carried = (prev.get("meta") or {}).get("cut_head")
-            if carried:
-                cut_head = list(carried)
+            pmeta = prev.get("meta") or {}
+            if not cut_head and pmeta.get("cut_head"):
+                cut_head = list(pmeta["cut_head"])
+            # A RE-ATTACHED TURN HAS NOT SEEN A USAGE BLOCK YET, and the reading
+            # it already published must not drop back to the previous turn's.
+            if not context_tokens and pmeta.get("context_tokens"):
+                context_tokens = int(pmeta["context_tokens"])
     chat_log.write_live_sync(thread_id, {
         "turn_id": turn_id,
         "content": content,
@@ -1719,8 +1724,17 @@ def update_turn(thread_id: str, turn_id: str, segments: list[dict], content: str
         # emitted anything. It rides in `meta` beside the segments because the
         # two are read together and a reader that has one without the other
         # cannot place those messages. See docs/decisions/0018.
+        # `context_tokens` is the size of the prompt the model last reported for
+        # THIS turn. It rides here for the same reason `cut_head` does: it is
+        # live state that otherwise exists only on the wire, so a client that is
+        # not currently streaming (a reconnect, a second tab, a reload) cannot
+        # see it, and GET /context falls back to the LAST turn's number. On a
+        # turn that runs for an hour that fallback is not stale by a little, it
+        # is a different conversation's number.
         "meta": {"segments": segments, "turn_id": turn_id,
-                 **({"cut_head": list(cut_head)} if cut_head else {})},
+                 **({"cut_head": list(cut_head)} if cut_head else {}),
+                 **({"context_tokens": int(context_tokens)}
+                    if context_tokens else {})},
     })
 
 

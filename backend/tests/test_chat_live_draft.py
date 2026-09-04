@@ -285,3 +285,53 @@ class TestACutPositionSurvivesAReattach:
         _claim(thread, turn_id="r2")
         chat_store.update_turn(thread, "r2", _segs(2), "fresh")
         assert (chat_log.read_live(thread)["meta"]).get("cut_head") is None
+
+
+class TestTheLiveContextReadingSurvivesTheWire:
+    """The composer's meter reads the RUNNING turn, not the last one.
+
+    `context_tokens` on the thread is written at commit, so during a turn
+    GET /context served the previous turn's number. Invisible on a short turn;
+    on an agentic turn that runs for an hour and grows the prompt by an order of
+    magnitude, it is a different conversation's number. The operator read 2%
+    through a 90-minute turn that finished at 24% and reasonably concluded the
+    meter was broken (2026-09-03).
+
+    The live reading already existed on the wire as a `context` event, but the
+    wire only reaches a tab streaming at that moment: a reload, a second tab, or
+    a reconnect after a restart all fell back to the stale number. It is
+    persisted into the live snapshot for the same reason `cut_head` is.
+    """
+
+    def test_the_reading_is_written_into_the_live_snapshot(self, thread):
+        _claim(thread)
+        chat_store.update_turn(thread, "r1", _segs(), "so far", context_tokens=41000)
+        assert (chat_log.read_live(thread)["meta"]).get("context_tokens") == 41000
+
+    def test_a_growing_reading_replaces_the_earlier_one(self, thread):
+        _claim(thread)
+        chat_store.update_turn(thread, "r1", _segs(), "a", context_tokens=1000)
+        chat_store.update_turn(thread, "r1", _segs(4), "b", context_tokens=90000)
+        assert (chat_log.read_live(thread)["meta"]).get("context_tokens") == 90000
+
+    def test_a_re_attached_turn_does_not_lose_the_reading(self, thread):
+        """A rebuilt Turn has seen no usage block yet, so it persists 0. That
+        must not drop the meter back to the previous turn's number."""
+        _claim(thread)
+        chat_store.update_turn(thread, "r1", _segs(), "a", context_tokens=90000)
+        chat_store.update_turn(thread, "r1", _segs(6), "after the restart")
+        assert (chat_log.read_live(thread)["meta"]).get("context_tokens") == 90000
+
+    def test_a_new_turn_does_not_inherit_the_dead_turn_s_reading(self, thread):
+        _claim(thread)
+        chat_store.update_turn(thread, "r1", _segs(), "a", context_tokens=90000)
+        chat_store.commit_turn(thread, "r1", _segs(), "done")
+        _claim(thread, turn_id="r2")
+        chat_store.update_turn(thread, "r2", _segs(2), "fresh")
+        assert (chat_log.read_live(thread)["meta"]).get("context_tokens") is None
+
+    def test_the_active_turn_snapshot_reports_it(self, thread):
+        _claim(thread)
+        chat_store.update_turn(thread, "r1", _segs(), "a", context_tokens=41000)
+        run = chat_log.active_turn(thread)
+        assert (run["live"]["meta"]).get("context_tokens") == 41000

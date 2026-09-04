@@ -104,13 +104,36 @@ export default function ContextMeter({
   // THE TRIGGER LIST, as a dependency array, which is what it always was: the
   // thread, the compaction nonce, the streaming flip (both edges of it), and
   // the message count parked at `-1` while a turn runs -- the transcript grows
-  // every few seconds during a turn and the answer cannot change until it
-  // lands. Nothing else may fire this read.
+  // every few seconds during a turn, and the SIZE of it is not what this reads.
+  // Nothing else may fire this read except the interval below.
   const trigger = streaming ? -1 : messages.length;
   const refetchCtx = ctxQuery.refetch;
   useEffect(() => {
     if (activeId) void refetchCtx();
   }, [activeId, nonce, streaming, trigger, refetchCtx]);
+
+  // AND WHILE A TURN RUNS, ON A TIMER.
+  //
+  // Parking the read for the length of a turn rested on "the answer cannot
+  // change until it lands", which was true of the server and is not any more:
+  // GET /context now prefers the running turn's own reported prompt size over
+  // the last committed one. The stream already carries that number as a
+  // `context` event, but only to a tab attached at the instant it is pushed, so
+  // a reload, a second tab, or a reconnect after a backend restart saw a meter
+  // frozen at whatever the previous turn ended on.
+  //
+  // Measured 2026-09-03: 2% on screen for a 90-minute turn that finished at
+  // 24%. A turn here routinely runs for an hour, so "until it lands" is not a
+  // short wait, and a confidently wrong number is worse than a coarse one.
+  //
+  // 20s because this is a progress reading, not a control: it costs one small
+  // request that answers from the live snapshot without assembling a prompt,
+  // and it is well under the rate at which the number visibly moves.
+  useEffect(() => {
+    if (!activeId || !streaming) return;
+    const id = window.setInterval(() => { void refetchCtx(); }, 20_000);
+    return () => window.clearInterval(id);
+  }, [activeId, streaming, refetchCtx]);
 
   // The reading on screen IS the cache entry. No copy, so there is nothing to
   // keep in step with it.
