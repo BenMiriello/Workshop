@@ -130,8 +130,22 @@ class TestTheEdgeCarriesTheUpgrade:
         # The blocklist covers loopback-trusted endpoints, which would otherwise
         # inherit this proxy's loopback trust. It has to apply to the socket path
         # too, or the upgrade becomes a way around it.
+        #
+        # THE PREFIX IS DERIVED, NOT TYPED. This asserted "/api/tools/anything"
+        # and had been failing for as long as the baseline records, because
+        # "/tools" is not on the blocklist and there is no sign it ever was --
+        # the list is `/relay`, `/events`, `/auto-pr`, and one entry (`/services`)
+        # was deliberately REMOVED on 2026-08-20 when blocking it broke two real
+        # features. A test that hardcodes one member of a list somebody curates
+        # fails for the list changing rather than for the property breaking, and
+        # a red test nobody can act on is a test nobody reads. Reading the real
+        # list means this keeps testing the property no matter which paths are
+        # on it.
         edge_app, made, _sent = edge
-        with pytest.raises(Exception):
-            with TestClient(edge_app.app).websocket_connect("/api/tools/anything"):
-                pass
-        assert made == [], "a blocked path was still dialed upstream"
+        assert edge_app._BLOCKED_PREFIXES, "nothing is blocked; this proves nothing"
+        for prefix in edge_app._BLOCKED_PREFIXES:
+            made.clear()
+            with pytest.raises(Exception):
+                with TestClient(edge_app.app).websocket_connect(f"/api{prefix}/anything"):
+                    pass
+            assert made == [], f"blocked path {prefix} was still dialed upstream"
