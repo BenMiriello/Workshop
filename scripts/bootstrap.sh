@@ -102,6 +102,12 @@ if [ "$DEV" = "1" ] && [ -f "$REPO_ROOT/backend/requirements-dev.txt" ]; then
 fi
 echo "  dependencies installed"
 
+# Any app present in this checkout gets installed into the same venv, so its
+# `workshop.apps` entry point exists and the catalog can resolve it. A fresh
+# clone has no `apps/` directory and this is a no-op; it is here so that an
+# instance that DOES have apps never boots with an empty catalog and no error.
+"$REPO_ROOT/backend/.venv/bin/python" "$REPO_ROOT/scripts/install_apps.py" || true
+
 # ---- 4. node ----------------------------------------------------------------
 if [ "$NO_FRONTEND" = "0" ]; then
   step "node workspace"

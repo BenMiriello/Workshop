@@ -301,11 +301,35 @@ fi
 #
 # This runs for --force too. --force means "do not wait for the turn to finish",
 # which is a scheduling decision; it has never meant "start code that cannot run".
+# EVERY APP PRESENT IN THE CHECKOUT IS INSTALLED BEFORE THE BACKEND COMES BACK.
+#
+# An app's backend reaches the platform through a `workshop.apps` entry point,
+# which only exists once the app's distribution is installed into this venv.
+# Nothing installed it, so on 2026-09-04 a correctly extracted set of apps came
+# back up as an EMPTY catalog: registry said eight installed, catalog resolved
+# none, zero app routes served, and no error anywhere -- an empty catalog is
+# legitimate for a slimmed instance, so nothing could tell the difference.
+#
+# It runs HERE rather than in a runbook because a step someone has to remember
+# is a step that gets forgotten, and this one is silent when it is forgotten.
+# It is a no-op (one importlib.metadata read) when everything is installed.
+ensure_apps_installed() {
+  local py="$REPO_ROOT/backend/.venv/bin/python"
+  [ -x "$py" ] || return 0
+  [ -f "$REPO_ROOT/scripts/install_apps.py" ] || return 0
+  "$py" "$REPO_ROOT/scripts/install_apps.py" --quiet || {
+    echo "restart: WARNING: could not install every app into the backend venv;" >&2
+    echo "         the catalog may come up short. python3 scripts/install_apps.py --check" >&2
+  }
+}
+
 preflight_import() {
   local py="$REPO_ROOT/backend/.venv/bin/python"
   [ -x "$py" ] || return 0   # no venv to check with: do not invent a failure
   ( cd "$REPO_ROOT/backend" && "$py" -c 'import sys; sys.path.insert(0, "."); import main' ) 2>&1
 }
+
+ensure_apps_installed
 
 if [ "${SKIP_PREFLIGHT:-0}" != "1" ]; then
   if ! pf_out="$(preflight_import)"; then
