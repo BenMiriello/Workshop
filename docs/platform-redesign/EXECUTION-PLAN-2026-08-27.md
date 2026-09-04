@@ -74,11 +74,32 @@ This is the single buildable primitive named by both
 
 ### C-3. Nothing gives an interactive chat a lease. NOT FIXED.
 
-**This is the largest single piece of dead code in the platform.**
-`WORKSHOP_TREE_LEASE_MOUNT` is off. It cannot be turned on, because
-`tree_access.decide` returns read-only for anything that does not hold a lease,
-and no chat can acquire one: `session_defaults.resolve()` and `.choose()` have
-**zero non-test callers**, and `reader_staleness.py` has zero callers anywhere.
+**STALE AS OF 2026-09-04. Re-measure before repeating it.** The paragraph below
+was true when written and stopped being true within days; it was then read as a
+live blocker for a week, which is the failure CLAUDE.md names as "a stale
+blocker is a permanent excuse". Measured 2026-09-04:
+`chat_worktree.enter` is called from `routes/chat.py:3765`, and
+`session_defaults.resolve()`/`.choose()` have real callers at
+`chat_worktree.py:274`, `302` and `529`. Only `reader_staleness.py` still has
+zero callers, and that is B8, not this.
+
+The real remaining obstacle was smaller and is fixed in `d9d36677`: the
+write-blocked path refused to auto-create a worktree for any chat whose
+`context_key` did not start with `project:` -- which is exactly the operator's
+own chat, since `DevelopmentContextProvider` keys itself `development` by
+design. Arming the flag would have dropped the one chat that cuts the most
+branches into the manual picker.
+
+The flag is still OFF. Arming it is a global behaviour change on a live
+instance and wants its own step with a restart it can watch.
+
+The original text, for the record:
+
+> **This is the largest single piece of dead code in the platform.**
+> `WORKSHOP_TREE_LEASE_MOUNT` is off. It cannot be turned on, because
+> `tree_access.decide` returns read-only for anything that does not hold a lease,
+> and no chat can acquire one: `session_defaults.resolve()` and `.choose()` have
+> **zero non-test callers**, and `reader_staleness.py` has zero callers anywhere.
 
 So: B1's enforcement, B8's whole module, the `write_blocked` client event, and
 the branch-on-write rule in `branches-worktrees-and-environments-2026-08-20.md`

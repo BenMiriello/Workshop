@@ -9,8 +9,18 @@
   the lease -- and the lease now exists, so B1 is next.
 - **CORRECTED 2026-08-27: that status line is wrong and has been since
   2026-08-23. B1 and B5 through B8 all shipped.** The whole of B0 to B8 is
-  built. B1 remains behind `WORKSHOP_TREE_LEASE_MOUNT`, which is off and cannot
-  safely be armed because nothing gives an interactive chat a lease. The
+  built. B1 remains behind `WORKSHOP_TREE_LEASE_MOUNT`, which is off.
+- **CORRECTED AGAIN 2026-09-04: "cannot safely be armed because nothing gives an
+  interactive chat a lease" is STALE and had been for a week.** Measured today:
+  `chat_worktree.enter` is called from `routes/chat.py:3765`, and
+  `session_defaults.resolve`/`.choose` have real callers at
+  `chat_worktree.py:274, 302, 529`. The connection C-3 said was missing exists.
+  What was still missing until today is smaller and was the real obstacle: the
+  write-blocked path refused to auto-create a worktree for any chat whose
+  `context_key` did not start with `project:`, which is precisely the operator's
+  own chat, so arming would have dropped him into the manual picker the design
+  exists to delete. Fixed in `d9d36677`. `reader_staleness.py` still has zero
+  callers anywhere; that is B8 and is a separate piece. The
   measured state, and the ordered plan for the rest of the platform around it,
   is [`EXECUTION-PLAN-2026-08-27.md`](EXECUTION-PLAN-2026-08-27.md). Read that
   before acting on any status line in this file.
