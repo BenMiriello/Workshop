@@ -41,10 +41,10 @@ occupancy is **UNMEASURED** here rather than reported as zero.
 | 8 | Prompt-budget chain | Nothing declares, measures or bounds a turn's prefix | `agent-context-plan-2026-08-24.md`; tickets `0e810bf9` `4614bfee` `c971b8f9` `f8fced4a` `1f0d6dcd` | **UNBUILT** | `grep -rn PROMPT_BLOCKS backend/ scripts/` → **0**; `ls scripts/check_prompt_size.py` → No such file; `grep -n "PROJECT.md" backend/services/semantic_index.py` → **0** |
 | 9 | Hosting / artifact / release chain | No artifact store, no release or deployment record | `hosting-apps-design-2026-08-24.md`, `app-artifact-spec-2026-08-24.md`; tickets `fb93c4d2` `9ed7a34b` `80709722` `0cae7ab2` | **UNBUILT** | `grep -rn "class Artifact\|class Release\|class Deployment" backend/ --include=*.py` → 0 (only sqlalchemy internals); `ls .runtime/artifacts` → No such directory |
 | 10 | Stage-5 runtime app loader (`86564637`) | Install an app without rebuilding the shell | `stage-5-app-loader-plan-2026-08-24.md` | **UNBUILT** | `grep -rn "importMap\|import-map" frontend/ backend/` → one comment, `frontend/src/apps/registry.tsx:54`, naming it as not built |
-| 11 | Delete the deploy subsystem (`726d75a9`) | It has never run once and still boots | `REVIEW-plan-vs-reality-2026-08-29.md` §5 Tier 1 row 7 | **UNBUILT** | `grep -n deploy backend/main.py` → `:25` imports `routes.deploys`, `:434` mounts it |
-| 12 | Delete `services/latitude.py` | Ordered deleted 2026-08-25; null on 100% of tickets | `REVIEW…` §5.1; `AUDIT-2026-08-31.md` | **UNBUILT** | `grep -rnE "from services(\.|.*import).*latitude" backend/ \| grep -v tests \| grep -v migrations` → **6 live import sites** (`db/ticket_sync.py`, `db/models.py`, `db/backfill.py`, `services/agents_registry.py`, `services/tasks.py`, `routes/projects.py`) |
-| 13 | `services/triager.py` (1,004 lines) never executed | Built, entrypoint script exists, zero importers | `WHY…` §5.1 | **UNBUILT (dead)** | `grep -rnE "from services(\.|.*import).*triager" backend/ \| grep -v tests \| grep -v migrations` → **0**; `scripts/triager_run.sh` exists and nothing calls it |
-| 14 | Zero declared command tools | Complete mechanism, empty registry | `tools-are-declared-2026-08-23.md`; `WHY…` §6 item 4 | **UNBUILT (unused)** | `cat .runtime/tools.json` → `{"tools": []}` |
+| 11 | Delete the deploy subsystem (`726d75a9`) | It has never run once and still boots | `REVIEW-plan-vs-reality-2026-08-29.md` §5 Tier 1 row 7 | **UNBUILT → DONE 2026-09-04** | `grep -n deploy backend/main.py` → `:25` imports `routes.deploys`, `:434` mounts it. **Scope correction:** the routes were NOT unreferenced — `AppOverviewTab.tsx:73` rendered `<DeploysPanel>` on a live route, so this was a backend+frontend vertical, not a backend deletion. **Stale premise in the ticket:** it claims the watcher logs on every boot; that loop was removed 2026-09-01 (`main.py:74-88`) |
+| 12 | Delete `services/latitude.py` | Ordered deleted 2026-08-25; null on 100% of tickets | ~~`REVIEW…` §5.1; `AUDIT-2026-08-31.md`~~ **CORRECTED: ticket `3b1c5432` + `work-status-contract-2026-08-24.md:159`** | **UNBUILT (scope was understated ~4x; deferred, inventory written into `3b1c5432`)** | ~~6 live import sites~~ **The original grep only matched `from services…import latitude` lines.** True surface: ~20 backend files, plus `scripts/ralph.sh:548` (shells `python3 -m services.latitude` and writes the resolved value into every sweep's instructions), `scripts/reviewer.sh` (LATITUDE decides block-vs-guess), `scripts/project_ralph.sh` (rc=7), `scripts/project_tasks.py --latitude`, the `ticket.latitude` column + `ck_ticket_latitude` constraint, and 4 frontend modules. Neither cited document contains the word "latitude": `grep -ic latitude docs/platform-redesign/REVIEW-plan-vs-reality-2026-08-29.md docs/platform-redesign/AUDIT-2026-08-31.md` → **0, 0**. Also conflicts with open ticket `77b22987` (SEC-A2) |
+| 13 | ~~`services/triager.py` (1,004 lines) never executed~~ **CORRECTED 2026-09-04: NOT DEAD** | It is the role runner for `role: triager` agents and the dispatcher calls it | `WHY…` §5.1 | **~~UNBUILT (dead)~~ → LIVE, KEPT** | The original grep was scoped to `backend/` and never looked in `scripts/`. `grep -n "triager" scripts/dispatch_triggers.sh` → `:534` `_dispatch_triager`, `:549` `from services import triager`, `:550` `triager.has_due_notes(scope_key)`, `:588` registered in `ROLE_HANDLERS`. `grep -rln "role: triager" agents/_templates/` → `note-triager.md`, `inbox-watcher.md`. This installation has no *instantiated* triager agent, which is an installation fact, not a dead mechanism |
+| 14 | ~~Zero declared command tools~~ **CORRECTED 2026-09-04: mechanism KEPT** | Complete, fully wired mechanism; the empty registry is instance state | `tools-are-declared-2026-08-23.md`; `WHY…` §6 item 4 | **~~UNBUILT (unused)~~ → KEPT; a tool declared to prove the path** | `git check-ignore -v .runtime/tools.json` → `.gitignore:24`, so `{"tools": []}` is a fact about THIS INSTALLATION and not about the product. The mechanism is wired: `backend/main.py:466` mounts `routes/tools.py`; `mcp/workshop_query_server.py:732-800` lists and dispatches; `agents_registry.py:490` and `llm_router.py:261,296` read its ID sets |
 | 15 | Run the bare ratchets on a schedule (`0f2f3fa6`) | Two silent upward drifts in one day motivated it | ticket `0f2f3fa6` | **UNBUILT** | `crontab -l` → no crontab; `systemctl --user list-timers` → `0 timers listed`; `ls /etc/systemd/system/*.timer` → only `backup.timer` |
 | 16 | Images do not survive compaction | The real diagnosis, unfiled | `WHY…` §6 item 8 (retracting the `build_streaming.py:2666` claim) | **UNBUILT, UNFILED** | ticket store search for `image\|attachment\|upload` in titles → **0 of 211** |
 | 17 | Messages out of order during a running turn (`ae9a6c08`, P100) | Two sends during one turn render in the wrong sequence | ticket `ae9a6c08` | **UNMEASURED** | No static decider exists. It needs a live two-send-during-one-turn repro against the built origin; grep cannot distinguish "fixed" from "not reproduced". The adjacent read-state bug WAS fixed (`efb38e6a`) and is a different defect |
@@ -148,12 +148,41 @@ these; `registry.tsx:54` says so in a comment.
 
 ## Items 11-13 — three deletions that were decided and not done
 
-`726d75a9` (deploy subsystem, still imported and mounted in `main.py`),
-`latitude.py` (6 live import sites, ordered deleted 2026-08-25), and
-`triager.py` (1,004 lines, zero importers, an entrypoint script nothing calls).
-**Smallest next step:** `latitude.py` first — it has the most import sites but
-the field is null on 100% of tickets, so every site deletes rather than
-migrates. **~3h for all three.**
+**REWRITTEN 2026-09-04 after each was verified individually. One of the three
+was not dead, and the other two were mis-sized. The original text is kept below
+struck through, because the way it was wrong is the point.**
+
+> ~~`726d75a9` (deploy subsystem, still imported and mounted in `main.py`),
+> `latitude.py` (6 live import sites, ordered deleted 2026-08-25), and
+> `triager.py` (1,004 lines, zero importers, an entrypoint script nothing calls).
+> **Smallest next step:** `latitude.py` first — it has the most import sites but
+> the field is null on 100% of tickets, so every site deletes rather than
+> migrates. **~3h for all three.**~~
+
+**What each turned out to be:**
+
+- **`726d75a9` (deploy) — DONE 2026-09-04**, but as a backend+frontend vertical
+  rather than the backend deletion this table implied. The routes had a live
+  caller: `AppOverviewTab.tsx:73` rendered `<DeploysPanel>` on a reachable
+  route. A route the frontend still calls is not dead, and deleting the backend
+  alone would have 404'd a panel in the operator's running installation.
+- **`latitude.py` — DEFERRED, and roughly four times bigger than stated.** The
+  "6 live import sites" figure came from a grep that only matched
+  `from services…import latitude` lines, so it missed every other kind of
+  reference: `scripts/ralph.sh` shells `python3 -m services.latitude` to resolve
+  the cascade into every sweep's instructions, `scripts/reviewer.sh` reads
+  LATITUDE to decide block-vs-guess, and there is a `ticket.latitude` column
+  with a check constraint plus four frontend modules. The full inventory now
+  lives in ticket `3b1c5432` with executable acceptance criteria. Deferred
+  deliberately: reviewer.sh is the completion gate other agents run, so this
+  cannot land mid-wave.
+- **`triager.py` — NOT DEAD. Kept.** See the corrected row 13 above.
+
+**The common failure in all three rows was one narrow grep, scoped to
+`backend/`, treated as proof of non-reference.** It could not see a shell
+dispatcher, a `python3 -m` invocation, a database constraint, or a frontend
+`fetch`. Before deleting anything on the strength of a grep in this file, run it
+again across `scripts/`, `frontend/src`, the migrations and the agent templates.
 
 ## Items 14-16 — three small, fully specified gaps
 
@@ -162,7 +191,14 @@ migrates. **~3h for all three.**
   `list_wakeups`, `cancel_wakeup`, `notify_operator` in
   `backend/mcp/workshop_query_server.py`; the clock at `chat_context.py:1272`),
   so the remaining gap is the declared-tool path having no first user. **~2h**
-  to declare one real tool and prove the path.
+  to declare one real tool and prove the path. **RESOLVED 2026-09-04 by
+  declaring a tool, not by deleting the mechanism.** `.runtime/tools.json` is
+  gitignored (`git check-ignore -v` → `.gitignore:24`), so an empty registry is
+  a fact about THIS INSTALLATION and says nothing about the product; the
+  mechanism itself is mounted, dispatched and read by three other services.
+  Deleting a shipped platform mechanism because one installation's untracked
+  state file is empty is the installation-vs-product confusion `CLAUDE.md`
+  names as the recurring defect.
 - `0f2f3fa6`: no cron, no systemd timer. **~1h.**
 - Image survival across compaction: unfiled, zero tickets. **File it first**;
   the fix is scoped by `WHY…` §6 item 8 and is not a per-turn injection change.
