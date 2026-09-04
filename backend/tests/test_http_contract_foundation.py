@@ -1,6 +1,10 @@
 """ADR 0023 (`docs/decisions/0023-the-http-contract.md`) foundation: the
-registered error handler, the `Page[T]` envelope, and the two exemplar
-conversions (`routes/health.py`, `routes/location.py`).
+registered error handler, the `Page[T]` envelope, and the one exemplar
+conversion that is still platform code (`routes/location.py`).
+
+The second exemplar was an app. Its three assertions left with it on 2026-09-04
+and are `apps/health/tests/test_health_contract.py` now: they tested that app's
+routes, not this ADR, and a fresh clone had no reason to ship them.
 
 Setup mirrors `test_ownership.py`: real `main.app` via TestClient, auth state
 in `tmp_path` so nothing here touches the real deployment's data.
@@ -32,8 +36,7 @@ def env(tmp_path, monkeypatch):
     auth_store.init_db()
     op = auth_store.create_user("operator@example.com", "password1")
     auth_store.set_operator(op["id"])
-    for d in ("location", "health"):
-        auth_store.set_domain_owner(d, op["id"])
+    auth_store.set_domain_owner("location", op["id"])
     return {"op": op, "tmp": tmp_path}
 
 
@@ -189,37 +192,5 @@ def test_location_history_delete_is_204_with_no_body(env):
     op = _client_for("operator@example.com", "password1")
     op.post("/api/location/update", json={"lat": 1.0, "lng": 1.0}, headers=CSRF)
     r = op.delete("/api/location/history", headers=CSRF)
-    assert r.status_code == 204
-    assert r.content == b""
-
-
-# ---------------------------------------------------------------- health.py
-
-
-def test_health_latest_is_the_mapping_unwrapped(env):
-    requires_app("health")
-    op = _client_for("operator@example.com", "password1")
-    r = op.get("/api/health/latest")
-    assert r.status_code == 200
-    # Empty store: {} directly, not {"metrics": {}}.
-    assert r.json() == {}
-
-
-def test_health_history_is_the_adr_0023_envelope(env):
-    requires_app("health")
-    op = _client_for("operator@example.com", "password1")
-    r = op.get("/api/health/history")
-    assert r.status_code == 200
-    body = r.json()
-    assert set(body) == {"items", "page"}
-    assert body["items"] == []
-    assert body["page"]["total"] == 0
-    assert body["page"]["limit"] == DEFAULT_PAGE
-
-
-def test_health_history_delete_is_204_with_no_body(env):
-    requires_app("health")
-    op = _client_for("operator@example.com", "password1")
-    r = op.delete("/api/health/history", headers=CSRF)
     assert r.status_code == 204
     assert r.content == b""

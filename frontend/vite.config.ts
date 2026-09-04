@@ -216,6 +216,18 @@ export default defineConfig({
     alias: [
       { find: /^@shared\//, replacement: path.resolve(__dirname, "../shared") + "/" },
       { find: /^@shared$/, replacement: path.resolve(__dirname, "../shared") },
+      // `@shell/...` is what an app under `apps/<slug>/ui/` imports when it needs
+      // something the shell owns and the kit does not export yet: the AppModule
+      // type, `lazyPage`, the generated API schema. An extracted app sits outside
+      // `frontend/`, so a relative `../../../lib/...` would not resolve and would
+      // silently re-couple the app to this repo's directory layout.
+      //
+      // This alias is a NAMED seam, not a permanent interface. Every specifier
+      // reached through it is a candidate for promotion into `@workshop/ui`
+      // (stage-4b-kit-promotions-2026-08-24.md); when the last one is promoted
+      // this alias goes away. Naming it is what makes that list countable — the
+      // relative imports it replaces were not.
+      { find: /^@shell\//, replacement: path.resolve(__dirname, "src") + "/" },
       // Empty unless an optional dependency is missing; see above.
       ...optionalAliases(),
     ],

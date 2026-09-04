@@ -38,23 +38,58 @@ export type { AppModule, AppStatus, CrumbNode };
 // `eager` because the shell needs the route table synchronously to render at
 // all. The modules themselves are tiny -- every page inside them is lazy -- so
 // eager costs the declarations and nothing else.
-const DISCOVERED = import.meta.glob<{ appModule?: AppModule }>(
+const IN_TREE = import.meta.glob<{ appModule?: AppModule }>(
   "../pages/apps/*/module.tsx",
   { eager: true },
 );
+
+// EXTRACTED apps: `apps/<slug>/ui/module.tsx`, outside this package entirely.
+// `apps/` is the operator's own overlay and is untracked by this repo, so on a
+// fresh clone this pattern matches NOTHING and the shell builds with an empty
+// catalog -- which is exactly what `check_fresh_clone.sh` asserts, now measured
+// by the build itself rather than by a separate scan.
+//
+// This is the build-time half of the loader. It gets an app's SOURCE out of the
+// platform repo, which is the requirement; it does not yet let an app be
+// installed without rebuilding the shell, which is the runtime import-map
+// loader in `stage-5-app-loader-plan-2026-08-24.md`. That plan is unchanged by
+// this and lands on the same files: an app already lives at `apps/<slug>/ui`
+// and already exports `appModule`, so stage 5 changes how these modules are
+// built and fetched, not where they are or what they declare.
+const EXTRACTED = import.meta.glob<{ appModule?: AppModule }>(
+  "../../../apps/*/ui/module.tsx",
+  { eager: true },
+);
+
+// An extracted app SHADOWS an in-tree one of the same id, the same way an
+// installed distribution shadows an in-tree declaration in the backend
+// (`app_registry._build_catalog`). Extraction is a sequence, not a flag day:
+// while it runs, some apps are here and some are there, and the moment an app's
+// files land in `apps/` it is the one that counts -- so a half-deleted in-tree
+// copy can never win and render stale code.
+function declared(mods: Record<string, { appModule?: AppModule }>): AppModule[] {
+  return Object.values(mods)
+    .map((m) => m?.appModule)
+    .filter((a): a is AppModule => Boolean(a && a.id));
+}
 
 // Sorted by the `order` each app declares, then by id. Discovery order is
 // filesystem order, and the switcher's siblings read in a deliberate order that
 // alphabetising would silently change; `order` is how an app states its place
 // without this file knowing what that place is.
-export const APPS: AppModule[] = Object.values(DISCOVERED)
-  .map((m) => m?.appModule)
-  .filter((a): a is AppModule => Boolean(a && a.id))
-  .sort(
-    (x, y) =>
-      (x.order ?? Number.MAX_SAFE_INTEGER) - (y.order ?? Number.MAX_SAFE_INTEGER) ||
-      x.id.localeCompare(y.id),
-  );
+export const APPS: AppModule[] = Object.values(
+  [...declared(IN_TREE), ...declared(EXTRACTED)].reduce<Record<string, AppModule>>(
+    (acc, a) => {
+      acc[a.id] = a;
+      return acc;
+    },
+    {},
+  ),
+).sort(
+  (x, y) =>
+    (x.order ?? Number.MAX_SAFE_INTEGER) - (y.order ?? Number.MAX_SAFE_INTEGER) ||
+    x.id.localeCompare(y.id),
+);
 
 /** Every app's <Route> elements, for the shell's one <Routes>. */
 export function appRoutes(): ReactNode[] {

@@ -170,6 +170,65 @@ seven times below:
   `[project.entry-points."workshop.apps"]` declaration so the backend catalog
   discovers it (`app_registry` already supports this path, added in stage 4).
 
+### 2.0 WHAT WAS ACTUALLY BUILT, 2026-09-04: the mechanism, and health through it
+
+The frontend half of extraction had no mechanism, and that is why the seven
+tickets below had not moved. `frontend/src/apps/registry.tsx` discovered apps
+with `import.meta.glob("../pages/apps/*/module.tsx")` -- inside the platform
+package -- so an app's pages could not leave the repo and still render. Stage 5
+answers this with a runtime import-map loader, which is a large build, and
+waiting for it is what has kept every app's source in the product.
+
+**The build-time half was built instead, and it is what the requirement
+actually needs.** The registry now scans a second pattern,
+`../../../apps/*/ui/module.tsx`, and an extracted app SHADOWS an in-tree one of
+the same id -- the same rule `app_registry._build_catalog` already applies on
+the backend, for the same reason: extraction is a sequence, not a flag day, so
+while it runs some apps are in each place and the extracted one must win.
+
+What this buys and what it does not, stated plainly so the next session does not
+have to re-derive it:
+
+- It gets an app's SOURCE out of the platform repo, which is the operator's
+  requirement and the thing that had not happened.
+- It does NOT let an app be installed without rebuilding the shell. That is
+  stage 5, and stage 5 is unchanged by this: an app already lives at
+  `apps/<slug>/ui/` and already exports `appModule`, so stage 5 changes how
+  these same modules are built and fetched, not where they are or what they
+  declare.
+- On a fresh clone `apps/` does not exist, the pattern matches nothing, and the
+  shell builds with an empty catalog. The build itself now measures assertion 2
+  rather than a separate scan doing it.
+
+Two supporting pieces, both named seams rather than conveniences:
+
+- **`@shell/...`** (alias in `frontend/vite.config.ts`, path in
+  `frontend/tsconfig.json`) is how an app reaches a shell-owned module the kit
+  does not export yet: `@shell/apps/appModule`, `@shell/lib/lazyPage`,
+  `@shell/api/schema.gen`. An extracted app sits outside `frontend/`, so a
+  relative `../../../lib/...` would not resolve. Every specifier reached through
+  it is a candidate for promotion into `@workshop/ui`
+  (`stage-4b-kit-promotions-2026-08-24.md`); when the last one is promoted the
+  alias goes away. Naming it is what makes that list countable.
+- **`testpaths = tests ../apps/*/tests`** in `backend/pytest.ini`. An app's
+  tests leave with its source, and they must still run, or extraction quietly
+  converts a tested app into an untested one. The glob names no app.
+
+**health went through it, whole** (ticket d65244c4). Its three backend modules,
+three frontend files and three contract assertions are in `apps/health/`, and
+`backend/services/health_app.py` is gone. Measured after: catalog builds health
+from the `workshop.apps` entry point, `/health/{latest,history,ingest}` mount,
+`npm run typecheck` clean, the bundle emits a `HealthSettings` chunk compiled
+from a directory this repo does not track, and `check_no_app_names.py` fell
+`content 131 -> 125`, `literals 348 -> 342` -- the first fall for the reason the
+target exists rather than a re-classification.
+
+One correction to 2.1 below: it says to delete `_health_spec` and its
+`_CATALOG_FACTORIES` row. That tuple was removed on 2026-09-01 and health had
+already been moved to a self-declaring `backend/services/health_app.py`; that
+file is what was deleted. The instruction was stale by three days and would
+have sent a worker looking for something that no longer existed.
+
 ### 2.1 health (3 C, 0 H)
 
 **Frontend (1 C)**

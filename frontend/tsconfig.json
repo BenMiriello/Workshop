@@ -21,11 +21,23 @@
     // declared subpaths resolve. A paths entry here would shadow the exports map
     // and quietly re-open the kit's internals.
     "paths": {
-      "@shared/*": ["../shared/*"]
+      "@shared/*": ["../shared/*"],
+      // Mirrors the `@shell/` alias in vite.config.ts. See the comment there:
+      // it is the named seam an extracted app uses to reach shell-owned modules
+      // the kit does not export yet, and it is meant to shrink to nothing.
+      "@shell/*": ["./src/*"]
     }
   },
   // packages/ui/src is included so ONE tsc run covers the kit and every call
   // site in the app: a kit change that breaks a consumer fails here, which is
   // what reviewer.sh relies on.
-  "include": ["src", "../shared", "../packages/ui/src"]
+  // `../apps/*/ui` is where an EXTRACTED app's frontend lives. `apps/` is
+  // untracked by this repo (it is the operator's own overlay, per
+  // stage-7-extraction-plan-2026-08-24.md section 4), so on a fresh clone this
+  // pattern matches nothing and tsc is content. On an instance that has apps,
+  // it means one typecheck run still covers the kit, the shell AND every
+  // installed app -- a kit change that breaks an app fails here, which is the
+  // property `reviewer.sh` relies on and the one extraction would otherwise
+  // lose.
+  "include": ["src", "../shared", "../packages/ui/src", "../apps/*/ui"]
 }
