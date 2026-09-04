@@ -234,10 +234,10 @@ def resolve_app_for_path(path: str, manifests: dict[str, dict[str, Any]] | None 
     """Resolve which app owns an API path by longest `api_prefix` match (pure).
 
     A prefix matches when `path` equals it or continues with a "/" boundary, so
-    "/budget" matches "/budget" and "/budget/x" but not "/budgetary". When
-    several apps declare overlapping prefixes (e.g. finance owns "/budget" and
-    budget also owns "/budget"), the LONGEST matching prefix wins; on a tie the
-    candidates are sorted by app id for determinism.
+    "/thing" matches "/thing" and "/thing/x" but not "/thingamajig". When
+    two apps declare overlapping prefixes (which happens when one app owns a
+    surface a sibling also serves under), the LONGEST matching prefix wins; on
+    a tie the candidates are sorted by app id for determinism.
 
     This is provided for FUTURE enforcement only. It is a pure function and is
     not wired into any request path. Returns the owning app id, or None.

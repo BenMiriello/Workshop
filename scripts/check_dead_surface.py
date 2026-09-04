@@ -354,10 +354,9 @@ def _shell_modules(tree: Path, tracked: set[str]) -> set[str]:
     """Files the Workshop shell's entry point actually reaches.
 
     Needed because this repo builds a SECOND application out of the same
-    source: `pages/apps/birds/standalone/main.tsx` is its own vite entry with
-    its own root-mounted router, so its ten `<Route path="/atlas">`-style
-    declarations are not Workshop routes and must not be judged against
-    Workshop's nav. Reachability from the shell entry is the general form of
+    source: an app may ship a standalone entry with its own root-mounted
+    router, so ITS route declarations are not Workshop routes and must not be
+    judged against Workshop's nav. Reachability from the shell entry is the general form of
     that distinction, and it costs one BFS over relative imports.
     """
     if _SHELL_ENTRY not in tracked:

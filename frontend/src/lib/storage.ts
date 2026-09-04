@@ -41,9 +41,9 @@ registerDeviceScoped([
   {
     match: (k) => k.startsWith("birdinfo:"),
     reason:
-      "public species reference data from iNaturalist/Wikipedia " +
-      "(pages/apps/birds/birdinfo.ts), identical for every viewer and keyed only " +
-      "by scientific name, it carries no user-specific content to leak",
+      "public reference data an app fetches from a third party, identical " +
+      "for every viewer and keyed only by a public identifier, so it carries " +
+      "no user-specific content to leak",
   },
   {
     match: (k) =>
@@ -57,8 +57,8 @@ registerDeviceScoped([
         "birdSessionSpecies", "birdSessionLog", "birdWasListening",
       ].includes(k),
     reason:
-      "identity and live-recording state of THIS physical recording device " +
-      "(pages/apps/birds/recorder.tsx), independent of which web account is " +
+      "identity and live-recording state of THIS physical device, " +
+      "independent of which web account is " +
       "viewing it: the file's own header calls the token 'the only durable " +
       "client identity' and treats the server, not the browser, as the source " +
       "of truth for who is looking at it",

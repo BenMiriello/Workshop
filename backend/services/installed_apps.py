@@ -5,7 +5,12 @@ none of them. An app is "installed" only when its id appears in this instance's
 installed-apps registry — a small JSON file that lives under `.runtime/`
 (gitignored) so a fresh clone starts with an **empty** roster.
 
-    { "installed": ["finance", "budget", "commute", "location", "birds", "health", "wearables"] }
+    { "installed": ["<app-id>", "<app-id>", ...] }
+
+The example is deliberately generic. It listed one operator's seven real app
+ids until 2026-09-04, which put a roster of somebody's personal apps in a
+platform docstring that every installation ships -- the same defect as an app
+name in platform code, written as prose.
 
 Installing or removing an app is an edit to this file (or the `install()` /
 `remove()` helpers), never an edit to any platform-core file. A missing file means

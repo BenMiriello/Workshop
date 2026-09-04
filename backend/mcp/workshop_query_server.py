@@ -101,7 +101,7 @@ SEARCH_TOOL_SCHEMA = {
             "type": "string",
             "description": (
                 "Narrow to one scope and everything below it in the tree "
-                "(e.g. 'project:birds', 'app:budget'). Default: everything "
+                "(e.g. 'project:<slug>', 'app:<id>'). Default: everything "
                 "this chat's own scope can reach, which already excludes "
                 "sibling projects and, unless this chat IS a development "
                 "chat, the development scope."

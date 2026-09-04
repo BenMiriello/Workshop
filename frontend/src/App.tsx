@@ -13,7 +13,7 @@ import { BreadcrumbProvider } from "@workshop/ui";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
 import { Shell } from "./components/shell/Shell";
-import { AppProviders, AppSuspense, appRoutes } from "./apps/registry";
+import { AppProviders, AppSuspense, appRoutes, appRedirects } from "./apps/registry";
 import { useAppPlacesState } from "./apps/useAppPlaces";
 
 // LAZY BY ROUTE. Each of these is a page the app does not need to render its
@@ -269,8 +269,13 @@ export default function App() {
           {/* Voice is a toggle inside the chat, not a separate screen. Old
               /voice deep-links redirect to the one focused chat (no second mount). */}
           <Route path="/voice/:contextKey" element={<VoiceRedirect />} />
-          {/* Legacy path + the old external link both land on the in-workshop app now. */}
-          <Route path="/commute" element={<Navigate to="/apps/commute" replace />} />
+          {/* Old top-level paths that apps absorbed. Each app DECLARES its own
+              (`AppModule.redirects`); this file names none. Two were hardcoded
+              here until 2026-09-04, which put two specific app names in the
+              platform's route table. */}
+          {Object.entries(appRedirects()).map(([from, to]) => (
+            <Route key={from} path={from} element={<Navigate to={to} replace />} />
+          ))}
           {/* Settings is a PLACE with one route per tab (see pages/Settings.tsx
               and the `settings` entry in components/shell/places.ts). All six
               share one lazy chunk, so the split costs no extra request; what it
@@ -306,9 +311,6 @@ export default function App() {
               are what the in-app links carry. */}
           <Route path="/work" element={<WorkRedirect />} />
           <Route path="/notes" element={<Navigate to="/memory" replace />} />
-          {/* Old /location web-geolocation page removed. Owntracks iOS now
-              posts to /api/location/owntracks; viewer lives at /apps/location. */}
-          <Route path="/location" element={<Navigate to="/apps/location" replace />} />
           {/* A URL this app does not have says so. Without this, an unmatched
               path rendered the shell with an empty main, which is the same
               picture a failed load and a broken build produce. */}

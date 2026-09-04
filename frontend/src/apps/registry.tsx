@@ -107,6 +107,12 @@ export function appLegacyTabs(): Record<string, string> {
   return Object.assign({}, ...APPS.map((a) => a.legacyTabs ?? {}));
 }
 
+/** Old top-level paths apps absorbed, merged from their own declarations.
+ *  `App.tsx` renders one <Navigate replace> per entry and names no app. */
+export function appRedirects(): Record<string, string> {
+  return Object.assign({}, ...APPS.map((a) => a.redirects ?? {}));
+}
+
 /** The switcher groups: sibling apps that link to each other. */
 export function appGroups(): { label: string; to: string }[][] {
   const byGroup = new Map<string, { label: string; to: string }[]>();

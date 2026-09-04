@@ -29,6 +29,15 @@ export type AppModule = {
    *  deliberate order that alphabetising would silently change. Absent sorts
    *  last, then by id, so the list is stable either way. */
   order?: number;
+  /** Old top-level paths this app absorbed, as `{ from: to }`. The shell
+   *  renders each as a <Navigate replace>.
+   *
+   *  DECLARED BY THE APP because the path is the app's history, not the
+   *  platform's. Two of these were hardcoded in `App.tsx` until 2026-09-04 --
+   *  a platform route table naming two specific apps, which is exactly what
+   *  `check_no_app_names.py` counts. An app that never had a legacy path
+   *  declares nothing and the shell renders nothing. */
+  redirects?: Record<string, string>;
   /** A provider the shell mounts for the whole session while installed. */
   Provider?: ComponentType<{ children: ReactNode }>;
   /** The app's icon, DECLARED not imported: an icon token (see lib/appIcon),

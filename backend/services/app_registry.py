@@ -147,6 +147,51 @@ def _in_tree_factories() -> "list[tuple[str, Callable[[], AppSpec]]]":
 APP_ENTRY_POINT_GROUP = "workshop.apps"
 
 
+def _load_app_env() -> int:
+    """Each installed app's own environment, from `apps/<slug>/app.env`.
+
+    AN APP'S CONFIGURATION IS THE APP'S. Until 2026-09-04 there was nowhere for
+    it to live, so seven variables belonging to three apps -- database paths, a
+    clips directory, an auth file, a channel id -- sat in the PLATFORM's
+    `~/.config/workshop/instance.env` alongside the deployment's own identity,
+    and one of them was still there after its app's code had left the repo.
+    That is the same defect as an app name in platform source, one layer down:
+    the platform was holding a fact only one app could possibly need.
+
+    ALREADY-SET WINS, ALWAYS. systemd's `EnvironmentFile` and the operator's own
+    shell are read first and are never overwritten here, so this is a default
+    an app ships rather than a setting it imposes. An operator who exports a
+    path still gets that path.
+
+    Called once, before the catalog is built, because a declaration may read its
+    own configuration at spec-build time.
+
+    Names no app: it is a glob over whatever is installed, and on a fresh clone
+    `apps/` does not exist and this does nothing.
+    """
+    from wsplatform import paths
+
+    apps_dir = paths.workshop_root() / "apps"
+    if not apps_dir.is_dir():
+        return 0
+    loaded = 0
+    for env_file in sorted(apps_dir.glob("*/app.env")):
+        try:
+            from services import auth_env
+            pairs = auth_env.parse(env_file.read_text(encoding="utf-8"))
+        except OSError as e:
+            log.warning("app env %s unreadable: %s", env_file, e)
+            continue
+        for key, value in pairs.items():
+            if key not in os.environ:
+                os.environ[key] = value
+                loaded += 1
+    if loaded:
+        log.info("app env: %d variable(s) from %d app env file(s)",
+                 loaded, len(list(apps_dir.glob("*/app.env"))))
+    return loaded
+
+
 def _entry_point_factories() -> "list[tuple[str, Callable[[], AppSpec]]]":
     out: "list[tuple[str, Callable[[], AppSpec]]]" = []
     try:
@@ -180,6 +225,8 @@ def _build_catalog() -> dict[str, AppSpec]:
     it: the source is asked what it is rather than told.
     """
     catalog: dict[str, AppSpec] = {}
+    # Before any declaration is called: a spec may read its own configuration.
+    _load_app_env()
     in_tree = _in_tree_factories()
     discovered = _entry_point_factories()
     in_tree_ids: set[str] = set()

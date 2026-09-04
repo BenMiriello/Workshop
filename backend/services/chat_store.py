@@ -1,6 +1,6 @@
 """Chat thread + message persistence — the generalized history layer.
 
-App-agnostic: a thread carries a `context_key` (e.g. "budget", "general") that
+App-agnostic: a thread carries a `context_key` (an app id, or "general") that
 tells the chat route which context provider to wire in, but the store itself
 knows nothing about any app.
 

@@ -992,9 +992,9 @@ input[type="range"].grad::-moz-range-thumb {
    the content the way a speaker label does. No border and no chip, since who is
    talking is hierarchy, carried by position and color.
 
-   It lived in pages/apps/birds/birds.css until 2026-08-14 and reached the screen
-   only because that file is statically imported into the main bundle. An app's
-   stylesheet is not where platform chrome goes; making Birds lazy would have
+   It lived in one app's stylesheet until 2026-08-14 and reached the screen only
+   because that file was statically imported into the main bundle. An app's
+   stylesheet is not where platform chrome goes; making that app lazy would have
    unstyled every mention reply in the chat with nothing to point at. */
 .chat-byline {
   display: flex; align-items: center; gap: 0.3rem;
