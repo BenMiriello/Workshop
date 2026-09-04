@@ -52,10 +52,10 @@ describe("context_key resolves to one scope", () => {
     ["workshop", "workshop"],
     ["new-project", "workshop"],
     ["development", "development"],
-    ["project:birds", "project:birds"],
-    ["app:budget", "app:budget"],
+    ["project:atlas", "project:atlas"],
+    ["app:ledger", "app:ledger"],
     ["agent:scribe", "agent:scribe"],
-    ["budget", "app:budget"],
+    ["ledger", "app:ledger"],
     ["role:maker", "workshop"],
     ["project:", "workshop"],
   ];
@@ -90,13 +90,13 @@ describe("which scopes a chat gets a task queue for", () => {
     // system look like it owned the same work.
     expect(taskScopeFor("general")).toBeNull();
     expect(taskScopeFor("workshop")).toBeNull();
-    expect(taskScopeFor("budget")).toBeNull();
-    expect(taskScopeFor("app:budget")).toBeNull();
+    expect(taskScopeFor("ledger")).toBeNull();
+    expect(taskScopeFor("app:ledger")).toBeNull();
   });
 
   it("gives a work scope its own queue, under its scope key", () => {
     expect(taskScopeFor("development")).toBe("development");
-    expect(taskScopeFor("project:birds")).toBe("project:birds");
+    expect(taskScopeFor("project:atlas")).toBe("project:atlas");
     expect(taskScopeFor("agent:scribe")).toBe("agent:scribe");
   });
 
@@ -106,7 +106,7 @@ describe("which scopes a chat gets a task queue for", () => {
   });
 
   it("agrees with scopeForContext wherever it answers", () => {
-    for (const key of ["development", "project:birds", "agent:scribe"]) {
+    for (const key of ["development", "project:atlas", "agent:scribe"]) {
       expect(taskScopeFor(key)).toBe(scopeForContext(key));
     }
   });

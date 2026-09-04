@@ -1,15 +1,5 @@
 {
   "groups": {
-    "0f663842cbd5": {
-      "files": 2,
-      "names": [
-        "copy"
-      ],
-      "where": [
-        "frontend/src/pages/apps/health/HealthSettings.tsx:110",
-        "frontend/src/pages/apps/location/LocationSettings.tsx:112"
-      ]
-    },
     "25dcbeda50c8": {
       "files": 2,
       "names": [
@@ -34,49 +24,23 @@
       ]
     },
     "704d4e45550b": {
-      "files": 3,
+      "files": 2,
       "names": [
         "freshNoteId"
       ],
       "where": [
         "frontend/src/pages/AgentDetail.tsx:407",
-        "frontend/src/pages/Memory.tsx:230",
-        "frontend/src/pages/ProjectDetail.tsx:179"
-      ]
-    },
-    "852a764bc54b": {
-      "files": 2,
-      "names": [
-        "projectStateKind",
-        "stateKind"
-      ],
-      "where": [
-        "frontend/src/pages/Home.tsx:219",
-        "frontend/src/pages/ProjectDetail.tsx:154"
+        "frontend/src/pages/Memory.tsx:230"
       ]
     },
     "d4ce9ee8f055": {
-      "files": 4,
+      "files": 2,
       "names": [
         "slugify"
       ],
       "where": [
         "frontend/src/pages/AgentBuild.tsx:113",
-        "frontend/src/pages/AgentDetail.tsx:113",
-        "frontend/src/pages/ProjectDetail.tsx:171",
-        "frontend/src/pages/Projects.tsx:30"
-      ]
-    },
-    "e7c4d28bf9e5": {
-      "files": 2,
-      "names": [
-        "cap",
-        "capitalize"
-      ],
-      "where": [
-        "frontend/src/lib/tasks.ts:616",
-        "frontend/src/pages/apps/birds/Atlas.tsx:227",
-        "frontend/src/pages/apps/birds/Atlas.tsx:616"
+        "frontend/src/pages/AgentDetail.tsx:113"
       ]
     },
     "ef85ce556c33": {

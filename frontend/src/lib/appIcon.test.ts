@@ -10,9 +10,9 @@ describe("monogram", () => {
   });
 
   it("uses initials for a multi-word name, the way a person would write it", () => {
-    expect(monogram("Yard Birds")).toBe("YB");
-    expect(monogram("notes-app")).toBe("NA");
-    expect(monogram("open_wearables")).toBe("OW");
+    expect(monogram("Yard Sensors")).toBe("YS");
+    expect(monogram("beacon-app")).toBe("BA");
+    expect(monogram("open_relay")).toBe("OR");
   });
 
   it("survives a one-character name and an empty one", () => {
@@ -88,7 +88,7 @@ describe("the token vocabulary", () => {
     //
     // This is the stronger property anyway. A token derived mechanically from a
     // lucide name CANNOT be an app name unless lucide ships an icon called
-    // "budget", and it constrains every future entry rather than only the ones
+    // "ledger", and it constrains every future entry rather than only the ones
     // someone remembered to blocklist.
     for (const token of ICON_TOKENS) {
       expect(token).toMatch(/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/);

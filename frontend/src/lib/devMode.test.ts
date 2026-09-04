@@ -27,8 +27,8 @@ describe("dev surfaces are absent from a non-dev build", () => {
     // A non-dev BUNDLE talking to a dev BACKEND is a real combination (the
     // public origin serves a built dist against the same API), and the bundle
     // is what decides what the operator can see.
-    const fromServer = ["development", "workshop", "project:birds"];
-    expect(orderScopes(fromServer, false)).toEqual(["workshop", "project:birds"]);
+    const fromServer = ["development", "workshop", "project:atlas"];
+    expect(orderScopes(fromServer, false)).toEqual(["workshop", "project:atlas"]);
     expect(orderScopes(fromServer, false)).not.toContain(DEVELOPMENT_SCOPE);
   });
 
@@ -41,7 +41,7 @@ describe("dev surfaces are absent from a non-dev build", () => {
 
 describe("dev surfaces are present, and sort above Workshop, in a dev build", () => {
   it("sorts Development first in a flat scope list", () => {
-    const ordered = orderScopes(["workshop", "project:birds", "development"], true);
+    const ordered = orderScopes(["workshop", "project:atlas", "development"], true);
     expect(ordered[0]).toBe(DEVELOPMENT_SCOPE);
     expect(ordered[1]).toBe("workshop");
   });
@@ -90,7 +90,7 @@ describe("a run against the platform repo still finds its ticket", () => {
   });
 
   it("leaves project runs alone", () => {
-    expect(runTicketScope({ project_slug: "birds" })).toBe("project:birds");
+    expect(runTicketScope({ project_slug: "atlas" })).toBe("project:atlas");
   });
 });
 
@@ -104,12 +104,12 @@ describe("the development scope owns a queue like any other work scope", () => {
   });
 
   it("still maps the other work scopes", () => {
-    expect(taskScopeFor("project:birds")).toBe("project:birds");
+    expect(taskScopeFor("project:atlas")).toBe("project:atlas");
     expect(taskScopeFor("agent:triager")).toBe("agent:triager");
   });
 
   it("still returns null for a chat with no queue", () => {
     expect(taskScopeFor("general")).toBeNull();
-    expect(taskScopeFor("budget")).toBeNull();
+    expect(taskScopeFor("ledger")).toBeNull();
   });
 });
