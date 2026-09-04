@@ -158,35 +158,8 @@ def test_llm_router_and_the_loader_agree_on_the_path(tmp_path, monkeypatch):
     assert Path(llm_router.auth_env_path()) == auth_env.auth_env_path()
 
 
-def test_commute_modules_hold_no_import_time_path():
-    """These two hardcoded a different directory than everything else read, and
-    the fix must not just move the hardcoding to import time: `None` means the
-    path is resolved on every call."""
-    from services.commute import poller, reason
-    assert poller.AUTH_ENV is None
-    assert reason.AUTH_ENV is None
-
-
-def test_commute_reads_the_configured_file(tmp_path, monkeypatch):
-    from services.commute import poller, reason
-    p = tmp_path / "auth.env"
-    p.write_text("WORKSHOP_511_API_KEY=k511\nCLAUDE_CODE_OAUTH_TOKEN=tok\n")
-    monkeypatch.setenv(auth_env.ENV_VAR, str(p))
-    monkeypatch.delenv("WORKSHOP_511_API_KEY", raising=False)
-    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
-    assert poller._key_511() == "k511"
-    assert reason._oauth_token() == "tok"
-
-
-def test_a_key_added_after_start_is_picked_up(tmp_path, monkeypatch):
-    """The failure this module exists to prevent: the backend launched without
-    the key, an import-time constant stayed empty, and every poll returned
-    needs_key from a file that was on disk the whole time."""
-    from services.commute import poller
-    p = tmp_path / "auth.env"
-    p.write_text("# nothing yet\n")
-    monkeypatch.setenv(auth_env.ENV_VAR, str(p))
-    monkeypatch.delenv("WORKSHOP_511_API_KEY", raising=False)
-    assert poller._key_511() == ""
-    p.write_text("WORKSHOP_511_API_KEY=arrived\n")
-    assert poller._key_511() == "arrived"
+# THREE TESTS LEFT HERE ON 2026-09-04. They asserted that this file is read at
+# CALL time rather than at import, using one app's poller and reason modules as
+# the example. The rule is the platform's and is covered above over platform
+# readers; the app-specific example moved to that app's own tests, which is
+# where the obligation sits.

@@ -48,8 +48,10 @@ DERIVED = [
     ("services.worktrees", "PROJECTS_ROOT"),
     ("services.compose_gen", "COMPOSE_ROOT"),
     ("services.dev_servers", "LOG_ROOT"),
-    ("services.commute.config", "COMMUTE_ROOT"),
-    ("services.commute.config", "RUNTIME_ROOT"),
+    # NO APP MODULE BELONGS IN THIS LIST. Two were here until 2026-09-04 and
+    # left with their app; the rule is the platform's, the example was not, and
+    # a fresh clone cannot import a module it does not ship. An app asserts this
+    # same rule over its own modules, in its own tests.
 ]
 
 
