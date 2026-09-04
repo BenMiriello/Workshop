@@ -200,6 +200,45 @@ def _priority_arg(raw: str):
     return _BAND_FLOOR[band]
 
 
+def _resolve_task_id(root: Path, given: str) -> str | dict:
+    """The full id for `given`, or an error dict if it names no single task.
+
+    WHY THIS EXISTS. `tasks.update` answers None for an id it does not hold, and
+    every verb here prints `_slim(None)`, which is `{}`, and returns 0. So a
+    wrong id was a SILENT SUCCESS: the CLI said nothing, exited clean, and wrote
+    nothing. Measured 2026-09-03 on ticket df91b7c4 -- `note` with the 8-char id
+    printed `{}`, exited 0, and left `evidence` empty; the same call with the
+    32-char id worked. Eight characters is the id form that TODO.md, the ticket
+    lists, the reviewer output and every handoff document actually display, so
+    the failing form is the one an agent naturally types, and the annotations it
+    dropped were never missed by anyone.
+
+    Two fixes in one: a unique prefix RESOLVES, because a short id is the
+    ergonomic thing to type and refusing it would just move the papercut; and an
+    id that matches nothing, or matches more than one task, is an ERROR with a
+    non-zero exit rather than an empty object.
+    """
+    given = (given or "").strip()
+    if not given:
+        return {"error": "no task id given"}
+    try:
+        rows = tasks.list_tasks(root, include_done=True)
+    except Exception as exc:                      # the store is the authority;
+        return {"error": f"could not read the task store: {exc}"}
+    ids = [t.get("id", "") for t in rows]
+    if given in ids:
+        return given                              # an exact id always wins
+    hits = [i for i in ids if i.startswith(given)]
+    if len(hits) == 1:
+        return hits[0]
+    if not hits:
+        return {"error": f"no task whose id is or starts with {given!r}",
+                "fix": "check the id against: project_tasks.py list-json ."}
+    return {"error": f"{given!r} is ambiguous: it matches {len(hits)} tasks",
+            "matches": hits[:8],
+            "fix": "give more of the id"}
+
+
 def _slim(t: dict | None) -> dict:
     """Compact projection for the loop (keeps next-open's old shape + new fields)."""
     if not t:
@@ -382,6 +421,13 @@ def main(argv: list[str]) -> int:
 
     a = p.parse_args(argv[1:])
     root: Path = a.dir
+
+    if getattr(a, "task_id", None):
+        resolved = _resolve_task_id(root, a.task_id)
+        if isinstance(resolved, dict):
+            print(json.dumps(resolved))
+            return 2
+        a.task_id = resolved
 
     try:
         if a.cmd in ("next-open", "next-ready"):
