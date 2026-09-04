@@ -5,6 +5,7 @@ import {
 import { Bot, Brain, ChevronRight, Wrench } from "lucide-react";
 import { ChatMarkdown as Markdown } from "./ChatMarkdown";
 import type { ChatSegment } from "../../lib/chat";
+import { flashesOnArrivalAt } from "./arrivalFlash";
 import ApprovalBlock from "./ApprovalBlock";
 import { agentBrief, agentChipLine, agentSummary } from "./segments";
 import {
@@ -126,8 +127,15 @@ function ToolChip({ seg, nowMs, arrived }: {
  *  calls whose start time is older than this mount. */
 function useArrivedSteps(): (seg: ChatSegment) => boolean {
   const mountedAt = useRef(Date.now());
+  // Same clock-at-render-time wiring as MessageList's, and for the same reason:
+  // the flash is a CSS animation that re-runs whenever its node is rebuilt, so
+  // it has to be a spent one-shot rather than a standing property. `seg.at`
+  // already limits this to calls that are still open, but a long-running call
+  // is still open an hour later and must not flash again then.
+  const now = Date.now();
   return (seg: ChatSegment) =>
-    seg.t === "tool" && typeof seg.at === "number" && seg.at * 1000 > mountedAt.current;
+    seg.t === "tool" && flashesOnArrivalAt(
+      typeof seg.at === "number" ? seg.at * 1000 : undefined, mountedAt.current, now);
 }
 
 // A run of adjacent tool calls, behind one count.

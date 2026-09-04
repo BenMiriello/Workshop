@@ -14,6 +14,7 @@ import { modelDisplay } from "./models";
 import { stoppedTag } from "./stopReason";
 import { hasBubble, noReplyText } from "./replyBody";
 import type { TranscriptBlock } from "./transcriptBlocks";
+import { flashesOnArrival } from "./arrivalFlash";
 import AttachmentViewer, { type ViewableAttachment } from "./AttachmentViewer";
 import { receiptHref, receiptItems, receiptLabel } from "./receipts";
 import { branchTargets } from "./branchable";
@@ -241,19 +242,19 @@ function senderName(meta?: { sender?: string; kind?: string }): string {
   return "Workshop";
 }
 
-// THE ARRIVAL FLASH is gated on this and nothing else: a message whose ts is
-// newer than the moment this list mounted. Without the gate, opening a thread
-// flashes every message in it at once, which is not a signal, it is a strobe.
-// Reading it off `ts` rather than a "new" flag keeps it honest across a
-// reconnect too: a message that landed in another tab an hour ago is not new to
-// this reader's eye, and it does not flash when the log reloads.
+// THE ARRIVAL FLASH. The rule is `arrivalFlash.flashesOnArrival` and this is
+// only the wiring: the mount instant, and the clock read at render time.
+//
+// `Date.now()` PER RENDER, not a memo and not a prop. The class this decides is
+// a CSS animation trigger, so the only moment its value matters is the render
+// that puts the node on screen — and reading the clock there is what makes the
+// flash a spent one-shot instead of a permanent property of the message. See
+// arrivalFlash.ts for the transcript-wide re-animation that came of the
+// property version.
 function useArrivedAfterMount(): (ts?: string) => boolean {
   const mountedAt = useRef(Date.now());
-  return (ts?: string) => {
-    if (!ts) return false;
-    const at = Date.parse(ts);
-    return Number.isFinite(at) && at > mountedAt.current;
-  };
+  const now = Date.now();
+  return (ts?: string) => flashesOnArrival(ts, mountedAt.current, now);
 }
 
 // Memoized per message. The list memo above already covers typing; this one

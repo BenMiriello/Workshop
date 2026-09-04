@@ -153,13 +153,22 @@ export function useThreadLog({
   const [hydratedId, setHydratedId] = useState<string | null>(null);
   const hydrated = !threadId || hydratedId === threadId;
 
-  // Consecutive failures, and when a request last landed. Both are needed: a
-  // burst of failures says nothing on its own (the first thing a dropped
-  // connection does is fail several times quickly), and elapsed time says
-  // nothing on its own either, since a quiet chat legitimately goes a minute
-  // between polls. See staleNotice.
+  // Consecutive failures, and when that run of failures BEGAN. Both are
+  // needed: a burst of failures says nothing on its own (the first thing a
+  // dropped connection does is fail several times quickly), and elapsed time
+  // says nothing on its own either.
+  //
+  // THE SECOND ONE IS THE OUTAGE'S OWN CLOCK, not the last success. It used to
+  // be `lastOkRef`, the moment a request last landed, and that is not when
+  // anything went wrong: this thread only asks every POLL_MS while it is
+  // quiet, so it sits up to a minute past its last success with a perfectly
+  // healthy backend. Two failures a second apart then cleared a 30s floor
+  // nothing had been silent for, and "This chat stopped updating." appeared
+  // about two seconds into a restart and vanished again when the next request
+  // landed. Reported 2026-09-04. Timed from the first failure of the current
+  // run, the floor measures what the sentence claims. See staleNotice.
   const failuresRef = useRef(0);
-  const lastOkRef = useRef(Date.now());
+  const outageSinceRef = useRef(0);
   const [stale, setStale] = useState(false);
 
   // Which branch the last response was for. `undefined` means "no response
@@ -329,9 +338,10 @@ export function useThreadLog({
         // because only a fresh read asked. See `hasMoreOlder` in threadStore.
         hasMore: isFreshRead ? (page.has_more ?? false) : undefined,
       });
-      // A poll landed, so whatever this chat is showing is current.
+      // A poll landed, so whatever this chat is showing is current, and any
+      // run of failures is over: the outage clock has nothing left to time.
       failuresRef.current = 0;
-      lastOkRef.current = Date.now();
+      outageSinceRef.current = 0;
       setStale((prev) => (prev ? false : prev));
     } catch (e) {
       // Transient by nature (this runs on a timer), and ONE failure says
@@ -343,8 +353,12 @@ export function useThreadLog({
       // the exact case that said nothing at all. The operator had no way to tell
       // "it is still thinking" from "this browser stopped hearing minutes ago",
       // which is a large share of what "the chat is stuck" has meant.
+      // The first failure of a run starts the outage clock. Later failures in
+      // the same run leave it where it is, which is what makes the floor
+      // measure one continuous outage rather than the gap since a poll.
+      if (failuresRef.current === 0) outageSinceRef.current = Date.now();
       failuresRef.current += 1;
-      if (isStale(failuresRef.current, lastOkRef.current, Date.now())) {
+      if (isStale(failuresRef.current, outageSinceRef.current, Date.now())) {
         setStale((prev) => (prev ? prev : true));
       }
       if (stateRef.current.order.length === 0) {
@@ -367,7 +381,7 @@ export function useThreadLog({
     // A new thread starts from a clean slate: the previous chat's stale run,
     // failure count and "load older" bookkeeping say nothing about this one.
     failuresRef.current = 0;
-    lastOkRef.current = Date.now();
+    outageSinceRef.current = 0;
     setStale(false);
     loadingOlderRef.current = false;
     setLoadingOlder(false);
