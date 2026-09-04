@@ -62,8 +62,30 @@ log() { echo "[$(ts)] [dispatch] $*" >> "$LOG"; }
 # is how the two answers drifted apart in the first place. Both are gone; the
 # union (and the fail-closed rule) live in services/autonomy_override, reached
 # through scripts/autonomy_gate.sh.
+# ONE LINE PER STATE CHANGE, NOT ONE PER TICK. This used to run only from cron
+# and cron is not installed, so the line below was written a handful of times in
+# two months. It now runs every five minutes from the backend's schedule loop
+# (services/backend_schedule), and the override is engaged, so an unconditional
+# line here is 288 identical lines a day forever -- the same shape that made
+# .runtime/queue-runner.log 81,473 lines of one unchanged fact.
+#
+# The heartbeat is an hour rather than nothing, because a log that goes silent
+# for weeks cannot be told from a dispatcher that stopped running. There is no
+# in-memory state to compare against (this is a one-shot script), so the last
+# line of the log IS the state.
+log_state_change() {
+  local msg="$1" last ts age
+  last="$(tail -1 "$LOG" 2>/dev/null || true)"
+  if [[ "$last" == *"$msg" ]]; then
+    ts="${last#[}"; ts="${ts%%]*}"
+    age=$(( $(date +%s) - $(date -d "$ts" +%s 2>/dev/null || echo 0) ))
+    (( age < 3600 )) && return 0
+  fi
+  log "$msg"
+}
+
 if autonomy_engaged; then
-  log "autonomy engaged ($(autonomy_reason)); dispatching nothing"
+  log_state_change "autonomy engaged ($(autonomy_reason)); dispatching nothing"
   exit 0
 fi
 

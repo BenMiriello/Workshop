@@ -30,7 +30,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -337,3 +337,32 @@ def test_the_loop_runs_each_pass_on_its_own_interval(sandbox, monkeypatch):
 
     assert calls.count("slow") == 1, calls
     assert calls.count("fast") > 1, calls
+
+
+def test_an_engaged_override_does_not_write_a_line_every_tick(sandbox):
+    """The log growth this cadence would otherwise cause.
+
+    The dispatcher ran from cron, which is not installed, so its "dispatching
+    nothing" line was written a handful of times in two months. On a five-minute
+    backend loop with the override engaged it would be 288 identical lines a day
+    forever -- which is exactly how `.runtime/queue-runner.log` reached 81,473
+    lines of one unchanged fact. So the state is logged when it changes, with an
+    hourly heartbeat, and the last line of the log is the state.
+    """
+    (sandbox / ".runtime" / "autonomy-override.json").write_text(json.dumps(
+        {"engaged": True, "reason": "off by the operator", "engaged_by": "operator"}))
+    log = sandbox / ".runtime" / "dispatch.log"
+
+    for _ in range(3):
+        assert backend_schedule.run_pass(backend_schedule.TRIGGERS)["rc"] == 0
+    lines = log.read_text().strip().splitlines()
+    assert len(lines) == 1, lines
+    assert "dispatching nothing" in lines[0]
+    assert _state(sandbox) == {}
+
+    # An hour later the same unchanged state beats once, so a silent log and a
+    # dead dispatcher stay distinguishable.
+    old = datetime.now(timezone.utc).astimezone() - timedelta(hours=2)
+    log.write_text(f"[{old.isoformat(timespec='seconds')}] {lines[0].split('] ', 1)[1]}\n")
+    assert backend_schedule.run_pass(backend_schedule.TRIGGERS)["rc"] == 0
+    assert len(log.read_text().strip().splitlines()) == 2
