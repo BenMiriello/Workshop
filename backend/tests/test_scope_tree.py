@@ -17,6 +17,7 @@ Four properties are load-bearing and pinned here (design doc sec 7.4):
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -31,8 +32,8 @@ class TestParse:
         assert (s.kind, s.slug) == ("workshop", "")
 
     def test_project(self):
-        s = scope_tree.parse("project:birds")
-        assert (s.kind, s.slug) == ("project", "birds")
+        s = scope_tree.parse("project:atlas")
+        assert (s.kind, s.slug) == ("project", "atlas")
 
     def test_role_is_a_valid_shape_but_not_a_tree_node(self):
         s = scope_tree.parse("role:reviewer")
@@ -141,8 +142,8 @@ class TestStoredOverride:
 # and `read_layers` must reproduce this exactly.
 GOVERN_TABLE = [
     ("workshop", None, None, ["workshop"]),
-    ("project:birds", None, None, ["workshop", "project:birds"]),
-    ("project:birds", "reviewer", None, ["workshop", "role:reviewer", "project:birds"]),
+    ("project:atlas", None, None, ["workshop", "project:atlas"]),
+    ("project:atlas", "reviewer", None, ["workshop", "role:reviewer", "project:atlas"]),
     ("agent:scribe", "reviewer", "agent:scribe",
      ["workshop", "role:reviewer", "agent:scribe"]),
     ("workshop", "reviewer", "agent:scribe",
@@ -282,22 +283,41 @@ def _write_agent(agents_dir, slug, extra_frontmatter=""):
         f"---\nname: {slug}\n{extra_frontmatter}---\n\nProbe.\n")
 
 
+def _some_catalog_app_id() -> str:
+    """Any id the catalog actually carries, or skip.
+
+    A test that needs "an installed app" must not name one: a platform test
+    carrying a real app id is the violation `check_no_app_names.py` counts, and
+    the id is irrelevant to everything asserted here. A fresh clone installs
+    nothing, so an empty catalog skips rather than fails.
+    """
+    from services import app_registry
+
+    for app_id in app_registry.BUILTIN_APPS:
+        return app_id
+    pytest.skip("this instance has no apps in its catalog")
+
+
 class TestAppsAndAgentsAreRegistryDriven:
     def test_a_newly_installed_app_appears_with_no_knowledge_dir(self, registry_tree):
         tmp_path, _agents_dir = registry_tree
         from services import installed_apps
-        # "birds" is a real catalog id (app_registry._CATALOG_FACTORIES),
-        # independent of whether any note was ever written for it.
-        installed_apps.REGISTRY_PATH.write_text('{"installed": ["birds"]}')
+        # ASKED FOR, not named. The point is that the installed-apps registry
+        # alone puts an app in the tree, independent of whether any note was
+        # ever written for it -- and a platform test may not carry one
+        # installation's app id to make that point.
+        app_id = _some_catalog_app_id()
+        installed_apps.REGISTRY_PATH.write_text(
+            json.dumps({"installed": [app_id]}))
 
         assert not (tmp_path / "shared" / "knowledge").exists()
-        assert not (tmp_path / "apps" / "birds").exists()
+        assert not (tmp_path / "apps" / app_id).exists()
 
-        assert "app:birds" in scope_tree.children("workshop")
-        assert "app:birds" in scope_tree.reach("workshop")
+        assert f"app:{app_id}" in scope_tree.children("workshop")
+        assert f"app:{app_id}" in scope_tree.reach("workshop")
         # Reading the tree must not itself have created a directory.
         assert not (tmp_path / "shared" / "knowledge").exists()
-        assert not (tmp_path / "apps" / "birds").exists()
+        assert not (tmp_path / "apps" / app_id).exists()
 
     def test_a_newly_registered_unattached_agent_appears_with_no_knowledge_dir(self, registry_tree):
         tmp_path, agents_dir = registry_tree
@@ -334,11 +354,13 @@ class TestAppsAndAgentsAreRegistryDriven:
         tmp_path, agents_dir = registry_tree
         monkeypatch.setenv(dev_mode.DEV_MODE_ENV, "1")
         from services import installed_apps
-        installed_apps.REGISTRY_PATH.write_text('{"installed": ["birds"]}')
+        app_id = _some_catalog_app_id()
+        installed_apps.REGISTRY_PATH.write_text(
+            json.dumps({"installed": [app_id]}))
         _write_agent(agents_dir, "scribe")
 
         r = scope_tree.reach("development")
-        assert {"workshop", "app:birds", "agent:scribe"} <= set(r)
+        assert {"workshop", f"app:{app_id}", "agent:scribe"} <= set(r)
 
 
 # --- label -----------------------------------------------------------------------
@@ -351,7 +373,7 @@ class TestLabel:
         assert scope_tree.label("development") == "Development"
 
     def test_project(self):
-        assert scope_tree.label("project:birds") == "Project: birds"
+        assert scope_tree.label("project:atlas") == "Project: atlas"
 
     def test_empty(self):
         assert scope_tree.label("") == "unknown"

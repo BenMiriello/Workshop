@@ -129,9 +129,8 @@ class TestExactlyOneNameForTheRepo:
         monkeypatch.delenv("WORKSHOP_DEV_MODE", raising=False)
         from services import task_scope
         from tests.conftest import requires_registry
-        # Any real project will do; "birds" only exists on an instance that has
-        # registered it, and the point is that the gate does not swallow
-        # ordinary projects, not that this particular one is present.
+        # Any real project will do: the point is that the gate does not
+        # swallow ordinary projects, not that a particular one is present.
         data = requires_registry()
         slug = next((s for s in (data.get("projects") or {})
                      if s not in ("development",)), None)
@@ -158,5 +157,5 @@ class TestTheDowngradeIsNotSilent:
 
     def test_an_ordinary_scope_is_never_refused(self, ctx, monkeypatch):
         monkeypatch.delenv("WORKSHOP_DEV_MODE", raising=False)
-        for key in ("general", "project:birds", "budget", None):
+        for key in ("general", "project:atlas", "ledger", None):
             assert ctx.dev_scope_refused(key) is False

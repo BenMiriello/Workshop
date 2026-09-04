@@ -37,7 +37,7 @@ def test_scope_root_is_the_documented_mapping(isolated_root):
     root = paths.workshop_root()
     assert paths.scope_root("project:alpha") == paths.projects_root() / "alpha"
     assert paths.scope_root("project:alpha") == root / "projects" / "alpha"
-    assert paths.scope_root("app:budget") == root / "apps" / "budget"
+    assert paths.scope_root("app:ledger") == root / "apps" / "ledger"
     assert paths.scope_root("agent:triager") == paths.runtime_dir() / "agents" / "triager"
     assert paths.scope_root("agent:triager") == root / ".runtime" / "agents" / "triager"
 
@@ -59,7 +59,7 @@ def test_scope_dir_is_identical_before_and_after_for_tree_scopes(isolated_root):
     root = paths.workshop_root()
     expected = {
         "project:alpha": root / "projects" / "alpha" / "knowledge",
-        "app:budget": root / "apps" / "budget" / "knowledge",
+        "app:ledger": root / "apps" / "ledger" / "knowledge",
         "agent:triager": root / ".runtime" / "agents" / "triager" / "knowledge",
     }
     for key, want in expected.items():

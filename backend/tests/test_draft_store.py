@@ -90,13 +90,13 @@ class TestTheClearOutlivesTheOperatorBeingAway:
 class TestDeadRowsAreReclaimed:
     def test_an_abandoned_draft_is_eventually_dropped(self, store):
         """A key nothing reads any more must not sit here for the life of the
-        install. Found in the real store: a bare context key `budget` holding
+        install. Found in the real store: a bare context key `ledger` holding
         text from ten days earlier, written by a client version that predates
         per-chat draft keys, which nothing could ever clear."""
         ancient = store._now_ms() - (store.STALE_DRAFT_TTL_S + 86400) * 1000
-        store.put_draft("budget", "… oh I see", ancient, "old-client")
+        store.put_draft("ledger", "… oh I see", ancient, "old-client")
         store.put_draft("general::t1", "current", store._now_ms(), "tab-a")
-        assert store.get_draft("budget")["text"] == ""
+        assert store.get_draft("ledger")["text"] == ""
 
     def test_an_old_but_not_ancient_draft_is_kept(self, store):
         """Unsent writing is the operator's, and is not thrown away for being a

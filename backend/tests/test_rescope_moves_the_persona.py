@@ -28,7 +28,26 @@ def thread(tmp_path, monkeypatch):
         ownership.clear_current_owner()
 
 
-from tests.conftest import requires_app
+
+
+@pytest.fixture()
+def app_scope() -> str:
+    """SOME installed app's context key, asked for rather than named.
+
+    These tests need a scope the rescope route will accept, which means an app
+    that is actually installed. Which one is irrelevant to what is asserted,
+    and naming a real app here made a platform test carry one installation's
+    app id -- the exact thing `check_no_app_names.py` counts. A fresh clone
+    installs nothing, so with no app installed there is no second scope to
+    move to and the test skips.
+    """
+    from services import app_registry
+
+    for cls in app_registry.installed_chat_providers():
+        key = getattr(cls, "key", None)
+        if key:
+            return key
+    pytest.skip("no app with a chat persona is installed on this instance")
 
 
 def _rescope(thread_id: str, key: str):
@@ -36,26 +55,24 @@ def _rescope(thread_id: str, key: str):
     return asyncio.run(rc.rescope_thread(thread_id, rc.RescopeThread(context_key=key)))
 
 
-def test_the_live_session_is_dropped_with_the_scope(thread):
-    requires_app("budget")
+def test_the_live_session_is_dropped_with_the_scope(thread, app_scope):
     tid = thread["id"]
     sid, _ = chat_store.ensure_thread_session(tid)
     assert chat_store.get_thread(tid)["claude_session"] == sid
 
-    out = _rescope(tid, "budget")
+    out = _rescope(tid, app_scope)
 
-    assert out["context_key"] == "budget"
+    assert out["context_key"] == app_scope
     # The persona travels with the tools, or neither has really moved.
     assert chat_store.get_thread(tid).get("claude_session") is None
 
 
-def test_the_conversation_itself_is_untouched(thread):
-    requires_app("budget")
+def test_the_conversation_itself_is_untouched(thread, app_scope):
     tid = thread["id"]
     chat_store.append_message(tid, "user", "keep me")
     chat_store.ensure_thread_session(tid)
 
-    out = _rescope(tid, "budget")
+    out = _rescope(tid, app_scope)
 
     assert out["id"] == tid
     assert out["message_count"] == 1

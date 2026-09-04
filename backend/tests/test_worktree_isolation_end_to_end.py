@@ -256,6 +256,44 @@ def test_two_chats_about_different_things_get_two_different_trees(workshop):
                                                    "sidebar-width"}
 
 
+def test_a_worktree_is_cut_from_where_the_shared_tree_actually_is(workshop):
+    """The defect that kept the whole mechanism off, as a test.
+
+    The base used to be `git_service.main_branch`, a NAME heuristic that answers
+    "main" whenever a ref called `main` resolves -- whatever the tree in front
+    of it is doing. Measured on this installation 2026-09-04: the shared tree
+    was on a feature branch 368 commits ahead of `main`, so a chat's first write
+    would have handed it a checkout 368 commits stale.
+    """
+    workshop["git"]("checkout", "-q", "-b", "feat/long-lived")
+    (workshop["proj"] / "recent.txt").write_text("two weeks of work\n")
+    workshop["git"]("add", "-A")
+    workshop["git"]("commit", "-qm", "work that main has never seen")
+
+    made = _open_a_worktree(workshop, "thread-a", "Chat toolbar fixes")
+
+    assert os.path.isfile(os.path.join(made["dir"], "recent.txt")), (
+        "the worktree was cut from a stale ref and is missing the shared "
+        "tree's work")
+    state = worktrees.branch_state("probe", made["branch_slug"])
+    assert state["base_ref"] == "feat/long-lived"
+
+
+def test_merging_does_not_move_the_shared_trees_checkout(workshop):
+    """`merge_branch` checks the base ref out in the project's OWN tree. When
+    the base was a name that did not match the checkout, a merge silently moved
+    somebody else's branch out from under them."""
+    workshop["git"]("checkout", "-q", "-b", "feat/long-lived")
+    a = _open_a_worktree(workshop, "thread-a", "Chat toolbar fixes")
+    open(os.path.join(a["dir"], "toolbar.txt"), "w").write("mine\n")
+    _commit_all(a["dir"], "toolbar work")
+
+    assert worktrees.merge_branch("probe", a["branch_slug"])["ok"]
+
+    assert git_service.status(str(workshop["proj"]))["branch"] == "feat/long-lived"
+    assert (workshop["proj"] / "toolbar.txt").read_text() == "mine\n"
+
+
 # --- the lease ----------------------------------------------------------------
 
 def test_one_tree_has_one_holder_and_the_second_chat_is_refused(workshop):

@@ -57,18 +57,18 @@ class TestEveryScopeIsEnumerated:
         _note(tree / "shared" / "knowledge", "a", "# Shared\n\nshared body")
         _note(tree / "shared" / "knowledge" / "development", "b", "# Dev\n\ndev body")
         _note(tree / "shared" / "knowledge" / "roles" / "reviewer", "c", "# Role\n\nrole body")
-        _note(tree / "projects" / "birds" / "knowledge", "d", "# Proj\n\nproject body")
-        _note(tree / "apps" / "budget" / "knowledge", "e", "# App\n\napp body")
+        _note(tree / "projects" / "atlas" / "knowledge", "d", "# Proj\n\nproject body")
+        _note(tree / "apps" / "ledger" / "knowledge", "e", "# App\n\napp body")
         _note(tree / ".runtime" / "agents" / "scribe" / "knowledge", "f", "# Agent\n\nagent body")
 
         found = dict(knowledge.all_scope_dirs())
         assert set(found) >= {
             "workshop", "development", "role:reviewer",
-            "project:birds", "app:budget", "agent:scribe",
+            "project:atlas", "app:ledger", "agent:scribe",
         }
 
     def test_the_keys_are_real_scope_keys_that_scope_dir_round_trips(self, tree):
-        _note(tree / "projects" / "birds" / "knowledge", "d", "body")
+        _note(tree / "projects" / "atlas" / "knowledge", "d", "body")
         _note(tree / "shared" / "knowledge" / "roles" / "keeper", "c", "body")
         for key, d in knowledge.all_scope_dirs():
             if ":" not in key and key not in ("workshop", "development"):
@@ -79,11 +79,11 @@ class TestEveryScopeIsEnumerated:
         """`scope_dir` mkdirs what it is asked for, so enumerating by asking it
         about every installed app would CREATE a knowledge directory inside each
         one, in the tracked tree, just by looking."""
-        _mk(tree / "apps" / "budget")
-        _mk(tree / "projects" / "birds")
+        _mk(tree / "apps" / "ledger")
+        _mk(tree / "projects" / "atlas")
         knowledge.all_scope_dirs()
-        assert not (tree / "apps" / "budget" / "knowledge").exists()
-        assert not (tree / "projects" / "birds" / "knowledge").exists()
+        assert not (tree / "apps" / "ledger" / "knowledge").exists()
+        assert not (tree / "projects" / "atlas" / "knowledge").exists()
 
     def test_archive_is_excluded(self, tree):
         """`enforce_index_cap` demotes notes there specifically to get them out
@@ -98,15 +98,15 @@ class TestEveryScopeIsEnumerated:
 class TestCollectNotes:
     def test_notes_outside_the_shared_root_are_now_chunked(self, tree):
         _note(tree / "shared" / "knowledge", "a", "# Shared\n\nshared body")
-        _note(tree / "projects" / "birds" / "knowledge", "d", "# Proj\n\nproject body")
+        _note(tree / "projects" / "atlas" / "knowledge", "d", "# Proj\n\nproject body")
         _note(tree / "shared" / "knowledge" / "roles" / "reviewer", "c", "# Role\n\nrole body")
         scopes = {c.scope for c in si.collect_notes()}
-        assert scopes == {"workshop", "project:birds", "role:reviewer"}
+        assert scopes == {"workshop", "project:atlas", "role:reviewer"}
 
     def test_the_body_is_what_gets_indexed(self, tree):
-        _note(tree / "projects" / "birds" / "knowledge", "d",
+        _note(tree / "projects" / "atlas" / "knowledge", "d",
               "<!-- author: operator -->\n# Proj\n\nthe finding")
-        chunk = [c for c in si.collect_notes() if c.scope == "project:birds"][0]
+        chunk = [c for c in si.collect_notes() if c.scope == "project:atlas"][0]
         assert "the finding" in chunk.text
         assert "author:" not in chunk.text
         assert chunk.title == "Proj"

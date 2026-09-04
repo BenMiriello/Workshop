@@ -26,9 +26,9 @@ def test_unrecorded_scope_is_version_zero(store):
 
 
 def test_bump_increments_and_records_what_moved(store):
-    assert scope_version.bump("project:birds", "ticket", "3 tickets") == 1
-    assert scope_version.bump("project:birds", "note", "a finding") == 2
-    d = scope_version.describe("project:birds")
+    assert scope_version.bump("project:atlas", "ticket", "3 tickets") == 1
+    assert scope_version.bump("project:atlas", "note", "a finding") == 2
+    d = scope_version.describe("project:atlas")
     assert d["version"] == 2
     assert d["kind"] == "note"
     assert d["detail"] == "a finding"
@@ -36,9 +36,9 @@ def test_bump_increments_and_records_what_moved(store):
 
 
 def test_scopes_do_not_bleed_into_each_other(store):
-    scope_version.bump("project:birds", "ticket")
-    assert scope_version.current("project:birds") == 1
-    assert scope_version.current("project:budget") == 0
+    scope_version.bump("project:atlas", "ticket")
+    assert scope_version.current("project:atlas") == 1
+    assert scope_version.current("project:ledger") == 0
 
 
 def test_a_reader_that_is_current_sees_no_change(store):
@@ -92,7 +92,7 @@ class TestScopeRoundTrip:
         assert task_scope.key_for_root(task_scope.root_for_context("general")) == "workshop"
 
     def test_project(self, tmp_path):
-        assert task_scope.key_for_root(tmp_path / "projects" / "birds") == "project:birds"
+        assert task_scope.key_for_root(tmp_path / "projects" / "atlas") == "project:atlas"
 
     def test_agent_scope(self, tmp_path):
         assert task_scope.key_for_root(tmp_path / "agent-scopes" / "memory-keeper") == "agent:memory-keeper"

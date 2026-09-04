@@ -38,12 +38,12 @@ from services import knowledge, memory_policy, refs, semantic_index as si, tasks
 @pytest.fixture
 def roots(tmp_path):
     ws = tmp_path / "workshop"
-    proj = tmp_path / "birds"
+    proj = tmp_path / "atlas"
     dev = tmp_path / "dev-scope"
     ws.mkdir()
     proj.mkdir()
     dev.mkdir()
-    return {"workshop": ws, "project:birds": proj, "development": dev}
+    return {"workshop": ws, "project:atlas": proj, "development": dev}
 
 
 @pytest.fixture
@@ -56,7 +56,7 @@ def patched_scope_roots(roots, monkeypatch):
 class TestCollectTickets:
     def test_emits_ticket_chunks_with_real_scope_and_bare_id_ref(self, patched_scope_roots):
         roots = patched_scope_roots
-        t = tasks.add(roots["workshop"], title="File the birds ticket",
+        t = tasks.add(roots["workshop"], title="File the atlas ticket",
                       body="Longer spec text.")
         chunks = si.collect_tickets()
         mine = [c for c in chunks if c.ref == t["id"]]
@@ -64,18 +64,18 @@ class TestCollectTickets:
         c = mine[0]
         assert c.kind == "ticket"
         assert c.scope == "workshop"
-        assert c.title == "File the birds ticket"
-        assert "File the birds ticket" in c.text
+        assert c.title == "File the atlas ticket"
+        assert "File the atlas ticket" in c.text
         assert "Longer spec text." in c.text
 
     def test_covers_every_scope_root_not_just_one(self, patched_scope_roots):
         roots = patched_scope_roots
         a = tasks.add(roots["workshop"], title="Workshop ticket")
-        b = tasks.add(roots["project:birds"], title="Birds ticket")
+        b = tasks.add(roots["project:atlas"], title="Atlas ticket")
         c = tasks.add(roots["development"], title="Dev ticket")
         refs_seen = {ch.ref: ch.scope for ch in si.collect_tickets()}
         assert refs_seen[a["id"]] == "workshop"
-        assert refs_seen[b["id"]] == "project:birds"
+        assert refs_seen[b["id"]] == "project:atlas"
         assert refs_seen[c["id"]] == "development"
 
     def test_every_scope_it_enumerates_is_already_a_real_scope_key(self):
@@ -140,7 +140,7 @@ class TestTicketMemoryPolicyDefault:
         ticket follows the tree exactly like the plain `reach()` rule, which is
         what `resolve` falling through to "inherit" already gives it."""
         monkeypatch.setattr(memory_policy, "STORE", tmp_path / "memory-policy.json")
-        assert memory_policy.resolve("ticket", "project:birds") == "inherit"
+        assert memory_policy.resolve("ticket", "project:atlas") == "inherit"
 
 
 class TestKindsVocabulary:

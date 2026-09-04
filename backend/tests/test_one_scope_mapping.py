@@ -47,7 +47,7 @@ from wsplatform import paths
 # chat. `test_fence_scope_containment.py` asserts the same thing from the other
 # end; it is restated here so this table is total.
 #
-# `budget` is the bare-installed-app form and `bare-app` stands in for it under
+# `ledger` is the bare-installed-app form and `bare-app` stands in for it under
 # the stubbed catalog below, so the row does not depend on which apps this
 # instance happens to have.
 KEY_FORMS: list[tuple[str, str]] = [
@@ -56,8 +56,8 @@ KEY_FORMS: list[tuple[str, str]] = [
     ("workshop", "workshop"),
     ("new-project", "workshop"),
     ("development", "development"),
-    ("project:birds", "project:birds"),
-    ("app:budget", "app:budget"),
+    ("project:atlas", "project:atlas"),
+    ("app:ledger", "app:ledger"),
     ("agent:scribe", "agent:scribe"),
     # `build:<slug>` was a second spelling of `agent:<slug>` and is DELETED, so
     # it is now an unrecognised kind like any other and resolves to the root.
@@ -88,7 +88,7 @@ def catalog(tmp_path, monkeypatch):
     above, so it is isolated a second time here -- otherwise it falls through
     to this host's real `.runtime/installed-apps.json` and
     `.runtime/projects.json`, and the table stops being deterministic.
-    Neither `bare-app` nor `budget` names `has-a-project`, so both stay
+    Neither `bare-app` nor `ledger` names `has-a-project`, so both stay
     unlinked and queueless, same as before this fixture existed.
     """
     from services import app_registry, installed_apps
@@ -97,11 +97,11 @@ def catalog(tmp_path, monkeypatch):
     (projects / "has-a-project").mkdir(parents=True)
     monkeypatch.setattr(paths, "projects_root", lambda: projects)
     monkeypatch.setattr(app_registry, "installed_app_ids",
-                        lambda: ["bare-app", "budget"])
+                        lambda: ["bare-app", "ledger"])
     # Only `bare-app` needs to be here: `app_links.linked_project_slug`
     # answers None for anything not ALSO a key of the projects registry
-    # below (neither `bare-app` nor the app-form-tested `budget` name
-    # `has-a-project`), so the KEY_FORMS row for `budget` is unaffected by
+    # below (neither `bare-app` nor the app-form-tested `ledger` name
+    # `has-a-project`), so the KEY_FORMS row for `ledger` is unaffected by
     # whether it appears in this particular list.
     monkeypatch.setattr(installed_apps, "installed_app_ids",
                         lambda: ["bare-app"])
@@ -219,8 +219,8 @@ class TestScopeSurvivesARescope:
         chat_store.update_thread(t["id"], context_key="development")
         assert chat_store.get_thread(t["id"])["scope"] == "development"
 
-        chat_store.update_thread(t["id"], context_key="project:birds")
-        assert chat_store.get_thread(t["id"])["scope"] == "project:birds"
+        chat_store.update_thread(t["id"], context_key="project:atlas")
+        assert chat_store.get_thread(t["id"])["scope"] == "project:atlas"
 
     def test_the_list_row_moves_with_it(self, catalog, owned):
         """The sidebar reads a different code path from the thread document, and
@@ -278,6 +278,6 @@ class TestNoThreadCanCarryAppDevelopment:
         it, so a surface filtering the chat list against `reach()` (Memory.tsx)
         can never match a thread stamped with it."""
         monkeypatch.setattr(scope_tree, "_existing_scopes",
-                            lambda: ["project:birds", "app:bare-app"])
+                            lambda: ["project:atlas", "app:bare-app"])
         monkeypatch.setattr(scope_tree, "_agent_bound_project", lambda _slug: None)
         assert "app:development" not in scope_tree.reach("workshop")

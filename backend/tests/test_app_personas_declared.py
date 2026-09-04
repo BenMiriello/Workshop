@@ -24,16 +24,6 @@ from services import llm_router as _llm
 PROVIDERS = [f for f in app_registry.installed_chat_providers()]
 
 
-def _provider(key: str):
-    """The installed provider class for `key`, or skip. Used by the handful of
-    tests below that are about ONE app's declared capabilities; those assertions
-    belong to the app and will leave with it."""
-    for cls in PROVIDERS:
-        if getattr(cls, "key", None) == key:
-            return cls
-    pytest.skip(f"the {key} app is not installed on this instance")
-
-
 class TestEveryProviderIsDeclared:
     @pytest.mark.parametrize("cls", PROVIDERS, ids=lambda c: c.key)
     def test_provider_has_a_definition_file(self, cls):
@@ -60,68 +50,14 @@ class TestEveryProviderIsDeclared:
         assert set(reg.app_persona_keys()) == {c.key for c in PROVIDERS}
 
 
-class TestDeclarationsSayWhatTheyUsedTo:
-    """The migration must not have changed any assistant's capabilities.
-
-    THESE ARE APP TESTS, not platform tests, and they are the only place in this
-    file that names an app. They live here because the apps still live in this
-    repo; they leave with their app at extraction. The expectations are declared
-    once in the table below rather than scattered through the assertions, so
-    "which apps does the platform's test suite name" is one readable list.
-    """
-
-    # app id -> what that app's assistant is expected to still declare.
-    EXPECTED = {
-        "budget": {
-            # The narrow pair and nothing more. Asserted as WHICH plaid tools
-            # rather than as the whole list, because the whole list also carries
-            # the platform's workshop toolkit, which is not a capability over
-            # the operator's bank data.
-            "plaid_tools": ["mcp__plaid__search_transactions",
-                            "mcp__plaid__list_transactions"],
-            "in_persona": ["plan-patch", "TRANSFER ATTRIBUTION", "CUMULATIVE LOOKBACK"],
-            "model": "sonnet",
-        },
-        "finance": {
-            "plaid_tools_include": ["mcp__plaid__get_holdings",
-                                    "mcp__plaid__list_investment_transactions"],
-            "in_persona": ["TRANSFER ATTRIBUTION", "CUMULATIVE LOOKBACK"],
-        },
-        "commute": {"plaid_tools": []},
-        "location": {"plaid_tools": []},
-    }
-
-    @pytest.mark.parametrize("key", sorted(EXPECTED))
-    def test_the_plaid_surface_is_what_it_was(self, key):
-        want = self.EXPECTED[key]
-        p = _provider(key)()
-        got = [t for t in p.allowed_tools if t.startswith("mcp__plaid__")]
-        if "plaid_tools" in want:
-            assert got == want["plaid_tools"]
-        for tool in want.get("plaid_tools_include", []):
-            assert tool in got
-
-    @pytest.mark.parametrize("key", sorted(EXPECTED))
-    def test_the_persona_text_survived_the_move(self, key):
-        """The plaid lookup method was a shared Python constant appended to two
-        personas; it is written into both files now, and losing it from either
-        would silently degrade transaction attribution."""
-        body = _provider(key)().persona()
-        for marker in self.EXPECTED[key].get("in_persona", []):
-            assert marker in body
-
-    @pytest.mark.parametrize("key", sorted(EXPECTED))
-    def test_the_model_tier_survived_the_move(self, key):
-        want = self.EXPECTED[key].get("model")
-        if not want:
-            pytest.skip("no tier declared for this assistant")
-        assert _provider(key)().default_model == _llm.tier(want)
-
-    @pytest.mark.parametrize("key", sorted(EXPECTED))
-    def test_every_assistant_reaches_the_workshop_toolkit(self, key):
-        """Tools or none, an app assistant can always orient itself and reach
-        its own chat's uploads."""
-        assert "workshop" in _provider(key)().mcp_servers
+# The per-app capability assertions that used to sit here -- "this assistant
+# still declares exactly these two integration tools", "this marker is still in
+# that persona's text", "this one still resolves to that model tier" -- were
+# always APP tests, and said so in their own docstring: they named four apps and
+# were the only thing in this file that named any. They left with their apps on
+# 2026-09-04 and are each app's `tests/test_persona_declaration.py` now. What
+# stays here is the contract every app assistant must satisfy, asserted over
+# whatever the catalog discovered.
 
 
 class TestFailureIsLoud:

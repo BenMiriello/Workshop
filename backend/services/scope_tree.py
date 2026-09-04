@@ -157,7 +157,8 @@ def parse(scope_key: str) -> Scope:
 #
 # All five now call `scope_for_context`. Do not add a sixth.
 def _installed_app_ids() -> set[str]:
-    """Context keys that name an installed app (`budget`, `finance`, ...).
+    """Context keys that name an installed app -- the bare app id, as a chat
+    `context_key` spells it.
 
     Off the catalog rather than a list here: a key naming an app this instance
     does not have is a scope nothing can reach, and an app installed tomorrow
