@@ -26,21 +26,30 @@ def _guard(*args: str) -> subprocess.CompletedProcess:
 
 def test_the_real_historical_loosening_is_caught():
     """971f7f3 re-pinned five metrics upward to make a failing gate pass. The
-    guard must flag exactly those, against the commit before it."""
+    guard must flag the ones that are STILL above their pre-commit value, and
+    must not flag one that has since been repaired past it."""
     out = _guard("--baseline", "971f7f3^", "--json")
     if "unknown revision" in out.stderr or out.returncode not in (0, 1):
         pytest.skip("971f7f3 not present in this checkout")
     flagged = {(f["file"].split("/")[-1], f["metric"]): (f["was"], f["now"])
                for f in json.loads(out.stdout)["loosened"]}
-    # WAS is history and NOW is today, so only WAS may be asserted exactly.
+
+    # WAS is history and may be asserted exactly. NOW IS TODAY AND MAY NOT BE,
+    # and this test has now been bitten by that twice.
     #
-    # This pinned both, and `now` is the CURRENT baseline value: it moves every
-    # time anyone legitimately re-pins a metric, so the test failed on ordinary
-    # work rather than on the guard breaking. `function_local_imports` had
-    # reached 593 against the 552 written here and the file had been red for
-    # long enough that nobody knew which. What the test is actually about is
-    # that the guard flags these five metrics as loosened at that commit, and
-    # that the pre-commit value it reports is the real one.
+    # First it pinned `now` as a literal, and failed whenever anyone legitimately
+    # re-pinned a metric. That was fixed by dropping the literal -- but
+    # `key in flagged` and `now > was` were left, and BOTH still encode a fact
+    # about today's baseline: a metric only appears in `loosened` while its
+    # current value is above the historical one. On 2026-09-04 the app
+    # extraction took `upward_violations` from 47 to 38, below the 42 recorded
+    # here, so the guard correctly stopped calling it loosened at that commit
+    # and this test failed for the repo getting BETTER.
+    #
+    # The subject is the GUARD, so read today's baseline and assert the guard's
+    # answer against it, in both directions. A metric that has been repaired
+    # past its pre-commit value is asserted ABSENT rather than skipped: that is
+    # a real property of the guard and the previous versions never checked it.
     was_at_971f7f3 = {
         ("module_layout_baseline.json", "function_local_imports"): 452,
         ("module_layout_baseline.json", "largest_scc_size"): 58,
@@ -48,11 +57,33 @@ def test_the_real_historical_loosening_is_caught():
         ("module_layout_baseline.json", "big_file_count"): 21,
         ("no_process_globals_baseline.json", "mutable_global_count"): 60,
     }
-    for key, was in was_at_971f7f3.items():
-        assert key in flagged, f"{key} was not flagged as loosened"
-        got_was, got_now = flagged[key]
-        assert got_was == was, f"{key} pre-commit value moved: {got_was} != {was}"
-        assert got_now > was, f"{key} is not a loosening: {got_now} <= {was}"
+    still_loosened = 0
+    repaired = 0
+    for (fname, metric), was in was_at_971f7f3.items():
+        current = json.loads((ROOT / "scripts" / fname).read_text())[metric]
+        key = (fname, metric)
+        if current > was:
+            assert key in flagged, f"{key} is {current} > {was} and was not flagged"
+            got_was, got_now = flagged[key]
+            assert got_was == was, f"{key} pre-commit value moved: {got_was} != {was}"
+            assert got_now == current, f"{key} now-value is not the live baseline"
+            still_loosened += 1
+        else:
+            assert key not in flagged, (
+                f"{key} is {current} <= {was}: it has been repaired past the "
+                f"value that commit loosened it from, so it is no longer a "
+                f"loosening and the guard must not say it is")
+            repaired += 1
+
+    # Without this the test passes vacuously on a tree where every metric has
+    # been repaired -- or on one where the guard returns nothing at all, which
+    # is the failure it exists to catch.
+    assert still_loosened, (
+        "no metric from 971f7f3 is still above its pre-commit value, so this "
+        "test proved nothing about the guard. If that is genuinely true, the "
+        "commit is fully repaired and this test should be replaced by a "
+        "synthetic fixture rather than left to pass on an empty result.")
+    assert still_loosened + repaired == len(was_at_971f7f3)
 
 
 def test_a_metric_that_went_DOWN_is_not_flagged():
