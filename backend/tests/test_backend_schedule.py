@@ -304,3 +304,36 @@ def test_a_fresh_receipt_is_not_re_measured(planted):
     second = backend_schedule.run_pass(backend_schedule.RATCHETS)
     assert "nothing measured" in second["stdout"], second
     assert (planted / ".runtime" / "ratchet-drift.json").read_text() == first
+
+
+def test_the_loop_runs_each_pass_on_its_own_interval(sandbox, monkeypatch):
+    """The loop itself, driven for real.
+
+    `run_pass` working proves the mechanism; it does not prove anything ever
+    calls it, and "the mechanism was perfect and nothing called it" is the exact
+    failure this whole module exists to end. So this runs `schedule_loop` on a
+    millisecond clock with two passes of different cadences and counts the calls:
+    both run immediately, and only the fast one runs again.
+    """
+    import asyncio
+
+    calls: list[str] = []
+    fast = backend_schedule.Pass("fast", 0.05, 5.0, lambda: ["true"])
+    slow = backend_schedule.Pass("slow", 60.0, 5.0, lambda: ["true"])
+    monkeypatch.setattr(backend_schedule, "TICK", 0.01)
+    monkeypatch.setattr(backend_schedule, "run_pass",
+                        lambda p: calls.append(p.name) or {"ran": True, "rc": 0})
+
+    async def drive() -> None:
+        task = asyncio.create_task(backend_schedule.schedule_loop((fast, slow)))
+        await asyncio.sleep(0.3)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(drive())
+
+    assert calls.count("slow") == 1, calls
+    assert calls.count("fast") > 1, calls
