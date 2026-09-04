@@ -12,6 +12,21 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.7.9 - 2026-09-04 - the tab bar's fade is wide enough to see
+
+**Patch, fix.** CSS only: no export added, removed or altered.
+
+### Changed
+
+- **`.ws-tabbar`'s right-edge fade is 48px, not 28px**, and holds its full
+  width to 90% of the scroll travel rather than 80%.
+
+  0.7.8 added the fade and never looked at it on a phone. At 28px it faded the
+  last glyph of a label, which reads as antialiasing: re-shot at 390px on
+  2026-09-04, the Settings strip still looked plainly cut off at "Provide" and
+  the reported defect reproduced. 48px is about two characters at the bar's
+  type size, the smallest fade that reads as a fade.
+
 ## 0.7.8 - 2026-09-01 - a scrolling tab bar says it scrolls
 
 **Patch, additive.** CSS only: no export added, removed or altered.

@@ -2614,10 +2614,17 @@ span.ws-filterchip__open { cursor: default; }
   }
   /* Held at full width for most of the travel and released over the last
      stretch, so arriving at the end reads as arriving rather than as the mark
-     switching off. */
+     switching off.
+
+     48px, not the 28px this shipped with on 2026-09-01. That first width was
+     measured in source and never looked at: at 390px it faded the last GLYPH
+     of a label and read as antialiasing, so the strip still looked plainly
+     cut. Re-shot 2026-09-04 and the ticket still reproduced. 48px is about two
+     characters at the bar's type size, which is the smallest fade that reads
+     as a fade rather than as a clip. */
   @keyframes ws-tabbar-edge {
-    from { --ws-tabbar-fade: 28px; }
-    80%  { --ws-tabbar-fade: 28px; }
+    from { --ws-tabbar-fade: 48px; }
+    90%  { --ws-tabbar-fade: 48px; }
     to   { --ws-tabbar-fade: 0px; }
   }
 }
