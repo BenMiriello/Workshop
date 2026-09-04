@@ -18,20 +18,71 @@ import {
   Segmented,
 } from "@workshop/ui";
 import {
-  TASK_SORTS, TASK_EFFORTS, TASK_SOURCES, scopeLabel, sourceLabel,
+  TASK_SORTS, TASK_EFFORTS, scopeLabel, sourceLabel,
   taskStatusLabel, type TaskSort,
 } from "../../lib/tasks";
 import {
-  STATUS_PRESETS, chipsFor, clearField, statusPresetOf, statusesForPreset,
-  toggleValue,
+  SOURCE_PRESETS, STATUS_PRESETS, chipsFor, clearField, sourcePresetOf,
+  sourcesForPreset, statusPresetOf, statusesForPreset, toggleValue,
   type TicketFilters as Filters, type TicketSort, type TicketView,
 } from "../../lib/ticketFilters";
 
 export type LabelCount = { label: string; count: number };
 
-/** The count behind each status preset, keyed by preset value. `undefined`
- *  while it is still being counted, which is most of the first second. */
+/** The count behind each preset of a pill bar, keyed by preset value.
+ *  `undefined` while it is still being counted, which is most of the first
+ *  second. Shared by the status bar and the source bar: both ask the list route
+ *  for one row per preset and read `page.total` off the envelope. */
 export type StatusCounts = Record<string, number | undefined>;
+
+/** WHERE THE TICKETS CAME FROM, and the first control on the page.
+ *
+ *  THE OPERATOR'S QUEUE IS WHAT THIS IS FOR. Measured 2026-09-04: 215 live
+ *  tickets, 140 of them filed by an agent that noticed something while it was
+ *  doing something else, 75 through the operator's own two doors. He opens this
+ *  page to an undifferentiated list and reports that he cannot find the things
+ *  he asked for. Three pills with the server's own counts, above the status bar,
+ *  at every width, and the page opens on "From you".
+ *
+ *  It reads before the status bar because it is the coarser cut: "whose work is
+ *  this" divides 215 rows into 75 and 140, where "what state is it in" divides
+ *  the same rows into five buckets that are 87% one value. The status bar's
+ *  counts are counts WITHIN whatever this bar has selected, so the two compose
+ *  in the order they are read.
+ *
+ *  No dot and no icon on the pills. Two of the three are SETS of source kinds,
+ *  so any mark would have to pick one of them and would be picking wrong; the
+ *  rows below carry `sourceShort` in their meta line, where each one is about a
+ *  single ticket. */
+export function TicketSourceBar({ filters, counts, onFilters }: {
+  filters: Filters;
+  counts: StatusCounts;
+  onFilters: (next: Filters) => void;
+}) {
+  const current = sourcePresetOf(filters.source);
+  return (
+    <div className="ws-pillset" role="group" aria-label="Filter by where the ticket came from">
+      {SOURCE_PRESETS.map((p) => {
+        const n = counts[p.value];
+        return (
+          <button
+            key={p.value}
+            type="button"
+            className="ws-selectpill"
+            aria-pressed={current === p.value}
+            onClick={() => onFilters({ ...filters, source: sourcesForPreset(p.value) })}
+          >
+            {p.label}
+            {/* A count only once there is one. A 0 printed while the request is
+                in flight is a claim, and it is wrong on every preset that has
+                rows. */}
+            {n !== undefined && <span className="ws-selectpill__count">{n}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /** The status control, on screen at every width and above the list.
  *
@@ -107,19 +158,13 @@ function FieldMenuBody({ filters, scopes, labels, assignees, lockedScope, onFilt
           three interactions, and it can show no counts. Removed at both widths
           rather than kept on the wide one, because a filter the phone and the
           desktop disagree about is two surfaces to keep in sync. */}
-      {/* WHERE IT CAME FROM. First, because on this queue it is the strongest
-          narrowing there is after status: 132 of 208 open tickets were filed by
-          an agent noticing something while it worked. */}
-      <MenuLabel>Source</MenuLabel>
-      {TASK_SOURCES.map((k) => (
-        <MenuCheckItem
-          key={k}
-          checked={filters.source.includes(k)}
-          onToggle={() => onFilters(toggleValue(filters, "source", k))}
-        >
-          {sourceLabel(k)}
-        </MenuCheckItem>
-      ))}
+      {/* NO SOURCE GROUP EITHER, and for the same reason as status: it is
+          `TicketSourceBar`, on screen above the status bar at every width with
+          a count on every preset. It was in here, as five checkboxes behind a
+          closed menu, which is three interactions to reach the single strongest
+          cut this queue has (140 of 215 rows) and no way to see how big either
+          side of it is. Moved rather than duplicated: a filter the phone and the
+          desktop disagree about is two surfaces to keep in sync. */}
       <MenuLabel>Effort</MenuLabel>
       {TASK_EFFORTS.map((e) => (
         <MenuCheckItem
@@ -382,26 +427,10 @@ export function TicketFilterSheet({
       }
     >
       <div className="ws-filtersheet">
-        {/* No Status section: `TicketStatusBar` is on the screen behind this
-            sheet, so putting the same control in here would ask the reader to
-            open a sheet to reach a thing already under their thumb. */}
-        <section>
-          <div className="ws-section-label">Source</div>
-          <div className="ws-pillset">
-            {TASK_SOURCES.map((k) => (
-              <button
-                key={k}
-                type="button"
-                className="ws-selectpill"
-                aria-pressed={filters.source.includes(k)}
-                onClick={() => onFilters(toggleValue(filters, "source", k))}
-              >
-                {sourceLabel(k)}
-              </button>
-            ))}
-          </div>
-        </section>
-
+        {/* No Status section and no Source section: `TicketStatusBar` and
+            `TicketSourceBar` are both on the screen behind this sheet, so
+            putting either in here would ask the reader to open a sheet to reach
+            a thing already under their thumb. */}
         <section>
           <div className="ws-section-label">Effort</div>
           <div className="ws-pillset">

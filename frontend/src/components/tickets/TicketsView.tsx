@@ -52,8 +52,10 @@ import type { components } from "../../api/schema.gen";
 import { rowTotal } from "../../lib/pageTotal";
 import { queryKeys } from "../../lib/queryKeys";
 import {
-  DEFAULT_SORT, PAGE_SIZE, STATUS_PRESETS, apiQuery, clampPage, defaultFilters, isNarrowed,
+  DEFAULT_SORT, PAGE_SIZE, SOURCE_PRESETS, STATUS_PRESETS, apiQuery, clampPage,
+  defaultFilters, isNarrowed,
   pageCount, pageItems, parseFilters, parsePage, parseSort, parseView,
+  sourcePresetOf,
   writeParams,
   type TicketFilters, type TicketSort, type TicketView,
 } from "../../lib/ticketFilters";
@@ -62,7 +64,8 @@ import { useIsWide } from "../../lib/useMediaQuery";
 import { TicketBoard } from "./TicketBoard";
 import { TicketList } from "./TicketList";
 import {
-  TicketFilterBar, TicketFilterCompact, TicketFilterSheet, TicketStatusBar,
+  TicketFilterBar, TicketFilterCompact, TicketFilterSheet, TicketSourceBar,
+  TicketStatusBar,
   ViewSwitcher,
   type LabelCount, type StatusCounts,
 } from "./TicketFilters";
@@ -274,6 +277,45 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [countQueries.map((q) => (q.isSuccess ? q.data : "")).join(",")]);
 
+  // THE COUNT BEHIND EACH SOURCE PRESET. Same trick as the status counts above,
+  // one request each, `limit=1`, reading `page.total` off the envelope.
+  //
+  // EVERY OTHER FILTER IS CARRIED, INCLUDING STATUS, for the same reason: the
+  // number on a pill has to be the number of rows pressing it would produce. So
+  // under the default status set "From agents 128" means 128 ACTIVE tickets an
+  // agent filed, which is the honest count beside a list showing active work.
+  //
+  // NOTHING HERE IS CACHED OR DERIVED FROM A CONSTANT. The statuses in this
+  // store are being reconciled continuously (a ticket built weeks ago can still
+  // read `todo`), so every number on this page is a live read of the same route
+  // the rows come from and moves when the store does.
+  const sourceCountQueries = useQueries({
+    queries: SOURCE_PRESETS.map((preset) => {
+      const params = apiQuery(
+        { ...urlFilters, source: preset.sources }, DEFAULT_SORT, 1);
+      return {
+        queryKey: queryKeys.tasks.filteredList(`count:${params.toString()}`),
+        queryFn: async (): Promise<number> => {
+          const r = await fetch(`/api/tasks?${params.toString()}`);
+          if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, ""));
+          const j: TasksResp = await r.json();
+          return rowTotal(j.page?.total, j.items?.length ?? 0);
+        },
+        staleTime: 30_000,
+      };
+    }),
+  });
+
+  const sourceCounts = useMemo<StatusCounts>(() => {
+    const out: StatusCounts = {};
+    SOURCE_PRESETS.forEach((preset, i) => {
+      const q = sourceCountQueries[i];
+      out[preset.value] = q?.isSuccess ? q.data : undefined;
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see statusCounts.
+  }, [sourceCountQueries.map((q) => (q.isSuccess ? q.data : "")).join(",")]);
+
   const assigneesQuery = useQuery({
     queryKey: queryKeys.tasks.assignees(labelScope),
     queryFn: async (): Promise<LabelCount[]> => {
@@ -321,9 +363,28 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
   // cannot clear anything. An app with an empty queue says it is empty.
   const narrowed = isNarrowed(
     lockedScope ? { ...urlFilters, scope: null } : urlFilters, view);
-  // Nothing here, and nothing was asked for: the store is empty rather than the
-  // filters being tight. Read by the empty state and by the status bar.
-  const emptyStore = !!data && rows.length === 0 && !narrowed;
+  // The count with the SOURCE filter lifted and everything else left alone. It
+  // is what separates "there is nothing here" from "there is nothing here from
+  // you", which are two different sentences with two different actions and used
+  // to be one.
+  const anySourceCount = sourceCounts["anywhere"];
+  // The list is empty because the page opened on the operator's own queue and
+  // his queue is empty here, while other rows exist behind the pill next to it.
+  // That case must NOT read "No tickets match these filters" with a Clear
+  // button: the reader applied no filter, and clearing to the default would
+  // return him to the state he is already in. It gets its own sentence and a
+  // one-tap widen. See `isNarrowed`.
+  const hiddenBySource = !!data && rows.length === 0
+    && urlFilters.source.length > 0 && (anySourceCount ?? 0) > 0;
+  // The preset the source bar is showing as pressed, for that sentence. Null
+  // when the URL carries a hand-picked set, which the chip handles instead.
+  const sourcePreset = SOURCE_PRESETS.find(
+    (p) => p.value === sourcePresetOf(urlFilters.source)) ?? null;
+  // Nothing here, and nothing behind any other source either: the store is
+  // empty rather than the filters being tight. Read by the empty state and by
+  // both pill bars.
+  const emptyStore = !!data && rows.length === 0 && !narrowed
+    && anySourceCount === 0;
   // The scope goes on a row only when the rows in hand actually differ in it.
   // See `spansScopes`: on this installation the unfiltered list is one scope for
   // page after page, so the old rule (print it unless a scope filter is set)
@@ -358,6 +419,22 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
           {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} width="100%" />)}
         </Stack>
       </Card>
+    );
+  } else if (hiddenBySource) {
+    // The source cut emptied the list and there is work behind the other pill.
+    // Say which cut, say how much is behind it, and widen in one tap.
+    body = (
+      <StateBlock
+        title={sourcePreset
+          ? `No tickets ${sourcePreset.label.toLowerCase()}`
+          : "No tickets from that source"}
+        hint={`${anySourceCount} match everything else.`}
+        action={(
+          <Button size="sm" onClick={() => applyFilters({ ...filters, source: [] })}>
+            Show every source
+          </Button>
+        )}
+      />
     );
   } else if (rows.length === 0) {
     body = (
@@ -412,6 +489,20 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
           <div className="ws-tickets__headrow">
             <ViewSwitcher view={view} onView={applyView} />
           </div>
+        )}
+
+        {/* WHERE THE TICKETS CAME FROM, first, above the status bar. It is the
+            coarsest cut this list has (75 of 215 rows came from the operator,
+            140 from an agent) and it is the one the page now opens on, so it
+            reads before the control that divides whatever it selected. Gated on
+            the same `emptyStore` as the status bar so the two cannot disagree
+            about whether there is anything here. See TicketSourceBar. */}
+        {!emptyStore && (
+          <TicketSourceBar
+            filters={filters}
+            counts={sourceCounts}
+            onFilters={applyFilters}
+          />
         )}
 
         {/* The status control, above the search and the chips, at every width.

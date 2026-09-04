@@ -10,8 +10,10 @@
 // below are built from; it is not re-listed here.
 import {
   STATUSES_BY_STATE_TYPE,
+  TASK_SOURCES,
   TASK_STATUSES,
   type TaskSort,
+  type TaskSource,
   type TaskStatus,
 } from "./tasks";
 import {
@@ -70,6 +72,28 @@ export function defaultStatuses(view: TicketView): TaskStatus[] {
   return view === "board" ? [] : ACTIVE_STATUSES;
 }
 
+// ---- the default SOURCE set, and why this list opens narrowed ----------------
+// Measured on the live store 2026-09-04: 215 live tickets, of which 140 came
+// through the agent door and 75 through the operator's own two (38 `operator`,
+// 37 `chat`). An unfiltered list is therefore two thirds work an agent filed
+// for itself while it was doing something else, and the operator's report is
+// that he opens this page and cannot find the things he asked for.
+//
+// The same argument the status default already makes. A list answering "what is
+// in flight" must not open with 108 done tickets, so `defaultStatuses` narrows;
+// a list answering "what do I have to do" must not open with 140 tickets nobody
+// asked for, so this narrows too. Both are DEFAULTS, both are spelled by
+// leaving the URL param off, and both have a control on screen saying which one
+// is on with the count behind every alternative. One tap widens it.
+//
+// IT IS STILL PROVENANCE, NOT INTENT. `operator` and `chat` are the two doors
+// the operator's own words arrive through, which is the same pair the store
+// already collapses (`tasks._SCOPED_BY_FROM_SOURCE` maps both to `operator`).
+// It does not claim he wrote every one of them; it claims they came from him or
+// from a conversation with him, which is what the field records. See
+// lib/tasks TaskSource.
+export const DEFAULT_SOURCES: TaskSource[] = ["operator", "chat"];
+
 // ---- the filter set ----------------------------------------------------------
 export type TicketFilters = {
   /** Free text over title and body. Not a chip: it has its own field. */
@@ -103,7 +127,7 @@ export const DEFAULT_SORT: TicketSort = { key: "updated", dir: "desc" };
 export function defaultFilters(view: TicketView): TicketFilters {
   return {
     q: "", status: defaultStatuses(view), scope: null,
-    labels: [], effort: [], assignee: [], source: [],
+    labels: [], effort: [], assignee: [], source: [...DEFAULT_SOURCES],
   };
 }
 
@@ -115,6 +139,9 @@ const sameSet = (a: readonly string[], b: readonly string[]): boolean =>
 
 export const isDefaultStatus = (f: TicketFilters, view: TicketView): boolean =>
   sameSet(f.status, defaultStatuses(view));
+
+export const isDefaultSource = (f: TicketFilters): boolean =>
+  sameSet(f.source, DEFAULT_SOURCES);
 
 // ---- status presets: the one control that is always on screen ---------------
 // WHY THIS IS NOT A CHIP. Status was reachable only by opening a "+ Filter"
@@ -155,10 +182,66 @@ export function statusesForPreset(value: StatusFilter): TaskStatus[] {
   return STATUS_PRESETS.find((p) => p.value === value)?.statuses ?? [];
 }
 
+// ---- source presets: the other control that is always on screen -------------
+// WHERE A TICKET CAME FROM, as three pills with the server's own counts, above
+// the status bar and above the list, at every width.
+//
+// It is the same argument as the status bar one step earlier. Source was on
+// every ticket since the store existed and was readable only by opening the
+// "+ Filter" menu (wide) or the sheet (phone) and ticking two of five boxes, so
+// "how much of this did I ask for" took three interactions and its answer was
+// never a number. It is now the first thing on the page, because on a queue
+// that is two thirds agent-filed it narrows harder than anything else here.
+//
+// THREE PRESETS, NOT FIVE KINDS, for the same reason the status bar carries
+// five presets rather than eight statuses: the bar answers the question the
+// page is opened with, and the question is "mine or theirs". The five kinds
+// stay reachable as a URL (`?source=chat`), which renders no pressed pill and
+// gets a removable chip instead, exactly like a hand-picked status set.
+//
+// `agents` covers `autogen` as well as `agent`: both are a machine filing work
+// it decided on, which is the distinction being drawn. `unknown` is in neither
+// group and only in `anywhere` -- a record nobody wrote a source for must not
+// be counted as anyone's, which is the whole reason that value exists.
+export type SourceFilter = "you" | "agents" | "anywhere";
+
+export type TicketSourcePreset = {
+  value: SourceFilter;
+  label: string;
+  /** Empty means every source, the same spelling the filter set uses. */
+  sources: TaskSource[];
+};
+
+// "From anywhere" rather than "All", because the status bar sits directly under
+// this one and already has an All. Two pills a row apart reading the same word
+// about two different axes is how a control stops being read at all.
+export const SOURCE_PRESETS: TicketSourcePreset[] = [
+  { value: "you", label: "From you", sources: [...DEFAULT_SOURCES] },
+  { value: "agents", label: "From agents", sources: ["agent", "autogen"] },
+  { value: "anywhere", label: "From anywhere", sources: [] },
+];
+
+/** Which preset a source set IS, or null when it is a hand-picked combination. */
+export function sourcePresetOf(source: string[]): SourceFilter | null {
+  return SOURCE_PRESETS.find((p) => sameSet(p.sources, source))?.value ?? null;
+}
+
+export function sourcesForPreset(value: SourceFilter): TaskSource[] {
+  return SOURCE_PRESETS.find((p) => p.value === value)?.sources ?? [];
+}
+
 /** Is anything narrowing the list beyond the view's own default? */
+/** Is anything narrowing the list beyond the view's own default?
+ *
+ *  The DEFAULT source set does not count, the same way the default status set
+ *  does not. It is what the page opens on, so counting it would make every
+ *  fresh page load read as filtered and give the empty state a Clear button
+ *  that clears back to the state it is already in. What an empty result under
+ *  the default source needs is a different sentence and a different action, and
+ *  `TicketsView` draws that case separately. */
 export function isNarrowed(f: TicketFilters, view: TicketView): boolean {
   return !!f.q || !!f.scope || f.labels.length > 0 || f.effort.length > 0
-    || f.assignee.length > 0 || f.source.length > 0 || !isDefaultStatus(f, view);
+    || f.assignee.length > 0 || !isDefaultSource(f) || !isDefaultStatus(f, view);
 }
 
 // ---- URL round trip ----------------------------------------------------------
@@ -203,6 +286,19 @@ export function parseFilters(params: URLSearchParams, view: TicketView): TicketF
     status = known.length ? known : defaultStatuses(view);
   } else status = defaultStatuses(view);
 
+  // Source is spelled exactly like status, and for the same reason: it has a
+  // non-empty default, so "every source" needs a word of its own and cannot be
+  // an absent param. An unrecognised kind is dropped; a param that is entirely
+  // unrecognised falls back to the default rather than emptying the list.
+  const rawSource = params.get("source");
+  let source: TaskSource[];
+  if (rawSource === ALL) source = [];
+  else if (rawSource) {
+    const known = csv(rawSource).filter((s) =>
+      (TASK_SOURCES as string[]).includes(s)) as TaskSource[];
+    source = known.length ? known : [...DEFAULT_SOURCES];
+  } else source = [...DEFAULT_SOURCES];
+
   return {
     q: (params.get("q") ?? "").trim(),
     status,
@@ -210,7 +306,7 @@ export function parseFilters(params: URLSearchParams, view: TicketView): TicketF
     labels: csv(params.get("tag")),
     effort: csv(params.get("effort")),
     assignee: csv(params.get("assignee")),
-    source: csv(params.get("source")),
+    source,
   };
 }
 
@@ -250,7 +346,9 @@ export function writeParams(
   set("tag", filters.labels.join(",") || null);
   set("effort", filters.effort.join(",") || null);
   set("assignee", filters.assignee.join(",") || null);
-  set("source", filters.source.join(",") || null);
+  set("source", isDefaultSource(filters)
+    ? null
+    : (filters.source.length === 0 ? ALL : filters.source.join(",")));
   set("status", isDefaultStatus(filters, view)
     ? null
     : (filters.status.length === 0 ? ALL : filters.status.join(",")));
@@ -368,13 +466,19 @@ export function chipsFor(
     });
   }
 
-  // Directly after Status, and before Scope: on a queue that is two thirds
-  // agent-filed, which door a ticket came through narrows the list further than
-  // anything else on the bar.
-  if (filters.source.length === 1) {
-    chips.push({ field: "source", label: "Source", value: fmt.source(filters.source[0]) });
-  } else if (filters.source.length > 1) {
-    chips.push({ field: "source", label: "Source", value: many(filters.source.length) });
+  // SOURCE TAKES A CHIP ONLY WHEN THE BAR CANNOT SAY IT, the same rule as
+  // status one paragraph up. `TicketSourceBar` is on screen at both widths with
+  // its three presets and their counts, so a chip reading "Source · 2" beside a
+  // pressed "From you" is the same fact twice. A hand-picked set (`?source=chat`)
+  // presses no pill, so it keeps its chip and the chip is how it is cleared.
+  if (sourcePresetOf(filters.source) === null) {
+    chips.push({
+      field: "source",
+      label: "Source",
+      value: filters.source.length === 1
+        ? fmt.source(filters.source[0])
+        : many(filters.source.length),
+    });
   }
 
   if (filters.scope && !opts?.lockedScope) {
@@ -398,9 +502,10 @@ export function chipsFor(
   return chips;
 }
 
-/** Clearing a chip. Status clears to EVERY status, not back to the default:
- *  the default is what the chip already said, so clearing to it would look
- *  like the control did nothing. */
+/** Clearing a chip. Status and source clear to EVERY value, not back to their
+ *  defaults: a chip only exists for a set that matches no preset, and clearing
+ *  it to a default that has its own pressed pill would read as the control
+ *  doing nothing. */
 export function clearField(f: TicketFilters, field: TicketFilterField): TicketFilters {
   switch (field) {
     case "status": return { ...f, status: [] };
