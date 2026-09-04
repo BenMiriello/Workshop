@@ -250,11 +250,20 @@ def main() -> None:
              f"({', '.join(heads) or 'none'}); `upgrade head` is ambiguous")
     head = heads[0]
 
-    # THE RUNNING BACKEND ANSWERS FIRST (see `live_from_backend`). It is the
-    # only party that can say which database the app is actually on.
-    from_backend, why_not = live_from_backend()
-    if from_backend:
-        emit(*_compare(from_backend, head, source="the running backend"))
+    # THE RUNNING BACKEND ANSWERS FIRST (see `live_from_backend`) -- but only
+    # when the caller has NOT named a database.
+    #
+    # Asking the backend exists to answer "which database is the app actually
+    # on", which is a question only when nobody has said. A caller that sets
+    # WORKSHOP_DATABASE_URL has said, and it means that one: the guard's own
+    # tests stamp a throwaway SQLite file at a chosen revision and expect the
+    # comparison to be about THAT file. Asking the backend regardless made all
+    # five of them read `ok` off the live installation no matter what they set
+    # up, which is a check that cannot fail and therefore is not a check.
+    if not os.environ.get("WORKSHOP_DATABASE_URL", "").strip():
+        from_backend, why_not = live_from_backend()
+        if from_backend:
+            emit(*_compare(from_backend, head, source="the running backend"))
 
     # A SHORT TIMEOUT IS PART OF THE CONTRACT. apply.sh is documented as safe to
     # run at any time from any agent; a check that can hang on a wedged database

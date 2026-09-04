@@ -422,6 +422,21 @@ def main(argv: list[str]) -> int:
     a = p.parse_args(argv[1:])
     root: Path = a.dir
 
+    # A MALFORMED FLAG IS REFUSED BEFORE THE ID IS LOOKED UP. `--expect-claim-token ""`
+    # is a caller bug whether or not the id exists, and it has its own exit code
+    # (1, a bad argument) distinct from an unknown id (2). Resolving the id first
+    # meant an empty token on an id that happened not to exist reported "no such
+    # ticket" and exited 2, hiding the more serious of the two problems -- the
+    # one that used to SILENTLY UPGRADE the call's authority. Caught by
+    # tests/test_fence_token_is_never_promoted.py when the unknown-id check was
+    # added ahead of it (1d364164).
+    if getattr(a, "expect_claim_token", None) is not None:
+        try:
+            _opt_int(a.expect_claim_token, "--expect-claim-token")
+        except ValueError as e:
+            print(json.dumps({"error": str(e)}))
+            return 1
+
     if getattr(a, "task_id", None):
         resolved = _resolve_task_id(root, a.task_id)
         if isinstance(resolved, dict):
