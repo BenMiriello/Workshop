@@ -21,7 +21,7 @@ async def plaid_webhook(request: Request):
     # calls it), but it fans payloads into the event feed (which can enqueue
     # agent runs) and invalidates the finance cache — so an unsigned POST is an
     # event-injection primitive. Fail closed on a missing/invalid signature.
-    from services.plaid_verify import verify as _verify_plaid_jwt
+    from services.finance_plaid_verify import verify as _verify_plaid_jwt
     ok, reason = _verify_plaid_jwt(request.headers.get("plaid-verification", ""), body)
     if not ok:
         log.warning("plaid webhook rejected (unverified): %s", reason)

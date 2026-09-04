@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from services import budget_store, budget_engine, categorizer
+from services import budget_store, budget_engine, budget_categorizer as categorizer
 
 router = APIRouter()
 

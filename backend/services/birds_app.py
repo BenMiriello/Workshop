@@ -22,7 +22,7 @@ log = logging.getLogger("workshop.apps")
 async def _env_refresh_loop() -> None:
     """Keep the weather/astro spine fresh (stdlib astro + Open-Meteo) and score
     any forecast predictions whose hour has passed. Best-effort, off-thread."""
-    from services import environment as environment_svc
+    from services import birds_environment as environment_svc
 
     while True:
         try:
@@ -59,11 +59,11 @@ async def _atlas_rebuild_loop() -> None:
 
 # Route modules this app needs; the catalog drops the app when they are not
 # shipped. See `app_registry.APP_REQUIRES_ATTR`.
-REQUIRES = ("birds", "environment",)
+REQUIRES = ("birds", "birds_environment",)
 
 
 def app_spec() -> AppSpec:
-    from routes import birds, environment
+    from routes import birds, birds_environment as environment
     spec = AppSpec(
         id="birds",
         card={

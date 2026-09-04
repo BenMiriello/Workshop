@@ -14,7 +14,7 @@ from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 
-from services import owntracks, auth_store, ownership
+from services import location_owntracks as owntracks, auth_store, ownership
 
 def _viewer_url(path: str) -> str:
     """This deployment's own origin, or a relative path when it has none."""

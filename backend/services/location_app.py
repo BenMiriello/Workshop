@@ -15,11 +15,11 @@ from services.app_spec import AppSpec, RouterMount
 
 # Route modules this app needs; the catalog drops the app when they are not
 # shipped. See `app_registry.APP_REQUIRES_ATTR`.
-REQUIRES = ("location", "owntracks",)
+REQUIRES = ("location", "location_owntracks",)
 
 
 def app_spec() -> AppSpec:
-    from routes import location, owntracks
+    from routes import location, location_owntracks as owntracks
     from services import location_persona
     spec = AppSpec(
         id="location",

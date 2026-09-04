@@ -66,7 +66,7 @@ def move_global_budget(op_id: int) -> None:
 
 
 def import_legacy_items(op_id: int) -> None:
-    from services import ownership, plaid_store
+    from services import ownership, finance_plaid_store as plaid_store
     ownership.set_current_owner(op_id)
     if plaid_store.has_items(op_id):
         print("operator already has Plaid items in the Workshop store; skipping import")

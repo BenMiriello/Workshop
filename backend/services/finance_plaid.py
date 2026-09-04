@@ -4,7 +4,7 @@ Replaces the old delegation to the external ~/clawdbot Plaid MCP (node
 subprocess). Workshop now owns its Plaid integration: it talks to the Plaid REST
 API directly (httpx, like services/plaid_verify.py already does) using the
 operator's Plaid app credentials, and stores each user's Items owner-scoped and
-encrypted via services.plaid_store.
+encrypted via services.finance_plaid_store.
 
 Everything is owner-scoped: the owner is the authenticated user, resolved from
 services.ownership (the request pins it; background passes set it explicitly).
@@ -28,7 +28,7 @@ from typing import Any, Optional
 
 import httpx
 
-from services import ownership, plaid_store
+from services import ownership, finance_plaid_store as plaid_store
 
 # PLAID_ENV picks the Plaid host: sandbox/development/production. PLAID_ENV_URL
 # is an explicit override for anyone who needs a custom host (proxy, mock

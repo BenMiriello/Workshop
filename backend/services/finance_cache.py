@@ -8,7 +8,7 @@ Cache file: ~/workshop/.runtime/finance-cache.json
 Schema: {"balances": {ts, data}, "transactions:30": {ts, data}, ...}
 TTL: 5 minutes (configurable per-key via WORKSHOP_FINANCE_TTL_S env).
 
-Webhook invalidation: routes/plaid_webhook.py calls invalidate() on any
+Webhook invalidation: routes/finance_plaid_webhook.py calls invalidate() on any
 TRANSACTIONS webhook so the next /finance/transactions request fetches fresh.
 """
 from __future__ import annotations

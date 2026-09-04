@@ -6,7 +6,7 @@ their own linked banks; a user with no linked banks gets empty balances/txns.
 """
 from fastapi import APIRouter, Body, HTTPException, Query
 
-from services import finance_cache, finance_plaid, plaid_store
+from services import finance_cache, finance_plaid, finance_plaid_store as plaid_store
 
 router = APIRouter()
 

@@ -28,7 +28,7 @@ def _plan_file() -> Path:
 
 
 # Per-transaction category overrides written by the daily Sonnet categorizer
-# (services/categorizer.py). The engine consults these BEFORE Plaid's PFC rules,
+# (services/budget_categorizer.py). The engine consults these BEFORE Plaid's PFC rules,
 # so a model judgement ("this Venmo is rent", "this is the late June utility")
 # sticks across reloads. Schema: { txn_id: {bucket, reason, ts, source} } where
 # `bucket` is a variable id, a necessity id, "necessities", or "exclude".

@@ -19,7 +19,7 @@ def verify_webhook(headers: dict, body: bytes) -> tuple[bool, str]:
     Degrades to a shape check when PLAID_CLIENT_ID/PLAID_SECRET are unset, so a
     sandbox is testable; real traffic fails crypto until the creds are wired.
     """
-    from services import plaid_verify
+    from services import finance_plaid_verify as plaid_verify
 
     return plaid_verify.verify_webhook(headers, body)
 

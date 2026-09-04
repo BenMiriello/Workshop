@@ -39,7 +39,7 @@ _MIN_CTX = 12
 
 def _env():
     try:
-        from services import environment as e
+        from services import birds_environment as e
         return e
     except Exception:  # pragma: no cover
         return None

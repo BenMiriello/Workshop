@@ -1,7 +1,7 @@
 """The event log, and the one way to publish to it.
 
 WHY THIS MODULE EXISTS. The append-to-events.jsonl sequence was hand-copied in
-three places (`routes/events.py`, `routes/plaid_webhook.py`, `routes/birds.py`)
+three places (`routes/events.py`, `routes/finance_plaid_webhook.py`, `routes/birds.py`)
 and the three copies had already drifted: plaid's omitted the `signature` field
 entirely, and birds' reached into `routes.events` for a private helper
 (`_load_subscriptions`) to do it, making one app's route module depend on

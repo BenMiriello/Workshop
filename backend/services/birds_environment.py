@@ -18,10 +18,10 @@ Location-keyed throughout (location_id + lat/lon) so the same spine serves
 the yard, travel, and forecast-only pinned locations later.
 
 CLI (run from backend/):
-    .venv/bin/python -m services.environment backfill-astro
-    .venv/bin/python -m services.environment astro 37.3696 -122.0957 2026-06-09
-    .venv/bin/python -m services.environment backfill-weather   # needs egress
-    .venv/bin/python -m services.environment status
+    .venv/bin/python -m services.birds_environment backfill-astro
+    .venv/bin/python -m services.birds_environment astro 37.3696 -122.0957 2026-06-09
+    .venv/bin/python -m services.birds_environment backfill-weather   # needs egress
+    .venv/bin/python -m services.birds_environment status
 """
 from __future__ import annotations
 

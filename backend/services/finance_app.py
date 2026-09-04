@@ -65,7 +65,6 @@ PLAID_MCP_PROVIDER = {
 
 
 _PREWARM_INTERVAL_S = 9 * 60
-_CATEGORIZE_HOUR_LOCAL = 23
 
 
 async def _prewarm_cache(realtime: bool = False) -> None:
@@ -95,28 +94,6 @@ async def _prewarm_loop() -> None:
         await _prewarm_cache(realtime=False)
 
 
-async def _categorize_loop() -> None:
-    """Once-a-day Sonnet categorization of uncategorized/transfer transactions."""
-    from services import auth_store, ownership, categorizer
-
-    last_run_day = None
-    while True:
-        await asyncio.sleep(30 * 60)
-        lt = time.localtime()
-        today = (lt.tm_year, lt.tm_yday)
-        if lt.tm_hour >= _CATEGORIZE_HOUR_LOCAL and today != last_run_day:
-            try:
-                oid = auth_store.operator_id()
-                if oid is None:
-                    continue
-                ownership.set_current_owner(oid)
-                summary = await categorizer.run(days=30)
-                log.info("nightly categorizer: %s", summary)
-            except Exception as e:
-                log.warning("nightly categorizer failed: %s", e)
-            last_run_day = today
-
-
 async def _on_startup(app: FastAPI) -> None:
     """Wire the cache-invalidate prewarm hook and fire an initial realtime warm."""
     from services import finance_cache
@@ -127,11 +104,11 @@ async def _on_startup(app: FastAPI) -> None:
 
 # Route modules this app needs; the catalog drops the app when they are not
 # shipped. See `app_registry.APP_REQUIRES_ATTR`.
-REQUIRES = ("finance", "plaid_webhook",)
+REQUIRES = ("finance", "finance_plaid_webhook",)
 
 
 def app_spec() -> AppSpec:
-    from routes import finance, plaid_webhook
+    from routes import finance, finance_plaid_webhook as plaid_webhook
     from services import finance_events, finance_persona, finance_store_adapter
     spec = AppSpec(
         id="finance",
@@ -156,7 +133,7 @@ def app_spec() -> AppSpec:
         mcp=PLAID_MCP,
         mcp_provider=PLAID_MCP_PROVIDER,
         on_startup=(_on_startup,),
-        background=(_prewarm_loop, _categorize_loop),
+        background=(_prewarm_loop,),
         event_sources=("plaid",),
         event_verifiers={"plaid": finance_events.verify_webhook},
         event_dedup={"plaid": finance_events.dedup_key},

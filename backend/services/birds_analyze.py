@@ -2925,7 +2925,7 @@ def birds_now(location_id: int) -> dict:
     hour-of-day bucket (±1h). With little history it's weak and says so (n shown);
     it sharpens as detections accumulate. No baseline/pattern claim is made."""
     try:
-        from services import environment as _env  # lazy: avoid import cycle at load
+        from services import birds_environment as _env  # lazy: avoid import cycle at load
     except Exception:  # pragma: no cover
         _env = None
     now = datetime.now(timezone.utc)

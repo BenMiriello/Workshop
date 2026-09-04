@@ -2,11 +2,11 @@
 
 Tailnet-private like the birds router (mounted with the same _SECURE deps in
 main.py). Read-only over environment.db; the spine is populated by the
-services.environment refresh loop / CLI.
+services.birds_environment refresh loop / CLI.
 """
 from fastapi import APIRouter, Query
 
-from services import environment as env
+from services import birds_environment as env
 
 router = APIRouter(prefix="/environment", tags=["environment"])
 

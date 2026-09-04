@@ -170,6 +170,12 @@ def _app_content_patterns(app: str) -> tuple[re.Pattern[str], ...]:
         re.compile(rf"^agents/apps/{a}\.md$", re.I),
         re.compile(rf"^backend/(routes|services)/{short}(_[a-z_]+)?\.py$", re.I),
         re.compile(rf"^backend/services/{short}/", re.I),
+        # A one-off script that belongs to an app is app source too, and a
+        # stranger's clone has no more use for one operator's backfill than for
+        # the app it backfills. Same NAMING rule as routes/services above, so a
+        # script says whose it is; this is the path classifier deciding what IS
+        # app source, not another pattern for detecting a leaked name.
+        re.compile(rf"^backend/scripts/{short}(_[a-z_]+)?\.py$", re.I),
         re.compile(rf"^{a}/", re.I),
     )
 

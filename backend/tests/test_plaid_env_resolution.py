@@ -7,7 +7,7 @@ operator who set PLAID_ENV=sandbox, believing that was enough, would still
 hit production against real bank connections.
 
 These tests exercise services.finance_plaid._plaid_base() and
-services.plaid_verify._plaid_base() directly — no network calls, no secrets.
+services.finance_plaid_verify._plaid_base() directly — no network calls, no secrets.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import finance_plaid, plaid_verify  # noqa: E402
+from services import finance_plaid, finance_plaid_verify as plaid_verify  # noqa: E402
 
 
 @pytest.mark.parametrize("module", [finance_plaid, plaid_verify])
