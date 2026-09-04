@@ -42,7 +42,19 @@ import os
 from pathlib import Path
 from typing import Any
 
-MODES = ("reactive", "supervised", "autonomous")
+# ONE DECLARATION OF THE RATIFIED ENUM (ADR 0008), not a fourth copy of it.
+# The docstring above already calls this "the ratified autonomy enum", and
+# `check_one_definition.py` was flagging the same three values declared in
+# `services/triggers.py`, here, and `frontend/src/lib/autonomy.ts`. A closed
+# enum spelled twice in one language is one rename away from disagreeing, and
+# the disagreement would be a scope silently refusing to execute.
+#
+# `triggers` is the canonical Python home and is a safe import: it depends only
+# on `services.jobs`, and nothing in that chain reaches back here. The
+# cross-language pair (Python + TypeScript) is not a duplicate the checker
+# counts and is the seam the generated client would have to close.
+from services.triggers import AUTONOMY_MODES as MODES
+
 DEFAULT_MODE = "reactive"
 
 # The stage a scope's auto-execution may reach. supervised stops at in_review so

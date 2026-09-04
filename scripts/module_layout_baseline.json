@@ -1,8 +1,9 @@
 {
-  "_measured_against": 281,
-  "big_file_count": 25,
-  "function_local_imports": 593,
-  "largest_scc_size": 127,
+  "_measured_against": 237,
+  "big_file_count": 24,
+  "function_local_imports": 571,
+  "largest_scc_size": 102,
   "scc_count": 1,
-  "upward_violations": 47
+  "upward_violations": 38,
+  "_because": "Re-pinned 2026-09-04 by the stage-7 extraction: the operator's eight apps left the platform repo (check_no_app_names content_files 131 -> 0), which removed their modules from every count here. largest_scc 127 -> 102 because those modules were inside the big cycle; upward_violations 47 -> 38 and big_file_count 25 -> 24 for the same reason. NOTHING WAS REFACTORED TO EARN THIS -- it is the debt leaving with the code that carried it. Pinning is what stops it walking back in."
 }

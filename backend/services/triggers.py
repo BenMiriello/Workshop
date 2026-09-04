@@ -362,15 +362,20 @@ def effective_autonomy(agent_slug: str, *, registry=None, override=None) -> str:
     return "reactive"
 
 
-# CANONICAL for this file and services/deploys.py, which imports it rather
-# than restating it (coherence-overhaul-2026-08-16 T5). Two further copies
-# remain outside this module's reach: db/models.py's own `AGENT_AUTONOMY` (the
-# DB CHECK constraint's source) and services/agents_registry.py's `AUTONOMY`.
-# Neither file is owned here, and as of this pass db/models.py is mid-rewrite
-# by another agent (its own AGENT_AUTONOMY was mid-move and briefly
-# undefined), so pointing this module at it now would couple a stable file to
-# an in-flux one. The remaining two-way collapse is left for whoever lands
-# that schema work.
+# CANONICAL for the Python side of the ratified autonomy enum (ADR 0008).
+# Imported rather than restated by services/deploys.py
+# (coherence-overhaul-2026-08-16 T5), services/agents_registry.py (`AUTONOMY`
+# is an alias of this name) and services/scope_execution.py (`MODES`, collapsed
+# 2026-09-04).
+#
+# THE DEFERRAL THAT USED TO BE WRITTEN HERE IS STALE and is removed rather than
+# left. It said two further copies were out of reach because `db/models.py` was
+# mid-rewrite and its `AGENT_AUTONOMY` briefly undefined. Re-measured
+# 2026-09-04: `db/models.py` declares no `AGENT_AUTONOMY` at all, and
+# `agents_registry.AUTONOMY` is already an alias of this tuple. The blocker
+# closed itself and the note outlived it, which is the shape this repo keeps
+# getting caught by -- a deferral reads as diligence long after the thing it
+# deferred became free.
 AUTONOMY_MODES = ("reactive", "supervised", "autonomous")
 
 
