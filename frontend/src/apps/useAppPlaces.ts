@@ -42,7 +42,10 @@ export type AppPlace = {
   ownScreen?: boolean;
 };
 
-async function fetchLauncher(): Promise<LauncherCard[]> {
+/** `GET /api/base-apps/launcher`. Exported so every reader of this list uses
+ *  one fetcher against one key: the dock reads it here and the Apps page reads
+ *  it too, and they were two requests for one answer. */
+export async function fetchLauncher(): Promise<LauncherCard[]> {
   const r = await fetch("/api/base-apps/launcher");
   if (!r.ok) throw new Error(`launcher ${r.status}`);
   // LauncherCards, named rather than re-described. This list decides which

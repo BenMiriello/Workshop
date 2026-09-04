@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { appIcon, appStatuses } from "../apps/registry";
+import { fetchLauncher } from "../apps/useAppPlaces";
 import { queryKeys } from "../lib/queryKeys";
 import { AppGlyph } from "../lib/appIcon";
 import {
@@ -148,34 +149,46 @@ type AgentState =
 // revert on failure. Apps with no manifest (external, e.g. Wearables) render
 // nothing here.
 function AgentButtonSetting({ appId }: { appId: string }) {
-  const [state, setState] = useState<AgentState>({ kind: "loading" });
+  const qc = useQueryClient();
   const [saving, setSaving] = useState(false);
+  // A rejected WRITE. Its own slot, because the read's entry holds the
+  // reverted value and must not also carry the reason it was reverted.
+  const [saveErr, setSaveErr] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setState({ kind: "loading" });
-    try {
+  // `null` means the app ships no manifest, which is a real answer and not a
+  // failure: 404 here is the "absent" arm, and it must not be retried.
+  const manifestQuery = useQuery({
+    queryKey: queryKeys.apps.manifest(appId),
+    queryFn: async (): Promise<{ ui?: { agent_button?: boolean } } | null> => {
       const r = await fetch(`/api/base-apps/manifests/${appId}`);
-      if (r.status === 404) {
-        setState({ kind: "absent" });
-        return;
-      }
+      if (r.status === 404) return null;
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const m = await r.json();
-      setState({ kind: "ready", on: m?.ui?.agent_button !== false });
-    } catch (e) {
-      setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
-    }
-  }, [appId]);
+      return await r.json();
+    },
+  });
+  const state: AgentState = saveErr
+    ? { kind: "error", message: saveErr }
+    : manifestQuery.isPending
+      ? { kind: "loading" }
+      : manifestQuery.isError
+        ? { kind: "error", message: String(manifestQuery.error) }
+        : manifestQuery.data === null
+          ? { kind: "absent" }
+          : { kind: "ready", on: manifestQuery.data?.ui?.agent_button !== false };
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const load = useCallback(() => {
+    setSaveErr(null);
+    void manifestQuery.refetch();
+  }, [manifestQuery]);
 
   const toggle = useCallback(
     async (next: boolean) => {
-      const prev = state;
-      setState({ kind: "ready", on: next }); // optimistic
+      const key = queryKeys.apps.manifest(appId);
+      const prev = qc.getQueryData<{ ui?: { agent_button?: boolean } } | null>(key);
+      // Optimistic, on the entry itself rather than on a copy of it.
+      qc.setQueryData(key, { ...(prev ?? {}), ui: { ...(prev?.ui ?? {}), agent_button: next } });
       setSaving(true);
+      setSaveErr(null);
       try {
         const r = await fetch(`/api/base-apps/manifests/${appId}/ui`, {
           method: "PUT",
@@ -183,16 +196,15 @@ function AgentButtonSetting({ appId }: { appId: string }) {
           body: JSON.stringify({ agent_button: next }),
         });
         if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-        const m = await r.json();
-        setState({ kind: "ready", on: m?.ui?.agent_button !== false });
+        qc.setQueryData(key, await r.json());
       } catch (e) {
-        setState(prev); // revert
-        setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+        qc.setQueryData(key, prev);   // revert
+        setSaveErr(e instanceof Error ? e.message : String(e));
       } finally {
         setSaving(false);
       }
     },
-    [appId, state],
+    [appId, qc],
   );
 
   if (state.kind === "absent") return null;
@@ -232,11 +244,16 @@ function ManageDetails({
   projects,
   busy,
   onOpenOrCreate,
+  createErr,
   onRetry,
 }: {
   card: AppCard;
   projects: ProjectsState;
   busy: boolean;
+  /** A create that was REJECTED. Separate from `projects`, which is the read:
+   *  a failed POST used to be written into the read's state and replaced the
+   *  list of linked apps with "Couldn't load projects". */
+  createErr: string | null;
   onOpenOrCreate: (card: AppCard) => void;
   onRetry: () => void;
 }) {
@@ -263,6 +280,12 @@ function ManageDetails({
       case "loaded": {
         const linked = projects.slugs.has(card.key);
         return (
+          <>
+          {createErr && (
+            <Notice tone="error" where="/api/projects/" detail={createErr}>
+              Couldn't create the project.
+            </Notice>
+          )}
           <Row style={{ justifyContent: "space-between", flexWrap: "wrap", gap: "var(--space-2)" }}>
             <span className="ws-card__meta">
               {linked ? "Backed by a project" : "No backing project yet"}
@@ -278,6 +301,7 @@ function ManageDetails({
               {linked ? "Open in workbench" : "Create project"}
             </Button>
           </Row>
+          </>
         );
       }
     }
@@ -326,7 +350,6 @@ function ManageDetails({
 
 export default function Apps() {
   const nav = useNavigate();
-  const [services, setServices] = useState<ServiceProbe[] | null>(null);
   // Each installed app supplies its own card status (apps/registry). The
   // launcher no longer knows which apps exist or what their endpoints are.
   //
@@ -347,47 +370,68 @@ export default function Apps() {
   });
   const statuses = statusQ.data ?? null;
 
-  const [launcher, setLauncher] = useState<LauncherState>({ kind: "loading" });
+  const qc = useQueryClient();
   const [mode, setMode] = useState<ViewMode>("view");
   const [expanded, setExpanded] = useState<string | null>(null); // one card open at a time
-  const [projects, setProjects] = useState<ProjectsState>({ kind: "idle" });
   const [bridgeBusy, setBridgeBusy] = useState<string | null>(null); // app key mid open/create
+  // Creating a project FAILED. Its own slot: it used to be written into the
+  // projects READ's state, so a 500 from POST /api/projects/ replaced the list
+  // of linked apps with "Couldn't load projects", which is not what happened.
+  const [bridgeErr, setBridgeErr] = useState<string | null>(null);
+  // Manage has been entered at least once. The project list is read only from
+  // then on, which is what the "idle" arm of the state union meant.
+  const [wantProjects, setWantProjects] = useState(false);
 
   // The installed-app roster drives every card here. A fresh instance installs
   // nothing and this returns an empty list — the launcher then shows its empty
   // state rather than a hardcoded app set.
-  const loadLauncher = useCallback(async () => {
-    setLauncher({ kind: "loading" });
-    try {
-      const r = await fetch("/api/base-apps/launcher");
-      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = (await r.json()) as components["schemas"]["LauncherCards"];
-      setLauncher({ kind: "loaded", apps: j.apps ?? [] });
-    } catch (e) {
-      setLauncher({ kind: "error", message: e instanceof Error ? e.message : String(e) });
-    }
-  }, []);
+  //
+  // ONE ENTRY WITH THE DOCK, which reads the same route through the same
+  // fetcher (apps/useAppPlaces). Two components were asking the platform which
+  // apps exist and keeping two answers. `staleTime: 0` here because opening
+  // this page IS the moment to re-ask, which is what its mount effect did; the
+  // dock keeps its own five-minute window.
+  const launcherQuery = useQuery({
+    queryKey: queryKeys.apps.launcher(),
+    queryFn: fetchLauncher,
+    staleTime: 0,
+    retry: false,
+  });
+  const launcher: LauncherState =
+    launcherQuery.data
+      ? { kind: "loaded", apps: launcherQuery.data }
+      : launcherQuery.isError
+        ? { kind: "error", message: String(launcherQuery.error) }
+        : { kind: "loading" };
 
-  // Lazily load the project list, only when Manage is first turned on, and
-  // only once (re-runs on retry via an explicit reset to "idle").
-  const loadProjects = useCallback(async () => {
-    setProjects({ kind: "loading" });
-    try {
+  // Read only once Manage has been entered, which `enabled` states directly.
+  const projectsQuery = useQuery({
+    queryKey: queryKeys.projects.list(),
+    enabled: wantProjects,
+    queryFn: async (): Promise<ProjectLite[]> => {
       const r = await fetch("/api/projects/");
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const list = (await r.json()) as ProjectLite[];
-      setProjects({ kind: "loaded", slugs: new Set(list.map((p) => p.slug)) });
-    } catch (e) {
-      setProjects({ kind: "error", message: e instanceof Error ? e.message : String(e) });
-    }
-  }, []);
+      return (await r.json()) as ProjectLite[];
+    },
+  });
+  // The Set is derived HERE, not in the queryFn: the key names what the
+  // endpoint answered, and AgentDetail's picker reads the same entry as a list.
+  const projects: ProjectsState = !wantProjects
+    ? { kind: "idle" }
+    : projectsQuery.data
+      ? { kind: "loaded", slugs: new Set(projectsQuery.data.map((p) => p.slug)) }
+      : projectsQuery.isError
+        ? { kind: "error", message: String(projectsQuery.error) }
+        : { kind: "loading" };
+  const loadProjects = useCallback(() => {
+    setWantProjects(true);
+    void projectsQuery.refetch();
+  }, [projectsQuery]);
 
   const enterManage = useCallback(() => {
     setMode("manage");
-    // Fetch once when Manage is first entered; if it already loaded (or is
-    // loading), leave it. Errors are recoverable via the in-panel Retry.
-    if (projects.kind === "idle") void loadProjects();
-  }, [loadProjects, projects.kind]);
+    setWantProjects(true);
+  }, []);
 
   // Link-not-fuse bridge. If a backing project exists, open it. If not, create
   // one (only here, on click) then open it. A 409 means it already exists,
@@ -401,6 +445,7 @@ export default function Apps() {
         return;
       }
       setBridgeBusy(slug);
+      setBridgeErr(null);
       try {
         const r = await fetch("/api/projects/", {
           method: "POST",
@@ -413,30 +458,31 @@ export default function Apps() {
           }),
         });
         if (!r.ok && r.status !== 409) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+        // The list gained a project, and the dock's copy of it is the same entry.
+        void qc.invalidateQueries({ queryKey: queryKeys.projects.list() });
         nav(`/projects/${slug}`);
       } catch (e) {
-        setProjects({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+        setBridgeErr(e instanceof Error ? e.message : String(e));
       } finally {
         setBridgeBusy(null);
       }
     },
-    [nav, projects],
+    [nav, projects, qc],
   );
 
-  const loadServices = useCallback(async () => {
-    try {
+  // The external-app health probes. A failed read answers an empty list, which
+  // renders "no probe configured" on the cards that wanted one, exactly as the
+  // swallowed catch it replaces did.
+  const servicesQuery = useQuery({
+    queryKey: queryKeys.apps.serviceProbes(),
+    queryFn: async (): Promise<ServiceProbe[]> => {
       const r = await fetch("/api/services/");
-      const s = r.ok ? ((await r.json()) as ServicesResp) : { services: [] };
-      setServices(s.services || []);
-    } catch {
-      setServices([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadLauncher();
-    loadServices();
-  }, [loadLauncher, loadServices]);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+      return ((await r.json()) as ServicesResp).services || [];
+    },
+    retry: false,
+  });
+  const services = servicesQuery.isPending ? null : (servicesQuery.data ?? []);
 
   const findService = (needle: string) => services?.find((s) => s.name.includes(needle));
 
@@ -523,7 +569,7 @@ export default function Apps() {
             </>
           }
           action={
-            <Button variant="ghost" size="sm" onClick={() => void loadLauncher()}>
+            <Button variant="ghost" size="sm" onClick={() => { void launcherQuery.refetch(); }}>
               Retry
             </Button>
           }
@@ -603,6 +649,7 @@ export default function Apps() {
                     card={card}
                     projects={projects}
                     busy={bridgeBusy === card.key}
+                    createErr={bridgeErr}
                     onOpenOrCreate={openOrCreate}
                     onRetry={loadProjects}
                   />

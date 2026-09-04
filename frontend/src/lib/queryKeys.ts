@@ -198,6 +198,11 @@ export const queryKeys = {
      *  lists only apps with bundled UI, so an app the platform knows about any
      *  other way was missing from the dock and the dashboard card. */
     launcher: () => ["apps", "launcher"] as const,
+    /** `GET /api/base-apps/manifests/{id}` -- one app's declaration. 404 is a
+     *  real answer (the app ships no manifest), not a failure. */
+    manifest: (appId: string) => ["apps", appId, "manifest"] as const,
+    /** `GET /api/services/` -- the external health probes an app can point at. */
+    serviceProbes: () => ["apps", "service-probes"] as const,
     chats: (appId: string) => ["apps", appId, "chats"] as const,
     agents: (appId: string) => ["apps", appId, "agents"] as const,
     runs: (appId: string) => ["apps", appId, "runs"] as const,
