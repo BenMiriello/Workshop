@@ -221,23 +221,60 @@ def _is_blocked(stripped_path: str) -> bool:
     return False
 
 
+# How long the edge will WAIT OUT a backend that is not answering, and the pauses
+# between attempts. Sums to ~7s of patience across 4 tries.
+#
+# ONE IMMEDIATE RETRY WAS NOT ENOUGH, and the gap is the whole reason this list
+# exists. A deferred restart takes the backend down for several seconds; a retry
+# fired microseconds after the first failure lands inside the same outage and
+# fails identically, so the caller got a 502 for a condition that healed itself
+# two seconds later. Measured 2026-09-04: the operator pressed compact while an
+# armed restart was firing (pid 2473998 -> 4084450 at 19:38:31Z) and got
+# "Server unavailable (502)" on a backend that was healthy by the time he read
+# it. That is the second user-visible 502 from a self-inflicted restart in two
+# days.
+#
+# SAFE FOR WRITES, and that is not an assumption. `_RETRYABLE` is exactly the
+# set of failures that PROVE the backend never saw the request -- no connection
+# established, or the connection closed before a single response byte. A
+# ReadError or ReadTimeout is deliberately excluded above, because those can
+# mean the backend read the request and was working on it. So a POST re-sent
+# here cannot be a double-write.
+#
+# Bounded on purpose. A backend that is genuinely down should fail in seconds
+# with the honest 502, not hold connections open: waiting longer would convert
+# a clear error into an unexplained hang, which is worse.
+_RETRY_WAITS = (0.25, 1.0, 2.5, 3.0)
+
+
 async def _send_upstream(
     request: Request, backend_path: str, headers: dict, body: bytes, *, stream: bool
 ) -> httpx.Response:
-    """Send one proxied request upstream, retrying once when the failure proves
-    the backend never saw it (see `_RETRYABLE`).
+    """Send one proxied request upstream, waiting out a brief backend outage.
 
-    The request is REBUILT for the retry rather than replayed: an httpx.Request
-    whose content stream has been consumed cannot be handed to the transport a
-    second time."""
-    try:
-        req = _build_upstream_request(request, backend_path, headers, body, stream=stream)
-        return await _transport.handle_async_request(req)
-    except _RETRYABLE as e:
-        log.info("edge: %s %s failed on a dead connection (%s); retrying once",
-                 request.method, backend_path, type(e).__name__)
-    req = _build_upstream_request(request, backend_path, headers, body, stream=stream)
-    return await _transport.handle_async_request(req)
+    Retries only on `_RETRYABLE`, which is the set of failures proving the
+    backend never saw the request. The request is REBUILT for each attempt
+    rather than replayed: an httpx.Request whose content stream has been
+    consumed cannot be handed to the transport a second time.
+    """
+    last: Exception | None = None
+    for attempt, wait in enumerate((0.0, *_RETRY_WAITS)):
+        if wait:
+            await asyncio.sleep(wait)
+        try:
+            req = _build_upstream_request(
+                request, backend_path, headers, body, stream=stream)
+            resp = await _transport.handle_async_request(req)
+            if attempt:
+                log.info("edge: %s %s recovered on attempt %d",
+                         request.method, backend_path, attempt + 1)
+            return resp
+        except _RETRYABLE as e:
+            last = e
+            log.info("edge: %s %s unreachable (%s), attempt %d of %d",
+                     request.method, backend_path, type(e).__name__,
+                     attempt + 1, len(_RETRY_WAITS) + 1)
+    raise last  # type: ignore[misc]  -- the loop always runs at least once
 
 
 def _unreachable(method: str, backend_path: str, e: Exception) -> Response:
