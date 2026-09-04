@@ -246,3 +246,60 @@ one, because it makes inaction look like diligence — an agent reads it, agrees
 summarises it, and does nothing, which is `WHY…` §3 exactly.
 
 **The cheapest thing on this whole page is item 1**, and it is not code.
+
+---
+
+## Correction, 2026-09-04 (backlog reconcile pass, later the same day)
+
+Three verdicts above were measured false within hours of being written. Recorded
+here rather than edited into the table, for the reason §6 item 8 of
+`WHY-THE-WORK-DOES-NOT-LAND-2026-09-01.md` gives for its own retraction: acting
+on an inherited conclusion without re-measuring is the failure this whole
+document is about, and a quiet edit hides that it happened.
+
+**Item 16, "Images do not survive compaction: UNBUILT, UNFILED", is wrong about
+UNBUILT.** The deciding command in the table was a ticket-store title search, and
+it inferred *unbuilt* from *unfiled*. That is Item 1's error running backwards:
+Item 1 is about work that is built and whose ticket says otherwise, and this is
+work that is built and has no ticket at all. Measured today:
+
+- `backend/services/attachment_carry.py` exists (2026-09-01, 9,952 bytes) and
+  its docstring carries the five-turn experiment that established the mechanism:
+  an ordinary turn boundary loses nothing, a compaction loses the image.
+- The chain is wired end to end, not half-built. `chat_store.note_auto_compact`
+  (`chat_store.py:1561`) marks the thread as owing its images, and the manual
+  `/compact` path reaches the same function, because both compaction paths emit
+  `compact_boundary` and `build_streaming.py:3824` calls it on commit. A second
+  mark at `chat_store.py:2147` covers the rescope / fork / branch-switch /
+  failed-resume paths, which hand the next turn the transcript as prose.
+  `attachment_carry.due()` is read at `build_streaming.py:2829` and
+  `note_carried` clears the mark at `:2853`.
+- It is tested: `cd backend && .venv/bin/python -m pytest
+  tests/test_images_survive_compaction.py -q` -> **17 passed**.
+- The bytes were never the problem and still are not: attachments are
+  content-addressed in `chat_attachments` (sha256 at `:152`), so the carry needs
+  no new storage.
+
+**So no ticket was filed for it, and none should be.** Filing one now would add a
+false item to the very backlog this document is trying to shrink. What the
+absence actually shows is that the store has no record of a fix that landed,
+which is the same gap as a stale `todo` and costs the same thing: the next audit
+re-derives it. The scope caps are deliberate and are not a defect: images only
+(`MAX_IMAGES` 6, `MAX_BYTES` 10MB), because a text attachment can reach the
+summary as text and a PDF would refill the window the compaction just emptied.
+
+**Item 15, `0f2f3fa6` "Run the bare ratchets on a schedule: UNBUILT", is stale.**
+Its deciding commands were `crontab -l` and `systemctl --user list-timers`, and
+both still report nothing. The answer built was neither: it is a backend lifespan
+loop. `backend/services/backend_schedule.py` runs a table of passes registered at
+`backend/main.py:136`, `PASSES` is `(TRIGGERS, RATCHETS)`, and
+`scripts/report_ratchet_drift.py` leaves `.runtime/ratchet-drift.json`. A check
+that looks only where the answer used to live cannot see the answer.
+
+**The OWNED row's `check_fresh_clone.sh` result is stale, and this is the good
+kind.** The table records "4 PASS, 1 FAIL (`no_hardcoded_identity`)". Re-run in
+full today against a clone of HEAD `69568854`: **all five assertions PASS and it
+exits 0**, with `expected_failures` in `scripts/fresh_clone_baseline.json` an
+empty dict. Per CLAUDE.md the claim is that command's exit code and nothing else,
+and the exit code is 0. `CLAUDE.md` still says "It fails today and prints exactly
+where", and that sentence is now the stale blocker its own paragraph warns about.
