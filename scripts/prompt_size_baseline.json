@@ -1,0 +1,8 @@
+{
+  "_comment": "Ratchet for check_prompt_size.py. These counts only go DOWN. ceiling_chars is enforced only once uncapped_blocks reaches 0, because a sum over an incomplete registry is not a sum: an uncapped block contributes 0, so the ceiling would read as passing while the thing it bounds is unbounded. Driving uncapped_blocks to 0 is the work; re-pinning the other two is not.",
+  "ceiling_chars": 46000,
+  "static_chars": 23840,
+  "declared_budget_chars": 14928,
+  "uncapped_blocks": 9,
+  "because": "First pin, 2026-09-04, from a committed tree. uncapped_blocks pins at 9, NOT the 1 the design predicted: the registry's first act was to find eight more blocks with no byte budget, none of which was reachable by reading any single file. Two of the nine are deliberate rather than debt - ambient_digest caps on ITEMS not bytes (a count is not a byte budget), and custom_instructions is the operator's own L3 text, which must never be capped to fit platform text. ceiling_chars stays UNENFORCED until this count reaches 0, because an uncapped block contributes 0 to the sum and a ceiling over an incomplete sum reads as passing while the thing it bounds is unbounded."
+}

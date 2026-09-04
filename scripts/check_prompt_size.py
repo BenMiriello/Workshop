@@ -451,44 +451,57 @@ def main() -> int:
               + ", ".join(f"{k}={result[k]}" for k in COUNTS))
         return 0
 
-    if args.json:
-        print(json.dumps({**result, "baseline": base}, indent=2))
+    # --json PRINTS JSON AND NOTHING ELSE. It used to print the payload and then
+    # the human report underneath it, so every machine reader had to find the
+    # closing brace by hand; the first caller to try `json.loads` on it failed
+    # on "Extra data". A mode called --json that does not emit parseable output
+    # is not a mode, it is a trap.
+    say = (lambda *a, **k: None) if args.json else print
 
     failed = False
     if not base:
-        print("check_prompt_size: no baseline; run --write-baseline to pin one")
+        say("check_prompt_size: no baseline; run --write-baseline to pin one")
         for k in COUNTS:
-            print(f"    {k}: {result[k]}")
+            say(f"    {k}: {result[k]}")
+        if args.json:
+            print(json.dumps({**result, "baseline": base}, indent=2))
         return 0
 
     if base.get("because"):
-        print(f"check_prompt_size: pinned upward, reason on record: {base['because']}")
+        say(f"check_prompt_size: pinned upward, reason on record: {base['because']}")
 
     for k in COUNTS:
         pinned = base.get(k)
         if pinned is None:
-            print(f"  {k}: {result[k]} (unpinned)")
+            say(f"  {k}: {result[k]} (unpinned)")
             continue
         if result[k] > pinned:
-            print(f"  FAIL {k}: {result[k]} > pinned {pinned}")
+            say(f"  FAIL {k}: {result[k]} > pinned {pinned}")
             failed = True
         elif result[k] < pinned:
-            print(f"  improved {k}: {pinned} -> {result[k]}")
+            say(f"  improved {k}: {pinned} -> {result[k]}")
         else:
-            print(f"  ok {k}: {result[k]}")
+            say(f"  ok {k}: {result[k]}")
 
     total = result["static_chars"] + result["declared_budget_chars"]
-    if result["uncapped_blocks"] == 0:
+    ceiling_enforced = result["uncapped_blocks"] == 0
+    if ceiling_enforced:
         if ceiling and total > ceiling:
-            print(f"  FAIL ceiling: {total} > {ceiling}")
+            say(f"  FAIL ceiling: {total} > {ceiling}")
             failed = True
         else:
-            print(f"  ok ceiling: {total} <= {ceiling}")
+            say(f"  ok ceiling: {total} <= {ceiling}")
     else:
-        print(f"  ceiling NOT ENFORCED: {result['uncapped_blocks']} block(s) "
-              f"declare no byte budget, so the {total}-char sum is incomplete "
-              f"and comparing it to {ceiling} would measure nothing. Uncapped: "
-              + ", ".join(result["_uncapped"]))
+        say(f"  ceiling NOT ENFORCED: {result['uncapped_blocks']} block(s) "
+            f"declare no byte budget, so the {total}-char sum is incomplete "
+            f"and comparing it to {ceiling} would measure nothing. Uncapped: "
+            + ", ".join(result["_uncapped"]))
+
+    if args.json:
+        print(json.dumps({**result, "baseline": base, "total_chars": total,
+                          "ceiling_enforced": ceiling_enforced,
+                          "failed": failed}, indent=2))
+        return 1 if failed else 0
 
     if failed:
         print("\ncheck_prompt_size: the prompt budget got worse.")

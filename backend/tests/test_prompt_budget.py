@@ -190,7 +190,10 @@ class TestTheGate:
         exists to catch, reproduced inside itself."""
         r = self._run("--json")
         assert r.returncode in (0, 1), r.stderr
-        payload = json.loads(r.stdout[r.stdout.index("{"):])
+        # --json emits JSON AND NOTHING ELSE. It used to print the payload and
+        # then the human report under it, so the first caller to try json.loads
+        # failed on "Extra data". A --json mode that is not parseable is a trap.
+        payload = json.loads(r.stdout)
         assert payload["_blocks"] == len(cc.PROMPT_BLOCKS) - 1  # conversation excluded
         assert payload["uncapped_blocks"] > 0
         assert payload["declared_budget_chars"] > 0
@@ -199,7 +202,7 @@ class TestTheGate:
         """The static read and the runtime read must produce the same numbers,
         or the gate is pinning something other than what runs."""
         r = self._run("--json")
-        payload = json.loads(r.stdout[r.stdout.index("{"):])
+        payload = json.loads(r.stdout)
         live = cc.prefix_budget()
         assert payload["declared_budget_chars"] == live["capped_chars"]
         assert payload["uncapped_blocks"] == len(live["uncapped"])
@@ -210,7 +213,7 @@ class TestTheGate:
         must pin the DECLARED default; a number that moved with the shell would
         not be a ratchet."""
         r = self._run("--json")
-        payload = json.loads(r.stdout[r.stdout.index("{"):])
+        payload = json.loads(r.stdout)
         assert payload["_capped_by_block"]["standing_notes"] == 1800 * 4
 
     def test_it_does_not_offer_delta_mode(self):
