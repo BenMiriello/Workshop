@@ -9,6 +9,7 @@ import {
 import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib/tasks";
 import { jobStatusKind } from "../lib/jobs";
 import { queryKeys } from "../lib/queryKeys";
+import { useEventSources } from "../lib/eventSources";
 
 // Autonomy = how a PROJECT decides when to work its own task queue through the
 // Ralph loop. The PRIMARY control is a preset (Section
@@ -100,8 +101,6 @@ type PrimaryDraft = {
   budget: string;
 };
 
-const KNOWN_SOURCES = ["plaid", "gmail", "calendar", "github", "open-wearables", "bluebubbles", "custom"];
-
 const PRESET_OPTIONS: SegmentedOption<Preset>[] = [
   { value: "off", label: "Off" },
   { value: "on-demand", label: "On demand" },
@@ -174,6 +173,7 @@ const RUNNING_MS = 2500;
 const IDLE_MS = 15000;
 
 export default function AutonomyPanel({ slug }: { slug: string }) {
+  const knownSources = useEventSources();
   const getUrl = `/api/projects/${encodeURIComponent(slug)}/autonomy`;
   const putUrl = getUrl;
   const runUrl = `/api/projects/${encodeURIComponent(slug)}/autonomy/run`;
@@ -574,7 +574,7 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
                               </Field>
                             )}
                             {aedit.editing && t.kind === "event" && (
-                              <Field label="Sources (comma separated)" htmlFor={`ev-${i}`} help={KNOWN_SOURCES.join(", ")}>
+                              <Field label="Sources (comma separated)" htmlFor={`ev-${i}`} help={knownSources.join(", ")}>
                                 <Input
                                   id={`ev-${i}`}
                                   value={(t.event_sources ?? []).join(", ")}

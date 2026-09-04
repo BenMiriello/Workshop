@@ -4055,11 +4055,11 @@ span.ws-filterchip__open { cursor: default; }
   .ws-spin { animation-duration: 2.4s; }
 }
 
-/* The NOTES app's 102 lines of layout used to sit here. They were the one
+/* One app's 102 lines of page layout used to sit here. They were the one
    place this kit named a specific app, so every installation shipped them
    whether or not it had that app. They moved out with the app itself on
-   2026-09-04 (ticket 668a18f3) and are `apps/notes-app/ui/notes.css` now,
-   imported by that app's own module.
+   2026-09-04 (ticket 668a18f3) and live in that app's own stylesheet,
+   under `apps/<slug>/ui/`, imported by its own module.
 
    Left as a note rather than deleted silently, because the next person to
    go looking for `.ws-note-layout` in the kit should find out where it went

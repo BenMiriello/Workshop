@@ -39,8 +39,6 @@ export type UnifiedAgent = {
   source?: string;
 };
 
-export const EVENT_SOURCES = ["plaid", "gmail", "calendar", "github", "open-wearables", "bluebubbles", "custom"];
-
 // A one-line human summary of an agent's triggers for the roster card.
 export function triggerSummary(triggers?: Trigger[]): string {
   if (!triggers || triggers.length === 0) return "Manual, on demand";

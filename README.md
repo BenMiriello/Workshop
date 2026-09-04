@@ -1,24 +1,33 @@
 # Workshop
 
-Personal-AI control panel: Agents (Letta-backed), Projects (git scan), Apps (Plaid + Open Wearables). Web + mobile, sharing types via `shared/`.
+A self-hosted control panel for one person's agents, projects and apps.
+
+Workshop is a **container and a toolkit**, not a bundle of applications. It
+ships the shell — agents, chats, tickets, runs, memory, auth, the app launcher
+and the runner — and **installs no apps of its own**. A fresh clone boots with
+an empty catalog. Apps are separate: each one declares itself, lives in its own
+tree, and is installed into an instance rather than committed into this
+repository.
 
 ## Layout
 
 ```
 workshop/
-├── TODO.md                # build state for the cron agent
-├── cron_agent.sh          # one-shot claude -p loop (installed by supervisor session)
-├── infra/
-│   ├── letta/             # docker compose: pgvector + Letta server (127.0.0.1:8283)
-│   ├── open-wearables/    # docker compose (Phase 2)
-│   └── systemd/           # workshop-backend.service template + secrets.env.example
-│                          #   (installed by scripts/install_service.sh)
-├── backend/               # FastAPI: /agents, /projects, /finance, /plaid/webhook
-├── frontend/              # Vite + React + TS: Agents, Agent config, Projects, Apps
-├── mobile/                # Expo + React Native scaffold
-├── shared/types.ts        # Agent + Project types shared with frontend & mobile
-├── scripts/
+├── backend/               # FastAPI: agents, chats, tickets, runs, memory, auth
+├── frontend/              # Vite + React + TS: the shell the browser loads
+├── packages/ui/           # @workshop/ui — the design-system kit both consume
+├── mobile/                # Expo + React Native client
+├── shared/                # types shared by web and mobile
+├── infra/                 # systemd units, compose files, config templates
+├── scripts/               # bring-up, checks and the ratchets that gate a change
+└── docs/                  # product documentation and design records
 ```
+
+An installed app lives at `apps/<slug>/` — untracked here, because an app is not
+part of the platform. It carries its own backend package, its own `ui/module.tsx`,
+its own tests, and a `workshop.app.json` the platform reads. See
+[`docs/apps-are-pluggable.md`](docs/apps-are-pluggable.md) and
+[`docs/declaring-an-app-surface.md`](docs/declaring-an-app-surface.md).
 
 ## Bring-up
 
@@ -43,48 +52,28 @@ Two things that catch everyone:
 - `npm run build:ui` before any typecheck. vite reads the kit's sources, tsc
   reads its built `dist`, so a missing `dist` builds fine and fails typecheck.
 
-## Endpoints
+## The API
 
-- `GET  /agents/`                  — list Letta agents
-- `GET  /agents/{id}`              — agent detail (memory blocks)
-- `POST /agents/`                  — create agent
-- `PATCH /agents/{id}/memory/{label}` — update persona/human/etc.
-- `DELETE /agents/{id}`
-- `GET  /projects/`                — git repos under `$WORKSHOP_PROJECTS_ROOT`
-- `GET  /finance/balances`         — Plaid balances (via plaid-mcp Node bridge)
-- `GET  /finance/transactions?days=30` — Plaid transactions
-- `POST /plaid/webhook`            — Plaid webhook sink (logs to `.runtime/plaid-webhooks.jsonl`)
-- `GET  /healthz`
+The HTTP surface is generated, not listed here: a running instance serves
+OpenAPI at `/openapi.json` and the typed client is
+`frontend/src/api/schema.gen.ts`. The contract every route follows — error
+bodies, the `Page[T]` envelope, status codes — is
+[`docs/decisions/0023-the-http-contract.md`](docs/decisions/0023-the-http-contract.md).
+`GET /healthz` is the liveness probe.
 
-## Status (Phase 1)
+An installed app's routes are mounted from its own declaration and appear in the
+same schema; the platform never lists them in source.
 
-- ✅ Monorepo scaffold
-- ✅ FastAPI backend
-- ✅ React frontend (Agents, Projects, Apps, Agent config)
-- ✅ Systemd unit
-- ✅ Memory migration script
-- ⏸ Letta deploy (operator)
-- ⏸ Memory migration run (depends on Letta)
-- ⏸ End-to-end verify
+## Where the real documentation is
 
-## Status (Phase 2)
+- [`CLAUDE.md`](CLAUDE.md) — repo conventions, and the gates a change must pass.
+- [`frontend/CLAUDE.md`](frontend/CLAUDE.md) — the design system, which is
+  mandatory for anything under `frontend/` or `mobile/`.
+- [`docs/applying-changes.md`](docs/applying-changes.md) — how a change reaches
+  the running instance.
+- [`docs/platform-redesign/entity-model-2026-07-18.md`](docs/platform-redesign/entity-model-2026-07-18.md)
+  — the model the rest of the design set rides on.
 
-- ✅ Plaid webhook receiver route
-- ✅ `/finance/balances` + `/finance/transactions` via plaid-mcp Node bridge
-- ✅ Apps page rendering finance data
-- ⏸ Open Wearables deploy (operator)
-- ⏸ iOS Health MCP Sync configuration (operator-side, requires phone)
-- ⏸ Cloudflare Tunnel (operator)
-- ⏸ BlueBubbles connector (operator-side, requires MacBook Air)
-
-## Status (Phase 3)
-
-- ✅ Agent config UI (create/edit/delete from React)
-- ⏸ Privacy relay service (Qwen-local boilerplate / Claude architecture)
-- ⏸ Service registry
-
-## Status (Phase 4)
-
-- ✅ Mobile scaffold (Expo + Router + shared types)
-- ⏸ Full mobile screens
-- ⏸ On-device testing (operator)
+There is deliberately no build-status list in this file. Status here went stale
+for months while reading as current; what is true is what the checks in
+`scripts/` report when you run them.

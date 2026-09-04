@@ -166,8 +166,8 @@ _grep_in() { # $1=dir, rest = git-grep args
 # Any of these is a path that exists on exactly one machine.
 #
 # FIVE FORMS, not one. Until 2026-08-27 this required a literal `/home/` or
-# `/Users/` prefix, so `~/notes`, `$HOME/Development/Workshop`,
-# `Path.home() / "notes"` and `expanduser("~/birdnet/...")` were all invisible
+# `/Users/` prefix, so `~/vault`, `$HOME/Development/Workshop`,
+# `Path.home() / "vault"` and `expanduser("~/rig-data/...")` were all invisible
 # to it -- the same defect wearing four other spellings, and the reason a
 # hardcoded vault path survived in three backend files for months while both
 # gates reported clean.

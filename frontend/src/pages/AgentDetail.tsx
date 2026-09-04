@@ -10,12 +10,12 @@ import TaskPanel from "../components/TaskPanel";
 import MakerPanel from "../components/MakerPanel";
 
 import {
-  EVENT_SOURCES,
   triggerSummary,
   type Trigger,
   type TriggerKind,
   type UnifiedAgent,
 } from "../lib/agentTriggers";
+import { useEventSources } from "../lib/eventSources";
 import { ticketHref } from "../lib/tasks";
 import { queryKeys } from "../lib/queryKeys";
 import type { components } from "../api/schema.gen";
@@ -96,6 +96,7 @@ function TriggerEditor({
   triggers: Trigger[];
   onChange: (next: Trigger[]) => void;
 }) {
+  const eventSources = useEventSources();
   const update = (i: number, patch: Partial<Trigger>) => {
     const next = triggers.map((t, idx) => (idx === i ? { ...t, ...patch } : t));
     onChange(next);
@@ -154,7 +155,7 @@ function TriggerEditor({
             <div style={{ marginTop: "var(--space-3)" }}>
               <SectionLabel>Subscribe to event sources</SectionLabel>
               <Row wrap>
-                {EVENT_SOURCES.map((s) => (
+                {eventSources.map((s) => (
                   <Checkbox
                     key={s}
                     checked={(t.event_sources || []).includes(s)}

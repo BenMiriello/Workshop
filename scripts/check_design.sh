@@ -136,7 +136,7 @@ EXEMPT = [
 #
 # An app states them in its own manifest instead:
 #
-#     "ui": { "design_exempt": ["recorder.tsx", "Spectrogram.tsx"] }
+#     "ui": { "design_exempt": ["canvas/Waveform.tsx"] }
 #
 # paths relative to the app's `ui/` directory. A canvas 2D `fillStyle` cannot
 # read CSS custom properties, which is a real and narrow reason; an app that

@@ -382,7 +382,7 @@ def _build_digest() -> str:
 
 def _caller_scope_key(raw: str) -> str:
     """`WORKSHOP_QUERY_SCOPE` is the chat's `context_key` ("general",
-    "workshop", "budget", a project/app/agent key...) -- the same value
+    "workshop", or a project/app/agent key...) -- the same value
     `_build_digest` reads. `reach()` operates on `scope_tree`'s scope_key
     namespace, so this is the same translation `_build_digest` already
     applies inline, pulled out because the search path needs it too."""

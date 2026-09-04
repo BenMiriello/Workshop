@@ -146,12 +146,35 @@ class RecentEvents(BaseModel):
     count: int
 
 
+class EventSources(BaseModel):
+    """Which sources this deployment accepts, right now.
+
+    The list is the platform's own set unioned with what the INSTALLED apps
+    declare, so it changes when an app is installed and names no app in
+    platform source. It exists because the client used to carry its own
+    hardcoded copy -- two of them, in fact -- and every entry in that copy that
+    was an app's integration was a platform file naming a specific app.
+    """
+
+    sources: list[str]
+
+
+@router.get("/sources", response_model=EventSources, response_model_exclude_unset=True)
+async def event_sources() -> dict:
+    """The sources a trigger may subscribe to on this deployment.
+
+    Declared BEFORE `POST /{source}` only for readability; the methods differ,
+    so there is no path-precedence question here.
+    """
+    return {"sources": sorted(known_sources())}
+
+
 @router.post("/{source}", response_model=EventAccepted, response_model_exclude_unset=True)
 async def receive_event(source: str, request: Request):
     body = await request.body()
 
     # Per-source signature verification. Unknown sources pass with a "no_verifier"
-    # note; known sources (plaid, github) MUST validate.
+    # note; a source whose app registered a verifier MUST validate.
     headers_lower = {k.lower(): v for k, v in request.headers.items()}
     verifier = verifier_for(source)
     sig_ok, sig_reason = verifier(headers_lower, body)
@@ -207,9 +230,9 @@ async def receive_event(source: str, request: Request):
 # calls it would leave a landmine for whoever next starts that bridge.
 #
 # Measured 2026-08-20: the bridge is NOT running and `discord-reply` has never
-# appeared in the log (sources present: plaid, gmail, commute-ui, custom,
-# birdnet, test_source). So this route has one caller and that caller has never
-# succeeded. Recorded in the handoff rather than acted on.
+# appeared in the log, which carried six other sources at the time. So this
+# route has one caller and that caller has never succeeded. Recorded in the
+# handoff rather than acted on.
 #
 # Both were, and /events/recent still is, unreachable from the operator's origin:
 # /events is on the public edge blocklist because THIS router also carries

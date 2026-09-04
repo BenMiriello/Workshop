@@ -1,63 +1,44 @@
-"""LocalRunner — run a project's STANDALONE deployment as a scoped subprocess.
+"""Command resolution, scoped env and surface reflection for a project tree.
 
-This is LocalRunner v1 from docs/workshop-v1/05-deployment-isolation-safety.md
-section 2 ("the run model: worktrees for build, runners for deploy"). A project's
-standalone surface is launched as a managed subprocess with:
+WHAT THIS IS NOW. Three helpers `services/app_runner.py` builds on, and nothing
+else:
 
-  - its own working dir (the project's `dir`),
-  - a dedicated port,
-  - a SCOPED environment: only a safe allowlist (PATH/HOME/...) plus PORT. The
-    platform's full secret env (WORKSHOP_511_API_KEY, HEALTH_USER, plaid creds,
-    OwnTracks, etc) is NEVER passed to the deployed app. This is the runtime
-    isolation layer in the doc's table.
+  - `resolve_command(cwd)` — the launch command for a project, read from its
+    manifest (`MANIFEST_NAMES`) or detected by `dev_servers.suggest_command`,
+    so the app runner and the builder Preview form agree on how to start a
+    project rather than each guessing separately.
+  - `scoped_env(port)` — the env a child process is given: an ALLOWLIST plus
+    `PORT`, never `{**os.environ}`. The platform's secret-bearing variables are
+    dropped rather than inherited, which is the whole point of the function.
+  - `_reflect_surface(slug, standalone)` — best-effort mirror of a running
+    surface into the projects registry.
 
-Out of scope for v1 (noted, not implemented here):
-  - INTEGRATED surface (route-mount): needs frontend route injection.
-  - RemoteRunner: builds an OCI image + runs a container; same lifecycle verbs,
-    added later (doc section 2 + 8, phase 05c).
+WHAT THIS WAS, AND WHY THE REST IS GONE. Until 2026-09-04 this was "LocalRunner
+v1" from docs/workshop-v1/05-deployment-isolation-safety.md §2, and it also
+carried a full process lifecycle: a `Deploy` dataclass, an in-memory `RUNNING`
+map, a `.runtime/deploys.json` runtime store, a port window at 8600-8699, and
+`start_deploy` / `stop_deploy` / `deploy_status`.
 
-Why a parallel registry instead of services/dev_servers.RUNNING: dev_servers is
-the BUILDER Preview lifecycle. Its `start()` spawns with `{**os.environ, ...}`
-(full platform env, by design for the operator's own preview) and shares one
-slug-keyed RUNNING map with the gc reaper. A deploy needs a scoped env and a
-separate namespace so deploy slugs never collide with preview/agent entries.
-So this module mirrors the DevServer dataclass / RUNNING / status / stop SHAPE
-exactly (same process-group + SIGTERM-then-SIGKILL discipline), without
-duplicating dev_servers' own bookkeeping or touching its registry.
-
-Command detection reuses dev_servers.suggest_command (the same heuristic the
-Preview form uses), so deploy and preview agree on how to launch a project.
+That lifecycle had ZERO callers and was actively dangerous: it shared the
+`.runtime/deploys.json` path with the deploy subsystem's own record store under
+an INCOMPATIBLE schema, so the first write through `start_deploy` would have
+overwritten every Deploy record with its own `{"deploys": {slug: ...}}` shape.
+It was deleted with the deploy subsystem (ticket `726d75a9`). Real apps are run
+by `services/app_runner.py`, which is a different and living thing; this module
+survives only because that one imports these three helpers. Do not grow a
+process lifecycle back in here.
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
-import signal
-import subprocess
-import time
-from dataclasses import dataclass, asdict
 from pathlib import Path
 
-from services import dev_servers, port_registry
+from services import dev_servers
 from wsplatform import paths
 
 log = logging.getLogger("workshop.local_runner")
-
-# Deploy port window, distinct from the dev_servers Preview window (8500-8599)
-# so a running preview and a running deploy of the same project don't fight over
-# a port.
-PORT_MIN = 8600
-PORT_MAX = 8699
-
-# Per-deploy log files (mirrors dev_servers' LOG_ROOT layout, separate subdir).
-LOG_ROOT = paths.env_path("WORKSHOP_DEPLOY_LOG_ROOT", "deploy-logs")
-
-# Runtime store: persisted record of the current standalone deploy per slug, so
-# status survives within the process and the project's surfaces.standalone can be
-# reflected. PIDs are also kept in-memory in RUNNING for lifecycle control.
-RUNTIME_STORE = paths.env_path("WORKSHOP_DEPLOY_RUNTIME", "deploys.json")
-
 # Projects registry — same file routes/projects.py owns. We reflect a deploy into
 # surfaces.standalone here (best-effort) so the Projects hub sees the running URL.
 #
@@ -104,21 +85,6 @@ class DeployError(Exception):
         self.status = status
 
 
-@dataclass
-class Deploy:
-    slug: str
-    pid: int
-    port: int
-    command: str
-    url: str
-    started_at: float
-    log_path: str
-
-
-# slug -> Deploy (in-memory authoritative for lifecycle; mirrored to RUNTIME_STORE)
-RUNNING: dict[str, Deploy] = {}
-
-
 # ---- persistence helpers ----------------------------------------------------
 
 def _atomic_write_json(path: Path, data: dict) -> None:
@@ -126,26 +92,6 @@ def _atomic_write_json(path: Path, data: dict) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, path)
-
-
-def _load_runtime() -> dict:
-    if not RUNTIME_STORE.exists():
-        return {"deploys": {}}
-    try:
-        data = json.loads(RUNTIME_STORE.read_text(encoding="utf-8"))
-        if not isinstance(data, dict) or not isinstance(data.get("deploys"), dict):
-            return {"deploys": {}}
-        return data
-    except (OSError, json.JSONDecodeError):
-        return {"deploys": {}}
-
-
-def _persist_runtime() -> None:
-    """Mirror the in-memory RUNNING map to the runtime store (best-effort)."""
-    try:
-        _atomic_write_json(RUNTIME_STORE, {"deploys": {s: asdict(d) for s, d in RUNNING.items()}})
-    except OSError as e:
-        log.warning("could not persist deploy runtime store: %s", e)
 
 
 def _reflect_surface(slug: str, standalone: dict | None) -> None:
@@ -180,22 +126,6 @@ def _reflect_surface(slug: str, standalone: dict | None) -> None:
 
 
 # ---- project + command resolution -------------------------------------------
-
-def _project_dir(slug: str) -> str:
-    """Return the project's working dir from the projects registry, or raise
-    DeployError(404) if the slug is unknown / the dir is missing."""
-    try:
-        data = json.loads(PROJECTS_REGISTRY.read_text(encoding="utf-8")) if PROJECTS_REGISTRY.exists() else {}
-    except (OSError, json.JSONDecodeError) as e:
-        raise DeployError(f"could not read projects registry: {e}", status=500)
-    rec = (data.get("projects") or {}).get(slug) if isinstance(data, dict) else None
-    if not rec:
-        raise DeployError(f"project not found: {slug}", status=404)
-    cwd = rec.get("dir")
-    if not cwd or not Path(cwd).is_dir():
-        raise DeployError(f"project dir missing for {slug}: {cwd}", status=400)
-    return cwd
-
 
 def _manifest_run(cwd: str) -> str | None:
     """Return the `run` command from a per-project manifest if present, else None.
@@ -261,171 +191,3 @@ def scoped_env(port: int) -> dict[str, str]:
     env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
     env["PORT"] = str(port)
     return env
-
-
-# ---- port allocation --------------------------------------------------------
-
-def _next_free_port(slug: str) -> int:
-    """Allocate a deploy port for `slug` via the central port_registry, so the
-    deploy never collides with a preview, an app service, or any other process on
-    the box. The pid is recorded after the child spawns (set_pid)."""
-    try:
-        return port_registry.allocate(f"deploy:{slug}", "deploy")
-    except RuntimeError as e:
-        raise DeployError(str(e), status=503)
-
-
-# ---- lifecycle --------------------------------------------------------------
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
-
-
-def deploy_status(project_slug: str) -> dict:
-    """Status of the standalone deploy for a slug.
-
-    Returns {running: False} when nothing is registered or the process has died
-    (a dead entry is reaped as a side effect, mirroring dev_servers.status). When
-    running: {running, port, url, pid, command, started_at}.
-    """
-    d = RUNNING.get(project_slug)
-    if not d:
-        return {"running": False}
-    if not _alive(d.pid):
-        # Process gone (crashed / killed externally); reap and clear the surface.
-        RUNNING.pop(project_slug, None)
-        port_registry.release(f"deploy:{project_slug}")
-        _persist_runtime()
-        _reflect_surface(project_slug, None)
-        return {"running": False, "stale_pid": d.pid}
-    return {
-        "running": True,
-        "pid": d.pid,
-        "port": d.port,
-        "url": d.url,
-        "command": d.command,
-        "started_at": d.started_at,
-        "log_path": d.log_path,
-    }
-
-
-def start_deploy(project_slug: str) -> dict:
-    """Start the project's standalone deployment as a scoped subprocess.
-
-    Idempotent on an already-running deploy (returns its current status). Raises
-    DeployError (mapped to HTTP by the route) for an unknown project, an
-    undetectable command, or no free port. Never raises a raw subprocess/OS error.
-
-    Returns {running: True, port, url, pid, command}.
-    """
-    existing = deploy_status(project_slug)
-    if existing.get("running"):
-        return {
-            "running": True,
-            "port": existing["port"],
-            "url": existing["url"],
-            "pid": existing["pid"],
-            "command": existing["command"],
-            "already_running": True,
-        }
-
-    cwd = _project_dir(project_slug)
-    command = resolve_command(cwd)
-    port = _next_free_port(project_slug)
-    url = f"http://127.0.0.1:{port}"
-
-    LOG_ROOT.mkdir(parents=True, exist_ok=True)
-    log_path = LOG_ROOT / f"{project_slug}.log"
-
-    env = scoped_env(port)
-
-    # Same spawn discipline as dev_servers.start: /bin/bash -lc so shell features
-    # work; tee stdout+stderr to a file; new session (own process group) so stop
-    # can kill the whole tree. The crucial difference is `env=` here is the SCOPED
-    # env, not {**os.environ, ...}.
-    #
-    # We pass env to bash directly; -l would normally source the user profile and
-    # re-introduce host vars, but a non-interactive `bash -lc` started with an
-    # explicit env only inherits what we hand it plus whatever the profile sets.
-    # To keep the env strictly scoped we use `bash -c` (no login profile) so no
-    # profile-sourced secret leaks in.
-    try:
-        with open(log_path, "ab", buffering=0) as logf:
-            proc = subprocess.Popen(
-                ["/bin/bash", "-c", command],
-                cwd=cwd,
-                stdout=logf,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-                env=env,
-            )
-    except (OSError, ValueError) as e:
-        raise DeployError(f"failed to launch deploy for {project_slug}: {e}", status=500)
-
-    deploy = Deploy(
-        slug=project_slug,
-        pid=proc.pid,
-        port=port,
-        command=command,
-        url=url,
-        started_at=time.time(),
-        log_path=str(log_path),
-    )
-    RUNNING[project_slug] = deploy
-    port_registry.set_pid(f"deploy:{project_slug}", proc.pid)
-    _persist_runtime()
-    _reflect_surface(project_slug, {
-        "runner": "local",
-        "pid": deploy.pid,
-        "port": deploy.port,
-        "url": deploy.url,
-        "started_at": deploy.started_at,
-    })
-
-    return {
-        "running": True,
-        "port": deploy.port,
-        "url": deploy.url,
-        "pid": deploy.pid,
-        "command": deploy.command,
-    }
-
-
-def stop_deploy(project_slug: str) -> dict:
-    """Stop the standalone deploy: SIGTERM the process group, escalate to SIGKILL
-    after 5s. Idempotent (stopping a non-running deploy returns stopped: True).
-    Clears the runtime store entry and the project's surfaces.standalone."""
-    d = RUNNING.pop(project_slug, None)
-    if not d:
-        # Nothing tracked; make sure the surface + port claim are clear anyway.
-        port_registry.release(f"deploy:{project_slug}")
-        _reflect_surface(project_slug, None)
-        return {"stopped": True, "reason": "not running"}
-
-    forced = False
-    try:
-        os.killpg(d.pid, signal.SIGTERM)
-        for _ in range(50):
-            if not _alive(d.pid):
-                break
-            time.sleep(0.1)
-        else:
-            os.killpg(d.pid, signal.SIGKILL)
-            forced = True
-    except ProcessLookupError:
-        pass  # already gone
-    except OSError as e:
-        log.warning("error stopping deploy %s (pid %s): %s", project_slug, d.pid, e)
-
-    port_registry.release(f"deploy:{project_slug}")
-    _persist_runtime()
-    _reflect_surface(project_slug, None)
-    result = {"stopped": True}
-    if forced:
-        result["force_killed"] = True
-    return result

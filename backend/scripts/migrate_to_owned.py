@@ -8,10 +8,24 @@ once on the deployment box (re-running is a no-op):
     cd backend && .venv/bin/python scripts/migrate_to_owned.py
 
 It (1) flags the operator account (by WORKSHOP_OPERATOR_EMAIL) as the admin and
-the data owner of the single-dataset domains, (2) moves the operator's existing
-per-user files into their partition, and (3) mints the operator-owned service /
-ingest tokens the machine callers need, writing them to
-~/.config/workshop/secrets.env (0600).
+the data owner of every single-dataset domain the INSTALLED apps declare, and
+(2) mints the operator-owned service / ingest tokens those apps declare, writing
+them to ~/.config/workshop/secrets.env (0600).
+
+THIS FILE NAMES NO APP, and it used to name four. `_DOMAINS` was a literal list
+of one operator's app ids, `_FILE_MOVES` was a literal list of that operator's
+app data files, and `_TOKENS` was one app's automation credential. All three
+were platform source carrying facts only an app can know, so all three moved
+onto the declaration an app already fills in: `AppSpec.owned_domains` and
+`AppSpec.service_tokens`. An app that is not installed contributes nothing here,
+which is the right answer rather than a special case.
+
+The per-user file relocation this script used to perform is GONE rather than
+generalized. It moved a fixed set of flat files out of `.runtime/` and into
+`.runtime/users/<owner_id>/` on the one deployment that predates owner
+partitioning. Every app declares its own per-owner stores now
+(`AppSpec.stores`, `per_owner=True`), a fresh installation writes them in the
+partitioned location from the first request, and there is nothing to move.
 
 No WORKSHOP_SESSION_SECRET is needed: sessions are opaque server-side tokens, not
 signed cookies, so there is no signing secret to manage.
@@ -19,28 +33,16 @@ signed cookies, so there is no signing secret to manage.
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # backend/ on path
 
-from services import auth_store, ownership  # noqa: E402, paths
+from services import app_registry, auth_store  # noqa: E402
 
-RUNTIME = paths.runtime_dir()
 SECRETS = Path(
     os.environ.get("WORKSHOP_SECRETS_ENV", str(Path.home() / ".config/workshop/secrets.env"))
 )
-
-# Per-user flat-file stores to relocate into .runtime/users/<owner_id>/.
-_FILE_MOVES = ["location.jsonl", "location-latest.json", "health.jsonl", "health-latest.json",
-               "push-tokens.json"]
-# Single-dataset domains owned by the operator (finance/budget share "finance").
-_DOMAINS = ["finance", "commute", "location", "health"]
-# Operator-owned machine credentials: (env var name, scope).
-_TOKENS = [
-    ("WORKSHOP_SVC_COMMUTE", "automation:commute"),
-]
 
 
 def _log(msg: str) -> None:
@@ -61,30 +63,16 @@ def ensure_operator() -> int:
     return user["id"]
 
 
-def assign_domains(owner_id: int) -> None:
-    for d in _DOMAINS:
+def assign_domains(owner_id: int, specs: list) -> None:
+    domains = sorted({d for spec in specs for d in getattr(spec, "owned_domains", ())})
+    if not domains:
+        _log("no installed app declares an owned domain; nothing to assign")
+        return
+    for d in domains:
         if auth_store.domain_owner(d) == owner_id:
             continue
         auth_store.set_domain_owner(d, owner_id)
         _log(f"domain '{d}' -> owner {owner_id}")
-
-
-def move_files(owner_id: int) -> None:
-    dest = ownership.user_runtime_dir(owner_id)
-    for name in _FILE_MOVES:
-        src = RUNTIME / name
-        dst = dest / name
-        if dst.exists():
-            continue  # already migrated
-        if src.exists():
-            shutil.move(str(src), str(dst))
-            _log(f"moved {name} -> users/{owner_id}/")
-    # chat threads
-    src_chat = RUNTIME / "chat"
-    dst_chat = dest / "chat"
-    if src_chat.is_dir() and not dst_chat.exists():
-        shutil.move(str(src_chat), str(dst_chat))
-        _log(f"moved chat/ -> users/{owner_id}/chat/")
 
 
 def _read_secrets() -> str:
@@ -94,10 +82,19 @@ def _read_secrets() -> str:
         return ""
 
 
-def mint_tokens(owner_id: int) -> None:
+def mint_tokens(owner_id: int, specs: list) -> None:
+    wanted: list[tuple[str, str]] = []
+    for spec in specs:
+        for env_name, scope in getattr(spec, "service_tokens", ()):
+            if (env_name, scope) not in wanted:
+                wanted.append((env_name, scope))
+    if not wanted:
+        _log("no installed app declares a service token; nothing to mint")
+        return
+
     existing = _read_secrets()
     lines: list[str] = []
-    for env_name, scope in _TOKENS:
+    for env_name, scope in wanted:
         if f"{env_name}=" in existing:
             continue  # already minted; don't rotate on re-run
         raw = auth_store.create_service_token(owner_id, scope, label=env_name)
@@ -119,9 +116,12 @@ def mint_tokens(owner_id: int) -> None:
 def main() -> None:
     auth_store.init_db()
     owner_id = ensure_operator()
-    assign_domains(owner_id)
-    move_files(owner_id)
-    mint_tokens(owner_id)
+    # `installed_specs` already drops an app whose declaration failed to
+    # build (the catalog logs and skips it), so a broken app cannot stop the
+    # operator being flagged -- the one step here that nothing else does.
+    specs = app_registry.installed_specs()
+    assign_domains(owner_id, specs)
+    mint_tokens(owner_id, specs)
     _log("done. Re-running is a no-op.")
 
 

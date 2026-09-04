@@ -81,8 +81,8 @@ CHUNK_OVERLAP = 150
 # tickets integrate without merging the stores: separate stores, separate
 # lifecycles, one query surface, one ref format").
 # The platform's own corpora. An app contributes more through
-# `AppSpec.index_collectors`; `vault` (the operator's Obsidian folder) used to be
-# listed here and is now the notes app's declaration.
+# `AppSpec.index_collectors`; a personal Markdown vault used to be listed here
+# and is now declared by the app that owns it.
 PLATFORM_KINDS = ("note", "doc", "chat", "ticket")
 
 # Indexed on every build. A corpus an app marks opt-in (its id absent from
@@ -264,10 +264,10 @@ _STATUS_ADJUST = {
 # overrides relevance", and the ungated version really did the second. Measured
 # 2026-09-01 with a flat +0.05 and no gate, on queries with no strong match:
 #
-#   "what does the birdnet rig do"  -> app-is-the-entity-2026-08-20.md, raw
+#   a question about one installed app -> app-is-the-entity-2026-08-20.md, raw
 #      0.6529, promoted over the master spec for that subject at 0.6963
-#   "how does plaid auth work"      -> final-plan-agent-generalize..., raw
-#      0.7431, promoted over the ticket that answers it at 0.7846
+#   a question about an integration's auth -> final-plan-agent-generalize...,
+#      raw 0.7431, promoted over the ticket that answers it at 0.7846
 #   "what is the design system for the frontend" -> two chunks of the apply
 #      procedure, raw 0.7087/0.7062, promoted over the note that answers it
 #
@@ -1825,9 +1825,9 @@ def search(query: str, *, limit: int = 8,
     # thing said about any subject is almost always a chat message. What was
     # actually wanted from "make recency count" is that a RETIRED document stop
     # being returned as if current, and a document is retired when it says so
-    # or when the tree says so -- not when it is old. `docs/birdnet-accuracy.md`
-    # is one of the oldest files here and is still exactly right; a plan written
-    # last week can be dead. So staleness is read from the declaration
+    # or when the tree says so -- not when it is old. Some of the oldest files
+    # in this corpus are still exactly right; a plan written last week can be
+    # dead. So staleness is read from the declaration
     # (`doc_status`, `_dir_status`), never from the timestamp.
     #
     # A caller asking "lately" is narrowing the corpus, which is a different

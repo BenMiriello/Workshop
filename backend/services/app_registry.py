@@ -295,7 +295,7 @@ def installed_snapshots() -> list[Callable[[], str]]:
 # development-scoped content, which is most of the platform's own history.
 #
 # The value pinned here is the chat's `context_key` ("general", "development",
-# "project:birds", ...), not a resolved scope_key: `workshop_query_server.py`
+# "project:<slug>", ...), not a resolved scope_key: `workshop_query_server.py`
 # already does that translation (`knowledge.scope_for_context`) on the
 # subprocess side, and it must stay the only place that does, per the design
 # doc's two-namespace note (sec 7.1).

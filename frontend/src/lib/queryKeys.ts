@@ -127,6 +127,16 @@ export const queryKeys = {
     autonomyControls: () => ["agents", "autonomy", "status", "controls"] as const,
   },
 
+  events: {
+    /**
+     * `GET /api/events/sources` -- the sources a trigger may subscribe to on
+     * THIS deployment: the platform's own set unioned with what the installed
+     * apps declare. Asked for rather than hardcoded, because the client's two
+     * hardcoded copies each named specific apps' integrations.
+     */
+    sources: () => ["events", "sources"] as const,
+  },
+
   tasks: {
     all: () => ["tasks"] as const,
     list: (scope: string) => ["tasks", scope] as const,

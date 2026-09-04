@@ -1142,7 +1142,7 @@ print(sid)
   # Detect classifier block in output — the operator's hard rule says these
   # are real blocks, not workarounds. Treat as terminal for this Ralph run.
   # Match only the exact multi-word block phrases, never the bare words
-  # "classifier"/"safety-check": this workspace has a BirdNET classifier
+  # "classifier"/"safety-check": an installed app may well have a classifier
   # subsystem, so legitimate task output routinely mentions "classifier" and must
   # NOT be read as a safety block. (review F2)
   if grep -qE '3 consecutive actions were blocked|Safety-Check Bypass|blocked by the (auto-mode )?classifier' "$ITER_OUT"; then

@@ -22,7 +22,6 @@ from routes import mcp as mcp_routes
 from routes import model_providers_routes
 from routes import tools as tools_routes
 from routes import stores as stores_routes
-from routes import deploys as deploys_routes
 from routes import apps as apps_routes
 from routes import git as git_routes
 from routes import changes as changes_routes
@@ -71,23 +70,6 @@ async def lifespan(app: FastAPI):
     # kept alive by docker's restart policy, not by us.
     from services import port_registry
     app.state._bg_port_reconcile = asyncio.create_task(port_registry.reconcile_loop())
-    # THERE IS NO DEPLOY WATCHER HERE, and its absence is deliberate. This used
-    # to start `deploy_watcher.watcher_loop`, which every 300 seconds ran
-    # `git ls-remote` for every autonomous Deploy to see whether its source
-    # branch had moved. The deploy subsystem has never run once: zero deploy
-    # runs, and the 40 rows that were on /deploys turned out to be test
-    # fixtures the suite had written into the live store (c9c0e464). So the
-    # loop was a git network call on a timer, on every boot, for a feature
-    # nobody has used. Removed 2026-09-01.
-    #
-    # The CAPABILITY is untouched and still on demand: `tick_all` and
-    # `tick_one` are what `routes/deploys.py` calls for the manual tick and
-    # the source webhook. Only the unattended polling is gone.
-    #
-    # Whether the subsystem itself goes is a separate and larger decision
-    # (`hosting-apps-design-2026-08-24` section 5 says delete it,
-    # `threads-branches-and-pages-2026-08-29` section 6 lists it under retired,
-    # and ticket 726d75a9 is open on it). Not taken here.
     # Job liveness: close Jobs left `running` by a process that died. Its only
     # shell caller never fires (the dispatcher exits early while autonomy is
     # engaged), so a crashed run used to read `running` forever. The backend
@@ -340,10 +322,10 @@ async def _validation_exception_handler(
 app.add_middleware(SSEAwareGZipMiddleware, minimum_size=500, compresslevel=5)
 
 
-# Tailscale Serve mounts the backend directly at :443/, so paths from the
-# launcher/Owntracks come in as /location/... — but the Workshop and Commute
-# vite proxies use /api/... and strip that prefix. Accept both so callers
-# don't have to care which entry point they used.
+# A reverse proxy can mount the backend directly at :443/, so paths from an
+# external ingest client arrive unprefixed — but the vite dev proxies use
+# /api/... and strip that prefix. Accept both so callers don't have to care
+# which entry point they used.
 @app.middleware("http")
 async def strip_api_prefix(request, call_next):
     path = request.scope.get("path", "")
@@ -368,7 +350,8 @@ app.add_middleware(
 # Gating model (docs/auth-redesign/): identity, never network position.
 #   PLATFORM control      -> require_operator (the admin role)
 #   per-user personal data -> require_user (cookie / device token), owner-scoped
-#   single-dataset domains -> require_domain_owner("finance"|"commute") (owned data)
+#   single-dataset domains -> require_domain_owner(<domain>) (owned data; the
+#                             domain comes from the app's declaration, never from here)
 #   low-sensitivity + ingest -> require_user_or_service(scope)
 #   internal machine infra  -> require_loopback (no personal data; not public)
 #   ingest webhooks         -> require_service(scope) / Basic bound to an owner
@@ -447,10 +430,14 @@ app.include_router(grants.router, dependencies=_OPERATOR)
 # The Store catalog + the one door onto a Store's contents (/stores). The operator
 # is served ungated here; the gate is on a caller that says it is an agent.
 app.include_router(stores_routes.router, dependencies=_OPERATOR)
-# Deploys — per-project target bindings + provider catalog + run kicker. Both
-# cross-project (/deploys) and per-project (/projects/{slug}/deploys/...) routes
-# live in the same router.
-app.include_router(deploys_routes.router, dependencies=_OPERATOR)
+# THE DEPLOY ROUTER WAS HERE AND IS DELETED (2026-09-04, ticket `726d75a9`).
+# It served `/deploys`, `/deploys/providers`, `/deploys/autonomy/override` and
+# the per-project `/projects/{slug}/deploys/...` family, over roughly 1,900
+# lines of target bindings, two provider drivers, a run pipeline and a polling
+# watcher. None of it ever ran: zero job records carried `kind=deploy` and the
+# record store was empty. Do not reintroduce a deployment surface here; the
+# model of record for running an app is `hosting-apps-design-2026-08-24.md`,
+# and it starts from an empty seat on purpose.
 app.include_router(autonomy.router, dependencies=_OPERATOR)
 app.include_router(usage.router, dependencies=_OPERATOR)  # rolling-window token usage (/usage)
 # Settings -> MCP: which MCP servers exist, whether they connect, what they

@@ -242,7 +242,8 @@ def set_operator(user_id: int) -> None:
 
 
 def domain_owner(domain: str) -> Optional[int]:
-    """Who owns a single-dataset domain (finance/budget/commute). This is DATA
+    """Who owns a single-dataset domain. A domain is declared by the app that
+    owns it (`AppSpec.owned_domains`); the platform never names one. This is DATA
     ownership recorded by the bootstrap migration — distinct from the is_operator
     role. A domain has exactly one owner; everyone else is denied that domain."""
     init_db()

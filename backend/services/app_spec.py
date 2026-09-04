@@ -124,6 +124,19 @@ class AppSpec:
     # Each entry: (name, category, url, probe_path, expect_status). An app that
     # runs out of process is the only thing that knows what "up" means for it.
     service_probes: tuple[tuple[str, str, str, str, tuple[int, ...]], ...] = ()
+    # Single-dataset domains this app owns (`auth_store.domain_owners`, read by
+    # `deps_user.require_domain_owner`). A domain has exactly one owner and
+    # everyone else is denied it, which is a fact about the app's data and not
+    # about the platform. The bootstrap (`backend/scripts/migrate_to_owned.py`)
+    # assigns every declared domain to the operator; before this field it
+    # carried a literal list of four of one operator's apps.
+    owned_domains: tuple[str, ...] = ()
+    # Machine credentials this app's out-of-process callers need, as
+    # (env var name, token scope). Minted once by the same bootstrap into the
+    # deployment's secrets file, never rotated on a re-run. Declared here for
+    # the same reason as `owned_domains`: which automation needs a token is the
+    # app's knowledge, and the platform had a literal one-entry list of it.
+    service_tokens: tuple[tuple[str, str], ...] = ()
 
 
 # --------------------------------------------------------------------------- #

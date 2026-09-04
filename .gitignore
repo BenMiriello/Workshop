@@ -33,11 +33,6 @@ auth.env
 
 # Generated
 status.md
-.runtime/finance-cache.json
-
-# BirdNET: local-preview copy of the sanitized dataset + any local fixture DB
-apps/birds/public-site/birds-public.json
-apps/birds/**/*.db
 
 # Infra deploy state (containers, secrets dropped in by deploy scripts)
 infra/open-wearables/repo/
