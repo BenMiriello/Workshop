@@ -1676,6 +1676,34 @@ def update_turn(thread_id: str, turn_id: str, segments: list[dict], content: str
     stored = chat_log._read_meta_raw(thread_id)
     if stored is None or stored.get("active_turn_id") != turn_id:
         return
+    # A CUT POSITION IS NEVER UNLEARNED WITHIN A TURN, so an empty list in
+    # memory must not erase one already on disk.
+    #
+    # `cut_head` names the messages that arrived before this turn emitted
+    # anything, and it only ever GROWS while the turn runs: `cut_here` appends,
+    # and `carry_cuts` moves refs off dropped segments ONTO it. Nothing removes
+    # one. So the only way the caller can hand us an empty list after a
+    # non-empty one is that the in-memory turn lost it, which is exactly what a
+    # re-attach does: a backend restart rebuilds the Turn from its journal, and
+    # the journal carries segments, not cut positions.
+    #
+    # This write then completed the loss. `write_live_sync` replaces the file,
+    # so an empty list did not merely fail to update `cut_head`, it DELETED it,
+    # and the client's next fresh read got a snapshot with no way to place those
+    # messages. They fall into the transcript's `stray` branch and render after
+    # the whole reply, which is the operator's most-repeated complaint: a
+    # message he sent mid-turn appearing BELOW work that came after it.
+    #
+    # Measured 2026-09-03 on the live installation: a message filed at 21:40:26
+    # recorded `at_segment 0` with a cut id, the backend restarted at 21:40:32,
+    # and the live snapshot thereafter carried 56 segments and no `cut_head` at
+    # all. See docs/decisions/0018.
+    if not cut_head:
+        prev = chat_log.read_live(thread_id)
+        if prev is not None and prev.get("turn_id") == turn_id:
+            carried = (prev.get("meta") or {}).get("cut_head")
+            if carried:
+                cut_head = list(carried)
     chat_log.write_live_sync(thread_id, {
         "turn_id": turn_id,
         "content": content,

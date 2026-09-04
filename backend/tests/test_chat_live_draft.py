@@ -231,3 +231,57 @@ class TestMergeLive:
         chat_log.merge_live(base, draft)
         assert base == {"turn_id": "r1", "meta": {"model": "m"}}
         assert draft == {"turn_id": "r1", "meta": {"segments": [1]}}
+
+
+class TestACutPositionSurvivesAReattach:
+    """A cut position is never unlearned within a turn, so an empty list in
+    memory must not erase one already on disk.
+
+    A backend restart rebuilds a running Turn from its journal, and the journal
+    carries segments but not cut positions, so the re-attached turn's
+    `cut_head` is empty. `write_live_sync` replaces the whole file, so the next
+    incremental persist DELETED the cut positions rather than merely failing to
+    update them, and the client's next fresh read had no way to place the
+    messages the operator sent mid-turn. They render after the whole reply.
+
+    Measured 2026-09-03 on the live installation: a message filed at 21:40:26
+    recorded `at_segment 0` with a cut id, the backend restarted six seconds
+    later, and every later snapshot carried 56 segments and no `cut_head`.
+    """
+
+    def test_a_later_write_with_no_cut_head_keeps_the_recorded_one(self, thread):
+        _claim(thread)
+        chat_store.update_turn(thread, "r1", [], "", ["m1"])
+        assert (chat_log.read_live(thread)["meta"]).get("cut_head") == ["m1"]
+
+        # The re-attached turn: same turn id, rebuilt segments, no cut_head.
+        chat_store.update_turn(thread, "r1", _segs(5), "the reply so far")
+
+        live = chat_log.read_live(thread)["meta"]
+        assert live.get("cut_head") == ["m1"], "the cut position was erased"
+        assert len(live["segments"]) == 5, "the rebuilt segments still land"
+
+    def test_the_active_turn_snapshot_still_reports_it(self, thread):
+        _claim(thread)
+        chat_store.update_turn(thread, "r1", [], "", ["m1"])
+        chat_store.update_turn(thread, "r1", _segs(2), "more")
+        run = chat_log.active_turn(thread)
+        assert (run["live"]["meta"]).get("cut_head") == ["m1"]
+
+    def test_a_growing_cut_head_still_wins_over_the_stored_one(self, thread):
+        """Carrying forward is a floor, not a freeze: a turn that learns a
+        SECOND cut position must still be able to record it."""
+        _claim(thread)
+        chat_store.update_turn(thread, "r1", [], "", ["m1"])
+        chat_store.update_turn(thread, "r1", _segs(1), "x", ["m1", "m2"])
+        assert (chat_log.read_live(thread)["meta"]).get("cut_head") == ["m1", "m2"]
+
+    def test_a_different_turn_does_not_inherit_the_previous_cut_head(self, thread):
+        """The carry-forward is fenced on the turn id, like every other read of
+        the draft: a new turn must not show the dead one's cut positions."""
+        _claim(thread)
+        chat_store.update_turn(thread, "r1", [], "", ["m1"])
+        chat_store.commit_turn(thread, "r1", _segs(1), "done")
+        _claim(thread, turn_id="r2")
+        chat_store.update_turn(thread, "r2", _segs(2), "fresh")
+        assert (chat_log.read_live(thread)["meta"]).get("cut_head") is None
