@@ -90,11 +90,21 @@ bootstrap_driver() {
 # shoot died with "Executable doesn't exist at .../chromium_headless_shell-1148"
 # while node_modules was intact. Check for both, and let a missing browser
 # re-trigger the bootstrap rather than needing a person to know this.
+# TRAP 3b, 2026-09-04: the guard accepted a browser the LAUNCHER cannot use.
+# `chromium` and `chromium_headless_shell` are two separate downloads, and
+# playwright >=1.49 launching `headless: true` wants the SHELL. The `||` above
+# meant a cache holding only `chromium-<build>` satisfied the check, bootstrap
+# was skipped, and the run then died with "Executable doesn't exist at
+# .../chromium_headless_shell-1148" -- the exact error TRAP 3 was written to
+# prevent, passing through the guard that was supposed to catch it.
+#
+# So: require the shell when the driver launches headless, which is every call
+# here. An `||` in a presence check is a claim that either thing will do, and
+# that claim has now been wrong twice in this file.
 browser_present() {
   case "$DRIVER_NAME" in
     playwright-core)
-      [ -n "$(ls -d "$HOME/.cache/ms-playwright/${DRIVER_BROWSER}"*/ 2>/dev/null)" ] \
-        || [ -n "$(ls -d "$HOME/.cache/ms-playwright/${DRIVER_BROWSER}_headless_shell-"*/ 2>/dev/null)" ] ;;
+      [ -n "$(ls -d "$HOME/.cache/ms-playwright/${DRIVER_BROWSER}_headless_shell-"*/ 2>/dev/null)" ] ;;
     *) return 0 ;;
   esac
 }
