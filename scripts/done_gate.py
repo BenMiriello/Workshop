@@ -189,11 +189,44 @@ def _transcript_path(session_id, explicit):
     return cand if cand.is_file() else None
 
 
-def _last_user_turn_ts(transcript):
-    """Epoch seconds of the last real user message; None if unreadable.
+def _turn_start_ts(transcript, after=None):
+    """Epoch seconds of the EARLIEST real user message after `after`.
 
     A tool_result also arrives typed `user`, so those are skipped: they mark the
     middle of a turn, not its start.
+
+    EARLIEST, NOT LATEST, and that is the second half of the same deadlock. The
+    `isMeta` clause below stops this gate's OWN rejection from moving the
+    boundary; it does not stop the operator from doing it. Typing mid-turn is a
+    supported and encouraged path here, and those messages are real user
+    messages carrying no `isMeta`, so each one dragged the boundary forward past
+    commits the turn had already made.
+
+    Measured 2026-09-03, the same session: the turn opened at 20:46 and
+    committed at 20:51, 21:07 and 21:17; the operator typed at 21:27 and again
+    at 21:40; the boundary followed him, `base` resolved to the turn's own last
+    commit, and reviewer.sh answered `no_diff` against an empty range with
+    eleven commits sitting in front of it.
+
+    `after` is the last mark, written when a turn ends, so the earliest message
+    since then is this turn's opener. Erring EARLY is the safe direction: it
+    attributes too much rather than too little, and `touched_files` narrows the
+    set afterwards. Attributing too little is what fails closed and cannot be
+    cleared by rerunning.
+
+    AND SO IS THIS GATE'S OWN REJECTION, which is the deadlock this clause
+    exists to break. The Stop hook's feedback is injected into the transcript as
+    a `user` message carrying `isMeta`, so counting it moved the turn boundary
+    to a moment AFTER the turn's own commits. `turn_boundary` then resolved
+    `base` to HEAD, `reviewer.sh` was handed a baseline with the work already
+    behind it and answered `no_diff`, and the retry failed for that reason
+    however correct the work was. Every later attempt failed the same way, so
+    the gate could reject once and then never be satisfiable again. Measured
+    2026-09-03.
+
+    `isMeta` is the discriminator rather than the message text: a real user
+    message does not carry it, and matching on wording would break the moment
+    the hook's copy changed.
     """
     if not transcript:
         return None
@@ -209,6 +242,10 @@ def _last_user_turn_ts(transcript):
                     continue
                 if ev.get("type") != "user":
                     continue
+                # Injected context (this gate's own Stop-hook feedback among it),
+                # not a turn the operator started. See the docstring.
+                if ev.get("isMeta"):
+                    continue
                 content = (ev.get("message") or {}).get("content")
                 if isinstance(content, list) and any(
                     isinstance(b, dict) and b.get("type") == "tool_result" for b in content
@@ -219,9 +256,13 @@ def _last_user_turn_ts(transcript):
                     continue
                 try:
                     from datetime import datetime
-                    best = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+                    when = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
                 except ValueError:
                     continue
+                if after is not None and when <= after:
+                    continue          # belongs to a turn that has already ended
+                if best is None or when < best:
+                    best = when
     except OSError:
         return None
     return best
@@ -334,13 +375,17 @@ def turn_boundary(session_id, transcript):
     everything dirty in the tree.
     """
     mark = read_mark(session_id)
-    marked, spoken = mark.get("at"), _last_user_turn_ts(transcript)
-    candidates = [t for t in (marked, spoken) if t]
-    if not candidates:
-        at, how = time.time() - FALLBACK_LOOKBACK_S, "fallback"
+    marked = mark.get("at")
+    # The opener of the turn running NOW: the first thing the operator said
+    # after the last turn ended. Anything said since is an interjection INTO
+    # this turn, not the start of a new one.
+    spoken = _turn_start_ts(transcript, after=marked)
+    if spoken:
+        at, how = spoken, "transcript"
+    elif marked:
+        at, how = marked, "mark"
     else:
-        at = max(candidates)
-        how = "mark" if at == marked else "transcript"
+        at, how = time.time() - FALLBACK_LOOKBACK_S, "fallback"
     base = mark.get("head") or ""
     if base:
         # A mark from a previous checkout can name a commit this tree lost.
