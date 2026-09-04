@@ -151,29 +151,9 @@ def test_operator_email_not_consulted_at_request_time():
     assert offenders == [], f"operator email referenced in request-time code: {offenders}"
 
 
-# 7 — birds visibility is scoped to the server-pinned owner on the main backend
-# (the "birds viewer bridge"), and a client-supplied viewer_id cannot widen it.
-# Without this, /birds/* reads default to see-all. DB-free: exercises the
-# resolution directly.
-def test_birds_viewer_is_pinned_to_owner_not_see_all():
-    from services import birds_analyze
-
-    birds_analyze.set_request_viewer(None)  # no springer viewer (main backend)
-    try:
-        # No owner pinned at all -> unrestricted only when nothing is set.
-        ownership.clear_current_owner()
-        assert birds_analyze._resolve_viewer(None) is None
-
-        # Owner pinned (as current_user does) -> birds scopes to that owner,
-        # NOT see-all.
-        ownership.set_current_owner(42)
-        assert birds_analyze._resolve_viewer(None) == 42
-        # A client-supplied viewer_id cannot override the server-pinned owner.
-        assert birds_analyze._resolve_viewer(999) == 42
-
-        # The springer request-scoped viewer still wins (its own auth surface).
-        birds_analyze.set_request_viewer(7)
-        assert birds_analyze._resolve_viewer(None) == 7
-    finally:
-        birds_analyze.set_request_viewer(None)
-        ownership.clear_current_owner()
+# 7 LEFT THIS FILE ON 2026-09-04. It asserted that one app's reads are scoped to
+# the server-pinned owner and that a client-supplied viewer id cannot widen
+# them. The ownership MODEL is this file's subject and stays; the app that
+# resolves a viewer is the one that can regress it, so the assertion moved to
+# that app's own tests and this file stopped being the last platform module
+# importing an app.

@@ -24,9 +24,14 @@
 #   packages/ui/src/styles/**           (tokens.css / components.css / tokens.js)
 #   packages/ui/src/chart.tsx           (CHART_SERIES — recharts needs literal colors)
 #   packages/ui/src/Map.tsx             (maplibre StyleSpecification; token() reads CSS vars w/ hex fallback)
-#   birds/recorder.tsx, birds/Spectrogram.tsx
-#       (the spectrogram is a deliberate theme-independent near-black; a canvas
-#        2D fillStyle cannot read CSS custom properties, and the wrapper matches it)
+#   whatever an installed app declares in its own workshop.app.json, as
+#   ui.design_exempt (paths relative to that app's ui/ directory). This file
+#   names no app.
+#
+# Scanned trees: frontend/src, packages/ui/src, and apps/*/ui. The last is not
+# optional politeness -- an app's pages are pages a person looks at, and when
+# app source left this repo on 2026-09-04 the design rules would otherwise have
+# stopped applying to exactly the surfaces the operator uses most.
 #
 # Exit 0 = clean, 1 = violations, 2 = foundation broken.
 
@@ -108,20 +113,47 @@ if [[ "$MODE" == "full" ]]; then
 fi
 
 python3 - "$MODE" "$REV" <<'PYEOF'
-import os, re, subprocess, sys
+import json, os, re, subprocess, sys
 
 mode, rev = sys.argv[1], sys.argv[2]
 FE = os.environ["WORKSHOP"] + "/frontend"
 KIT = os.environ["WORKSHOP"] + "/packages/ui"
 
-EXEMPT = (
+EXEMPT = [
     "packages/ui/src/styles/",
     "packages/ui/src/chart.tsx",
     "packages/ui/src/Map.tsx",  # maplibre StyleSpecification needs literal colors; token() reads CSS vars w/ hex fallback
-    "frontend/src/pages/apps/birds/recorder.tsx",
-    "frontend/src/pages/apps/birds/Spectrogram.tsx",
-    "frontend/src/pages/apps/birds/LiveFeed.tsx",  # remote spectrogram canvas; literal colors like Spectrogram.tsx
-)
+]
+
+# AN APP DECLARES ITS OWN EXEMPTIONS; this file names none.
+#
+# Three entries here used to be one app's canvas files, spelled as
+# `frontend/src/pages/apps/<name>/...`. That is the exact shape the operator
+# named on 2026-09-03: platform code carrying an app's name for a reason that is
+# true of the app, not of the platform. When the app left the repo on 2026-09-04
+# those three paths also stopped existing, so the gate was carrying dead strings
+# that happened to be app names.
+#
+# An app states them in its own manifest instead:
+#
+#     "ui": { "design_exempt": ["recorder.tsx", "Spectrogram.tsx"] }
+#
+# paths relative to the app's `ui/` directory. A canvas 2D `fillStyle` cannot
+# read CSS custom properties, which is a real and narrow reason; an app that
+# claims it is making a claim in its own file, where its own reviewer sees it.
+APPS_DIR = os.path.join(os.environ["WORKSHOP"], "apps")
+for _slug in sorted(os.listdir(APPS_DIR)) if os.path.isdir(APPS_DIR) else []:
+    _mf = os.path.join(APPS_DIR, _slug, "workshop.app.json")
+    if not os.path.isfile(_mf):
+        continue
+    try:
+        with open(_mf, encoding="utf-8") as _fh:
+            _ui = (json.load(_fh) or {}).get("ui") or {}
+    except (OSError, ValueError):
+        continue          # a broken manifest is the app's problem, not this gate's
+    for _rel in _ui.get("design_exempt") or []:
+        EXEMPT.append(f"apps/{_slug}/ui/{_rel}")
+EXEMPT = tuple(EXEMPT)
 HEX = re.compile(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?\b")
 NOT_ALLOWED = re.compile(r"not-allowed")
 # Emoji = decorative pictographs (📝 🛠 🔍 …), all in the astral planes + flags.
@@ -215,7 +247,13 @@ if mode == "full":
     # frontend/src/ui and were scanned by walking one tree; now that they live
     # in packages/ui they need their own root, or the design system would be the
     # one place the design rules stopped applying.
-    for scan_root in (os.path.join(FE, "src"), os.path.join(KIT, "src")):
+    # An installed app's ui/ is scanned as well. `apps/` is absent on a fresh
+    # clone, so this adds nothing there and everything here.
+    _app_uis = []
+    if os.path.isdir(APPS_DIR):
+        _app_uis = [os.path.join(APPS_DIR, d, "ui") for d in sorted(os.listdir(APPS_DIR))
+                    if os.path.isdir(os.path.join(APPS_DIR, d, "ui"))]
+    for scan_root in [os.path.join(FE, "src"), os.path.join(KIT, "src")] + _app_uis:
         for root, _, files in os.walk(scan_root):
             for f in files:
                 if not f.endswith(".tsx"):
@@ -233,6 +271,15 @@ else:
         ["git", "diff", "--unified=0", rev, "--", "frontend/src", "packages/ui/src"],
         capture_output=True, text=True, cwd=os.environ["WORKSHOP"],
     ).stdout
+    # `apps/` is its OWN repository, so the platform's diff cannot see a change
+    # to an app's page. Ask that repo the same question against its own HEAD:
+    # uncommitted app work is what a gate run mid-change is looking at, and
+    # without this an app's UI could take on new violations with the gate green.
+    if os.path.isdir(os.path.join(APPS_DIR, ".git")):
+        diff += subprocess.run(
+            ["git", "diff", "--unified=0", "HEAD", "--", "."],
+            capture_output=True, text=True, cwd=APPS_DIR,
+        ).stdout.replace("+++ b/", "+++ b/apps/")
     cur_file = None
     new_ln = 0
     for line in diff.splitlines():
