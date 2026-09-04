@@ -160,9 +160,24 @@ docs/masini/
 # working here; they just stop being in the repo.
 #
 # The REST of an app (its React pages under frontend/src/pages/apps, its
-# route/service modules in the flat backend dirs) cannot follow yet: the
-# frontend registry statically imports those pages, so gitignoring them would
-# break a fresh clone's build. That needs the app loader and the AppSpec seams.
+# route/service modules in the flat backend dirs) WAS blocked here, and is not
+# any more. This paragraph used to read "the frontend registry statically
+# imports those pages, so gitignoring them would break a fresh clone's build",
+# and that stopped being true on 2026-09-02. RE-MEASURED 2026-09-03, not
+# recalled: frontend/src/apps/registry.tsx discovers with
+# `import.meta.glob("../pages/apps/*/module.tsx")` and names no app, so with the
+# app source absent the glob matches nothing and `tsc -b` is clean;
+# `bash scripts/check_fresh_clone.sh` prints `PASS build_with_zero_apps -- 121
+# app-source file(s) removed; kit, bundle and backend import all succeeded` and
+# `PASS shell_boots_with_empty_catalog`; and scripts/fresh_clone_baseline.json
+# now excuses nothing (`expected_failures: {}`).
+#
+# It is left here as prose rather than deleted because a STALE BLOCKER IS A
+# PERMANENT EXCUSE: this sentence was read as a live constraint for over a week
+# after it went false, and it makes inaction look like diligence. What remains
+# is a DECISION about where the app source goes (overlay directory, separate
+# repo, per-app worktree) plus the access-boundary requirement stated on
+# 2026-09-03, not a build that would break.
 # Plan: docs/platform-redesign/app-separation-and-github-2026-08-20.md.
 #
 # History is untouched: `git log --follow` still has all of it.
