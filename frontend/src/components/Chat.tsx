@@ -37,6 +37,7 @@ import { useThreadLog } from "./chat/useThreadLog";
 import { useSendOutbox, type SendOutbox } from "./chat/useSendOutbox";
 import { useChatScope } from "./chat/useChatScope";
 import { useChatThread } from "./chat/useChatThread";
+import { linkIntentKey } from "./chat/threadIntent";
 import { useSendPipeline, wasFirstExchange } from "./chat/useSendPipeline";
 import { logPlaceholder, noRealContent } from "./chat/chatLogState";
 import { placementFor, type ChatProblem } from "./chat/chatProblem";
@@ -114,6 +115,12 @@ export type ChatProps = {
   // Open a SPECIFIC thread on mount (e.g. resuming a draft project chat from a
   // link) instead of the most-recent one for this scope.
   initialThreadId?: string;
+  // `useLocation().key` from the route that mounted this chat, when there is
+  // one. It is what makes picking a conversation an EVENT rather than a value
+  // comparison, so a pick still lands when the router already holds that
+  // `?thread=`. Absent for a chat mounted inside another page, where nothing
+  // navigates underneath it. See chat/threadIntent.
+  navKey?: string;
   // Start BLANK, outranking every restore rule. Set from `?new=1` (see
   // lib/chatSelection.newChatHref) because a "New chat" button elsewhere in the
   // app knows the context key but cannot compute the scope the selection is
@@ -123,7 +130,7 @@ export type ChatProps = {
 
 export default function Chat({
   contextKey, mode, variant = "panel", placeholder, onAction, scoped, hideExpand,
-  initialThreadId, startNew,
+  initialThreadId, navKey, startNew,
 }: ChatProps) {
   // THE AGENT THIS CHAT IS WITH, when it is with one. Build mode is a fact about
   // the agent (role + project link), not about the shape of the context key, so
@@ -165,7 +172,13 @@ export default function Chat({
   // (which CONSUMES them) need the same two.
   const startNewRef = useRef(!!startNew);
   const linkedThreadRef = useRef<string | null>(initialThreadId ?? null);
-  useEffect(() => { linkedThreadRef.current = initialThreadId ?? null; }, [initialThreadId]);
+  // The dependency is the NAVIGATION, not the id it carries. Re-arming on the
+  // id alone is the whole of the "clicking a chat sometimes does nothing" bug:
+  // the resolver consumes this ref and nulls it, so a second push naming the
+  // same conversation left it null and nothing re-ran. threadIntent has the
+  // measurement and the four ways the router's `?thread=` goes stale.
+  const linkIntent = linkIntentKey(navKey, initialThreadId);
+  useEffect(() => { linkedThreadRef.current = initialThreadId ?? null; }, [linkIntent]);  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (startNew) startNewRef.current = true; }, [startNew]);
 
   // Take `?new=1` back out of the URL once acted on, so a refresh is governed by
@@ -214,7 +227,7 @@ export default function Chat({
     outboxRef,
     startNewRef,
     linkedThreadRef,
-    initialThreadId,
+    linkIntent,
     stripNewParam,
     setSelectedModel,
     setSelectedEffort,

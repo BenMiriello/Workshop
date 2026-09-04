@@ -15,9 +15,9 @@ import { queryKeys } from "../../lib/queryKeys";
 const NO_THREADS: ThreadSummary[] = [];
 
 /** The request `chatApi.listThreads` makes, named so an error block can point at
- *  the thing that actually failed. */
-const threadListEndpoint = (scope?: string) =>
-  scope ? `/api/chat/threads?context=${scope}` : "/api/chat/threads";
+ *  the thing that actually failed. It takes no scope: this hook reads the one
+ *  cross-scope list every other reader is on, and filters in memory. */
+const threadListEndpoint = () => "/api/chat/threads";
 
 // WHICH CONVERSATION IS OPEN, and the settings that belong to it.
 //
@@ -81,7 +81,7 @@ export type ChatThread = {
 
 export function useChatThread({
   scope, providersReady, variant, outboxRef,
-  startNewRef, linkedThreadRef, initialThreadId,
+  startNewRef, linkedThreadRef, linkIntent,
   stripNewParam, setSelectedModel, setSelectedEffort, setSelectedPermissionMode,
   onError, onLeaveForList,
 }: {
@@ -94,7 +94,10 @@ export function useChatThread({
   outboxRef: React.MutableRefObject<SendOutbox>;
   startNewRef: React.MutableRefObject<boolean>;
   linkedThreadRef: React.MutableRefObject<string | null>;
-  initialThreadId?: string;
+  /** The resolver's trigger: one string that changes on every NAVIGATION that
+   *  could ask for a different conversation, not merely when the id it names
+   *  differs from last time. Built by chat/threadIntent, which has the why. */
+  linkIntent: string;
   stripNewParam: () => void;
   setSelectedModel: (id: string) => void;
   setSelectedEffort: (level: string) => void;
@@ -114,17 +117,33 @@ export function useChatThread({
   // below issues the read as part of a larger sequence (it needs the list in
   // hand to pick a thread) and writes the result back through `setThreads`.
   // What moves here is where the answer is KEPT, so that a write reaches every
-  // reader instead of one. The scope slot is real: a scoped list is genuinely a
-  // different list from the cross-scope one, which is why a write patches its
-  // own entry for immediacy and then invalidates the shared prefix, rather than
-  // pretending one patch can reach all of them.
+  // reader instead of one.
   const qc = useQueryClient();
-  const threadsKey = useMemo(() => queryKeys.chat.threads(scope ?? null), [scope]);
+  // THE CROSS-SCOPE ENTRY, which is the only live thread list in the app.
+  //
+  // This used to be `threads(scope)` -- a SECOND entry, holding this scope's
+  // slice of the very same endpoint. Nothing outside this hook ever read it,
+  // and it cost two things. It cost a request: opening any chat fetched
+  // `/api/chat/threads?context=<scope>`, and then opening the toolbar's recent
+  // list fetched `/api/chat/threads` all over again, because the menu reads the
+  // cross-scope entry and the page had filled a different one. Measured on this
+  // installation: two reads per chat page, and the menu painting its "Loading"
+  // row every single time it was opened, on a list the page already had in
+  // hand. And it cost coherence, which is the same defect queryKeys.ts was
+  // written to end: an optimistic rename or archive patched the scoped copy,
+  // and the dashboard, the Chats page, Roles and the recent-chats menu -- all
+  // four of them on `threads(null)` -- went on painting the old row.
+  //
+  // So the read is the cross-scope one, shared with every other reader, and the
+  // scope filter is applied HERE, in memory. The endpoint returns every scope
+  // either way; filtering it in the client is a `.filter`, not a round trip.
+  const threadsKey = useMemo(() => queryKeys.chat.threads(null), []);
   const threadsQuery = useQuery({
     queryKey: threadsKey,
-    queryFn: () => chatApi.listThreads(scope),
+    queryFn: () => chatApi.listThreads(),
     enabled: false,
   });
+  /** Every conversation, in every scope. What the pickers show. */
   const threads = threadsQuery.data ?? NO_THREADS;
   const setThreads = useCallback(
     (next: ThreadSummary[] | ((prev: ThreadSummary[]) => ThreadSummary[])) => {
@@ -175,20 +194,20 @@ export function useChatThread({
     // a general chat ended up showing a stale development-scoped error). Only a
     // persistent transient failure, or any non-transient error, surfaces.
     try {
-      const list = await withTransientRetry(() => chatApi.listThreads(scope));
+      const list = await withTransientRetry(() => chatApi.listThreads());
       setThreads(list);
       return list;
     } catch (e) {
       onError({
         text: `Couldn't refresh the list of conversations: ${e}. The list may be out of date.`,
-        endpoint: threadListEndpoint(scope),
+        endpoint: threadListEndpoint(),
         // Reading the list again is the whole action, so the retry is the call
         // that just failed.
         retry: () => { void refreshThreads(); },
       });
       return [];
     }
-  }, [scope, onError, setThreads]);
+  }, [onError, setThreads]);
 
   // The namer runs detached and takes as long as it takes. This used to look
   // ONCE, 2.5 seconds later, and a namer slower than that left "New chat" in the
@@ -331,7 +350,7 @@ export function useChatThread({
         // list, and (when a thread is linked) that thread's settings document.
         // The list no longer sits IN FRONT OF the switch; it fills the picker and
         // supplies the fallback if the linked thread turns out to be gone.
-        const listP = chatApi.listThreads(scope);
+        const listP = chatApi.listThreads();
 
         // A linked thread is fetched by id, not looked up in `list`: the chat
         // list spans every context, so the thread the operator clicked need not
@@ -348,7 +367,17 @@ export function useChatThread({
         const list = await listP;
         if (cancelled) return;
         setThreads(list);
-        const has = (id: string | null | undefined): boolean => !!id && list.some((x) => x.id === id);
+        // THE LIST IS EVERY SCOPE; THE FALLBACK IS THIS ONE. Those are two
+        // different questions and they were only ever the same question because
+        // the read was scoped. "Is the thread I am on still real?" and "which
+        // thread should this scope open when nothing was asked for?" both go
+        // through here, and answering the second from the cross-scope list would
+        // restore a conversation belonging to another scope the moment this one
+        // was empty. A linked thread is exempt by design: it is fetched by id,
+        // above, precisely because a picked chat can live anywhere.
+        const inScope = list.filter((x) => x.context_key === scope);
+        const has = (id: string | null | undefined): boolean =>
+          !!id && inScope.some((x) => x.id === id);
 
         // Either nothing was linked (a scope change, or first load), or the
         // linked thread is gone: pick a target from the freshly-loaded list and
@@ -360,7 +389,7 @@ export function useChatThread({
             if (has(current)) return current;
             if (stored === NEW_CHAT) return null;
             if (has(stored)) return stored;
-            return list.length ? list[0].id : null;
+            return inScope.length ? inScope[0].id : null;
           })();
           t = target ? await chatApi.getThread(target).catch(() => null) : null;
           if (cancelled) return;
@@ -380,7 +409,7 @@ export function useChatThread({
         if (!cancelled) {
           onError({
             text: `Couldn't open this conversation: ${e}`,
-            endpoint: threadListEndpoint(scope),
+            endpoint: threadListEndpoint(),
             // A real retry: re-runs the whole resolver (list, then select), not
             // just the list — refilling the list alone would leave the chat
             // sitting on no thread while claiming it had recovered.
@@ -392,10 +421,13 @@ export function useChatThread({
       }
     })();
     return () => { cancelled = true; };
-    // scope and the linked thread drive the reload — the URL naming a different
-    // conversation has to re-run this even when the route is unchanged.
+    // Scope and the LINK INTENT drive the reload. The intent is a navigation,
+    // not the id it names: `initialThreadId` alone meant that picking the
+    // conversation the router already had in its `?thread=` changed no
+    // dependency, so this never ran and the click did nothing. See
+    // chat/threadIntent for the four ordinary ways the router goes stale.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, initialThreadId, providersReady, threadLoadNonce]);
+  }, [scope, linkIntent, providersReady, threadLoadNonce]);
 
   const newChat = useCallback(() => {
     setActiveId(null);

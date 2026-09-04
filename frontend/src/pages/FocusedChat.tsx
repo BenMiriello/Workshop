@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import Chat from "../components/Chat";
 import { chatApi } from "../lib/chat";
 import { useVisualViewport } from "../lib/useVisualViewport";
@@ -19,6 +19,14 @@ export default function FocusedChat() {
   // `?new=1` is an explicit "start blank here", set by newChatHref. It outranks
   // every restore rule inside Chat; see lib/chatSelection.
   const startNew = search.get("new") === "1";
+  // WHICH NAVIGATION THIS IS, not merely which thread it names. Picking a chat
+  // out of the toolbar list is usually a same-path, search-only push, and when
+  // the router is already sitting on that `?thread=` value -- which it is
+  // whenever the open conversation last moved without routing -- the value is
+  // unchanged and the pick used to do nothing at all. React Router mints a new
+  // `key` for every push including one to an identical URL, so this is the
+  // event. See components/chat/threadIntent.
+  const { key: navKey } = useLocation();
 
   // P5: legacy `agent:<slug>` URLs that point at a thread the backend has since
   // promoted (context_key rewritten to general or project:<slug>) redirect
@@ -57,6 +65,7 @@ export default function FocusedChat() {
       contextKey={contextKey}
       variant="full"
       initialThreadId={initialThreadId}
+      navKey={navKey}
       startNew={startNew}
     />
   );
