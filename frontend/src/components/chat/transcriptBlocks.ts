@@ -4,6 +4,7 @@ import {
   type LogEvent, type PendingSend, type PendingStatus, type ThreadState,
 } from "./threadStore";
 import { cutPointOf, splitAtUnits } from "./transcriptUnits";
+import { placeSend, type LogObservation, type SendPlacement } from "./chatSequence";
 
 // The transcript, DERIVED. Committed events in seq order, then the live run,
 // then pending sends. Nothing is stored in this shape; it is recomputed from the
@@ -534,7 +535,14 @@ export function selectCommitted(state: ThreadState): CommittedTranscript {
 }
 
 /** Where a pending send sits in the committed blocks: immediately after the last
- *  block the log had when that send was made. */
+ *  block the log had when that send was made.
+ *
+ *  Only ever called for a placement chatSequence resolved as `anchored`, which
+ *  is the only case in which `afterSeq` is a position at all. It used to be
+ *  called for every send whose `afterSeq` was below the tail — including the
+ *  ones whose `afterSeq` was 0 because the log had not loaded — and 0 matches no
+ *  message, so those returned index 0 and the message rendered above the entire
+ *  history. See chatSequence, invariant I2. */
 export function anchorIndex(blocks: TranscriptBlock[], afterSeq: number): number {
   for (let i = blocks.length - 1; i >= 0; i--) {
     const b = blocks[i];
@@ -576,7 +584,17 @@ export function isLiveShown(committed: CommittedTranscript, state: ThreadState):
  *  with every reply to those. Reported 2026-08-11, in those words. Anchoring on
  *  `afterSeq` puts it back among the messages it was actually typed between, and
  *  costs the common case nothing: a send in flight was made at the tail, so its
- *  anchor IS the end. */
+ *  anchor IS the end.
+ *
+ *  WHERE EACH SEND GOES IS NOT DECIDED HERE ANY MORE. It is decided once, by
+ *  `chatSequence.placeSend`, which is a pure function of one send's own
+ *  send-time observation and one observation of the log — no block counting, no
+ *  cross-send comparison, no second copy of the rule. This function arranges
+ *  what that one decided. The condition it replaces was four terms wide
+ *  (`duringActiveTurn && !noCommittedMessage && liveShown && status !== failed`),
+ *  computed inline, and every recurrence of the ordering defect was one of those
+ *  four terms being individually stale. See chatSequence for the invariants and
+ *  the reports each closes. */
 export function composeTranscript(
   committed: CommittedTranscript,
   state: ThreadState,
@@ -627,37 +645,36 @@ export function composeTranscript(
   const toBlock = (p: PendingSend): TranscriptBlock =>
     p.status === "failed" ? asPending(p) : asMessage(p, p.status === "sending");
 
-  // THE CONVERSATION'S FIRST MESSAGE IS NEVER BELOW THE WORKING INDICATOR.
-  // `duringActiveTurn` is captured from `!!state.activeTurn` at send time, and on
-  // a NEW chat that flag can be stale (a turn left active on the thread this one
-  // was opened from, or the new-chat lifecycle race): the first message is then
-  // stamped as "sent during a turn" and drops below the indicator, exactly the
-  // "it shows at the bottom then moves to the top once read" the operator has
-  // reported repeatedly. But a turn cannot predate the message that started it,
-  // so nothing the operator typed first can sit under a run that was already
-  // going. When the committed log carries no message yet, a tail send IS that
-  // first message and it starts the turn, so it goes above the indicator.
-  const noCommittedMessage = !committed.blocks.some((b) => b.kind === "message");
+  // ONE OBSERVATION OF THE LOG, handed to the rule once. `liveTurnId` is the
+  // run whose block is actually ON SCREEN (`isLiveShown`'s answer), not the one
+  // the snapshot names — the two differ for one round trip at every turn
+  // boundary, and believing the snapshot there is its own documented bug.
+  const observed: LogObservation = {
+    tail,
+    hasCommittedMessage: committed.blocks.some((b) => b.kind === "message"),
+    liveTurnId: liveShown && liveTurn ? liveTurn.turnId : null,
+  };
+  const placements = new Map<string, SendPlacement>();
+  for (const p of pending) placements.set(p.clientId, placeSend(p, observed));
 
-  // Anchored sends: a FAILED bubble the log has since grown past. Walk
-  // back-to-front so an index computed against `out` stays valid as earlier
-  // inserts push later ones right (see anchorIndex).
+  // Anchored sends: a bubble the log has since grown past, put back where it was
+  // typed. Walk back-to-front so an index computed against `out` stays valid as
+  // earlier inserts push later ones right (see anchorIndex).
   for (let i = pending.length - 1; i >= 0; i--) {
     const p = pending[i];
-    if (p.afterSeq < tail) out.splice(anchorIndex(out, p.afterSeq), 0, toBlock(p));
+    const at = placements.get(p.clientId);
+    if (at?.at === "anchored") out.splice(anchorIndex(out, at.afterSeq), 0, toBlock(p));
   }
 
-  // Tail sends split by whether they joined a turn already running. A mid-turn
-  // send belongs inside the live run at the run's current tail; a fresh send (or
-  // a failed one, or the conversation's first message) belongs above the whole
-  // live block. Both are collected in send order.
+  // The rest, in send order. `inRun` is folded into the live block below; `tail`
+  // renders above it, which is the truthful place for something the run on
+  // screen was never handed.
   const midTurn: PendingSend[] = [];
   const beforeLive: TranscriptBlock[] = [];
   for (const p of pending) {
-    if (p.afterSeq < tail) continue;                       // already anchored
-    const joined = p.duringActiveTurn && !noCommittedMessage && liveShown
-      && p.status !== "failed";
-    if (joined) midTurn.push(p);
+    const at = placements.get(p.clientId);
+    if (at?.at === "anchored") continue;                   // already placed
+    if (at?.at === "inRun") midTurn.push(p);
     else beforeLive.push(toBlock(p));
   }
   out.push(...beforeLive);

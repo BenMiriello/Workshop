@@ -93,13 +93,36 @@ export type PendingSend = {
    *  above this old message, and then subsequent chat messages show above these
    *  messages". See transcriptBlocks.composeTranscript. */
   afterSeq: number;
-  /** Whether a turn was already running in this thread at the moment this send
-   *  began. A send made while nothing was running is what STARTS a turn, so it
-   *  belongs above the working indicator once one appears; a send made while a
-   *  turn was already in flight belongs below it, same as a committed mid-turn
-   *  message. Read at send time, not at render time, because by the time a
-   *  render happens `activeTurn` may already be set from the very turn THIS
-   *  send caused. See `composeTranscript`. */
+  /** WAS `afterSeq` AN OBSERVATION, or the absence of one?
+   *
+   *  `afterSeq` is 0 both for "this conversation is empty" and for "this
+   *  browser had not loaded the log yet", and only the first is a position. The
+   *  second happens whenever a send is made against a store that has been reset
+   *  and not refilled, and 0 resolves to index 0 — the TOP — so the entire
+   *  conversation reappeared UNDERNEATH the message the operator had just
+   *  typed. Reported 2026-09-04 in exactly those words.
+   *
+   *  True iff a page has landed for this thread (`syncedAt`) or this browser
+   *  holds events for it (a cache seed). See chatSequence, invariant I2. */
+  observedLog: boolean;
+  /** WHICH RUN was in flight at the moment this send began, or `null` when none
+   *  was. Read at send time, not at render time, because by the time a render
+   *  happens `activeTurn` may already be set from the very turn THIS send
+   *  caused.
+   *
+   *  THE IDENTITY, NOT A BOOLEAN, and that is the whole of the fix. `true` says
+   *  "a run was going" and cannot say WHICH, so the renderer could not tell a
+   *  send that STARTED the run on screen from one that was handed to it, and
+   *  put both inside it. The guard bolted on for that ("...unless this is the
+   *  conversation's first message") only covers the first message of the CHAT,
+   *  while the case is the first message of every TURN. Comparing ids answers
+   *  it exactly: equal means handed to this run, unequal or null means this
+   *  send predates it. See chatSequence.placeSend. */
+  duringTurnId: string | null;
+  /** The boolean `duringTurnId` replaced. Kept because a PendingSend is
+   *  mirrored to storage (useSendOutbox) and entries written before that change
+   *  are still on disk; chatSequence reads it only for those. Do not add new
+   *  readers, and do not derive placement from it. */
   duringActiveTurn: boolean;
 };
 
@@ -682,6 +705,11 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
             // knows the log's tail, and a caller computing it would be reading
             // the same state one render late.
             afterSeq: lastSeq(state),
+            // Whether that number means anything. See `observedLog` above.
+            observedLog: state.syncedAt > 0 || state.order.length > 0,
+            // The run's ID, so the renderer can tell a send that STARTED this
+            // run from one handed to it. See chatSequence.joinedRun.
+            duringTurnId: state.activeTurn?.turnId ?? null,
             duringActiveTurn: !!state.activeTurn,
           },
         },

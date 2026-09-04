@@ -727,13 +727,32 @@ describe("a pending send's place in the log", () => {
       .toEqual(["user:a", "pending:first", "user:b", "pending:second", "user:c"]);
   });
 
-  it("goes to the very top when it failed on an empty thread", () => {
-    const empty = initialThreadState("t");
+  it("goes to the very top when it failed on an empty thread THIS TAB HAD READ", () => {
+    // `stateOf([])` rather than `initialThreadState`: the difference is whether
+    // a page has landed, and it is the difference between "this conversation is
+    // empty" and "the log has not arrived". Only the first is a position. See
+    // chatSequence, invariant I2, and the test below for the other one.
+    const empty = stateOf([]);
     const withFailure = failed(empty, "c1", "lost");
     const later = threadReducer(withFailure, {
       type: "eventsReceived", events: [user("b")], lastSeq: 99, activeTurn: null,
     });
     expect(shape(selectTranscript(later))).toEqual(["pending:lost", "user:b"]);
+  });
+
+  it("goes to the BOTTOM when it failed against a log this tab never read", () => {
+    // Reported 2026-09-04: "why did the chat history just disappear while i was
+    // typing ... then the chat reappeared but UNDER my last message that failed
+    // to send". A send made against a store that had been reset and not
+    // refilled recorded `afterSeq: 0`, which resolved to index 0 — the top —
+    // the moment the history came back. It is the newest thing the operator
+    // did, so it belongs last.
+    const unread = initialThreadState("t");
+    const withFailure = failed(unread, "c1", "lost");
+    const later = threadReducer(withFailure, {
+      type: "eventsReceived", events: [user("b")], lastSeq: 99, activeTurn: null,
+    });
+    expect(shape(selectTranscript(later))).toEqual(["user:b", "pending:lost"]);
   });
 
   it("stays above the working indicator for the turn it started, and does not flip once the send is acknowledged", () => {
@@ -1037,7 +1056,7 @@ describe("everything in the transcript comes from the transcript", () => {
       sends: [{
         clientId: "c1", text: "the one that never landed", ts: "2026-08-12T17:44:00Z",
         status: "failed", error: "the backend was restarting", at: 0, afterSeq: 0,
-        duringActiveTurn: false,
+        observedLog: false, duringTurnId: null, duringActiveTurn: false,
       }],
     });
     const blocks = selectTranscript(state);

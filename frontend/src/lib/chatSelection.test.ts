@@ -37,7 +37,8 @@ function memoryStorage(): Storage {
 // calendar moves and every test here starts asserting against an empty list.
 // This default means "a send made just now", which is what these cases are about.
 const send = (text: string, clientId: string, ts = new Date().toISOString()): OutboxSend =>
-  ({ text, clientId, ts, status: "failed", at: 1, afterSeq: 0, duringActiveTurn: false });
+  ({ text, clientId, ts, status: "failed", at: 1, afterSeq: 0,
+    observedLog: false, duringTurnId: null, duringActiveTurn: false });
 
 const agedTs = (ms: number) => new Date(Date.now() - ms).toISOString();
 const HOUR = 60 * 60 * 1000;

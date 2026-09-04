@@ -148,6 +148,8 @@ export type OutboxSend = {
   attachments?: { id: string; name: string; kind: "image" | "pdf" | "text" }[];
   at: number;
   afterSeq: number;
+  observedLog: boolean;
+  duringTurnId: string | null;
   duringActiveTurn: boolean;
 };
 
@@ -218,9 +220,19 @@ export function readOutbox(key: string): OutboxSend[] {
           : {}),
         at: Number(x.at) || 0,
         afterSeq: Number(x.afterSeq) || 0,
+        // An entry written before `observedLog` existed still carries the one
+        // thing that implies it: a non-zero `afterSeq` can only have come from
+        // a log this browser had actually read.
+        observedLog: typeof x.observedLog === "boolean"
+          ? x.observedLog
+          : (Number(x.afterSeq) || 0) > 0,
         // Whatever turn this send was made during belonged to a browser session
         // that is gone; it never joined the one running now, so it cannot be
-        // placed as though it did.
+        // placed as though it did. Normalised on READ rather than trusted from
+        // storage, so an entry written before `duringTurnId` existed comes back
+        // with the same shape as one written after it and chatSequence has one
+        // case to reason about instead of two.
+        duringTurnId: null,
         duringActiveTurn: false,
       });
     }
