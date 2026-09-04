@@ -20,6 +20,8 @@ describe("APP_TABS", () => {
   it("offers no tab for a surface that Work absorbed", () => {
     const ids = APP_TABS.map((t) => t.id) as string[];
     for (const gone of ["tickets", "runs", "deploys", "agents"]) {
+      // `deploys` stays in this list on purpose: it must not come back as a
+      // tab now that the deploy subsystem itself is deleted (`726d75a9`).
       expect(ids).not.toContain(gone);
     }
   });
@@ -44,7 +46,6 @@ describe("unlinkedReason", () => {
   it("explains an empty project-backed collection on an unlinked app", () => {
     expect(unlinkedReason("tickets", null, 0)).toMatch(/no linked project/);
     expect(unlinkedReason("runs", undefined, 0)).toMatch(/no linked project/);
-    expect(unlinkedReason("deploys", null, 0)).toMatch(/no linked project/);
     expect(unlinkedReason("agents", null, 0)).toMatch(/no linked project/);
   });
 
@@ -66,7 +67,7 @@ describe("canHaveContent", () => {
   });
 
   it("drops the project-backed collections on an app with no tree", () => {
-    for (const tab of ["work", "tickets", "runs", "deploys", "agents"] as const) {
+    for (const tab of ["work", "tickets", "runs", "agents"] as const) {
       expect(canHaveContent(tab, BARE)).toBe(false);
       expect(canHaveContent(tab, LINKED)).toBe(true);
     }

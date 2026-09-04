@@ -88,8 +88,8 @@ RETIRED_TAB_IDS: frozenset[str] = frozenset({
 # has all three, so none of them is listed here.
 REQUIRES_LINKED_PROJECT: dict[str, bool] = {
     "work": True,
-    # Overview is the autonomy brake, the services, the deploys and the
-    # environment, and every one of those reads the linked tree.
+    # Overview is the autonomy brake, the services and the environment, and
+    # every one of those reads the linked tree.
     "overview": True,
     "chats": False,
     "memory": False,

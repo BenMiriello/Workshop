@@ -9,7 +9,6 @@
   GET    /apps/{id}/tickets                               real, from the JSON ticket store
   GET    /apps/{id}/notes                                 real, from services/knowledge.py
   GET    /apps/{id}/runs                                  real, from services/jobs.py
-  GET    /apps/{id}/deploys                                real, from services/deploys.py
   GET    /apps/{id}/agents                                 real, roster agents linked to the app's project
   GET    /apps/{id}/files         ?path=                    tree listing of the app's linked project tree
   GET    /apps/{id}/files/content ?path=                    one file's content
@@ -22,11 +21,11 @@ rather than returning an empty list for one, so "this app has no tickets" and
 
 WHY SOME COLLECTIONS ARE HONESTLY EMPTY FOR MOST APPS TODAY. Only chats and
 (nominally) tickets are backed by Postgres tables with a real `app_id` column
-(stage A). Tickets, notes, runs, deploys and agents are served by resolving
+(stage A). Tickets, notes, runs and agents are served by resolving
 the app's slug -- and, where it has one, its `project_slug` link
 (`services/app_links.py`) -- against the file stores this installation
 already has. An app with no linked project (an installed-only app: no repo,
-no working tree) genuinely has no runs, deploys or tickets, and these routes
+no working tree) genuinely has no runs or tickets, and these routes
 return `200` with an empty list for it, never a 404 and never another app's
 rows. See `services/apps.py` for the full reasoning, collection by collection.
 
@@ -47,7 +46,6 @@ from pydantic import BaseModel
 
 from routes.agents import RosterAgent
 from routes.api_models import Job, Task
-from routes.deploys import Deploy
 from routes.knowledge import NoteSummary
 from services import app_files as app_files_svc
 from services import apps as apps_svc
@@ -153,10 +151,6 @@ class AppNoteList(BaseModel):
 
 class AppRunList(BaseModel):
     runs: list[Job]
-
-
-class AppDeployList(BaseModel):
-    deploys: list[Deploy]
 
 
 class AppAgentList(BaseModel):
@@ -277,16 +271,6 @@ async def app_notes(app_id: str) -> dict:
 async def app_runs(app_id: str, limit: int = Query(50, ge=1, le=200)) -> dict:
     try:
         return {"runs": apps_svc.runs_for_app(app_id, limit=limit)}
-    except apps_svc.AppNotFound:
-        raise HTTPException(404, f"no such app: {app_id}")
-    except apps_svc.AppsUnavailable:
-        raise _unavailable()
-
-
-@router.get("/{app_id}/deploys", response_model=AppDeployList, response_model_exclude_unset=True)
-async def app_deploys(app_id: str) -> dict:
-    try:
-        return {"deploys": apps_svc.deploys_for_app(app_id)}
     except apps_svc.AppNotFound:
         raise HTTPException(404, f"no such app: {app_id}")
     except apps_svc.AppsUnavailable:

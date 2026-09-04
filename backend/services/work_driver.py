@@ -21,7 +21,7 @@ disagreeing in both directions, is the "built but not wired up" failure mode.
 So: intent is the only thing anyone sets, and the runner is DERIVED from it.
 This module is the control loop that makes the mechanism follow the intent, in
 the same shape as the other reconcilers the lifespan owns (port_registry,
-deploy_watcher, jobs). It is deliberately ADDITIVE: it only ever ENSURES a runner
+jobs). It is deliberately ADDITIVE: it only ever ENSURES a runner
 for an armed scope. It never kills a runner it did not ask for, so a hand-started
 sweep for debugging is left alone. Disarming stops the runner at the moment of
 disarming (routes/autonomy), which is a direct consequence of an operator action

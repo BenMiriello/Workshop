@@ -16,7 +16,7 @@
 // list with seven tabs" including "a Memory tab nobody asked for". Three
 // previous rounds improved how those tabs RENDER, which was never the
 // complaint.
-export type AppTabId = "app" | "work" | "overview" | "chats" | "agents" | "memory" | "files" | "tickets" | "runs" | "deploys";
+export type AppTabId = "app" | "work" | "overview" | "chats" | "agents" | "memory" | "files" | "tickets" | "runs";
 
 export type AppTabDef = { id: Exclude<AppTabId, "app">; label: string; suffix: string };
 
@@ -24,7 +24,7 @@ export type AppTabDef = { id: Exclude<AppTabId, "app">; label: string; suffix: s
 //
 // It was seven (chats, agents, memory, files, tickets, runs, deploys) until
 // 2026-09-01. threads-branches-and-pages-2026-08-29.md section 6 makes Work the
-// app-level view and has it absorb tickets, runs, changes and deploys: "A
+// app-level view and has it absorb tickets, runs and changes: "A
 // branch is a row. Collapsed it shows the name, the ticket, and the holder."
 // Section 1 retires `agents` as a kind of object entirely -- an agent is a
 // thread that is armed, so it is a filter on Chats, not a tab.
@@ -37,14 +37,18 @@ export type AppTabDef = { id: Exclude<AppTabId, "app">; label: string; suffix: s
 //
 // The retired ids stay in `AppTabId` and keep their routes: a bookmark and a
 // deep link are still real. What changed is which tabs are OFFERED.
+//
+// `deploys` is the exception and is GONE from every list below rather than
+// retired into one: the deploy subsystem was deleted on 2026-09-04 (ticket
+// `726d75a9`), so there is no route left to keep and no collection left to
+// explain the emptiness of.
 export const APP_TABS: AppTabDef[] = [
   { id: "work", label: "Work", suffix: "/work" },
   // SECOND, not first, though section 6 lists Overview first. An app opens on
   // its FIRST tab, and what the operator wants an app to open on is the work
   // (reported 2026-08-29, 08-31 and twice on 09-01). Overview is where the
-  // autonomy brake, the services, the deploys and the environment live now
-  // that /projects is gone, and none of those is a thing you open an app to
-  // look at.
+  // autonomy brake, the services and the environment live now that /projects
+  // is gone, and none of those is a thing you open an app to look at.
   { id: "overview", label: "Overview", suffix: "/overview" },
   { id: "chats", label: "Chats", suffix: "/chats" },
   { id: "memory", label: "Memory", suffix: "/memory" },
@@ -52,15 +56,15 @@ export const APP_TABS: AppTabDef[] = [
 ];
 
 // Every tab that draws a COLLECTION and can therefore be empty for a reason
-// worth stating. Wider than `APP_TABS` on purpose: tickets, runs, deploys and
-// agents are no longer offered as tabs but their routes still resolve, and a
-// deep link that lands on one must still say why it is empty rather than look
+// worth stating. Wider than `APP_TABS` on purpose: tickets, runs and agents
+// are no longer offered as tabs but their routes still resolve, and a deep
+// link that lands on one must still say why it is empty rather than look
 // broken.
 export type CollectionTabId =
-  | "work" | "overview" | "chats" | "memory" | "tickets" | "runs" | "deploys" | "agents";
+  | "work" | "overview" | "chats" | "memory" | "tickets" | "runs" | "agents";
 
-// Mirrors services/apps.py collection by collection: tickets/runs/deploys/
-// agents resolve through `app_links.linked_project_slug`; chats and notes
+// Mirrors services/apps.py collection by collection: tickets/runs/agents
+// resolve through `app_links.linked_project_slug`; chats and notes
 // (memory) resolve through the app's slug alone and need no link. Files is a
 // separate question -- an app may declare its own root with a manifest instead
 // of a project link (services/app_files.py) -- so it is carried by `hasFiles`
@@ -76,7 +80,6 @@ const REQUIRES_LINKED_PROJECT: Record<CollectionTabId, boolean> = {
   memory: false,
   tickets: true,
   runs: true,
-  deploys: true,
   agents: true,
 };
 
@@ -90,7 +93,6 @@ const COLLECTION_NOUN: Record<CollectionTabId, string> = {
   memory: "notes",
   tickets: "tickets",
   runs: "runs",
-  deploys: "deploys",
   agents: "agents",
 };
 

@@ -559,7 +559,10 @@ class JobEvidence(BaseModel):
     iterations: int | None = None
     tokens: int | None = None
 
-    # Deploy and rollback runs (services/deploy_runner.py).
+    # Historical deploy and rollback runs. The deploy subsystem was deleted
+    # 2026-09-04 (ticket `726d75a9`) and nothing writes these any more; they
+    # stay on the model because old `run` records in the jobs feed still carry
+    # them and a reader must not choke on one.
     url: str | None = None
     commit_sha: str | None = None
     upload_ref: str | None = None

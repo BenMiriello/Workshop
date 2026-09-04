@@ -109,12 +109,14 @@ def _write_text(path: Path, content: str) -> None:
 class StandaloneSurface(BaseModel):
     """Where a project's standalone deployment is running, reflected into the
     registry by `local_runner._reflect_surface` so the Projects hub can show a
-    live URL. Two writers, and the union of their keys is this:
+    live URL. ONE writer now:
 
-      local_runner.start_deploy   runner="local", pid, port, url, started_at
       app_runner                  runner="app", service, port, url, started_at
 
-    `None` means nothing is running; both writers clear it that way on stop.
+    There were two until 2026-09-04: `local_runner.start_deploy` also wrote
+    `runner="local"` with a pid. It had no callers and went with the deploy
+    subsystem (ticket `726d75a9`), so `runner` is `"app"` on every live record.
+    `None` means nothing is running; the writer clears it that way on stop.
 
     NOTE ON THE WIRE. This router serialises full models (it returned
     constructed `Project` instances before it had a `response_model` at all, so

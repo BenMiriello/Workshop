@@ -27,7 +27,6 @@ import { Card, Prop, Props, SectionLabel, StateBlock, Tag, catFor } from "@works
 
 import AutonomyPanel from "../../../components/AutonomyPanel";
 import AppServicesPanel from "../../../components/AppServicesPanel";
-import DeploysPanel from "../../../components/DeploysPanel";
 import EnvironmentPanel from "../../../components/EnvironmentPanel";
 import type { AppRecord } from "../../../lib/apps";
 import { AppTabPage } from "./AppTabShell";
@@ -67,10 +66,9 @@ function OverviewBody({ app }: { app: AppRecord }) {
       </section>
 
       {/* The autonomy brake. It used to sit in two places (here and the top of
-          the Deploys page); the Deploys page is going, so this is the one. */}
+          the Deploys page); the Deploys page is gone, so this is the one. */}
       <AutonomyPanel slug={slug} />
       <AppServicesPanel slug={slug} />
-      <DeploysPanel slug={slug} />
       <EnvironmentPanel slug={slug} />
     </>
   );

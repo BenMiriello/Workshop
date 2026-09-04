@@ -45,7 +45,6 @@ const ToolsSettings = lazyPage(() => import("./pages/settings/Tools"));
 // CustomInstructions is a SECTION of Settings > Chat now, imported by the page
 // it is a section of. Its old route redirects there.
 const Marketplace = lazyPage(() => import("./pages/Marketplace"));
-const DeployDetail = lazyPage(() => import("./pages/DeployDetail"));
 const StoreDetail = lazyPage(() => import("./pages/StoreDetail"));
 const Stores = lazyPage(() => import("./pages/Stores"));
 const MemoryPage = lazyPage(() => import("./pages/Memory"));
@@ -73,19 +72,17 @@ const Settings = lazyPage(() => import("./pages/Settings"));
 // contributes below, so they live here rather than in apps/registry.tsx.
 const NotFound = lazyPage(() => import("./pages/NotFound"));
 const AppChats = lazyPage(() => import("./pages/apps/tabs/AppChats"));
-const AppAgentsTab = lazyPage(() => import("./pages/apps/tabs/AppAgentsTab"));
 const AppMemoryTab = lazyPage(() => import("./pages/apps/tabs/AppMemoryTab"));
 const AppFilesTab = lazyPage(() => import("./pages/apps/tabs/AppFilesTab"));
 // The app-level Work view: branches, and what is on them. It is the app's
 // FIRST tab (pages/apps/tabs/appTabState.ts) and therefore what an app with a
 // working tree opens on, which is the 2026-08-29 / 08-31 / 09-01 report.
 const AppWorkTab = lazyPage(() => import("./pages/apps/tabs/AppWorkTab"));
-// Overview absorbed what ProjectDetail had: the autonomy brake, the services,
-// the deploys and the environment. See section 7 step 4.
+// Overview absorbed what ProjectDetail had: the autonomy brake, the services
+// and the environment. See section 7 step 4.
 const AppOverviewTab = lazyPage(() => import("./pages/apps/tabs/AppOverviewTab"));
 const AppTicketsTab = lazyPage(() => import("./pages/apps/tabs/AppTicketsTab"));
 const AppRunsTab = lazyPage(() => import("./pages/apps/tabs/AppRunsTab"));
-const AppDeploysTab = lazyPage(() => import("./pages/apps/tabs/AppDeploysTab"));
 
 // Workshop IS the homepage. Apps live INSIDE Workshop — the Apps tab lists
 // them. No peer-app nav strip; the Apps tab is the discovery surface. Which
@@ -212,7 +209,6 @@ export default function App() {
               behind a finished ticket, before it reaches the trunk. Accepting
               the ticket is what merges it, so there is no merge route here. */}
           <Route path="/changes/:id" element={<ChangeReview />} />
-          <Route path="/deploys/:id" element={<DeployDetail />} />
           <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/usage" element={<Usage />} />
           <Route path="/agents/new" element={<AgentDetail />} />
@@ -259,12 +255,10 @@ export default function App() {
           <Route path="/apps/:appSlug/work" element={<AppWorkTab />} />
           <Route path="/apps/:appSlug/overview" element={<AppOverviewTab />} />
           <Route path="/apps/:appSlug/chats" element={<AppChats />} />
-          <Route path="/apps/:appSlug/agents" element={<AppAgentsTab />} />
           <Route path="/apps/:appSlug/memory" element={<AppMemoryTab />} />
           <Route path="/apps/:appSlug/files" element={<AppFilesTab />} />
           <Route path="/apps/:appSlug/tickets" element={<AppTicketsTab />} />
           <Route path="/apps/:appSlug/runs" element={<AppRunsTab />} />
-          <Route path="/apps/:appSlug/deploys" element={<AppDeploysTab />} />
           <Route path="/chat/:contextKey" element={<FocusedChat />} />
           {/* Voice is a toggle inside the chat, not a separate screen. Old
               /voice deep-links redirect to the one focused chat (no second mount). */}

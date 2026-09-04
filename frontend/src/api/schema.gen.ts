@@ -986,23 +986,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/apps/{app_id}/deploys": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** App Deploys */
-        get: operations["app_deploys_apps__app_id__deploys_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/apps/{app_id}/notes": {
         parameters: {
             query?: never;
@@ -4368,6 +4351,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chat/threads/{thread_id}/tree/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Thread Tree Diff
+         * @description This chat's worktree against the tree it would merge into.
+         *
+         *     A READ, and it answers for an unpinned chat too (`pinned: false` with the
+         *     reason), so the caller renders one shape instead of branching on whether
+         *     this chat happens to have a worktree.
+         */
+        get: operations["thread_tree_diff_chat_threads__thread_id__tree_diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/threads/{thread_id}/tree/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge Thread Tree
+         * @description Merge this chat's worktree back into the shared tree, and unpin the chat.
+         *
+         *     409 WITH A SENTENCE, NOT A 500. Every refusal this can hit is a fact about
+         *     the trees rather than a failure -- nothing to merge, the project's own tree
+         *     is dirty, the merge conflicted -- and each one is something a person acts on,
+         *     so the reason is the body.
+         */
+        post: operations["merge_thread_tree_chat_threads__thread_id__tree_merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chat/threads/{thread_id}/turns": {
         parameters: {
             query?: never;
@@ -5114,98 +5146,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/deploys": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List All */
-        get: operations["list_all_deploys_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/deploys/autonomy/override": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Override Read */
-        get: operations["override_read_deploys_autonomy_override_get"];
-        put?: never;
-        /** Override Engage */
-        post: operations["override_engage_deploys_autonomy_override_post"];
-        /** Override Clear */
-        delete: operations["override_clear_deploys_autonomy_override_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/deploys/providers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Providers */
-        get: operations["providers_deploys_providers_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/deploys/watcher/tick": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Watcher Tick
-         * @description One-shot manual sweep across all autonomous Deploys. Returns per-deploy
-         *     decisions so the operator can see what happened. Called by the frontend
-         *     Refresh button and by cron for a periodic reality check.
-         */
-        post: operations["watcher_tick_deploys_watcher_tick_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/deploys/{deploy_id}/log/{run_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Log */
-        get: operations["read_log_deploys__deploy_id__log__run_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/documents": {
         parameters: {
             query?: never;
@@ -5314,6 +5254,29 @@ export interface paths {
          * @description Tail the events log. Limit caps at 200 to keep responses bounded.
          */
         get: operations["recent_events_events_recent_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Event Sources
+         * @description The sources a trigger may subscribe to on this deployment.
+         *
+         *     Declared BEFORE `POST /{source}` only for readability; the methods differ,
+         *     so there is no path-precedence question here.
+         */
+        get: operations["event_sources_events_sources_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7114,135 +7077,6 @@ export interface paths {
         put?: never;
         /** Connect Github */
         post: operations["connect_github_projects__slug__connect_github_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{slug}/deploys": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Project */
-        get: operations["list_project_projects__slug__deploys_get"];
-        put?: never;
-        /** Create */
-        post: operations["create_projects__slug__deploys_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{slug}/deploys/{deploy_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Remove */
-        delete: operations["remove_projects__slug__deploys__deploy_id__delete"];
-        options?: never;
-        head?: never;
-        /** Patch */
-        patch: operations["patch_projects__slug__deploys__deploy_id__patch"];
-        trace?: never;
-    };
-    "/projects/{slug}/deploys/{deploy_id}/notice": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Read Notice
-         * @description The 'change detected but paused' notice, if any. Cleared automatically
-         *     on the next kick.
-         */
-        get: operations["read_notice_projects__slug__deploys__deploy_id__notice_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{slug}/deploys/{deploy_id}/runs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Runs */
-        get: operations["list_runs_projects__slug__deploys__deploy_id__runs_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{slug}/deploys/{deploy_id}:deploy": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Kick */
-        post: operations["kick_projects__slug__deploys__deploy_id__deploy_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{slug}/deploys/{deploy_id}:rollback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Rollback */
-        post: operations["rollback_projects__slug__deploys__deploy_id__rollback_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{slug}/deploys/{deploy_id}:tick": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Watcher Tick One
-         * @description Force a single-Deploy watcher tick. Handy for testing without waiting
-         *     for the loop interval.
-         */
-        post: operations["watcher_tick_one_projects__slug__deploys__deploy_id__tick_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9506,11 +9340,6 @@ export interface components {
             /** Deleted */
             deleted: boolean;
         };
-        /** AppDeployList */
-        AppDeployList: {
-            /** Deploys */
-            deploys: components["schemas"]["Deploy"][];
-        };
         /**
          * AppGrant
          * @description One app-to-app capability. `mode` is `read` or `rw`, and coerces to
@@ -11518,150 +11347,6 @@ export interface components {
             ok: boolean;
         };
         /**
-         * Deploy
-         * @description One deploy target. `Deploy.to_json` STRIPS None values, so a record
-         *     carries only the fields that have been set -- which is why everything below
-         *     the required four is optional and why absence here means unset rather than
-         *     null.
-         *
-         *     `current` is the live deployment: {run_id, commit_sha, deployed_at, url,
-         *     upload_ref}. It is provider-shaped like `target`, so it stays open.
-         */
-        Deploy: {
-            /** Autonomy */
-            autonomy?: string | null;
-            /** Created At */
-            created_at?: string | null;
-            /** Current */
-            current?: Record<string, never> | null;
-            /** Domain */
-            domain?: string | null;
-            /** Id */
-            id: string;
-            /** Last Run Id */
-            last_run_id?: string | null;
-            /** Name */
-            name: string;
-            /** Project Slug */
-            project_slug: string;
-            /** Source */
-            source: Record<string, never>;
-            /** Target */
-            target: Record<string, never>;
-            /** Updated At */
-            updated_at?: string | null;
-        };
-        /** DeployDeleted */
-        DeployDeleted: {
-            /** Ok */
-            ok: boolean;
-        };
-        /** DeployIn */
-        DeployIn: {
-            /**
-             * Autonomy
-             * @default reactive
-             */
-            autonomy: string;
-            /** Domain */
-            domain?: string | null;
-            /**
-             * Name
-             * @description "prod" | "preview" | free
-             */
-            name: string;
-            /**
-             * Source
-             * @description {kind, branch, build:{cmd,output_dir,...}}
-             */
-            source: Record<string, never>;
-            /**
-             * Target
-             * @description {kind, ...provider fields}
-             */
-            target: Record<string, never>;
-        };
-        /**
-         * DeployList
-         * @description Most-recently-updated first.
-         */
-        DeployList: {
-            /** Deploys */
-            deploys: components["schemas"]["Deploy"][];
-        };
-        /**
-         * DeployLog
-         * @description The tail of one run's build/upload log.
-         */
-        DeployLog: {
-            /** Deploy Id */
-            deploy_id: string;
-            /** Log */
-            log: string;
-            /** Run Id */
-            run_id: string;
-        };
-        /**
-         * DeployNotice
-         * @description 'Change detected but paused' -- written when a tick found new work and an
-         *     override was holding it, so the operator sees it even though no Job fired.
-         *     Cleared automatically on the next kick. `none: true` is the no-notice
-         *     answer, which is why every other field is optional.
-         */
-        DeployNotice: {
-            /** Branch */
-            branch?: string | null;
-            /** Deploy Id */
-            deploy_id?: string | null;
-            /** Detected At */
-            detected_at?: string | null;
-            /** None */
-            none?: boolean | null;
-            /** Reason */
-            reason?: string | null;
-            /** Remote Sha */
-            remote_sha?: string | null;
-        };
-        /** DeployPatch */
-        DeployPatch: {
-            /** Autonomy */
-            autonomy?: string | null;
-            /** Domain */
-            domain?: string | null;
-            /** Name */
-            name?: string | null;
-            /** Source */
-            source?: Record<string, never> | null;
-            /** Target */
-            target?: Record<string, never> | null;
-        };
-        /**
-         * DeployRuns
-         * @description Both `deploy` and `deploy-rollback` runs bound to this target, merged and
-         *     newest-first, then capped at `limit`.
-         */
-        DeployRuns: {
-            /** Runs */
-            runs: components["schemas"]["Job"][];
-        };
-        /**
-         * DeploysOverride
-         * @description The workspace-level kill switch FOR SHIPPING, and it is independent of
-         *     the workshop autonomy override: freezing agent dispatch and freezing prod
-         *     deploys are separate decisions. An absent file reads as clear; a corrupt or
-         *     unreadable one reads as engaged (fail-closed) with `engaged_by` "system".
-         */
-        DeploysOverride: {
-            /** Engaged */
-            engaged: boolean;
-            /** Engaged At */
-            engaged_at?: string | null;
-            /** Engaged By */
-            engaged_by?: string | null;
-            /** Reason */
-            reason?: string | null;
-        };
-        /**
          * DetectorStatus
          * @description A perception tier as MEASURED, not as configured. Constructing the
          *     detector is what probes it, so `tier` reports what is actually running --
@@ -12161,6 +11846,20 @@ export interface components {
             source: string;
             /** Ts */
             ts: string;
+        };
+        /**
+         * EventSources
+         * @description Which sources this deployment accepts, right now.
+         *
+         *     The list is the platform's own set unioned with what the INSTALLED apps
+         *     declare, so it changes when an app is installed and names no app in
+         *     platform source. It exists because the client used to carry its own
+         *     hardcoded copy -- two of them, in fact -- and every entry in that copy that
+         *     was an app's integration was a platform file naming a specific app.
+         */
+        EventSources: {
+            /** Sources */
+            sources: string[];
         };
         /**
          * ExcludedUsage
@@ -12861,13 +12560,6 @@ export interface components {
             recent_count: number;
             /** Running */
             running: number;
-        };
-        /** KickIn */
-        KickIn: {
-            /** Message */
-            message?: string | null;
-            /** Ref */
-            ref?: string | null;
         };
         /** LabelBody */
         LabelBody: {
@@ -13944,6 +13636,11 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /** OverrideEngageIn */
+        OverrideEngageIn: {
+            /** Reason */
+            reason?: string | null;
+        };
         /**
          * PageMeta
          * @description ADR 0023 clause 1's `page` object: `limit`, `next_cursor` (None means
@@ -14547,40 +14244,6 @@ export interface components {
             modes: components["schemas"]["ModesPayload"];
             /** Tools Active */
             tools_active: boolean;
-        };
-        /** ProviderCatalog */
-        ProviderCatalog: {
-            /** Providers */
-            providers: components["schemas"]["ProviderInfo"][];
-        };
-        /**
-         * ProviderEnvRequirement
-         * @description A credential the provider needs. Each provider module declares its own,
-         *     so the set is open beyond the key.
-         */
-        ProviderEnvRequirement: {
-            /** Key */
-            key?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * ProviderInfo
-         * @description One entry of the 'Add target' catalog. `target_fields` is what that
-         *     provider's `target` config expects, served as DATA so the modal renders a
-         *     new provider with no frontend edit.
-         */
-        ProviderInfo: {
-            /** Env Requirements */
-            env_requirements: components["schemas"]["ProviderEnvRequirement"][];
-            /** Kind */
-            kind: string;
-            /** Label */
-            label: string;
-            /** Source Kinds */
-            source_kinds: string[];
-            /** Target Fields */
-            target_fields: Record<string, never>[];
         };
         /**
          * PublicUser
@@ -15203,11 +14866,6 @@ export interface components {
             /** Token */
             token?: string | null;
         };
-        /** RollbackIn */
-        RollbackIn: {
-            /** To Run Id */
-            to_run_id: string;
-        };
         /**
          * RosterAgent
          * @description The roster projection. Deliberately NOT `Agent`: the list route hand-picks
@@ -15303,16 +14961,6 @@ export interface components {
             context?: string | null;
             /** Task */
             task: string;
-        };
-        /**
-         * RunKicked
-         * @description A deploy and a rollback both answer with the job that will do it, not
-         *     with the outcome -- the work is asynchronous and the run is how it is
-         *     followed.
-         */
-        RunKicked: {
-            /** Job Id */
-            job_id: string;
         };
         /**
          * RunSummary
@@ -15846,12 +15494,14 @@ export interface components {
          * StandaloneSurface
          * @description Where a project's standalone deployment is running, reflected into the
          *     registry by `local_runner._reflect_surface` so the Projects hub can show a
-         *     live URL. Two writers, and the union of their keys is this:
+         *     live URL. ONE writer now:
          *
-         *       local_runner.start_deploy   runner="local", pid, port, url, started_at
          *       app_runner                  runner="app", service, port, url, started_at
          *
-         *     `None` means nothing is running; both writers clear it that way on stop.
+         *     There were two until 2026-09-04: `local_runner.start_deploy` also wrote
+         *     `runner="local"` with a pid. It had no callers and went with the deploy
+         *     subsystem (ticket `726d75a9`), so `runner` is `"app"` on every live record.
+         *     `None` means nothing is running; the writer clears it that way on stop.
          *
          *     NOTE ON THE WIRE. This router serialises full models (it returned
          *     constructed `Project` instances before it had a `response_model` at all, so
@@ -17037,6 +16687,14 @@ export interface components {
             /** Branch */
             branch?: string | null;
         };
+        /** ThreadTreeMergeIn */
+        ThreadTreeMergeIn: {
+            /**
+             * Message
+             * @default
+             */
+            message: string;
+        };
         /**
          * ThreadWithQueue
          * @description GET /threads/{id}: the settings document merged with the queue, from one
@@ -17645,43 +17303,6 @@ export interface components {
             warmed: boolean;
         };
         /**
-         * WatcherResult
-         * @description One deploy's tick decision. `status` is one of no-deploy, not-autonomous,
-         *     no-project-dir, no-remote, no-change, skipped-running, paused, kicked, error
-         *     or crashed, and which other fields are present follows from it -- `sha` only
-         *     once a remote was read, `job_id` only on kicked, `reason` only where there
-         *     is one to give.
-         *
-         *     The three identity fields are stamped by `tick_all` and are absent from a
-         *     single-deploy tick, which returns the bare decision.
-         */
-        WatcherResult: {
-            /** Deploy Id */
-            deploy_id?: string | null;
-            /** Job Id */
-            job_id?: string | null;
-            /** Name */
-            name?: string | null;
-            /** Project Slug */
-            project_slug?: string | null;
-            /** Reason */
-            reason?: string | null;
-            /** Sha */
-            sha?: string | null;
-            /** Status */
-            status: string;
-        };
-        /**
-         * WatcherSweep
-         * @description One pass over every Deploy. A crash in one is captured as its own
-         *     `crashed` result rather than raised: a broken remote for one Deploy must not
-         *     stop the others.
-         */
-        WatcherSweep: {
-            /** Results */
-            results: components["schemas"]["WatcherResult"][];
-        };
-        /**
          * Withheld
          * @description WHY THIS IS ALWAYS PRESENT ON A FILTERED READ. An answer that has been
          *     truncated and is indistinguishable from a complete one makes an agent act
@@ -18181,11 +17802,6 @@ export interface components {
             /** Password */
             password: string;
         };
-        /** OverrideEngageIn */
-        routes__autonomy__OverrideEngageIn: {
-            /** Reason */
-            reason?: string | null;
-        };
         /**
          * BranchList
          * @description Empty rather than an error when the relational store is unreachable: a
@@ -18234,16 +17850,6 @@ export interface components {
             ticket_id?: string | null;
             /** Title */
             title: string;
-        };
-        /** OverrideEngageIn */
-        routes__deploys__OverrideEngageIn: {
-            /**
-             * By
-             * @default operator
-             */
-            by: string | null;
-            /** Reason */
-            reason?: string | null;
         };
         /** FileWriteIn */
         routes__files__FileWriteIn: {
@@ -18760,7 +18366,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["routes__autonomy__OverrideEngageIn"];
+                "application/json": components["schemas"]["OverrideEngageIn"];
             };
         };
         responses: {
@@ -20330,37 +19936,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppChatList"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    app_deploys_apps__app_id__deploys_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                app_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AppDeployList"];
                 };
             };
             /** @description Validation Error */
@@ -26216,6 +25791,72 @@ export interface operations {
             };
         };
     };
+    thread_tree_diff_chat_threads__thread_id__tree_diff_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merge_thread_tree_chat_threads__thread_id__tree_merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThreadTreeMergeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     start_streaming_turn_chat_threads__thread_id__turns_post: {
         parameters: {
             query?: never;
@@ -27273,173 +26914,6 @@ export interface operations {
             };
         };
     };
-    list_all_deploys_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeployList"];
-                };
-            };
-        };
-    };
-    override_read_deploys_autonomy_override_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeploysOverride"];
-                };
-            };
-        };
-    };
-    override_engage_deploys_autonomy_override_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["routes__deploys__OverrideEngageIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeploysOverride"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    override_clear_deploys_autonomy_override_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeploysOverride"];
-                };
-            };
-        };
-    };
-    providers_deploys_providers_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProviderCatalog"];
-                };
-            };
-        };
-    };
-    watcher_tick_deploys_watcher_tick_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WatcherSweep"];
-                };
-            };
-        };
-    };
-    read_log_deploys__deploy_id__log__run_id__get: {
-        parameters: {
-            query?: {
-                tail?: number;
-            };
-            header?: never;
-            path: {
-                deploy_id: string;
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeployLog"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_docs_documents_get: {
         parameters: {
             query?: never;
@@ -27620,6 +27094,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    event_sources_events_sources_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventSources"];
                 };
             };
         };
@@ -30681,310 +30175,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Project"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_project_projects__slug__deploys_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeployList"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_projects__slug__deploys_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DeployIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Deploy"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_projects__slug__deploys__deploy_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-                deploy_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeployDeleted"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    patch_projects__slug__deploys__deploy_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-                deploy_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DeployPatch"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Deploy"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    read_notice_projects__slug__deploys__deploy_id__notice_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-                deploy_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeployNotice"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_runs_projects__slug__deploys__deploy_id__runs_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path: {
-                slug: string;
-                deploy_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeployRuns"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    kick_projects__slug__deploys__deploy_id__deploy_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-                deploy_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["KickIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RunKicked"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rollback_projects__slug__deploys__deploy_id__rollback_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-                deploy_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RollbackIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RunKicked"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    watcher_tick_one_projects__slug__deploys__deploy_id__tick_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-                deploy_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WatcherResult"];
                 };
             };
             /** @description Validation Error */

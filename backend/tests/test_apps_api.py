@@ -7,7 +7,7 @@ What has to be true:
   - a chat linked to an app (`chat_thread.app_id`) shows up under
     `GET /apps/{id}/chats`;
   - an app LINKED to a project (services.app_links) shows real tickets, notes,
-    runs, deploys and agents once one of each is filed against it;
+    runs and agents once one of each is filed against it;
   - an app with NO linked project gets an honest empty `200` for every one of
     those, never a 404 and never another app's rows -- the specific failure
     mode this design has been burned by before;
@@ -157,8 +157,7 @@ class TestTheEntity:
 
     def test_unknown_app_404s_everywhere(self, client):
         fake = str(uuid.uuid4())
-        for path in ("", "/chats", "/tickets", "/notes", "/runs", "/deploys",
-                     "/agents"):
+        for path in ("", "/chats", "/tickets", "/notes", "/runs", "/agents"):
             r = client.get(f"/apps/{fake}{path}")
             assert r.status_code == 404, f"{path}: {r.status_code} {r.text}"
 
@@ -191,9 +190,9 @@ class TestChats:
 
 
 class TestLinkedVsUnlinked:
-    """One app linked to a real project (tickets/notes/runs/deploys/agents all
-    have real data), one installed-only app with no project (all five must be
-    an honest empty list)."""
+    """One app linked to a real project (tickets/notes/runs/agents all have
+    real data), one installed-only app with no project (all four must be an
+    honest empty list)."""
 
     @pytest.fixture(autouse=True)
     def _registries(self, tmp_path):
@@ -205,7 +204,7 @@ class TestLinkedVsUnlinked:
         self.proj_dir = proj_dir
 
     def test_linked_app_shows_real_data_of_every_kind(self, client):
-        from services import deploys, jobs, tasks
+        from services import jobs, tasks
 
         r = client.post("/apps", json={"slug": "gizmo", "name": "Gizmo"})
         app_id = r.json()["id"]
@@ -213,8 +212,6 @@ class TestLinkedVsUnlinked:
 
         tasks.add(self.proj_dir, title="Ship the gizmo", body="Objective: ship.")
         jobs.start(project_slug="gizmo", trigger="manual")
-        deploys.create(project_slug="gizmo", name="prod",
-                       target={"kind": "static"}, source={"kind": "git", "branch": "main"})
 
         agents_dir = self.proj_dir / "agents"
         agents_dir.mkdir()
@@ -227,7 +224,6 @@ class TestLinkedVsUnlinked:
         assert client.get(f"/apps/{app_id}/tickets").json()["tickets"], "tickets"
         assert client.get(f"/apps/{app_id}/notes").json()["notes"], "notes"
         assert client.get(f"/apps/{app_id}/runs").json()["runs"], "runs"
-        assert client.get(f"/apps/{app_id}/deploys").json()["deploys"], "deploys"
         assert client.get(f"/apps/{app_id}/agents").json()["agents"], "agents"
 
     def test_installed_only_app_is_honestly_empty_everywhere(self, client, monkeypatch):
@@ -242,11 +238,10 @@ class TestLinkedVsUnlinked:
         assert client.get(f"/apps/{app_id}/tickets").json() == {"tickets": []}
         assert client.get(f"/apps/{app_id}/notes").json() == {"notes": []}
         assert client.get(f"/apps/{app_id}/runs").json() == {"runs": []}
-        assert client.get(f"/apps/{app_id}/deploys").json() == {"deploys": []}
         assert client.get(f"/apps/{app_id}/agents").json() == {"agents": []}
         # And never GIZMO's rows -- the specific failure mode this must not
         # repeat.
-        for coll in ("tickets", "notes", "runs", "deploys", "agents"):
+        for coll in ("tickets", "notes", "runs", "agents"):
             assert client.get(f"/apps/{app_id}/{coll}").json()[coll] == []
 
 

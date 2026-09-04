@@ -6,10 +6,10 @@ caller was `cron_agent.sh`, which is reached only from a crontab. There is no
 crontab on this host -- not a disabled entry, no crontab at all -- so the
 dispatcher had not run since 2026-07-18, `.runtime/trigger-state.json` was frozen
 at that date, and every scheduled feature above it read as configured while doing
-nothing. `services/trigger_dispatch` ticks it from the backend lifespan instead.
+nothing. `services/backend_schedule` ticks it from the backend lifespan instead.
 
 MEASURED, NOT ASSERTED. These tests run the REAL dispatcher through the REAL
-backend entry point (`trigger_dispatch.dispatch_once`) against a sandbox workshop
+backend entry point (`backend_schedule.run_pass`) against a sandbox workshop
 root: its own `.runtime`, its own agent directory, its own registries, and stub
 runner scripts in place of the three that would otherwise start a model. Nothing
 is stubbed on the deciding side, so a test passes only if the shipped decision
@@ -27,6 +27,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -36,7 +37,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import trigger_dispatch  # noqa: E402
+from services import backend_schedule  # noqa: E402
 from wsplatform import paths  # noqa: E402
 
 REPO = paths.workshop_root()
@@ -145,7 +146,7 @@ def test_a_due_trigger_fires_from_the_backend_with_no_crontab(sandbox):
     (sandbox / "agents" / "sandbox-keeper.md").write_text(_agent_definition(cron=ALWAYS_DUE))
     assert not (sandbox / ".runtime" / "trigger-state.json").exists()
 
-    res = trigger_dispatch.dispatch_once()
+    res = backend_schedule.run_pass(backend_schedule.TRIGGERS)
 
     assert res["ran"], res
     assert res["rc"] == 0, res
@@ -170,7 +171,7 @@ def test_a_trigger_that_is_not_yet_due_does_not_fire(sandbox):
         second=0, microsecond=0).isoformat()}
     (sandbox / ".runtime" / "trigger-state.json").write_text(json.dumps(before))
 
-    res = trigger_dispatch.dispatch_once()
+    res = backend_schedule.run_pass(backend_schedule.TRIGGERS)
 
     assert res["ran"], res
     assert res["rc"] == 0, res
@@ -187,21 +188,21 @@ def test_two_backends_cannot_both_dispatch(sandbox):
     see, so the gate is an exclusive lock: held elsewhere, the tick is skipped
     rather than run."""
     (sandbox / "agents" / "sandbox-keeper.md").write_text(_agent_definition(cron=ALWAYS_DUE))
-    fd = os.open(trigger_dispatch._lock_path(), os.O_CREAT | os.O_RDWR, 0o644)
+    fd = os.open(backend_schedule._lock_path("triggers"), os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        res = trigger_dispatch.dispatch_once()
+        res = backend_schedule.run_pass(backend_schedule.TRIGGERS)
     finally:
         os.close(fd)
 
     assert res["ran"] is False
-    assert "dispatch lock" in res["skipped"]
+    assert "triggers lock" in res["skipped"]
     assert _state(sandbox) == {}
     assert _launched(sandbox, wait_s=1.0) == ""
 
     # And released, the very same call dispatches -- so the skip above is the
     # lock and not some other property of the sandbox.
-    assert trigger_dispatch.dispatch_once()["rc"] == 0
+    assert backend_schedule.run_pass(backend_schedule.TRIGGERS)["rc"] == 0
     assert f"agent:sandbox-keeper:cron:{ALWAYS_DUE}" in _state(sandbox)
 
 
@@ -210,5 +211,96 @@ def test_the_loop_is_actually_started_by_the_backend():
     be perfect and the system would still be exactly as inert as it was before,
     so the registration is asserted, not assumed."""
     src = (REPO / "backend" / "main.py").read_text(encoding="utf-8")
-    assert "trigger_dispatch" in src
-    assert "_trigger_dispatch.dispatch_loop()" in src
+    assert "backend_schedule" in src
+    assert "_backend_schedule.schedule_loop()" in src
+
+
+# ---------------------------------------------------------------------------
+# The second pass on the same loop
+# ---------------------------------------------------------------------------
+# ONE SCHEDULER, TWO CALLERS. The ratchet report has exactly the same problem the
+# dispatcher had -- there is nothing on this host that runs anything on a cadence
+# -- so it rides this loop rather than starting a second one. What follows checks
+# that it is on the table and that it actually measures, not that the checkers
+# themselves are right; each of those owns its own tests.
+
+
+def test_the_ratchet_report_rides_the_same_loop():
+    names = [p.name for p in backend_schedule.PASSES]
+    assert names == ["triggers", "ratchets"], names
+    # Each pass carries its own cadence: a five-minute dispatch tick and a
+    # six-hourly tree measurement are not the same job on the same timer.
+    assert backend_schedule.TRIGGERS.interval < backend_schedule.RATCHETS.interval
+    # And the loop wakes often enough that the shorter one is not distorted by it.
+    assert backend_schedule.TICK < backend_schedule.TRIGGERS.interval
+
+
+
+
+@pytest.fixture
+def planted(sandbox):
+    """A sandbox whose ratchet roster is one checker that is already over its
+    pinned baseline, which is how ticket `0f2f3fa6` asks for this to be shown.
+
+    The reporter is COPIED rather than symlinked, because it locates the scripts
+    directory from its own resolved path -- a symlink would send it back to the
+    real tree and it would measure this checkout instead of the plant. And the
+    sandbox is a git repo, because naming the commit a drift was first seen at is
+    half of what the receipt is for.
+    """
+    scripts = sandbox / "scripts"
+    (scripts / "check_planted.py").write_text(
+        "import sys\nprint('check_planted: widgets 7 -> 9')\nsys.exit(1)\n")
+    (scripts / "planted_baseline.json").write_text(json.dumps({"widgets": 7}))
+    for name, body in (
+            ("reviewer.sh",
+             '#!/bin/bash\n_delta_check PLANTED_CHECK "check_planted.py" '
+             '"planted_baseline.json"\n'),
+            ("report_ratchet_drift.py",
+             (REPO / "scripts" / "report_ratchet_drift.py").read_text())):
+        (scripts / name).unlink()
+        (scripts / name).write_text(body)
+    for argv in (["init", "-q"],
+                 ["config", "user.email", "t@example.invalid"],
+                 ["config", "user.name", "sandbox"],
+                 ["commit", "-q", "--allow-empty", "-m", "the planted drift"]):
+        subprocess.run(["git", *argv], cwd=sandbox, check=True,
+                       capture_output=True)
+    return sandbox
+
+
+def test_the_ratchet_pass_writes_a_receipt_naming_what_drifted(planted):
+    res = backend_schedule.run_pass(backend_schedule.RATCHETS)
+
+    assert res["ran"], res
+    receipt = json.loads((planted / ".runtime" / "ratchet-drift.json").read_text())
+    assert receipt["drifted"] == ["check_planted.py"], receipt
+    drift = receipt["checks"][0]
+    assert drift["baseline"] == "planted_baseline.json"
+    # The checker's own words: the metric, and both counts.
+    assert "widgets 7 -> 9" in drift["said"]
+    # And the commit it was first seen at, so the change can be found.
+    assert drift["first_seen"]["sha"], drift
+    assert drift["first_seen"]["subject"] == "the planted drift"
+
+
+def test_the_pass_reports_drift_without_failing(planted):
+    """It must never fail an attended commit, which is the property
+    `reviewer.sh`'s delta mode exists to protect. So a drifted ratchet is a
+    receipt and a zero exit, not a red pass."""
+    res = backend_schedule.run_pass(backend_schedule.RATCHETS)
+
+    assert res["rc"] == 0, res
+    assert "DRIFTED" in res["stdout"], res
+
+
+def test_a_fresh_receipt_is_not_re_measured(planted):
+    """The pass runs at every boot and this tree restarts several times a day.
+    Re-running every checker over the whole tree each time would be the cost of a
+    schedule with none of its benefit, so the receipt's own age decides."""
+    assert backend_schedule.run_pass(backend_schedule.RATCHETS)["rc"] == 0
+    first = (planted / ".runtime" / "ratchet-drift.json").read_text()
+
+    second = backend_schedule.run_pass(backend_schedule.RATCHETS)
+    assert "nothing measured" in second["stdout"], second
+    assert (planted / ".runtime" / "ratchet-drift.json").read_text() == first

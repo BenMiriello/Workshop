@@ -363,10 +363,10 @@ def effective_autonomy(agent_slug: str, *, registry=None, override=None) -> str:
 
 
 # CANONICAL for the Python side of the ratified autonomy enum (ADR 0008).
-# Imported rather than restated by services/deploys.py
-# (coherence-overhaul-2026-08-16 T5), services/agents_registry.py (`AUTONOMY`
-# is an alias of this name) and services/scope_execution.py (`MODES`, collapsed
-# 2026-09-04).
+# Imported rather than restated by services/agents_registry.py (`AUTONOMY` is
+# an alias of this name) and services/scope_execution.py (`MODES`, collapsed
+# 2026-09-04). services/deploys.py was a fourth reader until the deploy
+# subsystem was deleted 2026-09-04 (ticket `726d75a9`).
 #
 # THE DEFERRAL THAT USED TO BE WRITTEN HERE IS STALE and is removed rather than
 # left. It said two further copies were out of reach because `db/models.py` was

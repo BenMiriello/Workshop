@@ -157,9 +157,10 @@ DEFAULT_LATITUDE = _latitude.DEFAULT_LATITUDE
 # with declared triggers keep working via the compat path in dispatch (C5 will
 # flip to strict enforcement).
 # ONE definition, not a fourth restatement. This tuple was declared identically
-# in four places (here, services/triggers.py, services/deploys.py and the schema)
-# with nothing keeping them in step. T5 pointed deploys.py at triggers.py; this
-# is the third. `triggers` is already imported at module scope above, so this
+# in four places (here, services/triggers.py, the deploy subsystem's own copy
+# and the schema) with nothing keeping them in step. T5 pointed the deploy copy
+# at triggers.py and the deploy subsystem was deleted 2026-09-04; this is the
+# third. `triggers` is already imported at module scope above, so this
 # costs nothing and `scripts/check_one_definition.py` stops counting it.
 AUTONOMY = triggers.AUTONOMY_MODES
 DEFAULT_AUTONOMY = "reactive"

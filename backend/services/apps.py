@@ -5,8 +5,8 @@ THE SPLIT THAT MATTERS. The `app` row itself and its chats are real Postgres
 data (`db/app_repo.py`) -- a real, indexed, queryable relation, per the design
 doc's sec 4.2. Tickets and notes are served straight off the file stores this
 installation already has, resolved by slug (and, where one exists, the app's
-`project_slug` link) through `services/app_links.py`; runs, deploys and
-roster agents the same way, through the linked project_slug. NOTHING here
+`project_slug` link) through `services/app_links.py`; runs and roster
+agents the same way, through the linked project_slug. NOTHING here
 fabricates data: a collection an app genuinely has none of returns an empty
 list, never another app's rows relabelled as this one's. That specific
 failure mode -- pointing an app endpoint at project data and calling it
@@ -35,7 +35,7 @@ __all__ = [
     "AppsUnavailable", "AppNotFound", "SlugTaken",
     "list_apps", "get_app", "get_app_by_slug", "create_app", "update_app",
     "delete_app", "chats_for_app", "tickets_for_app", "notes_for_app",
-    "runs_for_app", "deploys_for_app", "agents_for_app",
+    "runs_for_app", "agents_for_app",
 ]
 
 
@@ -355,18 +355,6 @@ def runs_for_app(app_id: str, *, limit: int = 50) -> list[dict]:
         return [_enrich(r, names, cache) for r in records]
     except Exception:  # noqa: BLE001 -- display enrichment is best-effort
         return records
-
-
-def deploys_for_app(app_id: str) -> list[dict]:
-    """The app's deploys, off `services/deploys.py`, through the linked
-    project. Empty when unlinked."""
-    from services import app_links, deploys
-
-    app = _app_or_404(app_id)
-    project_slug = app_links.linked_project_slug(app["slug"])
-    if not project_slug:
-        return []
-    return deploys.list_by_project(project_slug)
 
 
 def agents_for_app(app_id: str) -> list[dict]:

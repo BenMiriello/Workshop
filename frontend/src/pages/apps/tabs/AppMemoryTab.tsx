@@ -9,7 +9,7 @@
 // "View all in Memory" link at the top of the page. The operator's objection
 // was that a per-app surface should not hand you off to the global one, and the
 // reason it did is that the tab had no read surface at all: the link existed
-// BECAUSE nothing here opened. Every sibling tab (AppTicketsTab, AppAgentsTab)
+// BECAUSE nothing here opened. Every sibling tab (AppTicketsTab, AppRunsTab)
 // makes the ROW the link to the record; this was the only one that made the
 // PAGE a link to a different page. A row is a `Link` now, exactly like a ticket
 // row, and the link out is gone rather than restyled.

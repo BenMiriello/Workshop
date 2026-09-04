@@ -45,7 +45,8 @@ import { shortSha } from "./sha";
 export type WorkThread = components["schemas"]["AppChat"];
 
 /** One roster agent linked to this app, as `GET /api/apps/{id}/agents` answers
- *  it. The route declares no response model, so this is the shape AppAgentsTab
+ *  it. The route declares no response model, so this is the shape the app's
+ *  agent list
  *  reads off the same payload, not a wire contract. */
 export type WorkAgent = {
   id?: string;

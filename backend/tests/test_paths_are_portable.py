@@ -33,8 +33,9 @@ DERIVED = [
     ("wsplatform.dev_mode", "WORKSHOP_ROOT"),
     ("services.port_registry", "STORE"),
     ("services.local_runner", "PROJECTS_REGISTRY"),
-    ("services.local_runner", "RUNTIME_STORE"),
-    ("services.local_runner", "LOG_ROOT"),
+    # `RUNTIME_STORE` and `LOG_ROOT` were here until 2026-09-04. They belonged
+    # to local_runner's deploy lifecycle, which had no callers and was deleted
+    # with the deploy subsystem (ticket `726d75a9`).
     # Callables, not constants. A path resolved at CALL time follows a root
     # that changed after import, which a module-level constant cannot — the
     # exact failure this file exists to catch, one step earlier.
