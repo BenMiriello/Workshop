@@ -2495,19 +2495,66 @@ async def set_thread_tree(thread_id: str, body: ThreadTreeIn):
     else:
         raise HTTPException(400, "action must be join, new_branch or release")
 
-    key = str(getattr(provider, "key", "") or "")
-    if key.startswith("agent:"):
-        try:
-            build_agents.set_branch(provider.slug, branch_slug)
-        except KeyError:
-            raise HTTPException(404, f"build agent not found: {provider.slug}")
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-    elif chat_store.set_thread_branch(thread_id, branch_slug) is None:
-        raise HTTPException(404, "thread not found")
+    # ASK `chat_worktree`, DO NOT RE-DERIVE. Where the pin lives (on the AGENT
+    # for a maker, on the CONVERSATION for a project chat) is the same rule
+    # `chat_worktree._pinned_branch` applies on the read, and it was written out
+    # a second time here for the write. Two copies of that rule is how a read
+    # and a write end up disagreeing about where a chat works -- the same defect
+    # `_project_of` and `_auto_create_worktree_for_chat` already hit once each.
+    try:
+        if not chat_worktree.set_pin(thread_id, provider, branch_slug):
+            raise HTTPException(404, "thread not found")
+    except KeyError:
+        raise HTTPException(404, f"build agent not found: {getattr(provider, 'slug', '')}")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
     _t2, _p2, moved = _tree_read(thread_id)
     return _tree_payload(moved)
+
+
+# The return trip. A chat that writes gets a worktree without being asked
+# (`build_streaming._auto_create_worktree_for_chat`); these two are how the work
+# in it gets looked at and brought home. No new noun and no new page: the
+# worktree is the same one the pill above already names, and the two verbs are
+# git's own, matching `/worktrees/{project}/{branch}/diff` and `/merge`.
+
+
+@router.get("/threads/{thread_id}/tree/diff")
+async def thread_tree_diff(thread_id: str):
+    """This chat's worktree against the tree it would merge into.
+
+    A READ, and it answers for an unpinned chat too (`pinned: false` with the
+    reason), so the caller renders one shape instead of branching on whether
+    this chat happens to have a worktree.
+    """
+    t, provider, _tree = _tree_read(thread_id)
+    fallback = (str(provider.dir) if chat_context.is_build_provider(provider)
+                else str(paths.chat_cwd()))
+    return chat_worktree.diff(t, provider, fallback_cwd=fallback)
+
+
+class ThreadTreeMergeIn(BaseModel):
+    message: str = ""
+
+
+@router.post("/threads/{thread_id}/tree/merge")
+async def merge_thread_tree(thread_id: str, body: ThreadTreeMergeIn):
+    """Merge this chat's worktree back into the shared tree, and unpin the chat.
+
+    409 WITH A SENTENCE, NOT A 500. Every refusal this can hit is a fact about
+    the trees rather than a failure -- nothing to merge, the project's own tree
+    is dirty, the merge conflicted -- and each one is something a person acts on,
+    so the reason is the body.
+    """
+    t, provider, _tree = _tree_read(thread_id)
+    fallback = (str(provider.dir) if chat_context.is_build_provider(provider)
+                else str(paths.chat_cwd()))
+    result = chat_worktree.merge(thread_id, t, provider, fallback_cwd=fallback,
+                                 message=body.message)
+    if not result.get("ok"):
+        raise HTTPException(409, result.get("reason") or "the merge was refused")
+    return result
 
 
 def _side_query_cwd(provider) -> str:

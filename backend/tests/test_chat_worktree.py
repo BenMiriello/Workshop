@@ -290,11 +290,13 @@ class TestPreempt:
         # Path (a): an operator message arrives while THREAD holds the tree.
         chat_worktree.enter(THREAD, {"branch_slug": "fix-42"}, wired["provider"],
                             fallback_cwd=str(wired["project"]))
-        # Prevent the real subprocess from running in tests.
-        monkeypatch.setattr(chat_worktree, "subprocess",
-                            type("SP", (), {"run": staticmethod(
-                                lambda *a, **kw: type("R", (), {
-                                    "stdout": "", "returncode": 0})())}))
+        # No real repository here, so the snapshot half is stubbed. What it
+        # takes is asserted end to end against real git in
+        # `test_worktree_isolation_end_to_end.py`.
+        monkeypatch.setattr(chat_worktree.git_service, "snapshot",
+                            lambda *a, **kw: {"ok": True, "sha": "deadbee",
+                                              "ref": kw.get("ref"),
+                                              "clean": False, "detail": ""})
         took = chat_worktree.enter(OTHER, {"branch_slug": "fix-42"},
                                    wired["provider"],
                                    fallback_cwd=str(wired["project"]),
@@ -324,10 +326,10 @@ class TestPreempt:
     def test_preempt_writes_preempted_to_as_dict(self, wired, monkeypatch):
         chat_worktree.enter(THREAD, {"branch_slug": "fix-42"}, wired["provider"],
                             fallback_cwd=str(wired["project"]))
-        monkeypatch.setattr(chat_worktree, "subprocess",
-                            type("SP", (), {"run": staticmethod(
-                                lambda *a, **kw: type("R", (), {
-                                    "stdout": "", "returncode": 0})())}))
+        monkeypatch.setattr(chat_worktree.git_service, "snapshot",
+                            lambda *a, **kw: {"ok": True, "sha": "deadbee",
+                                              "ref": kw.get("ref"),
+                                              "clean": False, "detail": ""})
         took = chat_worktree.enter(OTHER, {"branch_slug": "fix-42"},
                                    wired["provider"],
                                    fallback_cwd=str(wired["project"]),

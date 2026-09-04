@@ -68,18 +68,17 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from dataclasses import dataclass, replace
 from typing import Any
 
-from services import (build_agents, chat_context, leases, presence,
-                      session_defaults, tree_access, worktrees)
+from services import (build_agents, chat_context, git_service, leases,
+                      presence, session_defaults, tree_access, worktrees)
 
 log = logging.getLogger(__name__)
 
 __all__ = [
     "TreeState", "plan", "enter", "beat", "leave", "branch_options",
-    "pin_offer", "apply_choice", "SUBJECT_KIND",
+    "pin_offer", "apply_choice", "set_pin", "diff", "merge", "SUBJECT_KIND",
 ]
 
 SUBJECT_KIND = tree_access.SUBJECT_KIND
@@ -344,17 +343,22 @@ def _preempt_holder(tree: TreeState, holder: dict) -> dict:
     holder_kind = str(holder.get("holder_kind") or "")
     wip_ref: str | None = None
     if tree.cwd and tree.subject_id and holder_id:
+        # `git stash create`, WHICH THIS USED TO SHELL OUT TO DIRECTLY, CAPTURES
+        # TRACKED MODIFICATIONS ONLY. The holder being displaced is mid-turn,
+        # and a mid-turn agent's work is mostly files git has never seen, so the
+        # snapshot that justifies taking the tree away from somebody was empty
+        # in exactly the case it mattered -- and `wip_ref` came back None, which
+        # reads in the transcript as "nothing was lost". §9 of the leases design
+        # already named the mechanism for this and `git_service.snapshot`
+        # already implements it (`commit-tree` over a throwaway index, HEAD and
+        # the real index untouched); this had a second, weaker copy inline.
         try:
-            sha_out = subprocess.run(
-                ["git", "-C", tree.cwd, "stash", "create"],
-                capture_output=True, text=True, timeout=10)
-            sha = (sha_out.stdout or "").strip()
-            if sha:
-                ref = f"refs/wip/{holder_id}"
-                subprocess.run(
-                    ["git", "-C", tree.cwd, "update-ref", ref, sha],
-                    capture_output=True, timeout=10)
-                wip_ref = ref
+            snap = git_service.snapshot(
+                tree.cwd, ref=f"refs/wip/{holder_id}",
+                message=f"wip snapshot for {holder_kind or 'holder'} {holder_id}",
+                include_untracked=True)
+            if snap.get("ok") and snap.get("sha"):
+                wip_ref = snap.get("ref")
         except Exception as exc:
             log.warning("chat tree: snapshot failed for %s: %s", holder_id, exc)
         try:
@@ -548,3 +552,205 @@ def apply_choice(project_slug: str, offer: dict, action: str, *,
     return {"branch_slug": created["branch_slug"], "created": True,
             "display_name": display_name,
             "branch": created["branch"], "dir": created["dir"]}
+
+
+# --- the return trip ----------------------------------------------------------
+#
+# A chat that writes gets a worktree without being asked
+# (`build_streaming._auto_create_worktree_for_chat`). Until these three verbs
+# existed that was a one-way door: the work was isolated, committed, and then
+# unreachable, because the only merge path in the system runs through a TICKET
+# (`work_review.merge_for_task` off `POST /tasks/{scope}/{id}/review`) and a
+# chat's own worktree has no ticket. `worktrees.merge_branch` and
+# `worktrees.diff_branch` were already built and had zero callers above the
+# ticket path -- so the missing half was never the merge, it was the chat being
+# able to ask for one.
+
+def set_pin(thread_id: str, provider: Any, branch_slug: str | None) -> bool:
+    """Move this chat's pin, or clear it. False means the record is gone.
+
+    ONE RULE, ONE PLACE. Where the pin lives depends on what is being pinned --
+    a maker agent is one worker with one tree, so its pin is on the AGENT and
+    every chat addressed to it moves together; a project chat is one of many
+    against a shared tree, so its pin is on the conversation. `_pinned_branch`
+    above already encodes that split for the read, and the route encoded it a
+    second time for the write. Two copies of a rule is how the read and the
+    write end up disagreeing about where a chat works, so the write asks here.
+    """
+    from services import chat_store
+    key = str(getattr(provider, "key", "") or "")
+    if key.startswith("agent:"):
+        build_agents.set_branch(getattr(provider, "slug", ""), branch_slug)
+        return True
+    return chat_store.set_thread_branch(thread_id, branch_slug) is not None
+
+
+def _uncommitted(cwd: str) -> list[str]:
+    """Paths this worktree has changed and not committed. Empty when clean.
+
+    UNTRACKED COUNTS. `git status --porcelain` reports a new file as `??`, and
+    a new file is the overwhelmingly common thing a chat turn leaves behind --
+    so a definition of "uncommitted" that only saw modifications would call a
+    tree full of brand-new work clean, and everything downstream (the merge
+    guard, the diff's `mergeable`) would agree with it.
+    """
+    try:
+        return [str(e.get("path") or "")
+                for e in (git_service.status(cwd).get("entries") or [])
+                if e.get("path")]
+    except Exception as exc:  # pragma: no cover - a status that cannot be read
+        log.warning("chat tree: cannot read status of %s: %s", cwd, exc)
+        return []
+
+
+def diff(thread: dict | None, provider: Any, *, fallback_cwd: str) -> dict:
+    """What this chat has done in its worktree, and whether it can go home.
+
+    NOT CALLED `review`, deliberately. "Review" already names one specific thing
+    in this system -- the ticket gate at `POST /tasks/{scope}/{id}/review`, the
+    Change it opens, and `services/work_review.py` -- and a second meaning for
+    it would be one concept wearing two words, which is the naming defect this
+    whole design was asked to stop repeating. This is a git diff of a worktree
+    against its base, so it is called `diff`.
+
+    Answers for EVERY chat, including one that holds nothing: an unpinned chat
+    comes back `{"pinned": False}` with the reason, so the caller renders one
+    shape rather than branching on whether this module had an opinion (the same
+    contract `plan` keeps).
+
+    THE BASE REF IS REPORTED, NOT ASSUMED. `worktrees.merge_branch` checks the
+    project's canonical branch out in the project's OWN working tree before it
+    merges, so a merge moves that checkout. Naming `base_ref` here is what lets
+    somebody see that before pressing the button rather than after.
+    """
+    tree = plan(thread, provider, fallback_cwd=fallback_cwd)
+    out: dict = {
+        "pinned": tree.pinned,
+        "project_slug": tree.project_slug,
+        "branch_slug": tree.branch_slug,
+        "branch": tree.branch,
+        "cwd": tree.cwd,
+        "uncommitted": [],
+        "files": [],
+        "summary": {},
+        "ahead": 0,
+        "behind": 0,
+        "base_ref": "",
+        "mergeable": False,
+        "reason": "",
+    }
+    if not (tree.pinned and tree.project_slug):
+        out["reason"] = ("This chat is working in the shared tree, so there is "
+                         "nothing to merge back. A worktree is made the first "
+                         "time it writes.")
+        return out
+    try:
+        state = worktrees.branch_state(tree.project_slug, tree.branch_slug or "")
+    except Exception as exc:
+        out["reason"] = f"This branch cannot be read ({exc})."
+        return out
+    out["base_ref"] = state.get("base_ref") or ""
+    out["ahead"] = int(state.get("ahead") or 0)
+    out["behind"] = int(state.get("behind") or 0)
+    if not state.get("exists"):
+        out["reason"] = "This chat's branch no longer resolves, so there is nothing to merge."
+        return out
+    out["uncommitted"] = _uncommitted(tree.cwd)
+    try:
+        diff = worktrees.diff_branch(tree.project_slug, tree.branch_slug or "")
+        out["files"] = diff.get("files") or []
+        out["summary"] = diff.get("summary") or {}
+    except Exception as exc:
+        out["reason"] = f"The diff could not be read ({exc})."
+        return out
+    if not out["ahead"] and not out["uncommitted"]:
+        out["reason"] = (f"Nothing has been done in this worktree yet: it is "
+                         f"level with {out['base_ref'] or 'the shared tree'}.")
+        return out
+    out["mergeable"] = True
+    return out
+
+
+def merge(thread_id: str, thread: dict | None, provider: Any, *,
+          fallback_cwd: str, message: str = "") -> dict:
+    """Merge this chat's worktree back into the shared tree and unpin the chat.
+
+    Returns `{"ok": bool, "reason": str, "commit": str, "committed": [paths]}`.
+
+    UNCOMMITTED WORK IS COMMITTED FIRST, NOT REFUSED AND NOT DROPPED. A merge
+    moves the BRANCH, and `worktrees.merge_branch` reaps the directory on
+    success -- so anything the chat wrote and did not commit would go with the
+    directory. Refusing instead would be safe and useless: an interactive chat
+    routinely ends a turn with edits it has not committed, which is exactly the
+    state somebody is in when they ask for this. Committing is the only option
+    of the three that loses nothing, and a commit is recoverable in a way a
+    deleted directory is not.
+
+    THE PROJECT'S OWN TREE MUST BE CLEAN, and that is the one hard refusal.
+    `merge_branch` checks the base ref out in the project's working tree; git
+    will carry uncommitted changes across a checkout when they do not conflict,
+    which would silently move somebody else's in-progress edits onto another
+    branch. There is no version of that which is the caller's intent, so it is
+    named and declined.
+
+    THE PIN IS CLEARED ON SUCCESS. The directory is gone, and a pin to a tree
+    that is not there resolves through `plan`'s fallback with an apologetic
+    detail line forever. Clearing it puts the chat back on the shared tree,
+    where its next write makes a fresh worktree -- which is the whole cycle.
+    """
+    state = diff(thread, provider, fallback_cwd=fallback_cwd)
+    if not state["mergeable"]:
+        return {"ok": False, "reason": state["reason"] or "There is nothing to merge.",
+                "commit": "", "committed": []}
+    project_slug = str(state["project_slug"])
+    branch_slug = str(state["branch_slug"])
+
+    try:
+        project_dirty = _uncommitted(str(worktrees.project_dir(project_slug)))
+    except Exception as exc:
+        return {"ok": False, "reason": f"The project's own tree cannot be read ({exc}).",
+                "commit": "", "committed": []}
+    if project_dirty:
+        return {
+            "ok": False, "commit": "", "committed": [],
+            "reason": (f"{project_slug} has {len(project_dirty)} uncommitted "
+                       f"change(s) in its own tree, and merging checks "
+                       f"{state['base_ref']} out there. Commit or stash them "
+                       f"first: {', '.join(project_dirty[:8])}"),
+        }
+
+    committed: list[str] = []
+    if state["uncommitted"]:
+        text = (message or "").strip() or f"Work from this chat in {branch_slug}"
+        # STAGE FIRST. `commit -a` picks up modifications to TRACKED files and
+        # nothing else, so a turn whose whole output is new files would have
+        # been reported as committed and then reaped with the directory. The
+        # add is what makes the claim true.
+        try:
+            added = git_service.add_all(state["cwd"])
+            done = git_service.commit(state["cwd"], text)
+        except Exception as exc:
+            return {"ok": False, "commit": "", "committed": [],
+                    "reason": f"The worktree's own changes could not be committed ({exc})."}
+        if not added["ok"] or not done["ok"]:
+            detail = (added.get("detail") or done.get("detail") or "").strip()
+            return {"ok": False, "commit": "", "committed": [],
+                    "reason": f"The worktree's own changes could not be committed: {detail[:300]}"}
+        committed = list(state["uncommitted"])
+
+    try:
+        result = worktrees.merge_branch(project_slug, branch_slug, message=message)
+    except Exception as exc:
+        return {"ok": False, "commit": "", "committed": committed,
+                "reason": f"The merge failed ({exc})."}
+    if not result.get("ok"):
+        return {"ok": False, "commit": "", "committed": committed,
+                "reason": str(result.get("reason") or "The merge was refused.")}
+
+    try:
+        set_pin(thread_id, provider, None)
+    except Exception as exc:  # pragma: no cover - the merge already landed
+        log.warning("chat tree: merged %s but could not unpin %s: %s",
+                    branch_slug, thread_id, exc)
+    return {"ok": True, "reason": "", "commit": str(result.get("commit") or ""),
+            "committed": committed, "base_ref": state["base_ref"]}

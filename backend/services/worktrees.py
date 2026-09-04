@@ -1217,6 +1217,20 @@ def default_ref(project_slug: str) -> str:
         return "HEAD"
 
 
+def project_dir(project_slug: str) -> Path:
+    """This project's own canonical working tree. May raise (see `_project_dir`).
+
+    PUBLISHED FOR THE SAME REASON `branch_slug_for` WAS: where a project lives
+    is this module's path policy (section 13.2 of
+    `workspace-ownership-and-leases-2026-08-22.md`, "no service imports another
+    service's policy"), and a caller that needs it was otherwise going to reach
+    for `_project_dir` or re-read the registry itself -- which is one path
+    spelled twice. `chat_worktree.merge` needs it because merging checks the
+    base ref out in THIS tree, so it has to look at this tree before it starts.
+    """
+    return _project_dir(project_slug)
+
+
 def branch_dir(project_slug: str, branch_slug: str) -> Path:
     """Public helper: return the on-disk path for a (project, branch) pair.
 

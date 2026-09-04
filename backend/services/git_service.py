@@ -481,6 +481,19 @@ def worktree_prune(repo: Path | str) -> bool:
 # Writes
 # ---------------------------------------------------------------------------
 
+def add_all(repo: Path | str) -> dict:
+    """Stage everything git would add, including files it has never seen.
+
+    Returns `{ok, detail}`. The companion `commit(..., all=True)` is `commit -a`,
+    which picks up modifications to TRACKED files and nothing else -- so a
+    caller wanting "commit whatever is in this tree" needs this first, and every
+    caller that skipped it silently dropped the new files, which for an agent
+    turn is most of the work.
+    """
+    r = _run(repo, ["add", "-A"], check=False, timeout=60)
+    return {"ok": r.returncode == 0, "detail": _detail(r)}
+
+
 def commit(repo: Path | str, message: str, *, all: bool = False,
            allow_empty: bool = False, paths: list[str] | None = None) -> dict:
     """Commit the index (plus tracked modifications when `all`).
