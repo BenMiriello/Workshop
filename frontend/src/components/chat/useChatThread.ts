@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { chatApi, type CardState, type Thread, type ThreadSummary } from "../../lib/chat";
 import { withTransientRetry } from "@workshop/ui";
+import { threadIsGone } from "./threadGone";
 import {
   NEW_CHAT, forgetThread, readSelection, writeSelection,
 } from "../../lib/chatSelection";
@@ -364,8 +365,25 @@ export function useChatThread({
         // / mode); the transcript comes from useThreadLog by id, so a slow
         // document here no longer delays what is on screen.
         let t: Thread | null = null;
+        // COULD NOT ASK, as opposed to ASKED AND IT IS GONE. See threadGone.ts.
+        // Both reads below used to be `catch(() => null)`, and a `null` from
+        // either one ended in `setActiveId(null)` — the chat dropping to blank
+        // over a 502 in a restart window, and then rebuilding the whole
+        // transcript when the conversation came back. Only the server ANSWERING
+        // that the thread is not there is a reason to give it up.
+        let couldNotAsk: string | null = null;
+        const readThread = async (id: string): Promise<Thread | null> => {
+          try {
+            // A restart is a pause, not a break, so ride it out on the kit's
+            // one schedule before deciding anything.
+            return await withTransientRetry(() => chatApi.getThread(id));
+          } catch (e) {
+            if (!threadIsGone(e)) couldNotAsk = String(e);
+            return null;
+          }
+        };
         if (linked) {
-          t = await chatApi.getThread(linked).catch(() => null);
+          t = await readThread(linked);
           if (cancelled) return;
           if (t) adoptSettings(t);
         }
@@ -397,12 +415,23 @@ export function useChatThread({
             if (has(stored)) return stored;
             return inScope.length ? inScope[0].id : null;
           })();
-          t = target ? await chatApi.getThread(target).catch(() => null) : null;
+          t = target ? await readThread(target) : null;
           if (cancelled) return;
           if (t) {
             setActiveId(t.id);
             writeSelection(scope, t.id);
             adoptSettings(t);
+          } else if (couldNotAsk) {
+            // NOTHING WAS LEARNED, SO NOTHING CHANGES. The conversation on
+            // screen stays on screen; its transcript has its own reader
+            // (useThreadLog) which keeps syncing and recovers on its own. What
+            // this cannot do is drop to a blank chat, which is what threw the
+            // transcript away and re-rendered it from nothing a moment later.
+            onError({
+              text: `Couldn't read this conversation's settings: ${couldNotAsk}. The conversation is unchanged.`,
+              endpoint: target ? `/api/chat/threads/${target}` : threadListEndpoint(),
+              retry: () => setThreadLoadNonce((n) => n + 1),
+            });
           } else {
             setActiveId(null);
             setCardStates({});
