@@ -24,7 +24,12 @@
     "services.reader_staleness": {},
     "services.run_worktree": {},
     "services.token_usage": {},
-    "services.triager": {},
+    "services.triager": {
+      "not_actually_dead": true,
+      "why": "PINNED BECAUSE THE CHECKER CANNOT SEE ITS CALLER, NOT BECAUSE IT IS DEAD. services.triager is the role runner for `role: triager` agents and is reached from SHELL: scripts/dispatch_triggers.sh:549 does `from services import triager` inside a heredoc and :550 calls triager.has_due_notes(), with :588 registering it in ROLE_HANDLERS; scripts/triager_run.sh:96 execs `python3 -m services.triager`. This scan counts Python imports only, so a shell-mediated import is invisible to it.",
+      "do_not": "Do not read this pin as agreement that the module is dead. On 2026-09-04 BACKLOG-MEASURED-2026-09-04.md row 13 ordered it deleted on exactly that misreading, using a grep scoped to backend/. Ticket 88a2ba81 exists to give it a live trigger.",
+      "unpin_when": "the scan learns to follow imports out of scripts/*.sh"
+    },
     "workshop_public_app": {}
   },
   "unreferenced_frontend_modules": {
