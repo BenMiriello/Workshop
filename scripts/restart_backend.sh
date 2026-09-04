@@ -101,6 +101,40 @@ if [ "${1:-}" = "--deferred" ]; then
   # under another agent mid-turn is real damage (see the guard below), and never
   # restarting at all is worse, so this waits minutes rather than forever.
   other_cap=180
+
+  # ONE WAITER AT A TIME, and this is not a nicety.
+  #
+  # apply.sh is documented as safe to run at any time, from any agent,
+  # concurrently with any other agent, and it calls this on every run that finds
+  # the backend stale. Every call used to spawn ANOTHER waiter with a six-hour
+  # cap, and a waiter only fires once every turn in the tree has gone quiet. So
+  # on a busy shared checkout they do not fire, they ACCUMULATE, and then they
+  # all fire in sequence the moment things settle: N restarts back to back.
+  #
+  # Measured 2026-09-03: seven waiters parked between 20:58 and 21:40 from
+  # ordinary apply.sh calls by two agents. One fired while the operator was
+  # typing and took the backend out from under him -- 502 on the composer, the
+  # conversation list failed to refresh, his message would not send, and the
+  # forced reload landed his message out of order. The other six were still
+  # armed to do it again.
+  #
+  # Arming is therefore IDEMPOTENT: a live waiter means the restart is already
+  # coming, and a second one adds nothing but another outage. The pid file is
+  # the record, and a stale one (the waiter died, or the box rebooted) is
+  # ignored rather than trusted.
+  armed_file="$REPO_ROOT/.runtime/restart-armed.pid"
+  mkdir -p "$REPO_ROOT/.runtime" 2>/dev/null || true
+  if [ -f "$armed_file" ]; then
+    prev="$(cat "$armed_file" 2>/dev/null || true)"
+    case "$prev" in
+      ''|*[!0-9]*) : ;;                       # empty or junk: treat as absent
+      *) if kill -0 "$prev" 2>/dev/null; then
+           echo "Backend restart already armed (waiter $prev); not arming a second."
+           exit 0
+         fi ;;
+    esac
+  fi
+
   setsid bash -c '
     self="$1"; turns="$2"; chat="$3"; max="$4"; grace="$5"; mine="$6"; ocap="$7"; root="$8"
     live() {  # live <pid-filter>: "" = any turn, else only that pid
@@ -174,8 +208,13 @@ if [ "${1:-}" = "--deferred" ]; then
     printf "{\"when\": \"%s\", \"action\": \"backend-restart\", \"outcome\": \"%s\", \"old_pid\": %s, \"new_pid\": %s, \"serving\": \"%s\", \"arming_turn\": \"%s\"}\n" \
       "$(date -Is)" "$outcome" "${old_pid:-0}" "${new_pid:-0}" "${served:-}" "${mine:-none}" \
       > "$root/.runtime/apply-last.json" 2>/dev/null || true
+    # Clear the arming record LAST, so the window in which a second waiter could
+    # be armed is the window in which there is genuinely no waiter.
+    rm -f "$root/.runtime/restart-armed.pid" 2>/dev/null || true
   ' _ "$self" "$turns" "$chat" "$max_wait" "$commit_grace" "$own_turn" "$other_cap" "$REPO_ROOT" \
     >>/tmp/workshop-backend.log 2>&1 </dev/null &
+  waiter_pid=$!
+  printf '%s\n' "$waiter_pid" > "$armed_file" 2>/dev/null || true
   disown || true
   if [ -n "$own_turn" ]; then
     echo "Backend restart armed: fires when this turn (pid $own_turn) ends, then within ${other_cap}s."
