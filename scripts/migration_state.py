@@ -56,6 +56,44 @@ UPGRADE_CMD = (
 )
 
 
+VENV_PY = BACKEND / ".venv" / "bin" / "python"
+
+
+def reexec_in_venv() -> None:
+    """Re-run this file under the backend's interpreter when alembic is missing.
+
+    WHY. The tree side of the comparison needs alembic, which lives in the
+    backend venv and not in the system python an agent's shell resolves. Before
+    2026-09-03 the mismatch surfaced as `unknown` -- "COULD NOT DETERMINE --
+    alembic/sqlalchemy do not import here" -- and `unknown` is designed to be
+    loud, so it reads as a measurement that FAILED rather than a script that was
+    started wrong. It was handed forward through three sessions as "the schema
+    is blocked", while the live database sat at the tree's head the whole time
+    and `backend/.venv/bin/python scripts/migration_state.py` answered `ok` in
+    under a second. A stale blocker is a permanent excuse, so the fix is for the
+    script to find its own interpreter rather than to report the wrong one.
+
+    apply.sh already picks the venv python for this call. This makes the file
+    correct on its own, which is how every agent actually invokes it.
+    """
+    if os.environ.get("WORKSHOP_MIGRATION_STATE_REEXEC"):
+        return                      # already the second attempt; do not loop
+    try:
+        import alembic  # noqa: F401
+        import sqlalchemy  # noqa: F401
+        return                      # this interpreter can do the work
+    except Exception:
+        pass
+    if not os.access(VENV_PY, os.X_OK) or Path(sys.executable) == VENV_PY:
+        return                      # no better interpreter to hand off to
+    os.environ["WORKSHOP_MIGRATION_STATE_REEXEC"] = "1"
+    try:
+        os.execv(str(VENV_PY), [str(VENV_PY), str(Path(__file__).resolve()),
+                                *sys.argv[1:]])
+    except OSError:
+        return                      # exec failed; fall through to `unknown`
+
+
 def emit(state: str, headline: str, remedy: str = "") -> None:
     print("\t".join((state, headline, remedy)))
     raise SystemExit({"ok": 0, "not_configured": 0,
@@ -173,6 +211,8 @@ def tree_heads() -> list[str]:
 
 
 def main() -> None:
+    reexec_in_venv()
+
     if not ALEMBIC_INI.is_file():
         emit("not_configured",
              f"schema: no alembic config at {ALEMBIC_INI.relative_to(REPO)}, "
@@ -192,7 +232,11 @@ def main() -> None:
     except Exception as exc:
         emit("unknown",
              f"schema: COULD NOT DETERMINE -- alembic/sqlalchemy do not import "
-             f"here ({type(exc).__name__}), so tree and live were not compared")
+             f"under {sys.executable} ({type(exc).__name__}) and "
+             f"{VENV_PY.relative_to(REPO)} is not usable either, so tree and "
+             f"live were not compared",
+             f"install the backend venv, then: {VENV_PY.relative_to(REPO)} "
+             f"scripts/migration_state.py")
 
     try:
         heads = tree_heads()

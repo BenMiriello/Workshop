@@ -4113,7 +4113,18 @@ span.ws-filterchip__open { cursor: default; }
 .ws-note-backlink { flex-direction: column; align-items: flex-start; gap: 0; }
 
 .ws-note-main { min-width: 0; }
-.ws-note-title { font-size: var(--fs-xl); font-weight: 600; margin: 0; }
+/* The heading half of a note's header. It shares a wrapping `ws-row--between`
+   with the Edit/Rename/Delete group, so it needs `min-width: 0` for its own
+   ellipsis and word-break to engage: a flex item's automatic minimum size is
+   its content, and without this the title simply pushed the buttons past the
+   right edge at 390px instead of shrinking. */
+.ws-note-head { min-width: 0; flex: 1 1 auto; }
+.ws-note-title {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  margin: 0;
+  overflow-wrap: anywhere;   /* a long unbroken slug breaks rather than overflows */
+}
 .ws-note-meta {
   font-size: var(--fs-xs);
   color: var(--muted);

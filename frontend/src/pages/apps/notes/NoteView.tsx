@@ -162,15 +162,15 @@ export default function NoteView({
 
   return (
     <Stack gap="lg">
-      <Row between>
-        <Stack gap="sm">
+      <Row between wrap>
+        <Stack gap="sm" className="ws-note-head">
           <h2 className="ws-note-title">{note.title}</h2>
           <span className="ws-note-meta">
             {note.path} · edited {fmtTime(note.modified)}
           </span>
         </Stack>
         {!edit.editing && (
-          <Row>
+          <Row wrap>
             <Button onClick={edit.begin}>
               <Pencil size={16} /> Edit
             </Button>
