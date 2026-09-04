@@ -160,6 +160,27 @@ The authoritative model lives in [`docs/platform-redesign/entity-model-2026-07-1
 
 **No platform source file may name a specific app.** Measured by `python3 scripts/check_no_app_names.py`, which gates `reviewer.sh`; the three counts may only go down. Current work and the next stages: [`docs/platform-redesign/HANDOFF-app-platform-and-github-2026-08-20.md`](docs/platform-redesign/HANDOFF-app-platform-and-github-2026-08-20.md). Not a registry entry, not an `if app_id ==`, not an icon import, not a status probe, not a test fixture. An app declares what it is and the platform reads the declaration. This is currently violated in the two enumerating registries and about a dozen special cases, all inventoried in §6 of that doc; do not add to them.
 
+**The check is a stopgap, and needing it is the defect.** Counting app names in
+platform source only works while every agent keeps remembering not to write one,
+which is policing, and the policing itself has failed repeatedly. Three holes in
+it were found on 2026-09-03 alone: the app roster read one of three disagreeing
+registries, so an entire app was never scanned and its name counted zero; that
+roster's catalog source had silently gone dead two days earlier when the
+enumerating tuple it parsed was removed; and the pattern set could not see a
+constant NAMED for an app, which is how one app's vault root sat in
+`services/permissions.py` — platform code that never read it — indefinitely.
+
+The requirement, stated by the operator on 2026-09-03, is not a lower number. It
+is that the mistake be **impossible rather than detected**: an app's agent has no
+access to platform source, so it cannot hardcode an app name into a platform
+file, and a platform agent has no app source to name. That is the point of the
+separation, and it makes `check_no_app_names.py` redundant — the end state
+DELETES that script rather than extending it. **Do not answer the next leak by
+adding another pattern to it.** Whichever option §10 of
+`app-is-the-entity-2026-08-20.md` settles on, the access boundary is part of the
+deliverable: if the option cannot scope an app's agent to the app's own tree, it
+is the wrong option.
+
 **Know which prompt layer you are writing into.** The contract is [`docs/platform-redesign/agent-context-and-toolkit-2026-08-20.md`](docs/platform-redesign/agent-context-and-toolkit-2026-08-20.md) §"The four-layer contract", highest authority first: **L0** kernel (fixed, confidential, `chat_context.PLATFORM_KERNEL`), **L1** orientation manifest (generated, tool-centric, `services/orientation.py`), **L2** scope/app persona (`provider.persona()` plus the shared constants beside it), **L3** the operator's own custom instructions (`services/custom_instructions.py`, per owner per scope, edited at `/settings/instructions`). Plus one slot the contract does not name: **`AGENTS.md`** in a scope's own directory, read by `persona()` and injected as "Project-local agent rules".
 
 L0 to L2 are PLATFORM text: every installation and every user gets them, so they may carry only generalized product doctrine. They may not carry a fact about one checkout (a doc path, a repo convention, a named person, an operator's habits) and may not assume the reader's pronouns. This is the same rule as "no platform source file may name a specific app", applied to prompt text instead of code. It is gated as of 2026-08-27 by `python3 scripts/check_prompt_layers.py` (declaration in `scripts/prompt_layer_rules.json`, floor pinned at ZERO in `scripts/prompt_layers_baseline.json`), which runs unconditionally in `reviewer.sh` and fails the run on `installation_fact_in_platform_prompt`. It detects gendered pronouns, `~/` and host paths, `.md` filenames and a declared vendor list in the prose string literals of L0/L1/L2 and the MCP tool schemas. Anything true of THIS repo rather than of Workshop goes in this file, in `AGENTS.md`, or in L3 — never in `chat_context.py`; anything true of this INSTALLATION rather than of every installation is declared in `backend/services/installation.py` and set in `~/.config/workshop/instance.env`. Worked example: the ticket convention below was written into L2 on 2026-08-22 and moved out on 2026-08-23.
