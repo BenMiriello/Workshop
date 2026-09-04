@@ -170,6 +170,63 @@ seven times below:
   `[project.entry-points."workshop.apps"]` declaration so the backend catalog
   discovers it (`app_registry` already supports this path, added in stage 4).
 
+### 2.-1 WHAT WAS ACTUALLY BUILT, 2026-09-04 (later the same day): all of it
+
+Every app in the table below left the repo. Measured, not reported:
+
+```
+python3 scripts/check_no_app_names.py
+  content 0    imports 0    literals 296
+bash scripts/check_fresh_clone.sh
+  PASS no_app_source      (0 tracked files that ARE app source)
+  PASS build_with_zero_apps    0 app-source file(s) removed
+```
+
+`build_with_zero_apps` saying "0 removed" is the sentence worth reading twice.
+That assertion works by DELETING app source from a fresh clone and building what
+is left. It now deletes nothing, because the clone never had any.
+
+**The order changed and the plan's reasoning is what changed it.** Section 1
+sequences the seven one at a time, consumer before provider, so nothing left in
+the tree needs an app that has gone. That is correct for the PLATFORM and
+insufficient for the APPS: budget imports finance's cache, plaid bridge, persona
+and MCP config, and commute's engine reads location's store and persona. Doing
+those apart leaves a step where the consumer's import names a module that has
+moved. So they went as PAIRS — budget+finance, commute+location — and each
+dependency is now declared twice, at two layers answering different questions:
+`needs: ["finance.read"]` on the AppSpec is the capability the permission layer
+reads, `dependencies = ["workshop-app-finance"]` in pyproject is the import,
+which is the only layer that can install it.
+
+Things that moved and are on no file list in section 2:
+
+- `backend/mcp/plaid/` -> `apps/finance/mcp/plaid/`. Untracked, but inside the
+  platform and spawned by one app.
+- `frontend/vite.springer.config.ts` and `frontend/springer.html` ->
+  `apps/birds/standalone-build/`. TRACKED platform files whose whole purpose was
+  one app. Nothing invoked them from a script, which is why nothing broke and
+  also why the build command is now written down.
+- Four platform assertions using one app as their example
+  (`test_paths_are_portable.py`, `test_auth_env.py`), and one in
+  `test_ownership.py` that was the last platform file importing an app module.
+- `scripts/check_design.sh`'s three exemptions naming one app's canvas files. An
+  app declares its own now, as `ui.design_exempt` in `workshop.app.json`.
+
+**Two silent failure modes found doing it, both worth carrying forward.**
+
+1. `routes/X.py` and `services/X.py` share a stem, so any mechanical rename maps
+   both onto one module. Commute's engine import became a self-import; location's
+   router resolved to its store. NEITHER FAILED AT IMPORT. Both failed at catalog
+   build, where `_build_catalog` logs and skips a declaration that raises — so
+   the app simply was not in the catalog, with one INFO line to say so.
+2. A module that lived in `services/` and wrote `from . import ownership` meant
+   `services.ownership`. After the move `.` is the app package. Same shape,
+   same silence.
+
+Both mean: **after extracting an app, assert the catalog contains it.** A
+passing test suite does not, because the app's own tests import the app
+directly and never ask the platform whether it was discovered.
+
 ### 2.0 WHAT WAS ACTUALLY BUILT, 2026-09-04: the mechanism, and health through it
 
 The frontend half of extraction had no mechanism, and that is why the seven
