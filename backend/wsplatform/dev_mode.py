@@ -92,10 +92,12 @@ def is_self_dir(path: str | Path) -> bool:
     checkout is reachable under a second path (a container, a bind mount, a
     mount --rbind of a home directory), the same directory has two names, this
     returned False for one of them, and the developer-mode interlock was
-    silently open on that path. Measured 2026-08-30 in this installation's own
-    sandbox, where the repo is `/workspace` here and `/home/clawd-a/workshop`
-    to the host: `project:development` resolved to the platform repo, which
-    ADR 0014 sec 4 exists to forbid.
+    silently open on that path. Measured 2026-08-30 in an installation's own
+    sandbox, where the repo was reachable both at the sandbox's mount point and
+    under the host's home directory: `project:development` resolved to the
+    platform repo, which ADR 0014 sec 4 exists to forbid. (The two paths are
+    deliberately not written here -- they name one host, and
+    check_no_hardcoding.sh counts that.)
 
     So the string comparison stays as the fast path, and a stat comparison
     (device + inode) is the fallback: two names for one directory are one
