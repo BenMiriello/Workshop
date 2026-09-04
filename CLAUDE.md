@@ -146,11 +146,23 @@ That is the same rule the prompt-layer section below applies to prompt text.
 which is which**, and it is deliberately not a document: it clones HEAD and
 measures what a stranger actually receives — no app source, no personal data,
 no operator identity, builds with the app source deleted, boots with an empty
-catalog. It fails today and prints exactly where. Two assertions are recorded
-as expected failures in `scripts/fresh_clone_baseline.json`; a pin there prints
-`NOT YET`, never `PASS`, and never makes the absolute run green. **No document,
-status line or agent summary may claim app separation is done.** The claim is
-that command's exit code and nothing else.
+catalog. Any assertion recorded as an expected failure in
+`scripts/fresh_clone_baseline.json` prints `NOT YET`, never `PASS`, and never
+makes the absolute run green. **No document, status line or agent summary may
+claim app separation is done.** The claim is that command's exit code and
+nothing else.
+
+**As of 2026-09-04 that command exits 0**, all five assertions PASS, and
+`expected_failures` is empty, so nothing is excused. Re-run it rather than
+trusting this paragraph: the sentence it replaces said "it fails today", which
+was true when written and became the exact stale blocker this file warns about
+two sections down. What remains is NOT separation but residue —
+`python3 scripts/check_no_app_names.py` still counts 23 platform lines naming an
+app (`content`, `imports` and `homepath` are all 0). That check going green means
+NO WORSE, never done; the target for every count is 0 and the removal is
+`app-is-the-entity-2026-08-20.md` §9. Note also that the end state DELETES
+`check_no_app_names.py` — see the "stopgap" section below — so driving 23 to 0 is
+worth less than making the mistake impossible.
 
 ## Platform design (current: 2026-08-20)
 
