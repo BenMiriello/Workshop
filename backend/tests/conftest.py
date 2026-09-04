@@ -15,7 +15,7 @@ honest gate matters most.
 So: SKIP, loudly and with the reason, rather than fail. A skip says "not
 applicable here". A failure says "something is wrong", and nothing is.
 
-Use `requires_app("finance")` / `requires_registry()` at the top of a test that
+Use `requires_app("<app-id>")` / `requires_registry()` at the top of a test that
 needs deployment state. Do NOT use them to paper over a real failure: if a test
 can build the state it needs, it should build it in a tmp_path instead.
 """
@@ -48,9 +48,16 @@ def requires_app(name: str):
     """Skip unless `name` is installed on this instance.
 
     Apps are installable, so their routes and chat personas only exist where
-    they have been installed. A test asserting that /finance/cache is auth-gated
-    is testing nothing on an instance with no finance app: the path 404s because
+    they have been installed. A test asserting that an app's route is auth-gated
+    is testing nothing on an instance without that app: the path 404s because
     the feature is absent, not because ownership failed.
+
+    PREFER ASKING THE CATALOG. Naming an app here makes a platform test assert
+    against one installation and skip on every other, which is how the HTTP
+    contract's own foundation tests went unasserted on a fresh clone for weeks.
+    If the test needs "an app", take one from
+    `app_registry.installed_specs()`; if it needs a specific app's behaviour,
+    the test belongs in that app's `apps/<slug>/tests/`.
     """
     from services import app_registry
 

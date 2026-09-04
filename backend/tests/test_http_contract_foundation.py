@@ -1,10 +1,17 @@
 """ADR 0023 (`docs/decisions/0023-the-http-contract.md`) foundation: the
-registered error handler, the `Page[T]` envelope, and the one exemplar
-conversion that is still platform code (`routes/location.py`).
+registered error handler and the `Page[T]` envelope.
 
-The second exemplar was an app. Its three assertions left with it on 2026-09-04
-and are `apps/health/tests/test_health_contract.py` now: they tested that app's
-routes, not this ADR, and a fresh clone had no reason to ship them.
+BOTH exemplar conversions were an app's routes and both left with their app --
+the first on 2026-09-04 (`apps/health/tests/`), the second the same day once the
+last app's source went (`apps/location/tests/`). They tested those apps' routes,
+not this ADR, and a fresh clone has no reason to ship them. What stays here is
+the part that is true of every route on every installation: the handler shape,
+the envelope, and the two constants.
+
+The probes below therefore use PLATFORM routes. They used to use an app's,
+which meant this file named an app twelve times and skipped entirely on an
+instance that had not installed it -- so the ADR's own foundation went unasserted
+on exactly the clone it most needed to hold for.
 
 Setup mirrors `test_ownership.py`: real `main.app` via TestClient, auth state
 in `tmp_path` so nothing here touches the real deployment's data.
@@ -23,7 +30,6 @@ from pydantic import BaseModel
 
 from main import app
 from services import auth_store, ownership
-from tests.conftest import requires_app
 from wsplatform.http import DEFAULT_PAGE, MAX_PAGE, Page, PageMeta, error_body, validation_error_body
 
 CSRF = {"X-Workshop-Client": "1"}
@@ -36,7 +42,6 @@ def env(tmp_path, monkeypatch):
     auth_store.init_db()
     op = auth_store.create_user("operator@example.com", "password1")
     auth_store.set_operator(op["id"])
-    auth_store.set_domain_owner("location", op["id"])
     return {"op": op, "tmp": tmp_path}
 
 
@@ -66,7 +71,7 @@ def test_http_exception_status_code_still_means_what_it_meant(env):
     """The upgrade changes the BODY, never the status. An unauthenticated
     request to a gated route is still 401, exactly as before this ADR."""
     anon = TestClient(app)
-    r = anon.get("/api/location/latest")
+    r = anon.get("/api/chat/threads")
     assert r.status_code == 401
     assert r.json()["detail"]["code"] == "unauthorized"
 
@@ -76,14 +81,15 @@ def test_validation_error_carries_the_same_shape(env):
     raise site) must carry the same `{"code", "message", "hint"}` object as
     every other failure, not FastAPI's stock bare list of `{loc, msg, type}`."""
     op = _client_for("operator@example.com", "password1")
-    # lat is required and bounded to [-90, 90]; 999 fails validation before
-    # the handler body ever runs.
-    r = op.post("/api/location/update", json={"lat": 999, "lng": 0}, headers=CSRF)
+    # `context_key` is typed `str`; a list fails validation before the handler
+    # body ever runs.
+    r = op.post("/api/chat/threads", json={"context_key": ["not", "a", "string"]},
+                headers=CSRF)
     assert r.status_code == 422
     detail = r.json()["detail"]
     assert set(detail) == {"code", "message", "hint"}
     assert detail["code"] == "validation_error"
-    assert "lat" in detail["message"]
+    assert "context_key" in detail["message"]
 
 
 def test_error_body_passes_through_an_opted_in_code():
@@ -133,64 +139,3 @@ def test_page_items_is_never_absent_for_an_empty_collection():
 def test_default_and_max_page_constants():
     assert DEFAULT_PAGE == 50
     assert MAX_PAGE == 200
-
-
-# ---------------------------------------------------------------- location.py
-
-
-def test_location_update_creates_201_and_returns_the_resource_unwrapped(env):
-    requires_app("location")
-    op = _client_for("operator@example.com", "password1")
-    r = op.post("/api/location/update", json={"lat": 37.44, "lng": -122.14}, headers=CSRF)
-    assert r.status_code == 201, r.text
-    body = r.json()
-    # Unwrapped: the resource itself, not {"ok": true, "record": {...}}.
-    assert body["lat"] == 37.44
-    assert body["lng"] == -122.14
-    assert "ok" not in body
-    assert "record" not in body
-
-
-def test_location_latest_is_the_resource_unwrapped(env):
-    requires_app("location")
-    op = _client_for("operator@example.com", "password1")
-    op.post("/api/location/update", json={"lat": 1.0, "lng": 2.0}, headers=CSRF)
-    r = op.get("/api/location/latest")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["lat"] == 1.0
-    assert "latest" not in body  # not {"latest": {...}}
-
-
-def test_location_latest_is_null_not_wrapped_when_absent(env):
-    requires_app("location")
-    op = _client_for("operator@example.com", "password1")
-    r = op.get("/api/location/latest")
-    assert r.status_code == 200
-    assert r.json() is None
-
-
-def test_location_history_is_the_adr_0023_envelope(env):
-    requires_app("location")
-    op = _client_for("operator@example.com", "password1")
-    for i in range(3):
-        op.post("/api/location/update", json={"lat": float(i), "lng": 0.0}, headers=CSRF)
-    r = op.get("/api/location/history?limit=2&offset=0")
-    assert r.status_code == 200
-    body = r.json()
-    assert set(body) == {"items", "page"}
-    assert len(body["items"]) == 2
-    assert body["page"]["limit"] == 2
-    assert body["page"]["total"] == 3
-    # Offset survives (ADR 0023 clause 2: "offset survives only where it
-    # already is") -- carried inside `page`, not as a fourth top-level key.
-    assert body["page"]["offset"] == 0
-
-
-def test_location_history_delete_is_204_with_no_body(env):
-    requires_app("location")
-    op = _client_for("operator@example.com", "password1")
-    op.post("/api/location/update", json={"lat": 1.0, "lng": 1.0}, headers=CSRF)
-    r = op.delete("/api/location/history", headers=CSRF)
-    assert r.status_code == 204
-    assert r.content == b""
