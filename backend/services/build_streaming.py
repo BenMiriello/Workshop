@@ -1020,6 +1020,14 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
             "duration_ms": ev.get("duration_ms"),
             "total_cost_usd": ev.get("total_cost_usd"),
             "usage": ev.get("usage"),
+            # THE ONLY PLACE THIS TURN'S SPEND IS ACTUALLY REPORTED.
+            # `usage` on a result envelope is all zeros on this CLI build —
+            # measured 2026-09-04 over every surviving turn journal, four of
+            # four — while `modelUsage` beside it carries the real per-model
+            # counts, including the real output count that the assistant frames
+            # only ever show as a message_start placeholder. Carried through so
+            # `_finalize_turn` can record components instead of a frame sum.
+            "modelUsage": ev.get("modelUsage"),
         })
     if t == "system":
         return ("meta", {"subtype": ev.get("subtype")})
@@ -3039,6 +3047,16 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             # That overcounts the context window (hence the fallback-only use
             # below) but it is exactly right for spend, so prefer it when present.
             state["spend_result"] = _spend_tokens_from_usage(payload.get("usage"))
+            # The per-model components, which is what the ledger row stores and
+            # what a dollar figure needs. `spend_result` above stays as the
+            # backward-compatible integer for the `tokens` column, but on this
+            # CLI build it is ZERO (see the modelUsage comment in
+            # `_parse_stream_event`), which is why the `or` chain below it has
+            # always fallen through to the inflated frame sum.
+            if isinstance(payload.get("modelUsage"), dict):
+                state["model_usage"] = payload["modelUsage"]
+            if payload.get("total_cost_usd") is not None:
+                state["vendor_cost_usd"] = payload["total_cost_usd"]
             # Fallback only: the result usage can be a per-turn SUM across tool
             # rounds, so it overcounts the window. Use it only if no assistant
             # message reported usage.
@@ -3242,6 +3260,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     await _finalize_turn(turn, meta, rc=rc, timed_out=timed_out, compacted=state["compacted"],
                          context_tokens=int(state.get("last_ctx") or 0),
                          spend_tokens=int(state.get("spend_result") or state.get("spend_sum") or 0),
+                         model_usage=state.get("model_usage"),
+                         vendor_cost_usd=state.get("vendor_cost_usd"),
                          subtype=str(state.get("result_subtype") or ""), lost=lost,
                          stopped=stopped, over_memory=over_memory,
                          # A message the CLI never echoed back is one it never
@@ -3489,7 +3509,9 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
                        context_tokens: int = 0, spend_tokens: int = 0,
                        subtype: str = "", lost: bool = False,
                        stopped: bool = False, over_memory: bool = False,
-                       unread: bool = False) -> None:
+                       unread: bool = False,
+                       model_usage: dict | None = None,
+                       vendor_cost_usd: float | None = None) -> None:
     prompt = meta.get("prompt", "") or ""
     cwd = meta.get("cwd", "") or ""
     timeout_s = float(meta.get("timeout_s", 0) or 0)
@@ -3885,18 +3907,42 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     # reserve. Recorded with role="chat" so chat spend stays separable from
     # autonomous worker spend in every downstream view. Best-effort — a ledger
     # hiccup must never fail a turn the operator already received.
-    if spend_tokens > 0:
-        try:
-            from services import usage_ledger
+    #
+    # COMPONENTS, NOT ONE INTEGER, when the turn reported them. The `tokens`
+    # column has held three incompatible quantities at once — this writer summed
+    # raw usage over stream FRAMES (duplicated once per content block, and
+    # counting cache reads at parity), the worker weighted cache reads at 0.1,
+    # and compaction stored a chars/4 estimate — and window_usage added them
+    # together. `modelUsage` fixes the source (real, deduplicated, per model,
+    # with the real output count) and storing the components fixes the unit,
+    # because a row that keeps them can be re-expressed later and a row that
+    # keeps only a total never can.
+    try:
+        from services import token_usage, usage_ledger
+        parsed = usage_ledger.usage_from_envelope(
+            {"type": "result", "modelUsage": model_usage,
+             "total_cost_usd": vendor_cost_usd})
+        comp = parsed["components"]
+        tokens = spend_tokens
+        if comp:
+            # The rate-limit-shaped figure, so this row is finally in the SAME
+            # unit as the worker rows it sits beside in one window.
+            tokens = token_usage.effective(token_usage.Usage(**comp))
+        if tokens > 0 or comp:
             usage_ledger.record(
                 usage_scope_for_thread(turn.thread_id),
-                spend_tokens,
+                tokens,
                 role="chat",
                 run=turn.id,
                 chat=turn.thread_id,
+                components=comp,
+                models=parsed["models"],
+                model=parsed["model"],
+                source=parsed["source"],
+                vendor_cost_usd=parsed["vendor_cost_usd"],
             )
-        except Exception as e:
-            log.debug("turn %s: chat usage record failed: %s", turn.id, e)
+    except Exception as e:
+        log.debug("turn %s: chat usage record failed: %s", turn.id, e)
     try:
         build_agents.touch(turn.agent_slug)
         # Turn is over: drop the persisted "running" ratchet back to idle so the

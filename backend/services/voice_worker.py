@@ -307,7 +307,7 @@ async def _pump(worker: VoiceWorker) -> None:
                 # billed to the operator's account and recorded nowhere. The
                 # tokens were spent whether or not he heard the answer.
                 if t == "result":
-                    _record_spend(turn, ev.get("usage"))
+                    _record_spend(turn, ev.get("usage"), envelope=ev)
                 continue
             if t == "stream_event":
                 e = ev.get("event", {})
@@ -328,7 +328,7 @@ async def _pump(worker: VoiceWorker) -> None:
                     if blk.get("type") == "tool_use":
                         turn.push("tool", {"name": blk.get("name", "tool"), "input": ""})
             elif t == "result":
-                _record_spend(turn, ev.get("usage"))
+                _record_spend(turn, ev.get("usage"), envelope=ev)
                 _finish_turn(turn, error=None)
             elif t == "assistant":
                 # The completed assistant message carries the authoritative,
@@ -376,7 +376,8 @@ def _resolve_control(worker: VoiceWorker, ev: dict) -> None:
     fut.set_result(resp.get("subtype") != "error")
 
 
-def _record_spend(turn: VoiceTurn, usage: object) -> None:
+def _record_spend(turn: VoiceTurn, usage: object,
+                  envelope: dict | None = None) -> None:
     """Meter a spoken turn's SPEND, exactly as the text path does.
 
     A voice turn is a chat turn: same account, same model, same money. It was the
@@ -387,18 +388,38 @@ def _record_spend(turn: VoiceTurn, usage: object) -> None:
     Same shape as the text path deliberately: role="chat" (chat spend stays
     separable from autonomous worker spend downstream), scope from the thread,
     and best-effort — a ledger hiccup must never cost the operator a reply they
-    have already heard."""
-    tokens = _spend_tokens_from_usage(usage)
-    if tokens <= 0:
-        return
+    have already heard.
+
+    `envelope` is the WHOLE result event when the caller has it, because
+    `usage` on a result envelope is all zeros on this CLI build (measured
+    2026-09-04 across every surviving turn journal) while `modelUsage` beside it
+    carries the real per-model counts. Going through `usage_from_envelope` is
+    also what makes voice and text agree BY CONSTRUCTION rather than by two
+    copies of the same arithmetic — the property that was missing when voice
+    went unmetered for months."""
     try:
-        from services import usage_ledger
+        from services import token_usage, usage_ledger
+        parsed = usage_ledger.usage_from_envelope(envelope or {})
+        comp = parsed["components"]
+        if comp:
+            tokens = token_usage.effective(token_usage.Usage(**comp))
+        else:
+            # No envelope, or one this build reported nothing usable in. Fall
+            # back to the raw usage block the caller passed.
+            tokens = _spend_tokens_from_usage(usage)
+        if tokens <= 0 and not comp:
+            return
         usage_ledger.record(
             usage_scope_for_thread(turn.thread_id),
             tokens,
             role="chat",
             run=turn.id,
             chat=turn.thread_id,
+            components=comp,
+            models=parsed["models"],
+            model=parsed["model"],
+            source=parsed["source"],
+            vendor_cost_usd=parsed["vendor_cost_usd"],
         )
     except Exception as e:  # pragma: no cover — best-effort
         log.debug("voice turn %s: usage record failed: %s", turn.id, e)

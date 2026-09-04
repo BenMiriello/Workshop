@@ -93,10 +93,16 @@ _V1_UNIT_BY_ROLE = {
 # effect one step removed. Compacting a thread is overhead of an interactive
 # conversation, not work anybody chose to spend the autonomy budget on: it is
 # the summarizer folding a chat's own history, billed to the chat's scope, and
-# the operator cannot decline it. Its writer (`routes/chat.py`, the
-# `role="compaction"` record) says in its own comment "Reported, never gated
-# (same posture as the turn/voice metering)" -- and it WAS gated, because the
-# role was not on this list.
+# the operator cannot decline it. Its writer said in its own comment "Reported,
+# never gated (same posture as the turn/voice metering)" -- and it WAS gated,
+# because the role was not on this list.
+#
+# THAT WRITER NO LONGER EXISTS. Measured 2026-09-04: the four live writers are
+# `build_streaming` (role=chat), `voice_worker` (role=chat), `scripts/ralph.sh`
+# (role=worker) and `scripts/reviewer.sh` (role=reviewer); nothing writes
+# role=compaction any more. The role stays on this list regardless, because
+# 1,813 historical rows carry it and dropping it would silently change what
+# every past window totals.
 #
 # Measured 2026-08-22, with the loop refusing every sweep for hours: of the
 # 3,374,976 non-chat tokens the admission window counted, 2,801,736 (83%) were

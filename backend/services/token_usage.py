@@ -13,7 +13,8 @@ They cannot share a number:
       Rate-limit shaped, so cache reads count far below parity. This is the
       admission and budget quantity.
   (d) MONEY      what it would cost at metered prices. Needs the model id and a
-      price table, so it is NOT here; it lands with the price table (16625867).
+      price table, so it is not here: it is `services/model_prices.py`, which
+      imports this module for its component shape and never the other way round.
 
 (a) and (b) differ because one is a max and the other is a sum. (b) and (c)
 differ because they weight cache reads differently, by a measured factor of
@@ -88,9 +89,9 @@ class Usage:
     def as_dict(self) -> dict[str, int]:
         """Components as a plain dict.
 
-        This is the shape ticket c0bac5ad will store on a ledger row under
-        `components`. `usage_ledger.record()` does NOT write it today, and this
-        module deliberately does not change that.
+        This is the shape a ledger row stores under `components`, as of
+        2026-09-04: `usage_ledger.record()` writes it, and `row_tokens()` reads
+        it back to re-express a past row in a unit it was not written in.
         """
         return {"input": self.input, "cache_read": self.cache_read,
                 "cache_creation": self.cache_creation, "output": self.output}

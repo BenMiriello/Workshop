@@ -1428,48 +1428,32 @@ fi
 #    when there is no reviewer claude envelope (the deterministic checks above spend
 #    no Claude tokens, so nothing is recorded). Never affects the JSON verdict above.
 if [[ -n "${REVIEWER_BILL_SCOPE:-}" && -n "${REVIEWER_CLAUDE_OUT:-}" && -f "${REVIEWER_CLAUDE_OUT:-}" ]]; then
-  REV_TOKENS=$(python3 - "$REVIEWER_CLAUDE_OUT" <<'PYEOF'
+  # THROUGH THE ONE SEAM, like ralph.sh's per-iteration meter beside it. What
+  # was here was a third copy of the same tolerant JSON ladder and a THIRD
+  # spelling of the 0.1 cache-read weight, reading `usage` — which on this CLI
+  # build is all zeros on a result envelope (measured 2026-09-04, four of four
+  # surviving journals), so the reviewer's auxiliary spend has been recording
+  # nothing. `record --usage-json` prefers `modelUsage`, derives the token count
+  # from the components, and stores them so the row can be repriced.
+  REV_ATTR=(--role reviewer)
+  [[ -n "${REVIEWER_BILL_TASK_ID:-}" ]] && REV_ATTR+=(--task-id "$REVIEWER_BILL_TASK_ID")
+  [[ -n "${REVIEWER_BILL_RUN:-}" ]] && REV_ATTR+=(--run "$REVIEWER_BILL_RUN")
+  REV_OUT=$( (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.usage_ledger record \
+     --project "$REVIEWER_BILL_SCOPE" --usage-json "$REVIEWER_CLAUDE_OUT" "${REV_ATTR[@]}" 2>/dev/null) || echo "")
+  REV_TOKENS=$(printf '%s' "$REV_OUT" | python3 -c "
 import json, sys
-tok = 0
 try:
-    txt = open(sys.argv[1]).read()
-    obj = None
-    try:
-        obj = json.loads(txt)
-    except Exception:
-        for line in txt.splitlines():
-            line = line.strip()
-            if line.startswith('{') and '"usage"' in line:
-                try:
-                    obj = json.loads(line); break
-                except Exception:
-                    pass
-        if obj is None:
-            i = txt.find('{"type"')
-            if i >= 0:
-                try:
-                    obj = json.loads(txt[i:])
-                except Exception:
-                    obj = None
-    u = (obj or {}).get('usage') or {}
-    # Same weighted ladder as ralph.sh: cache reads at 0.1 (the subscription rate
-    # limits count a cache read far below a fresh token), everything else at parity.
-    tok = (int(u.get('input_tokens', 0))
-           + int(0.1 * int(u.get('cache_read_input_tokens', 0)))
-           + int(u.get('cache_creation_input_tokens', 0))
-           + int(u.get('output_tokens', 0)))
+    print(int((json.load(sys.stdin) or {}).get('tokens') or 0))
 except Exception:
-    tok = 0
-print(tok)
-PYEOF
-)
+    print(0)
+" 2>/dev/null || echo 0)
   if [[ -n "$REV_TOKENS" && "$REV_TOKENS" -gt 0 ]]; then
-    REV_ATTR=(--role reviewer)
-    [[ -n "${REVIEWER_BILL_TASK_ID:-}" ]] && REV_ATTR+=(--task-id "$REVIEWER_BILL_TASK_ID")
-    [[ -n "${REVIEWER_BILL_RUN:-}" ]] && REV_ATTR+=(--run "$REVIEWER_BILL_RUN")
-    (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.usage_ledger record \
-       --project "$REVIEWER_BILL_SCOPE" --tokens "$REV_TOKENS" "${REV_ATTR[@]}" >/dev/null 2>&1) || true
     echo "[$(ts)] reviewer metered $REV_TOKENS tokens (scope=$REVIEWER_BILL_SCOPE role=reviewer task=${REVIEWER_BILL_TASK_ID:-none} run=${REVIEWER_BILL_RUN:-none})" >> "$LOG"
+  else
+    # SAY SO. This block used to compute 0 and write nothing, which looks
+    # identical to a deterministic review that spent no Claude tokens at all.
+    # An unreadable envelope is a metering failure and must not be invisible.
+    echo "[$(ts)] reviewer metered NOTHING from $REVIEWER_CLAUDE_OUT (no readable usage in the envelope); its spend is missing from the ledger" >> "$LOG"
   fi
 fi
 
