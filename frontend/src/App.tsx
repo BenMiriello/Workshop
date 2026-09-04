@@ -147,15 +147,25 @@ function VoiceRedirect() {
 // content on a desktop, two toolbars and the content on a phone. The two width
 // modifiers (--chatfull, --appfull) moved there with it and are still the ONLY
 // per-route width logic there is. Do not reintroduce a route-by-route list.
-export default function App() {
-  // A TAB THAT HAS BEEN OPEN ALL DAY IS RUNNING THE BUILD IT LOADED. The edge
-  // already stops a FRESH load from getting a stale bundle (index.html goes out
-  // no-cache with an ETag); nothing was closing the other half, so a fix could
-  // be committed, built, and verifiably live on the public origin while the
-  // operator, in an open tab, was still looking at the previous one and
-  // correctly saying it was not fixed. Measured 2026-09-01. No banner: it
-  // reloads on the next navigation and says nothing. See lib/newBuild.ts.
+// A TAB THAT HAS BEEN OPEN ALL DAY IS RUNNING THE BUILD IT LOADED. The edge
+// already stops a FRESH load from getting a stale bundle (index.html goes out
+// no-cache with an ETag); nothing was closing the other half, so a fix could
+// be committed, built, and verifiably live on the public origin while the
+// operator, in an open tab, was still looking at the previous one and
+// correctly saying it was not fixed. Measured 2026-09-01. No banner: it
+// reloads on the next navigation and says nothing. See lib/newBuild.ts.
+//
+// A COMPONENT RATHER THAN A CALL IN `App`, because the read is on the query
+// layer and `App` IS the component that mounts `QueryClientProvider`: a hook
+// called in the body of the provider's own owner runs OUTSIDE the context it
+// is about to create, and `useQuery` there throws on the first render. It
+// renders nothing; it is mounted for its effect, inside the provider.
+function FreshBuildWatch() {
   useFreshBuild();
+  return null;
+}
+
+export default function App() {
   return (
     // The query cache sits ABOVE every route, so moving between screens does
     // not throw away what was already read, and INSIDE `AuthProvider` (which
@@ -163,6 +173,7 @@ export default function App() {
     // main.tsx mounts `BrowserRouter` above `AuthProvider`, so "outside the
     // router" can only mean above the route tree, which is what this is.
     <QueryClientProvider client={queryClient}>
+    <FreshBuildWatch />
     <AppProviders>
     <BreadcrumbProvider>
     <Shell>
