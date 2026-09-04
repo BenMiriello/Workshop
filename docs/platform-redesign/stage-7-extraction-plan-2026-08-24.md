@@ -597,6 +597,31 @@ Class J  the exception width in _has_module        1 site   (1 invisible)
 follows is the recommendation and, more usefully, the consequence of each option
 for three specific things that will otherwise be discovered late.
 
+### 4.0 WHAT WAS ACTUALLY BUILT, 2026-09-04
+
+The overlay, as recommended in 4.1 below. `apps/` is now its own git repository
+(first commit `719af12`, ticket 84028d47) holding eight directories: birds,
+budget, commute, finance, health, location, notes-app, wearables. Each carries a
+`workshop.app.json` with the `ui` block from `stage-5-app-loader-plan` section
+2.1, a `pyproject.toml` declaring a `workshop.apps` entry point, and a
+`package.json` where the app has a frontend. The spec each entry point resolves
+to is a declared placeholder returning the app's identity; the real one arrives
+in that app's own extraction ticket, which the placeholder names.
+
+Nothing was moved. Every app's source is still in the platform repo and still
+served from it: `git ls-files apps/` in the platform is 0 and the platform's
+`git status` is unchanged by this work, which is the whole point of doing the
+destination as its own step.
+
+NO REMOTE, deliberately. Decision D1 in section 8 is the operator's and the tree
+works locally without an answer. Decision D2 (what a worktree gets, section 4.2)
+is untouched and still open; it was not pre-empted with a symlink.
+
+One correction to the text below: it says seven apps. There are eight. Wearables
+declares itself like the rest and is in the catalog, and the earlier count
+predates it being scanned at all (`959a264e` widened the app-name gate's roster
+from a subset to every registry, which is also how `gengui` first appeared).
+
 ### 4.1 The recommendation: one overlay repo now, individual repos later
 
 `app-is-the-entity-2026-08-20.md` section 10 already recommends the overlay and
