@@ -9,6 +9,7 @@ import { threadCache } from "./threadCache";
 import { selectCommitted, composeTranscript, isLiveShown, type TranscriptBlock } from "./transcriptBlocks";
 import type { ChatProblem } from "./chatProblem";
 import { isStale } from "./staleNotice";
+import { NEW_STREAM, streamErrored, streamOpened } from "./streamHealth";
 
 // The client's copy of one thread's log, kept current from ONE endpoint.
 //
@@ -569,24 +570,43 @@ export function useThreadLog({
     let es: EventSource | null = null;
     let retry: number | undefined;
     let closed = false;
-    let attempt = 0;
+    // The reconnect policy is streamHealth.ts; this effect is its wiring and
+    // the socket. See that file for the three things the hand-rolled version
+    // got wrong, all of which only show up during a blip.
+    let health = NEW_STREAM;
 
     const open = () => {
       if (closed) return;
       es = new EventSource(`/api/chat/threads/${encodeURIComponent(threadId)}/stream`);
-      es.addEventListener("changed", () => {
-        attempt = 0;
-        void syncRef.current();
-      });
+      es.onopen = () => {
+        // OPENING IS THE PROOF, so this is where the backoff resets and where
+        // the catch-up read goes. It used to sync just BEFORE each reopen,
+        // i.e. while the backend was still away, so an outage spent its whole
+        // length issuing requests that could only fail — and those failures
+        // are what the staleness detector counts.
+        //
+        // NOT ON THE FIRST OPEN. That one is not a reconnect: the load effect
+        // above has just read this thread, and `stateRef` may not even carry
+        // its id yet, so a sync here would compute `after = 0` and re-read the
+        // whole tail. Only a socket that came BACK can have missed anything.
+        const reconnect = health.phase !== "connecting" || health.attempt > 0;
+        health = streamOpened();
+        if (reconnect) void syncRef.current();
+      };
+      es.addEventListener("changed", () => { void syncRef.current(); });
       es.onerror = () => {
-        // A dropped stream is ordinary (a restart, a proxy timeout, sleep).
-        // Reconnect with a bounded backoff, and sync on the way back in: the
-        // reconnect itself is the moment this tab is most likely to be behind.
+        if (closed) return;
+        // CONNECTING means the browser is already reopening this socket on its
+        // own schedule; closing it here and opening another is two reconnect
+        // machines racing over one stream. Only a socket the browser has given
+        // up on is ours to replace. Same rule useTurnStream has always applied.
+        const browserRetrying = es?.readyState === EventSource.CONNECTING;
+        const { next, reopenAfterMs } = streamErrored(health, browserRetrying, Math.random());
+        health = next;
+        if (reopenAfterMs === null) return;
         es?.close();
         es = null;
-        if (closed) return;
-        const wait = Math.min(1000 * 2 ** attempt++, 30_000);
-        retry = window.setTimeout(() => { void syncRef.current(); open(); }, wait);
+        retry = window.setTimeout(() => { retry = undefined; open(); }, reopenAfterMs);
       };
     };
     open();
