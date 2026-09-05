@@ -163,13 +163,37 @@ sudo systemctl reload ssh
 committing to `/opt/clawd-house/docs`), owned by clawd-house, not writable by the service user, rejecting any
 `-c`/`--upload-pack`/user-supplied args. Or drop the rule if the commit path can move.
 
-### Stale Serve entry 🔴 — `:8445 → :3100` points at the now-stopped open-wearables frontend
-Harmless (502s), but tidy it up (needs sudo — the service user's `tailscale serve` is access-denied):
+### ~~Stale~~ LIVE Serve entry 🔴 — `:8445 → :3100`, open-wearables frontend
+Was recorded here as harmless (502s) because the frontend was believed stopped. **Re-measured
+2026-09-05: it is running**, on `0.0.0.0:3100`, answering 200 unauthenticated, so this mapping
+publishes it to the tailnet rather than 502-ing. See the corrected M2 entry in Part 3 for the
+loopback bind and the container bounce that applies it. Decide there whether the mapping should
+stay; if not, it still needs sudo (the service user's `tailscale serve` is access-denied):
 `sudo tailscale serve --https=8445 off`
 
 ### L2 — Vite dev server (:5173) served to the tailnet via Serve 8443
-Source/source-map/FS exposure. Either `tailscale serve --https=8443 off`, or point it at the built
-bundle. If kept, set `server.fs.strict: true` in `frontend/vite.config.ts`.
+Source/source-map/FS exposure. **The dev server is now stopped** (2026-09-05):
+`systemctl --user stop workshop-frontend.service`, and `:5173` refuses connections, so Serve 8443
+now fronts a dead port and the source is no longer reachable through it. Two things remain, both
+needing a shell the agent does not have:
+
+1. **It is stopped but still enabled**, so it comes back at the next boot or login. Make it stick:
+   `systemctl --user disable workshop-frontend.service`. An agent cannot: the systemd user unit
+   directory is not in its mount namespace, so `disable`, `is-enabled` and `list-unit-files` fail for
+   *every* unit (including `docker.service`) while `systemctl --user show` still reports
+   `UnitFileState=enabled` through the manager. Stop and start work; the file-touching verbs do not.
+2. **Drop the mapping**: `sudo tailscale serve --https=8443 off`. Needs root — the service user's
+   `tailscale serve` is access-denied, and `tailscaled.sock` is not reachable as that user.
+
+To put the dev origin back at any time: `systemctl --user start workshop-frontend.service`.
+
+Not a substitute, and worth recording so nobody reaches for it as one: `server.fs.strict` already
+defaults to **true** in Vite 5 (this tree is on 5.4.21), so setting it in `frontend/vite.config.ts`
+changes nothing. Probing the running dev server for arbitrary reads bore that out — `/@fs/` requests
+for `backend/services/ownership.py` and for files under `.runtime/users/` all returned the 5089-byte
+SPA `index.html`, not the file. The exposure this finding is really about is the app's own
+TypeScript source and source maps (`/src/main.tsx` did serve real transformed source), not
+arbitrary filesystem read.
 
 ### L5 🔴 — Samba anon enumeration + rpcbind
 `smbclient -L -N` leaks share/user names. Add `restrict anonymous = 2` to `/etc/samba/smb.conf` and
@@ -184,6 +208,50 @@ The exposed/crash-looping containers are now stopped (the service user did this)
 move the vendor OAuth / AWS / `ADMIN_PASSWORD` / `SECRET_KEY` / `RESEND_API_KEY` values out of the
 committed compose env into a non-committed `env_file` (0600) or a secret store. Compose lives at
 `~/workshop/infra/open-wearables/repo`.
+
+**Re-measured 2026-09-05. The secrets half of this was already true, and the paragraph above was
+wrong in both directions.** Correcting it rather than deleting it, because "move the secrets out of
+the committed compose" is the instruction that would have been carried out otherwise, and there is
+nothing there to move.
+
+*Secrets — already satisfied, and nothing was ever committed.* Every value the finding names
+(`WHOOP*`, `OURA*`, `FITBIT*`, `GARMIN*`, `STRAVA*`, `SUUNTO*`, `POLAR*`, `ULTRAHUMAN*`, `AWS_*`,
+`ADMIN_PASSWORD`, `RESEND_API_KEY`, `SECRET_KEY`) appears **only** in `backend/config/.env`, which
+both compose files already consume via `env_file:`. Zero of them appear in `docker-compose.yml` or
+`docker-compose.prod.yml`; the single `SECRET_KEY` match in each is `$${SVIX_JWT_SECRET:=$$SECRET_KEY}`,
+a shell default inside a container `command`, not a value. `backend/config/.env` is untracked in the
+nested repo *and* the whole `infra/open-wearables/repo/` tree is gitignored by the parent, and the
+nested history has only ever carried `.env.example` files
+(`git log --all --pretty=format: --name-only | grep '\.env$'` finds none). **So there is no
+credential rotation owed for exposure through either repo.** The one real gap was the file mode:
+`backend/config/.env` was `644` and is now `600`. The local edits to `docker-compose.yml` are the
+operator's own host-port remapping (`DB_PORT_HOST`, `REDIS_PORT_HOST`, `VITE_API_URL`) and contain no
+secrets.
+
+*Crash-looping backend/svix — closed.* `app` (8100) and `svix-server` (8072) are not listening and no
+container is looping.
+
+*All-interfaces exposure — was still open, config now fixed, container still needs a bounce.* The
+claim that the frontend is stopped is stale: `frontend__open-wearables` was live on **`0.0.0.0:3100`
+and `[::]:3100`**, answering 200 unauthenticated. Upstream publishes every port with no host IP, so
+all of them bind `0.0.0.0` when they come up. Added `docker-compose.override.yml` in that checkout
+(auto-loaded, leaves the vendored file untouched) prefixing `127.0.0.1:` to **db, redis, flower,
+svix-server and frontend**. Tailnet access via Serve `:8445 -> :3100` is unaffected, because Serve
+connects from loopback. **This takes effect only on the next `docker compose up -d`** — compose does
+not re-bind a container that already exists — so `:3100` stays LAN-visible until the operator
+recreates it:
+`cd ~/workshop/infra/open-wearables/repo && docker compose up -d frontend` (or `docker compose down`
+if the stack is not wanted at all). An agent cannot: the rootless docker socket is outside its mount
+namespace.
+
+*Left for the operator to decide, deliberately not changed.* The `app` service (API, host 8100) is
+**not** in the override. The root `.env` sets `VITE_API_URL` to a LAN host on purpose — the SPA runs
+in an off-host browser and calls that URL directly — so binding the API to loopback breaks the app
+for anything not on this machine unless `VITE_API_URL` is repointed through the tailnet in the same
+change. That is an access-model decision, not hygiene.
+
+Also stale, and for the same reason: the "Stale Serve entry `:8445 -> :3100`" item above is **not**
+stale. It points at a frontend that is running.
 
 ### SEC-G1 — Fine-grained GitHub PAT (approved) 👤
 Move the the excluded work org boundary into the credential, not just the code. The current global git credential
@@ -203,6 +271,23 @@ the service user's letta `:8283` is loopback-only and the password is weak + vis
 (root). Enforcing it has near-zero value until Part 1. simonsays's `letta-simonsays` `:8284` is
 theirs to enforce if desired.
 
+**Re-measured 2026-09-05, and the service user's half is no longer reachable at all.** `:8283` is not
+in `ss -tln` and `curl http://127.0.0.1:8283/v1/health/` fails to connect. The `letta server --host
+0.0.0.0 --port 8283` process is still running in a container, but that port is not published to the
+host, so the loopback reach the finding describes is closed for `:8283` — by the port not being
+published, not by the password.
+
+What is still open is the other half, and it is not the service user's to close:
+`curl -o /dev/null -w '%{http_code}' http://127.0.0.1:8284/v1/agents/` returns **200
+unauthenticated**, and `/v1/health/` reports Letta 0.16.8. Since loopback is shared between host
+users, any host user reaches simonsays's agent-memory API. That server belongs to simonsays and
+needs the flag that actually requires `LETTA_SERVER_PASS` plus a restart, done by them. Note also
+that the agent cannot restart the containers either way: the rootless docker socket
+(`/run/user/1003/docker.sock`) is outside its mount namespace, so `docker ps` cannot connect.
+
+There is nothing to change in this repo for this finding — `infra/letta/.env` holds only Postgres
+and Ollama settings, and no compose file for either Letta server lives here.
+
 ---
 
 ## Quick status
@@ -210,7 +295,12 @@ theirs to enforce if desired.
 Applied by the service user already (no root): edge `/auto-pr` block, `/tools` LAN-trust narrowing, backend
 bound to loopback, registration fail-closed, `/docs` off, `auth.db`/`letta.env` perms, WebFetch
 egress coverage, recursive-claude clamps + depth guard, app-container `no-new-privileges`, mobile
-bridge write-only + origin-lock + debug gating, open-wearables exposure stopped.
+bridge write-only + origin-lock + debug gating, ~~open-wearables exposure stopped~~ (see M2: the
+frontend was still live on `0.0.0.0:3100` on 2026-09-05), Vite dev server `:5173` stopped (L2).
+
+A status line saying a thing is stopped is worth exactly as much as the last time somebody ran
+`ss -tln`. Two entries in this file said "stopped" about a port that was listening. Re-measure before
+trusting any line here.
 
 Highest-value remaining: **Part 1** (rootless cutover — the unbreakable agent boundary) and **C3**
 (verify IPv6 firewall). Everything else is contained or lower-severity.
