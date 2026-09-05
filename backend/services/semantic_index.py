@@ -1762,6 +1762,102 @@ def _keep_mask(meta: list[dict], kinds, scopes: set[str] | None,
     return mask
 
 
+def reachable_item(kind: str, scope: str, item_ref: str | None, *,
+                   scopes: str | tuple | list | set | frozenset | None = None,
+                   from_scope: str | None = None) -> bool:
+    """`_keep_mask`'s decision, for ONE item that is not a chunk.
+
+    Anything that hands a caller a piece of this corpus has to ask the same
+    question a search asks, or it becomes a way around the boundary a search
+    respected: a tool that reads a document in full is exactly that if it
+    answers for a document the searcher was never shown. Two doors, one rule --
+    the reach test and the `share` test are written once, here and in
+    `_keep_mask`, and both end at `memory_policy.reachable`.
+
+    `scope` is in the `scope_tree` namespace already (`resolve_chunk_scope`
+    applied), and "" means placeless, which is reachable from anywhere for the
+    same reason an unscoped doc chunk is."""
+    allowed = _scope_set(scopes)
+    in_reach = True if (allowed is None or not scope) else (scope in allowed)
+    if not from_scope:
+        return in_reach
+    from services import memory_policy
+    share = memory_policy.resolve(kind, scope or None, item_ref)
+    return bool(memory_policy.reachable(share=share, item_scope=scope,
+                                        from_scope=from_scope,
+                                        in_reach=in_reach))
+
+
+def corpus_map(kinds: tuple[str, ...] | list[str] | None = None,
+               scopes: str | tuple | list | set | frozenset | None = None,
+               from_scope: str | None = None) -> dict:
+    """How big the corpus is, and how much of it this caller can reach.
+
+    `status()` answers "is there an index"; this answers "how much is there",
+    which is a different question and the one an agent needs BEFORE it searches
+    rather than after it fails. A search that finds nothing means one thing
+    against twelve documents and the opposite against twelve thousand, and
+    until this existed there was no way to tell those apart from inside a chat.
+
+    Counts DOCUMENTS as well as passages, because a passage count is a fact
+    about the chunker and a document count is a fact about the workshop. Both
+    are reported reachable-first, since the reachable number is the one that
+    bounds any answer this caller can get.
+
+        {"chunks", "reachable_chunks", "documents", "reachable_documents",
+         "by_kind": {kind: {...}}, "oldest", "newest",
+         "model", "embedder_ok", "embedder_error", "stale"}
+    """
+    meta, _vecs = load()
+    keep = _keep_mask(meta, tuple(kinds) if kinds else None,
+                      _scope_set(scopes), from_scope)
+    by_kind: dict[str, dict] = {}
+    docs: set[tuple[str, str]] = set()
+    reachable_docs: set[tuple[str, str]] = set()
+    reachable_chunks = 0
+    oldest = newest = ""
+    for i, m in enumerate(meta):
+        kind = m.get("kind") or "?"
+        ident = (kind, m.get("ref") or "")
+        row = by_kind.setdefault(
+            kind, {"passages": 0, "reachable_passages": 0,
+                   "_docs": set(), "_reachable_docs": set()})
+        row["passages"] += 1
+        row["_docs"].add(ident)
+        docs.add(ident)
+        if not keep[i]:
+            continue
+        reachable_chunks += 1
+        row["reachable_passages"] += 1
+        row["_reachable_docs"].add(ident)
+        reachable_docs.add(ident)
+        ts = (m.get("ts") or "")[:10]
+        if ts:
+            oldest = ts if not oldest or ts < oldest else oldest
+            newest = ts if not newest or ts > newest else newest
+    for row in by_kind.values():
+        row["documents"] = len(row.pop("_docs"))
+        row["reachable_documents"] = len(row.pop("_reachable_docs"))
+    ok, why = available()
+    return {
+        "chunks": len(meta),
+        "reachable_chunks": reachable_chunks,
+        "documents": len(docs),
+        "reachable_documents": len(reachable_docs),
+        "by_kind": by_kind,
+        "oldest": oldest,
+        "newest": newest,
+        "model": _index_model(),
+        "embedder_ok": ok,
+        "embedder_error": why,
+        # Not "a rebuild is running": the reader of this map is usually a
+        # separate short-lived process with no rebuild thread of its own, so
+        # thread liveness would report False for every caller that matters.
+        # The on-disk staleness signal is the one that crosses processes.
+        "stale": is_stale(),
+    }
+
+
 # ---------------------------------------------------------------- search
 
 def search(query: str, *, limit: int = 8,
@@ -1935,9 +2031,22 @@ def search(query: str, *, limit: int = 8,
         if per_ref.get(ref, 0) >= _MAX_PER_REF:
             continue
         per_ref[ref] = per_ref.get(ref, 0) + 1
+        kind = m.get("kind") or ""
+        # THE ADDRESSABLE FORM, BESIDE THE RAW ONE. `ref` is whatever the
+        # collector recorded (a repo-relative path, a thread id, a bare ticket
+        # id) and stays exactly that, because the per-ref cap above and every
+        # existing consumer key off it. `item_ref` is the same chunk in the one
+        # ref vocabulary -- the thing `refs.py` parses, the thing a citation
+        # renders as a chip, and the thing `open_ref` reads. Without it a caller
+        # holding a hit could not name the document the hit came from: for a
+        # note the two forms do not even share a prefix
+        # (`shared/knowledge/development/x.md` against `note/development/x`),
+        # so it could not be derived on the far side either.
         hits.append({
             "score": round(score, 4),
             "kind": m.get("kind"), "ref": m.get("ref"),
+            "item_ref": _item_ref(kind, ref,
+                                  _resolve_chunk_scope(kind, m.get("scope") or "")),
             "title": m.get("title"), "scope": m.get("scope"),
             "ts": m.get("ts"), "text": m.get("text"),
             # Carried into the answer so the READER can see it too. A demotion

@@ -473,3 +473,186 @@ _RESOLVERS = {
     "app": _resolve_app,
     "file": _resolve_file,
 }
+
+
+# --- reading the whole thing --------------------------------------------------
+#
+# `resolve_ref` answers "does this still exist and what is it called". It stops
+# at a 220-character excerpt on purpose: it feeds a chip, and a chip is a label.
+#
+# That left an agent able to FIND a passage and unable to read the document the
+# passage came from. Search returns a ranked slice bounded by CHUNK_CHARS and a
+# per-document cap, so "6 passages" is never the same as "what was written", and
+# the only way to get the rest was to guess a file path and grep, which is the
+# exact rediscovery the orientation map exists to stop.
+#
+# So: one reader, over the four kinds the corpus actually holds, returning the
+# BODY with the metadata a reader needs to weigh it. It reads through the same
+# per-kind lookups the resolvers use rather than touching disk on its own, so a
+# ref that `resolve_ref` refuses is a ref this refuses too.
+#
+# BODIES ARE READ IN PARTS, NEVER SILENTLY TRUNCATED. A tool result that is cut
+# off without saying so is worse than a short one, because the reader cannot
+# tell a document that ended from one that was clipped: it will summarise half a
+# design as the whole of it. Every part states its character range, the total,
+# and the part number to ask for next.
+BODY_PART_CHARS = 20_000
+
+# The kinds a body can be read for: exactly the kinds the semantic index holds.
+# `run`, `project`, `agent` and `app` are records, not documents -- they have no
+# body to read -- and `file` is an upload, which `get_file` already reads.
+READABLE_KINDS = ("note", "doc", "ticket", "chat")
+
+
+def _mtime_iso(path: Path) -> str:
+    """A file's mtime as an ISO date-time, or "" when it cannot be read. Same
+    stamp the index records for the same file, so a passage and the document it
+    came from do not report different dates."""
+    import datetime as _dt
+    try:
+        return _dt.datetime.fromtimestamp(
+            path.stat().st_mtime, _dt.timezone.utc).isoformat(timespec="seconds")
+    except OSError:
+        return ""
+
+
+def _body_note(ref: Ref) -> dict | None:
+    from services import knowledge
+    scope, _, note_id = ref.key.partition("/")
+    body = knowledge.get_note(scope, note_id)
+    if body is None:
+        return None
+    ts = ""
+    try:
+        ts = _mtime_iso(knowledge.scope_dir(scope) / f"{note_id}.md")
+    except Exception:
+        pass
+    return {"text": body, "scope": scope, "item_ref": serialize_ref(ref), "ts": ts}
+
+
+def _body_doc(ref: Ref) -> dict | None:
+    from services import semantic_index
+    candidate = _clean_doc_path(ref.key)
+    if candidate is None or candidate.suffix != ".md" or not candidate.is_file():
+        return None
+    try:
+        raw = candidate.read_text()
+    except OSError:
+        return None
+    # A doc's supersession is computed by the index, not stored on the file, and
+    # a reader opening a retired design in full needs that label at least as
+    # much as one skimming a passage of it does.
+    return {"text": raw, "scope": "", "item_ref": serialize_ref(ref),
+            "ts": _mtime_iso(candidate),
+            "status": semantic_index.doc_status(raw) or ""}
+
+
+def _body_ticket(ref: Ref) -> dict | None:
+    from routes import tasks_all
+    from services import tasks
+    for scope, root in tasks_all.scope_roots():
+        task = tasks.get_task(root, ref.key)
+        if task is None:
+            continue
+        title = task.get("title") or ref.key
+        return {
+            "text": f"{title}\n\n{task.get('body') or ''}".strip(),
+            "scope": scope,
+            "item_ref": ticket_ref(ref.key),
+            "ts": task.get("updated") or task.get("created") or "",
+        }
+    return None
+
+
+def _body_chat(ref: Ref) -> dict | None:
+    """The transcript, in log order, attributed by speaker.
+
+    A `#<message-id>` in the ref addresses one message for the UI's anchor; it
+    is not a slice of the body. A reader who opened a chat wants the
+    conversation around the passage, which is the whole point of opening it."""
+    from services import chat_store, memory_policy, semantic_index
+    thread_id, _, _msg = ref.key.partition("#")
+    thread = chat_store.get_thread(thread_id)
+    if thread is None:
+        return None
+    lines: list[str] = []
+    for m in thread.get("messages") or []:
+        who = str(m.get("role") or "?")
+        text = str(m.get("text") or m.get("content") or "").strip()
+        if text:
+            lines.append(f"[{who}] {text}")
+    scope = semantic_index.resolve_chunk_scope(
+        "chat", thread.get("context_key") or "")
+    return {
+        "text": "\n\n".join(lines),
+        "scope": scope,
+        "item_ref": memory_policy.chat_item_ref(thread_id),
+        "ts": thread.get("updated_at") or thread.get("created_at") or "",
+    }
+
+
+_BODY_READERS = {
+    "note": _body_note,
+    "doc": _body_doc,
+    "ticket": _body_ticket,
+    "chat": _body_chat,
+}
+
+
+def read_ref(ref_str: str, *, part: int = 1,
+             part_chars: int = BODY_PART_CHARS) -> dict | None:
+    """The BODY of a ref, one bounded part at a time, plus what a reader needs
+    to weigh it: title, date, declared status, and the scope it sits in.
+
+    Returns None when the ref does not parse, names a kind with no body, or no
+    longer resolves -- the same refusal `resolve_ref` makes, for the same
+    reason. Otherwise:
+
+        {kind, key, title, href, status, scope, item_ref, ts,
+         text, offset, part, parts, total_chars}
+
+    `scope` and `item_ref` are the two values a caller needs to ask whether it
+    is allowed to see this at all (`semantic_index.reachable_item`). They are
+    returned rather than checked here because this module knows nothing about
+    who is asking; refs are addressing, not policy.
+    """
+    try:
+        ref = parse_ref(ref_str)
+    except ValueError:
+        return None
+    reader = _BODY_READERS.get(ref.kind)
+    if reader is None:
+        return None
+    try:
+        body = reader(ref)
+    except Exception:
+        log.debug("ref body read failed for %r", ref_str, exc_info=True)
+        return None
+    if body is None:
+        return None
+    meta = resolve_ref(ref_str) or {}
+
+    text = body.get("text") or ""
+    total = len(text)
+    size = max(1, int(part_chars))
+    parts = max(1, -(-total // size))  # ceil, and an empty body is still 1 part
+    idx = min(max(1, int(part or 1)), parts)
+    offset = (idx - 1) * size
+    return {
+        "kind": ref.kind,
+        "key": ref.key,
+        "title": meta.get("title") or ref.key,
+        "href": meta.get("href") or "",
+        # The index's computed status wins for a doc (it is the thing that
+        # knows about supersession); the resolver's own status is right for a
+        # ticket (its workflow state) and a chat (archived or not).
+        "status": body.get("status") or meta.get("status") or "",
+        "scope": body.get("scope") or "",
+        "item_ref": body.get("item_ref") or serialize_ref(ref),
+        "ts": body.get("ts") or "",
+        "text": text[offset:offset + size],
+        "offset": offset,
+        "part": idx,
+        "parts": parts,
+        "total_chars": total,
+    }

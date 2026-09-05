@@ -232,6 +232,15 @@ PLATFORM_TOOLS: tuple[Tool, ...] = (
         ceiling=(_mcp_id(_wqs.SEARCH_TOOL_NAME),),
     ),
     Tool(
+        id=_mcp_id(_wqs.OPEN_REF_TOOL_NAME),
+        title="Read the whole of a hit",
+        description=_wqs.OPEN_REF_TOOL_DESC,
+        kind="mcp",
+        provenance="platform",
+        spec={"server": _WORKSHOP_SERVER, "tool": _wqs.OPEN_REF_TOOL_NAME},
+        ceiling=(_mcp_id(_wqs.OPEN_REF_TOOL_NAME),),
+    ),
+    Tool(
         id=_mcp_id(_wqs.WHERE_IS_TOOL_NAME),
         title="Where does this live",
         description=_wqs.WHERE_IS_TOOL_DESC,
@@ -488,6 +497,11 @@ NOTIFY_TOOL_ID: str = _mcp_id(_wqs.NOTIFY_TOOL_NAME)
 
 # Workshop tools offered to every chat (not spawn, which is chat-scope only).
 WORKSHOP_TOOLKIT_IDS: tuple[str, ...] = (
+    # `open_ref` goes wherever `search` goes. A search that returns a ranked
+    # slice and no way to read the rest of what it found is half a capability,
+    # the same way a web search with no fetch is; granting one without the other
+    # is what left an agent unable to tell a passage from a document.
+    _mcp_id(_wqs.OPEN_REF_TOOL_NAME),
     _mcp_id(_wqs.WHERE_IS_TOOL_NAME),
     _mcp_id(_wqs.LIST_ATTACHMENTS_TOOL_NAME),
     _mcp_id(_wqs.GET_FILE_TOOL_NAME),
@@ -504,7 +518,8 @@ GENERAL_ALLOWLIST_IDS: tuple[str, ...] = (
 
 # Tools agent_authority grants to any role that has writes (reads are shared).
 READ_TOOL_IDS: tuple[str, ...] = (
-    "Read", "Grep", "Glob", _mcp_id(_wqs.SEARCH_TOOL_NAME)
+    "Read", "Grep", "Glob", _mcp_id(_wqs.SEARCH_TOOL_NAME),
+    _mcp_id(_wqs.OPEN_REF_TOOL_NAME),
 )
 
 # The tools that put bytes on disk. Named once because two of the four sources

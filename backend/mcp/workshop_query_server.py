@@ -79,7 +79,9 @@ SEARCH_TOOL_DESC = (
     "source declares itself to be: a document this repository's own agent-rules "
     "file names as the source of record outranks a conversation that merely "
     "mentions it, and a document that declares itself superseded is demoted and "
-    "arrives labelled rather than hidden. Read the labels on each hit."
+    "arrives labelled rather than hidden. Read the labels on each hit. "
+    "Each hit names its source as a ref, and open_ref reads the whole of "
+    "that source, so a passage is a way in rather than all you get."
 )
 SEARCH_TOOL_SCHEMA = {
     "type": "object",
@@ -215,6 +217,60 @@ GET_FILE_TOOL_SCHEMA = {
 }
 
 _GET_FILE_MAX_CHARS = 100_000
+
+
+# --- Reading the whole of what search found ----------------------------------
+#
+# Search returns a RANKED SLICE: passages bounded by the chunker, at most a
+# couple per document, chosen for one query. That is the right shape for
+# finding something and the wrong shape for reading it, and until this tool
+# existed there was no second step: an agent that found the paragraph it needed
+# could not get the paragraph after it, so it either answered from the slice or
+# went hunting the filesystem for a path, which is the rediscovery the
+# orientation map exists to stop.
+#
+# It reads by REF, not by path, because the ref vocabulary already exists, is
+# already what search returns on every hit, and is already what a citation
+# renders as. A second addressing scheme would be a second thing to keep true.
+#
+# IT CANNOT REACH PAST SEARCH. The scope and share decision is
+# `semantic_index.reachable_item`, which is `_keep_mask`'s own rule; a document
+# a search would not have surfaced is refused here in the same words.
+OPEN_REF_TOOL_NAME = "open_ref"
+OPEN_REF_TOOL_DESC = (
+    "Read the WHOLE of something search found, by its ref. Search returns "
+    "ranked passages, at most a couple from any one document, so a hit is a "
+    "pointer and not the document. Pass the ref from a hit "
+    "(workshop:note/<scope>/<id>, workshop:doc/<path>, workshop:ticket/<id>, "
+    "workshop:chat/<thread>) and this returns the body, with its title, its "
+    "date and whether it declares itself superseded. Long bodies come back in "
+    "parts: every part says which characters it covers, how many characters "
+    "there are in total, and which part to ask for next, so nothing is ever cut "
+    "off silently. It reaches exactly what a search from this chat reaches and "
+    "nothing further."
+)
+OPEN_REF_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ref": {
+            "type": "string",
+            "description": (
+                "The ref to read, as search printed it: "
+                "workshop:note/<scope>/<id>, workshop:doc/<path>, "
+                "workshop:ticket/<id>, or workshop:chat/<thread>."
+            ),
+        },
+        "part": {
+            "type": "integer",
+            "description": (
+                "Which part of a long body to read, counting from 1. Default 1. "
+                "Each part states how many there are."
+            ),
+        },
+    },
+    "required": ["ref"],
+    "additionalProperties": False,
+}
 
 
 # --- Waking this chat up later ------------------------------------------------
@@ -464,6 +520,16 @@ def _run_search(args: dict) -> str:
                                    scope=scopes, since=since,
                                    from_scope=from_scope)
     hits, mode, rebuilding = result["hits"], result["mode"], result["rebuilding"]
+    # ONE LINE PER CALL, so "does anyone use search" is a count and not an
+    # argument. Recorded before the render, and never allowed to fail the call
+    # it describes (services/search_log swallows its own errors).
+    from services import search_log
+    search_log.record(SEARCH_TOOL_NAME, query=query, kinds=list(kinds),
+                      scope=from_scope, searched=result.get("searched", 0),
+                      corpus=result.get("corpus", 0), mode=mode,
+                      top_score=(round(hits[0]["score"], 4) if hits else None),
+                      hits=len(hits), empty=not hits,
+                      turn=_bound_turn(), thread=_bound_thread())
     # What the scope and `share` filters actually left in play, NOT the index
     # total. A tool that reports the total overstates its own coverage: on
     # 2026-08-23 this line said "6089 indexed" for searches the policy had
@@ -500,9 +566,15 @@ def _run_search(args: dict) -> str:
            f"[mode: {mode}; searched {searched} of {corpus} indexed passages]"
            f"{rebuild_note}", ""]
     for h in hits:
-        where = h["ref"]
-        if h["kind"] == "chat":
-            where = f"chat {h['ref']}"
+        # THE HIT NAMES ITSELF IN THE ONE VOCABULARY, so the next step is
+        # possible. This line used to print the collector's raw locator: a
+        # repo-relative path, or a bare thread id behind the word "chat". Every
+        # one of those is unusable as an address -- `open_ref` reads refs, the
+        # orientation map already tells a caller to CITE refs, and for a note
+        # the raw path and the ref do not share a prefix, so a reader could not
+        # convert one into the other. The ref contains at least as much as the
+        # raw locator did in all four kinds, so nothing was traded away for it.
+        where = h.get("item_ref") or h["ref"]
         stamp = (h["ts"] or "")[:10]
         scope = f" · scope {h['scope']}" if h.get("scope") else ""
         # THE STATUS IS SAID OUT LOUD, in both directions. These passages are
@@ -522,6 +594,14 @@ def _run_search(args: dict) -> str:
     return "\n".join(out)
 
 
+# A repeats answer has to fit in ONE tool result. `limit` bounds statements and
+# nothing bounds what hangs off each one, which is how an unfiltered call reached
+# 52,565 characters. These two bound the render itself; both are stated in the
+# output whenever they bite.
+_REPEATS_MAX_CHARS = 24_000
+_REPEATS_MAX_OCCURRENCES = 8
+
+
 def _render_repeats(query: str, since: str, limit: int,
                     scopes: set | None, from_scope: str) -> str:
     """What was said more than once, rendered for a model to read.
@@ -531,11 +611,15 @@ def _render_repeats(query: str, since: str, limit: int,
     that reading is the reader's to make, and the provenance is carried so the
     reader can make it from the messages themselves rather than from this
     summary."""
-    from services import repetition
+    from services import repetition, search_log
 
     result = repetition.repeats(query=query or None, since=since or None,
                                 limit=limit, scope=scopes)
     rows = result["repeats"]
+    search_log.record(SEARCH_TOOL_NAME, query=query or None, mode="repeats",
+                      scope=from_scope, searched=result.get("considered", 0),
+                      corpus=result.get("repeat_total", 0), hits=len(rows),
+                      empty=not rows, turn=_bound_turn(), thread=_bound_thread())
     window = f" since {result['since']}" if result["since"] else ""
     if result.get("rebuilding") and not rows:
         return ("The repetition store is still being built from the chat log; "
@@ -547,32 +631,65 @@ def _render_repeats(query: str, since: str, limit: int,
 
     note = ("\n(the store is catching up with the newest messages)"
             if result.get("rebuilding") else "")
-    head = (f"{len(rows)} of {result['repeat_total']} repeated statement(s)"
-            f"{window}, most-repeated first "
-            f"[{result['considered']} messages considered]{note}")
-    out = [head, ""]
+    # The head counts what is BELOW it, so it is written after the loop: it used
+    # to promise `len(rows)` statements and the render can now stop short of
+    # that, and a header that overstates its own body is the silent truncation
+    # this bound exists to avoid, moved up one line.
+    out: list[str] = []
+    used = 0
+    shown = 0
     for r in rows:
+        block: list[str] = []
         first, last = (r["first_ts"] or "")[:10], (r["last_ts"] or "")[:10]
         span = f"{first} to {last}" if first != last else first
-        out.append(f"--- said {r['total']}x on {r['occasions']} occasion(s) "
-                   f"across {r['threads']} chat(s), {span}")
-        out.append(r["text"])
-        # Every occurrence, so the reader can go read them rather than take
-        # this count on trust.
-        out.append("  occurrences:")
-        for p in r["provenance"]:
-            out.append(f"  - {(p['ts'] or '')[:16]}  {p['ref']}  ({p['title']})")
+        block.append(f"--- said {r['total']}x on {r['occasions']} occasion(s) "
+                     f"across {r['threads']} chat(s), {span}")
+        block.append(r["text"])
+        # The occurrences, so the reader can go read them rather than take this
+        # count on trust. Bounded per statement and SAID to be bounded: a
+        # statement made forty times listed forty provenance lines, and forty
+        # lines of timestamps is not forty times more evidence than eight.
+        prov = r["provenance"]
+        block.append("  occurrences:")
+        for occ in prov[:_REPEATS_MAX_OCCURRENCES]:
+            block.append(f"  - {(occ['ts'] or '')[:16]}  {occ['ref']}  ({occ['title']})")
+        if len(prov) > _REPEATS_MAX_OCCURRENCES:
+            block.append(f"  - and {len(prov) - _REPEATS_MAX_OCCURRENCES} more "
+                         "occurrence(s), not listed")
         # The cross-source half: the same thing already written down elsewhere.
         # Without it, "said six times" cannot be told apart from "said six
         # times and filed as a ticket after the second".
         ech = repetition.echoes(r["text"], scope=scopes, from_scope=from_scope)
         if ech:
-            out.append("  also written down as:")
+            block.append("  also written down as:")
             for e in ech:
                 flag = _STATUS_FLAGS.get(e.get("status") or "", "")
-                out.append(f"  - {e['kind']}: {e['title']} ({e['ref']}){flag}")
-        out.append("")
-    return "\n".join(out)
+                block.append(f"  - {e['kind']}: {e['title']} ({e['ref']}){flag}")
+        block.append("")
+
+        size = sum(len(line) + 1 for line in block)
+        # STOP ON A WHOLE STATEMENT AND SAY SO. This render is not bounded by
+        # `limit`: limit caps the number of STATEMENTS, and the provenance and
+        # echo lines under each are unbounded, so an unfiltered call produced
+        # 52,565 characters and overran the caller's tool-result limit outright
+        # (measured 2026-09-04). Overrunning it loses the whole answer, and a
+        # silent cut loses the reader's ability to tell a short list from a
+        # clipped one, so the answer ends early, on a boundary, and names what
+        # it left out and how to ask for it.
+        if shown and used + size > _REPEATS_MAX_CHARS:
+            left = max(0, int(result["repeat_total"]) - shown)
+            out.append(f"({left} more repeated statement(s) are not shown: the "
+                       "rest would not fit in one answer. Narrow with `query`, "
+                       "or a `since` window, or a smaller `limit`, to read "
+                       "them.)")
+            break
+        out.extend(block)
+        used += size
+        shown += 1
+    head = (f"{shown} of {result['repeat_total']} repeated statement(s)"
+            f"{window}, most-repeated first "
+            f"[{result['considered']} messages considered]{note}")
+    return "\n".join([head, "", *out])
 
 
 def _run_where_is() -> str:
@@ -591,12 +708,64 @@ def _run_where_is() -> str:
     # the prompt (chat_context.orientation_manifest); that one is computed from
     # the chat's real allowlist and is exact.
     offered = {t["name"] for t in _tool_list()}
-    return orientation.manifest_text(
+    text = orientation.manifest_text(
         scope,
         background=SPAWN_TOOL_NAME in offered,
         wakeup=WAKE_TOOL_NAME in offered,
         notify=NOTIFY_TOOL_NAME in offered,
     )
+    return f"{text}\n\n{_corpus_lines(scope)}"
+
+
+def _corpus_lines(scope_raw: str) -> str:
+    """How big the searchable record is, and how much of it this chat reaches.
+
+    HOW BIG THE CORPUS IS BELONGS WITH WHERE THINGS ARE. An agent could already
+    be told that search finds past decisions; it could not find out whether
+    there were twelve of them or twelve thousand until after a search came back
+    empty, and an empty result means opposite things at those two sizes. It goes
+    here rather than into a tool of its own because this tool already takes no
+    arguments and is already the one the map points at.
+
+    The map is computed live and is not part of the injected orientation block:
+    these are counts for THIS installation at THIS moment, which is a fact about
+    one workshop and not product doctrine, so it is answered when asked for
+    rather than pasted into every prompt.
+    """
+    _pin_owner()
+    from services import semantic_index
+
+    from_scope = _caller_scope_key(scope_raw)
+    try:
+        m = semantic_index.corpus_map(scopes=_reach_scopes(from_scope),
+                                      from_scope=from_scope)
+    except Exception as e:  # noqa: BLE001
+        return f"=== WHAT IS IN THE RECORD ===\n(the corpus map is unavailable: {e})"
+
+    out = ["=== WHAT IS IN THE RECORD (so an empty search means something) ==="]
+    if not m["chunks"]:
+        why = m["embedder_error"] or "it has not been built yet"
+        out.append(f"Nothing is indexed yet: {why}. A search will find nothing, "
+                   "and that says nothing about what has been written.")
+        return "\n".join(out)
+    out.append(
+        f"{m['reachable_documents']} of {m['documents']} documents "
+        f"({m['reachable_chunks']} of {m['chunks']} passages) are searchable "
+        f"from this chat's scope, written between {m['oldest']} and {m['newest']}."
+    )
+    for kind in ("note", "doc", "chat", "ticket", "vault"):
+        row = m["by_kind"].get(kind)
+        if not row:
+            continue
+        out.append(f"- {kind}: {row['reachable_documents']} of {row['documents']} "
+                   f"({row['reachable_passages']} of {row['passages']} passages)")
+    if m["stale"]:
+        out.append("Something has changed since this was built; the next search "
+                   "rebuilds it in the background and answers from what is on "
+                   "disk meanwhile.")
+    out.append("An empty search over this many documents is an answer. Over a "
+               "few, it is mostly a statement about the corpus.")
+    return "\n".join(out)
 
 
 def _run_list_attachments() -> str:
@@ -665,12 +834,87 @@ def _render_text(head: str, text: str) -> str:
     return f"{head}\n\n{text}"
 
 
+def _run_open_ref(args: dict) -> str:
+    """The body behind a ref, bounded and labelled, for a caller that may see it."""
+    _pin_owner()
+    from services import refs, search_log, semantic_index
+
+    ref_str = (args.get("ref") or "").strip()
+    if not ref_str:
+        return ("error: a ref is required. Search prints one on every hit, "
+                "like workshop:doc/<path> or workshop:note/<scope>/<id>.")
+    try:
+        part = int(args.get("part") or 1)
+    except (TypeError, ValueError):
+        part = 1
+
+    caller_raw = os.environ.get("WORKSHOP_QUERY_SCOPE", "workshop").strip() or "workshop"
+    from_scope = _caller_scope_key(caller_raw)
+    scopes = _reach_scopes(from_scope)
+
+    def _log(**fields) -> None:
+        search_log.record(OPEN_REF_TOOL_NAME, ref=ref_str, scope=from_scope,
+                          turn=_bound_turn(), thread=_bound_thread(), **fields)
+
+    doc = refs.read_ref(ref_str, part=part)
+    if doc is None:
+        _log(refused="unresolvable")
+        return (f"Nothing resolves for {ref_str}. Either it is not a ref this "
+                f"tool reads ({', '.join(refs.READABLE_KINDS)}), or what it "
+                "named is gone. Search again rather than guessing a path.")
+
+    # THE SAME BOUNDARY A SEARCH RESPECTED. A tool that reads a document in full
+    # is a way around the scope and share filters if it answers for a document
+    # the searcher was never shown, so the decision is `_keep_mask`'s own, made
+    # by the same function.
+    if not semantic_index.reachable_item(doc["kind"], doc["scope"], doc["item_ref"],
+                                         scopes=scopes, from_scope=from_scope):
+        _log(refused="out_of_reach")
+        return (f"{ref_str} is outside what this chat's scope reaches, so it is "
+                "not readable from here. This is the same boundary search "
+                "applies; it is not a failure to retry.")
+
+    _log(part=doc["part"], parts=doc["parts"], total_chars=doc["total_chars"],
+         kinds=[doc["kind"]], empty=not doc["total_chars"])
+
+    where = f" \u00b7 scope {doc['scope']}" if doc["scope"] else ""
+    stamp = f" \u00b7 {doc['ts'][:10]}" if doc["ts"] else ""
+    flag = _STATUS_FLAGS.get(doc["status"], "")
+    head = f"{doc['kind']}: {doc['title']} ({ref_str}{where}{stamp}{flag})"
+    if not doc["total_chars"]:
+        return f"{head}\n\n(this one has no body text.)"
+
+    start = doc["offset"] + 1
+    end = doc["offset"] + len(doc["text"])
+    # SAY WHAT WAS OMITTED. A part that does not state its own range reads
+    # exactly like a whole document, and a reader that cannot tell the
+    # difference will summarise a fifth of a design as the design.
+    if doc["parts"] > 1:
+        span = (f"part {doc['part']} of {doc['parts']} "
+                f"(characters {start} to {end} of {doc['total_chars']})")
+        nxt = ("" if doc["part"] >= doc["parts"] else
+               f"\n\n(continues: call open_ref again with part {doc['part'] + 1}.)")
+        return f"{head}\n{span}\n\n{doc['text']}{nxt}"
+    return f"{head}\n{doc['total_chars']} characters, complete.\n\n{doc['text']}"
+
+
 def _bound_thread() -> str | None:
     """The chat this server instance belongs to, if any. Pinned at turn-start as
     WORKSHOP_QUERY_THREAD (app_registry.set_current_query_thread). Absent for a
     background/CLI spawn with no chat behind it, which is why spawn_background is
     only offered when it is present."""
     t = (os.environ.get("WORKSHOP_QUERY_THREAD") or "").strip()
+    return t or None
+
+
+def _bound_turn() -> str | None:
+    """The TURN this server instance was spawned for, if any. Pinned at the same
+    turn-start seam as the scope, owner and thread (WORKSHOP_QUERY_TURN).
+
+    A retrieval log keyed only by chat cannot tell one turn's search from the
+    next turn's, so it cannot answer whether the passage a turn found was the
+    one it then read. That question is the whole reason the log exists."""
+    t = (os.environ.get("WORKSHOP_QUERY_TURN") or "").strip()
     return t or None
 
 
@@ -697,8 +941,8 @@ def _bound_thread() -> str | None:
 # an ordinary file and the platform's own surface must not depend on what is in
 # it (`tool_registry.catalog` takes the same position).
 _BUILTIN_TOOL_NAMES = (
-    TOOL_NAME, SEARCH_TOOL_NAME, SPAWN_TOOL_NAME, WHERE_IS_TOOL_NAME,
-    LIST_ATTACHMENTS_TOOL_NAME, GET_FILE_TOOL_NAME,
+    TOOL_NAME, SEARCH_TOOL_NAME, OPEN_REF_TOOL_NAME, SPAWN_TOOL_NAME,
+    WHERE_IS_TOOL_NAME, LIST_ATTACHMENTS_TOOL_NAME, GET_FILE_TOOL_NAME,
     WAKE_TOOL_NAME, LIST_WAKEUPS_TOOL_NAME, CANCEL_WAKEUP_TOOL_NAME,
     NOTIFY_TOOL_NAME,
 )
@@ -757,6 +1001,11 @@ def _tool_list() -> list:
         {"name": TOOL_NAME, "description": TOOL_DESC, "inputSchema": TOOL_SCHEMA},
         {"name": SEARCH_TOOL_NAME, "description": SEARCH_TOOL_DESC,
          "inputSchema": SEARCH_TOOL_SCHEMA},
+        # Beside search rather than anywhere else in this list: it is the second
+        # half of one capability, and a caller reading the list in order meets
+        # "read the whole of it" immediately after "find it".
+        {"name": OPEN_REF_TOOL_NAME, "description": OPEN_REF_TOOL_DESC,
+         "inputSchema": OPEN_REF_TOOL_SCHEMA},
         {"name": WHERE_IS_TOOL_NAME, "description": WHERE_IS_TOOL_DESC,
          "inputSchema": WHERE_IS_TOOL_SCHEMA},
         {"name": LIST_ATTACHMENTS_TOOL_NAME, "description": LIST_ATTACHMENTS_TOOL_DESC,
@@ -957,6 +1206,8 @@ def _handle(msg: dict) -> dict | None:
                 text = _run_command_tool(name, params.get("arguments") or {})
             elif name == SEARCH_TOOL_NAME:
                 text = _run_search(params.get("arguments") or {})
+            elif name == OPEN_REF_TOOL_NAME:
+                text = _run_open_ref(params.get("arguments") or {})
             elif name == SPAWN_TOOL_NAME:
                 text = _run_spawn(params.get("arguments") or {})
             elif name == WHERE_IS_TOOL_NAME:

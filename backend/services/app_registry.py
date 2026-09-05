@@ -334,6 +334,26 @@ def current_query_thread() -> str | None:
     return _query_thread_ctx.get()
 
 
+# WHICH TURN, so the retrieval log can pair a search with what the same turn
+# then went and read (services/search_log). A log keyed only by chat cannot tell
+# one turn's search from the next turn's, and "did the agent read the whole of
+# what it found" is a question about one turn. Pinned at the same seam as the
+# scope, owner and thread; None for a caller with no turn behind it, in which
+# case the env var is omitted exactly like the other three.
+_query_turn_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "workshop_query_turn", default=None
+)
+
+
+def set_current_query_turn(turn_id: str | None) -> None:
+    """Pin the turn id for whatever spawns the workshop MCP server next."""
+    _query_turn_ctx.set(turn_id)
+
+
+def current_query_turn() -> str | None:
+    return _query_turn_ctx.get()
+
+
 # Platform-level MCP servers, always available (not tied to an installed app):
 # the read-only workshop-query tool the general chat uses to answer "what is
 # going on" from the task + knowledge digest (Stage 7 / 2e). It is NOT a
@@ -375,6 +395,11 @@ def _platform_mcp_servers() -> dict[str, dict]:
     thread_id = current_query_thread()
     if thread_id:
         env["WORKSHOP_QUERY_THREAD"] = str(thread_id)
+    # And WHICH TURN, so a search and the open_ref that followed it are one
+    # record rather than two unrelated lines. Same seam, same omission rule.
+    turn_id = current_query_turn()
+    if turn_id:
+        env["WORKSHOP_QUERY_TURN"] = str(turn_id)
     return {
         "workshop": {
             "type": "stdio",

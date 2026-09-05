@@ -75,6 +75,18 @@ def manifest_text(scope_key: str | None = None, *, background: bool = True,
         "before treating something as newly raised, and whenever the question is "
         "what keeps coming up. It reports counts and dates; what a repetition "
         "means is yours to judge from the messages it cites.\n"
+        # FINDING IS NOT READING. A hit is a passage the chunker cut, bounded,
+        # with at most a couple per document, so an agent that stops at the hit
+        # is answering from a slice and cannot tell that it is one. This line is
+        # unconditional for the same reason the repeats line is: it rides on
+        # `search`, which every chat has.
+        "- The WHOLE of something search found: `open_ref`, with the ref printed "
+        "on the hit. Search returns a slice of a document, never the document; "
+        "read it before treating a passage as the last word on anything. Long "
+        "bodies come back in numbered parts and each one says how much is left.\n"
+        "- How much there is to search at all: `where_is` reports how many "
+        "documents and passages this scope reaches. An empty search means "
+        "something very different over a dozen documents than over thousands.\n"
         "- What is going on now (open tickets, running and recent runs, the note "
         "titles in scope): `query`.\n"
         "- When you cite a doc, note or ticket, write it as a managed link "
