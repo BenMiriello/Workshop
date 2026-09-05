@@ -19,6 +19,25 @@ cross-owner data leak. The owner is set in exactly three kinds of place:
 `user_runtime_dir(owner_id)` is the on-disk home for an owner's files:
 `.runtime/users/<owner_id>/`. Stores build their paths under it, so there is no
 shared file across owners and thus no cross-owner read path to get wrong.
+
+THIS IS AN API-LAYER PARTITION, NOT A CONFINEMENT BOUNDARY. Everything above is
+true of code that reaches these files THROUGH this module, which is all of the
+platform's own read paths -- and it is why the partition is trustworthy for
+correctness: a store cannot accidentally serve one owner another owner's data.
+It is not a boundary against the process itself. An agent turn runs its Bash as
+the same uid that owns `.runtime/users/`, so reading another owner's directory
+directly never consults the contextvar, because the contextvar is not on that
+path. File modes cannot close it either: the files and the turn are one uid, so
+any mode that lets the platform read them lets the turn read them too, and
+tightening them buys only the appearance of a fix.
+
+Nothing here should be relied on as a per-user security boundary. Real
+confinement is a separate, lower-privilege execution identity for the turn
+(SEC-A1, ticket `4a79ffc5`); until that exists, an installation with two
+DIFFERENT PEOPLE in it has no enforced separation between them, and this
+partition should be read as the correctness mechanism it is. The full finding,
+and the reasoning about when that becomes unacceptable, is SEC-A5 (ticket
+`7f8f22d7`).
 """
 from __future__ import annotations
 
