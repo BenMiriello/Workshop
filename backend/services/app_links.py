@@ -76,16 +76,40 @@ class AppRoster:
         return frozenset(s for s, rec in self.projects.items() if _is_self(rec))
 
 
+class RegistryUnreadable(RuntimeError):
+    """The projects registry is present and cannot be understood.
+
+    Same distinction, and the same reason, as
+    `installed_apps.RegistryUnreadable`: an ABSENT registry means this instance
+    has no projects, which is a fresh clone and correct. A PRESENT one that
+    will not parse means the project roster is unknown, and answering `{}` for
+    it made every app look unlinked -- no working tree, no tickets, no runs --
+    which is indistinguishable from an instance that genuinely has none.
+    """
+
+
 def _load_projects() -> dict[str, dict]:
     path = paths.projects_registry()
     if not path.exists():
         return {}
     try:
         data = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return {}
+    except (OSError, ValueError) as e:
+        raise RegistryUnreadable(
+            f"{path} exists but could not be read as the projects registry "
+            f"({type(e).__name__}: {e}). Refusing to report zero projects, "
+            f"which is indistinguishable from an instance that has none.") from e
     projects = data.get("projects")
-    return projects if isinstance(projects, dict) else {}
+    if projects is None and not (isinstance(data, dict) and "projects" in data):
+        raise RegistryUnreadable(
+            f"{path} has no `projects` object. The file is the roster; a file "
+            f'without one is malformed, not an empty roster -- write '
+            f'`{{"projects": {{}}}}` to mean "no projects".')
+    if not isinstance(projects, dict):
+        raise RegistryUnreadable(
+            f"{path} has a `projects` that is {type(projects).__name__}, not an "
+            f"object.")
+    return projects
 
 
 def load() -> AppRoster:

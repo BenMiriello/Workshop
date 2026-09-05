@@ -260,13 +260,47 @@ def _build_catalog() -> dict[str, AppSpec]:
 BUILTIN_APPS: dict[str, AppSpec] = _build_catalog()
 
 
+def unresolved_installed_ids() -> list[str]:
+    """Ids the registry says are installed that the catalog cannot build.
+
+    THE STATE THIS NAMES IS THE ONE THAT CANNOT BE INTENTIONAL. An empty
+    catalog is legitimate (a slimmed instance ships fewer apps) and an empty
+    registry is legitimate (a fresh clone installs none), so neither on its own
+    is an error. "The registry lists N apps and none of them resolve" is
+    neither: those apps serve no routes, no persona, no store and contribute
+    nothing to the edge's refuse-list, and on 2026-09-04 that state stood for
+    two days while every app 404'd because the only thing it produced was an
+    empty list, which is exactly what a correct fresh clone produces.
+
+    `tests/test_catalog_agrees_with_registry.py` asserts this is empty; this
+    function is the runtime half, so the state is visible on a running
+    instance and not only in a test somebody has to run.
+    """
+    return [app_id for app_id in installed_apps.installed_app_ids()
+            if app_id not in BUILTIN_APPS]
+
+
 def installed_specs() -> list[AppSpec]:
-    """AppSpecs for installed apps, in installed order. Unknown ids are skipped."""
+    """AppSpecs for installed apps, in installed order.
+
+    An id with no catalog entry is dropped -- there is no spec to return -- but
+    the drop is LOGGED rather than silent: see `unresolved_installed_ids`.
+    """
     out: list[AppSpec] = []
+    missing: list[str] = []
     for app_id in installed_apps.installed_app_ids():
         spec = BUILTIN_APPS.get(app_id)
         if spec is not None:
             out.append(spec)
+        else:
+            missing.append(app_id)
+    if missing:
+        log.warning(
+            "installed-apps registry names %d app(s) the catalog cannot build: "
+            "%s. They serve no routes, no persona, no store and no edge block. "
+            "Most likely their distributions are not installed into the backend "
+            "venv: run `python3 scripts/install_apps.py`.",
+            len(missing), ", ".join(sorted(missing)))
     return out
 
 

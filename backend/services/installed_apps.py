@@ -15,6 +15,10 @@ name in platform code, written as prose.
 Installing or removing an app is an edit to this file (or the `install()` /
 `remove()` helpers), never an edit to any platform-core file. A missing file means
 nothing is installed, which is the correct state for a fresh container.
+
+A PRESENT FILE THAT CANNOT BE PARSED IS NOT THAT STATE, and the read no longer
+pretends it is: it raises `RegistryUnreadable`. See that class for the outage
+this distinction exists to make visible.
 """
 from __future__ import annotations
 
@@ -30,21 +34,46 @@ REGISTRY_PATH = Path(os.environ.get(
 ))
 
 
+class RegistryUnreadable(RuntimeError):
+    """The registry file is present and cannot be understood.
+
+    NOT the same condition as an absent file, and the whole point of the class
+    is that the two used to be. A missing file means "nothing is installed",
+    which is the correct and intentional state of a fresh clone. A file that
+    exists but cannot be parsed means "this instance's app roster is unknown",
+    which is not a state anybody configured -- and answering `[]` for it served
+    zero apps while looking exactly like a fresh clone, which is how an
+    every-app-404 outage stood for two days in 2026-09.
+    """
+
+
 def installed_app_ids() -> list[str]:
-    """Ordered list of installed app ids. Missing/corrupt file => [] (blank slate).
+    """Ordered list of installed app ids. A MISSING file => [] (blank slate);
+    a PRESENT but unreadable one raises `RegistryUnreadable`.
 
     Order is preserved from the file and drives launcher card order. Duplicates
-    and non-string entries are dropped; the read never raises.
+    and non-string entries are dropped.
     """
     if not REGISTRY_PATH.exists():
         return []
     try:
         data = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
+    except (OSError, json.JSONDecodeError) as e:
+        raise RegistryUnreadable(
+            f"{REGISTRY_PATH} exists but could not be read as the installed-apps "
+            f"registry ({type(e).__name__}: {e}). Refusing to report an empty "
+            f"roster, which is indistinguishable from an instance with no apps "
+            f"installed.") from e
     raw = data.get("installed") if isinstance(data, dict) else None
+    if raw is None and (not isinstance(data, dict) or "installed" not in data):
+        raise RegistryUnreadable(
+            f"{REGISTRY_PATH} has no `installed` list. The file is the roster; a "
+            f"file without one is malformed, not an empty roster -- write "
+            f'`{{"installed": []}}` to mean "no apps".')
     if not isinstance(raw, list):
-        return []
+        raise RegistryUnreadable(
+            f"{REGISTRY_PATH} has an `installed` that is {type(raw).__name__}, "
+            f"not a list.")
     seen: set[str] = set()
     out: list[str] = []
     for item in raw:
