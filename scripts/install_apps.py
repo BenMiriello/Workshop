@@ -70,13 +70,35 @@ def declared_id(app_dir: Path) -> str:
 
 
 def installed_entry_point_names(py: Path) -> set[str]:
-    """Entry-point names in the group, asked of the venv that will run the app."""
+    """Entry-point names whose declaration actually LOADS, asked of the venv that
+    will run the app.
+
+    IT MUST LOAD, NOT MERELY BE REGISTERED, and that distinction cost two days.
+    An app's metadata and its code are installed separately: a distribution can
+    publish a perfectly good `workshop.apps` entry point whose module cannot be
+    imported at all. When that happens the roster reads N apps, every
+    declaration raises, `app_registry._build_catalog` logs and SKIPS each one by
+    design (a slimmed instance is allowed to resolve fewer), and the process
+    mounts zero routers while every surface reports healthy. Measured 2026-09-05:
+    eight apps registered, eight declarations unloadable, every app route 404 for
+    two days. A name-only check said "all installed" the entire time.
+    """
     code = (
-        "from importlib.metadata import entry_points;"
-        f"print('\\n'.join(sorted(e.name for e in entry_points(group={ENTRY_POINT_GROUP!r}))))"
+        "from importlib.metadata import entry_points\n"
+        f"for e in sorted(entry_points(group={ENTRY_POINT_GROUP!r}), key=lambda e: e.name):\n"
+        "    try:\n"
+        "        e.load()\n"
+        "    except Exception:\n"
+        "        continue\n"
+        "    print(e.name)\n"
     )
+    # cwd=backend, because that is the service's WorkingDirectory and an app's
+    # declaration imports the platform's own `services` package by bare name.
+    # Asking from anywhere else makes every app look broken -- a false negative
+    # exactly as damaging as the false positive this check replaced.
     try:
-        out = subprocess.run([str(py), "-c", code], capture_output=True, text=True, timeout=60)
+        out = subprocess.run([str(py), "-c", code], capture_output=True, text=True,
+                             timeout=120, cwd=str(REPO / "backend"))
     except (OSError, subprocess.SubprocessError):
         return set()
     return {ln.strip() for ln in out.stdout.splitlines() if ln.strip()}
@@ -115,13 +137,35 @@ def main() -> int:
         return 1
 
     print(f"install-apps: installing {len(todo)} app(s): {names}")
-    pip = VENV_PY.parent / "pip"
+    # `python -m pip`, never the `pip` shim beside it. A console script carries a
+    # shebang written at creation time, and this venv's says
+    # `#!/home/clawd-a/...` -- the path the SERVICE sees. From an agent sandbox,
+    # where the same tree is bind-mounted elsewhere, that interpreter does not
+    # resolve and the shim dies with "required file not found" before pip runs.
+    # Reaching pip through the interpreter that is already known-good has no
+    # such dependency. Same root cause as the editable-install note below: a
+    # path baked into a file by one process is not portable to another.
+    pip = [str(VENV_PY), "-m", "pip"]
     failed: list[str] = []
     for d in todo:
         # `--no-deps`: an app's runtime dependencies belong to the backend's own
         # requirements, and letting pip resolve them here would let one app's
         # pin move the platform's.
-        r = subprocess.run([str(pip), "install", "-e", str(d), "--no-deps", "--quiet"],
+        #
+        # NOT `-e`. An editable install writes THIS PROCESS'S absolute path into
+        # a finder module in site-packages, e.g.
+        #     MAPPING = {'birds_app': '/workspace/apps/birds/birds_app'}
+        # and the process that runs the app is not this one. An agent installs
+        # from a sandbox where the tree is bind-mounted at /workspace; the
+        # backend service runs in the host namespace where that path does not
+        # exist. The metadata still resolves, so the entry point is registered
+        # and the roster reads the app -- and the import fails, the catalog
+        # comes up empty, and every route 404s while every check says installed.
+        # Measured 2026-09-05: that is exactly what happened, to all eight apps,
+        # for two days. A copy into site-packages has no such path dependency
+        # and is correct from any namespace. The cost is that editing an app's
+        # backend needs a reinstall, which is what apply.sh is for.
+        r = subprocess.run([*pip, "install", str(d), "--no-deps", "--quiet"],
                            capture_output=True, text=True)
         if r.returncode != 0:
             failed.append(d.name)
