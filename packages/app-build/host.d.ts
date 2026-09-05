@@ -5,15 +5,11 @@
 // and reaches the app through the import map, exactly as react does. Only the
 // types ship here, so an app can typecheck against the seam without depending
 // on the platform's source tree.
-import type { ComponentType, ReactNode } from "react";
-
-/** How a page asks for its own chat dock. The kit owns this type; it is
- *  restated structurally so an app needs no kit import to read this file. */
-export type AppChatDockOptions = {
-  title?: string;
-  placeholder?: string;
-  onAction?: (action: { kind: string; [key: string]: unknown }) => void;
-};
+import type { ComponentType } from "react";
+// The dock renderer's shape is a KIT type. An app already depends on the kit
+// (it declares a `kit` range in its manifest), so naming it here is one
+// declaration of one contract rather than a copy that can drift.
+import type { AppChatDockRenderer } from "@workshop/ui";
 
 export type AppHost = {
   /** The id the platform knows this app by. An app should not spell its own id
@@ -23,7 +19,7 @@ export type AppHost = {
    *  when the app has no siblings. */
   GroupNav: ComponentType;
   /** A ready-to-mount chat dock bound to this app. */
-  renderChatDock: (options?: AppChatDockOptions) => ReactNode;
+  renderChatDock: AppChatDockRenderer;
 };
 
 /** The host services for the app currently rendering. Throws outside an app

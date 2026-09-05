@@ -18,9 +18,10 @@
 // an app module can import what it fills in without importing the discoverer.
 //
 // Pages stay lazily imported INSIDE each app's module: an instance without an
-// app should not pay for its bundle, and until dynamic bundle injection exists
-// (docs/apps-are-pluggable.md calls this the deferred seam) lazy imports are
-// what keeps an uninstalled app's code off the critical path.
+// app should not pay for its bundle. For an app that has moved to the RUNTIME
+// loader that is no longer the mechanism at all -- its bundle is fetched by URL
+// when one of its declared paths is first opened, and the shell's build never
+// contains it. See declarations.tsx and loader.ts.
 
 import { Suspense } from "react";
 import type { ComponentType, ReactNode } from "react";
@@ -49,13 +50,13 @@ const IN_TREE = import.meta.glob<{ appModule?: AppModule }>(
 // catalog -- which is exactly what `check_fresh_clone.sh` asserts, now measured
 // by the build itself rather than by a separate scan.
 //
-// This is the build-time half of the loader. It gets an app's SOURCE out of the
-// platform repo, which is the requirement; it does not yet let an app be
-// installed without rebuilding the shell, which is the runtime import-map
-// loader in `stage-5-app-loader-plan-2026-08-24.md`. That plan is unchanged by
-// this and lands on the same files: an app already lives at `apps/<slug>/ui`
-// and already exports `appModule`, so stage 5 changes how these modules are
-// built and fetched, not where they are or what they declare.
+// This is the BUILD-TIME half of the loader, and it is now one of two. It gets
+// an app's source out of the platform repo, which was the requirement, but a
+// glob is resolved when the shell is compiled, so on its own it still means a
+// rebuild per install. The runtime half is below: `declarations.tsx` reads the
+// platform's own roster over HTTP and an app arrives with no rebuild at all.
+// Both paths produce the same `AppModule`, deliberately, so an app can move
+// from one to the other by being built rather than by being rewritten.
 const EXTRACTED = import.meta.glob<{ appModule?: AppModule }>(
   "../../../apps/*/ui/module.tsx",
   { eager: true },
@@ -73,23 +74,68 @@ function declared(mods: Record<string, { appModule?: AppModule }>): AppModule[] 
     .filter((a): a is AppModule => Boolean(a && a.id));
 }
 
+// THE THIRD SOURCE, and the one that does not need a rebuild: apps the PLATFORM
+// says are installed, read over HTTP from `/base-apps/contributions` and turned
+// into these same declarations by `declarations.tsx`. The two globs above are
+// resolved when the shell is compiled, so with only them, installing an app is
+// a rebuild of the shell and removing one is another. A runtime declaration is
+// none of that: it arrives with the roster.
+//
+// A HEALTHY runtime declaration SHADOWS a build-time module of the same id, the
+// same way an installed distribution shadows an in-tree declaration in the
+// backend. `declarations.canActivate` is what "healthy" means, and it is why
+// this is a sequence rather than a flag day: an app whose bundle is not built
+// yet is not published at all, so it keeps rendering from the shell's own
+// build, and it flips to its own bundle the moment that bundle exists.
+//
 // Sorted by the `order` each app declares, then by id. Discovery order is
 // filesystem order, and the switcher's siblings read in a deliberate order that
 // alphabetising would silently change; `order` is how an app states its place
 // without this file knowing what that place is.
-export const APPS: AppModule[] = Object.values(
-  [...declared(IN_TREE), ...declared(EXTRACTED)].reduce<Record<string, AppModule>>(
-    (acc, a) => {
-      acc[a.id] = a;
-      return acc;
-    },
-    {},
-  ),
-).sort(
-  (x, y) =>
-    (x.order ?? Number.MAX_SAFE_INTEGER) - (y.order ?? Number.MAX_SAFE_INTEGER) ||
-    x.id.localeCompare(y.id),
-);
+const BUNDLED: AppModule[] = [...declared(IN_TREE), ...declared(EXTRACTED)];
+
+// PUSHED IN by `declarations.tsx`, never pulled from it. This file must not
+// import that one: the loader's route host reaches the shell for its group nav
+// and chat dock, so pulling would close a cycle THROUGH this module's own
+// initialization, and the first thing this module does at init is build the
+// catalog. Measured 2026-09-05, as "declarationState is not a function" from a
+// test that imported the declarations first.
+const DECLARED: AppModule[] = [];
+
+function catalog(): AppModule[] {
+  const byId: Record<string, AppModule> = {};
+  for (const a of BUNDLED) byId[a.id] = a;
+  for (const a of DECLARED) byId[a.id] = a;
+  return Object.values(byId).sort(
+    (x, y) =>
+      (x.order ?? Number.MAX_SAFE_INTEGER) - (y.order ?? Number.MAX_SAFE_INTEGER) ||
+      x.id.localeCompare(y.id),
+  );
+}
+
+// MUTATED IN PLACE rather than reassigned, so every module that already holds
+// this array (and there are several) sees the same list the moment the
+// declarations land, with no import-binding subtleties to reason about.
+export const APPS: AppModule[] = catalog();
+
+const changeListeners = new Set<() => void>();
+
+/** Run `fn` whenever the catalog changes, which is when the platform's app
+ *  roster is read or re-read. For the few consumers that copy the catalog into
+ *  their own structure at module init (appNav's breadcrumb nodes) rather than
+ *  reading it during render. */
+export function onAppsChanged(fn: () => void): () => void {
+  changeListeners.add(fn);
+  return () => changeListeners.delete(fn);
+}
+
+/** Replace the runtime-declared half of the catalog. Called by
+ *  `declarations.tsx` every time the platform's app roster is read. */
+export function setDeclaredApps(apps: AppModule[]): void {
+  DECLARED.splice(0, DECLARED.length, ...apps);
+  APPS.splice(0, APPS.length, ...catalog());
+  for (const fn of changeListeners) fn();
+}
 
 /** Every app's <Route> elements, for the shell's one <Routes>. */
 export function appRoutes(): ReactNode[] {

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import { useBreadcrumbOverride, type Crumb } from "@workshop/ui";
-import { appCrumbs } from "../apps/registry";
+import { appCrumbs, onAppsChanged } from "../apps/registry";
 
 // What is left of the old top toolbar, which the shell replaced on 2026-08-20.
 //
@@ -69,10 +69,24 @@ const NODES: Record<string, RouteNode> = {
   "/settings/instructions": { label: "Instructions", parent: "/settings" },
 };
 
-Object.assign(NODES, appCrumbs());
+// The platform's own nodes, kept apart so the app nodes can be REPLACED rather
+// than merged over. An app installed at runtime arrives after this module has
+// been evaluated, and one removed at runtime has to take its crumbs with it:
+// merging in place would leave a breadcrumb pointing at a path nothing routes.
+const PLATFORM_NODES: Record<string, RouteNode> = { ...NODES };
 
-// Longest-prefix lookup keys, most specific first.
-const NODE_KEYS = Object.keys(NODES).sort((a, b) => b.length - a.length);
+// Longest-prefix lookup keys, most specific first. Mutated in place beside
+// NODES, because `resolveCrumbs` closes over both.
+const NODE_KEYS: string[] = [];
+
+function refreshNodes(): void {
+  for (const key of Object.keys(NODES)) delete NODES[key];
+  Object.assign(NODES, PLATFORM_NODES, appCrumbs());
+  NODE_KEYS.splice(0, NODE_KEYS.length, ...Object.keys(NODES).sort((a, b) => b.length - a.length));
+}
+
+refreshNodes();
+onAppsChanged(refreshNodes);
 
 export function resolveCrumbs(pathname: string): Crumb[] {
   // Focused chat: /chat/<context-key>. The leaf shows the decoded key so

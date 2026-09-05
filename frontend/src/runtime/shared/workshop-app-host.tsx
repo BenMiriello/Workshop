@@ -16,17 +16,17 @@
 // typecheck against this seam without depending on the platform's source tree.
 import "./guard";
 import { createContext, useContext, type ComponentType, type ReactNode } from "react";
+// TYPE ONLY, and erased: the dock renderer's shape is already a kit type
+// (`packages/ui/api/ui.api.md`), so restating it here would be a second
+// declaration of one contract, which is how the two drift.
+import type { AppChatDockRenderer } from "@workshop/ui";
 
-export type AppChatDockOptions = {
-  title?: string;
-  placeholder?: string;
-  onAction?: (action: { kind: string; [key: string]: unknown }) => void;
-};
+export type { AppChatDockRenderer };
 
 export type AppHost = {
   appId: string;
   GroupNav: ComponentType;
-  renderChatDock: (options?: AppChatDockOptions) => ReactNode;
+  renderChatDock: AppChatDockRenderer;
 };
 
 const HostContext = createContext<AppHost | null>(null);

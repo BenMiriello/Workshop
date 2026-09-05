@@ -14,6 +14,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
 import { Shell } from "./components/shell/Shell";
 import { AppProviders, AppSuspense, appRoutes, appRedirects } from "./apps/registry";
+import { useAppDeclarations } from "./apps/declarations";
 import { useAppPlacesState } from "./apps/useAppPlaces";
 
 // LAZY BY ROUTE. Each of these is a page the app does not need to render its
@@ -163,6 +164,15 @@ function FreshBuildWatch() {
 }
 
 export default function App() {
+  // WHICH APPS THIS INSTALLATION HAS, asked of the platform rather than
+  // compiled in. The read starts on mount and the routed area waits for it:
+  // mounting the route table first would 404 a deep link into an app for one
+  // frame, and would mount the tree below any session-scoped provider an app
+  // declares, which is exactly the unmount `AppProviders` cannot survive.
+  // Everything else on the screen -- the shell, the nav, the chat -- renders
+  // immediately, and an unreachable endpoint yields no apps rather than an
+  // error thrown into render (apps/declarations.tsx).
+  const apps = useAppDeclarations();
   return (
     // The query cache sits ABOVE every route, so moving between screens does
     // not throw away what was already read, and INSIDE `AuthProvider` (which
@@ -175,6 +185,7 @@ export default function App() {
     <BreadcrumbProvider>
     <Shell>
         <AppSuspense>
+        {!apps.ready ? <RouteSkeleton /> : (
         <Routes>
           <Route path="/" element={<Home />} />
           {/* ROLES REPLACED THE AGENTS ROSTER (threads-branches-and-pages-
@@ -310,6 +321,7 @@ export default function App() {
               picture a failed load and a broken build produce. */}
           <Route path="*" element={<NotFound />} />
         </Routes>
+        )}
         </AppSuspense>
     </Shell>
     </BreadcrumbProvider>
