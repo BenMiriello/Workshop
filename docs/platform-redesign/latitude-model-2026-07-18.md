@@ -5,6 +5,32 @@
 - Source: operator asks C1/C2/C3/C4 (operator-asks-2026-07-16.md)
 - Reasoning detail: scopedness-and-escalation-2026-07-16.md (the full exploration; this doc is its distilled output)
 
+> **SUPERSEDED BY REMOVAL, 2026-09-05. Latitude does not exist.** The field, the
+> `services/latitude.py` cascade, the `ticket.latitude` column and its check
+> constraint, the `--latitude` CLI flags, the scope-level setting and every UI
+> control for it were deleted by ticket `3b1c5432`, on the operator's order of
+> 2026-08-25 (`work-status-contract-2026-08-24.md` §159: "remove it"). Migration
+> `a1e4f7c02b93` drops the column.
+>
+> **The reason is measurement, not disagreement with this document.** Latitude
+> was set on 0 of 207 live tickets, null on every project, and absent from every
+> agent definition, so the cascade below resolved to `standard` on every sweep
+> that ever ran. Its stated job — decision rights over the underspecified
+> residue — is carried instead by the Boundaries line that
+> `services/ticket_format.py` requires on every ticket, in words the operator
+> reads.
+>
+> Two things this document specified DID survive, and they are worth finding
+> here rather than rediscovering: the `standard` paragraph is now the sweep's
+> unconditional instruction in `scripts/ralph.sh`, and the "when it is not
+> established, ask" rule that `strict` selected is now unconditional in
+> `scripts/reviewer.sh` — any check that applied but could not run blocks for a
+> decision instead of counting as a pass.
+>
+> Do not build against this document, and do not reintroduce the field without a
+> reader. The precedent it now joins is `depth` and `fanout`: "a control that
+> lies."
+
 ---
 
 ## The key distinction: scopedness is not settable, latitude is
