@@ -1,0 +1,28 @@
+{
+  "name": "@workshop/app-build",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The vite config an out-of-tree Workshop app builds with, and the one list of specifiers the shell publishes at runtime. Externals here and import-map entries in the shell are the SAME array, so they cannot drift.",
+  "license": "MIT",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./host": {
+      "types": "./host.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "host.d.ts",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "vite": ">=5"
+  }
+}

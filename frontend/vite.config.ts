@@ -2,6 +2,7 @@ import { defineConfig, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
 import fs from "node:fs";
 import path from "node:path";
+import { importmapPlugin, sharedInputs } from "./plugins/importmap";
 
 // iOS Safari refuses navigator.geolocation with "Origin does not have permission
 // to use Geolocation service" unless the document/origin has been granted the
@@ -199,8 +200,46 @@ export default defineConfig({
     serviceWorkerKillSwitchMiddleware(),
     httpsRedirectMiddleware(),
     react(),
+    // The one <script type="importmap"> that lets an app bundle built
+    // elsewhere resolve `react` (and the rest of SHARED) to the instances THIS
+    // bundle already carries. See plugins/importmap.ts.
+    importmapPlugin(),
   ],
+  build: {
+    rollupOptions: {
+      // The html entry plus one tiny re-export entry per shared specifier.
+      // Every one of them is a module `src/main.tsx` also reaches, so rollup
+      // hoists the real dependency into a chunk both import: one instance,
+      // with a stable public URL. See plugins/importmap.ts.
+      input: {
+        index: path.resolve(__dirname, "index.html"),
+        ...sharedInputs(),
+      },
+    },
+  },
+  // A nested copy of any of these under node_modules must not be able to win a
+  // resolution: two Reacts in one bundle is the same failure as two Reacts in
+  // one document, arriving from the other direction.
+  optimizeDeps: {
+    // Pre-bundle the shared set DETERMINISTICALLY rather than letting the dev
+    // server discover it mid-session, which is what makes the `?v=` token move.
+    // Deliberately NOT `exclude`: react@18 as installed here is CommonJS only
+    // (no "module" field, no ESM condition in its exports map), and excluding
+    // it from pre-bundling does not produce one React, it produces a dev server
+    // that cannot serve React at all.
+    include: [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react-router-dom",
+      "@tanstack/react-query",
+      "lucide-react",
+      "recharts",
+    ],
+  },
   resolve: {
+    dedupe: ["react", "react-dom", "react-router-dom", "@tanstack/react-query"],
     // The kit resolves as a real package: node_modules/@workshop/ui is a
     // workspace link to packages/ui, and its exports map decides which subpaths
     // exist. There is deliberately NO alias for it — an alias resolves BEFORE

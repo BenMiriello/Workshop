@@ -1,3 +1,8 @@
+// The shared-runtime guard, FIRST, so the shell registers its own React before
+// any app bundle can load a second one. See runtime/shared/guard.ts: without
+// this line the guard only ever sees an app's copy and has nothing to compare
+// it against.
+import "./runtime/shared/guard";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";

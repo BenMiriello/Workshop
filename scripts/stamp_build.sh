@@ -47,6 +47,19 @@ branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
 # ignore the flag.
 if [ -n "$(git status --porcelain -- frontend 2>/dev/null)" ]; then dirty=true; else dirty=false; fi
 
+# THE RUNTIME THIS BUNDLE PUBLISHES. An app's bundle does not carry react, the
+# router or the design kit -- it imports the shell's, through the import map in
+# index.html -- so an app declares the kit range it was compiled against and the
+# platform has to be able to answer what it actually serves. Read from the
+# packages the build just compiled, and recorded HERE rather than asked of
+# node_modules at request time, because the answer has to describe the bundle
+# being served and not whatever is installed now. `GET /base-apps/runtime`
+# returns these.
+pkg_version() { node -p "require('$1/package.json').version" 2>/dev/null || echo unknown; }
+kit_version="$(pkg_version "$REPO_ROOT/packages/ui")"
+react_version="$(pkg_version "$REPO_ROOT/node_modules/react")"
+router_version="$(pkg_version "$REPO_ROOT/node_modules/react-router-dom")"
+
 cat > "$DIST/build-info.json" <<EOF
 {
   "source_id": "$src_id",
@@ -54,7 +67,10 @@ cat > "$DIST/build-info.json" <<EOF
   "commit_short": "$(printf '%s' "$commit" | cut -c1-7)",
   "branch": "$branch",
   "dirty": $dirty,
-  "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "kit": "$kit_version",
+  "react": "$react_version",
+  "router": "$router_version"
 }
 EOF
 echo "stamped dist: source_id=$src_id commit=$(printf '%s' "$commit" | cut -c1-7) dirty=$dirty"
