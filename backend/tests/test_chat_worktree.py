@@ -468,7 +468,14 @@ class TestChoosingABranch:
         """Section 10.4's work id starts with a digit six times in ten, and
         `create_branch` requires a slug that starts with a letter. Normalizing it
         here rather than in `worktrees` would be the same name derived twice, so
-        the assertion is that the branches layer was ASKED."""
+        the assertion is that the branches layer was ASKED.
+
+        The name it answers with is `unnamed-9f0d2c8b`, not `t-9f0d2c8b`: an
+        untitled chat gets a branch named for the fact that nothing named it,
+        rather than one named after `uuid4().hex[:8]`. That is the branches
+        layer's rule and this test asserts it is the branches layer's rule --
+        the point of the mock is that this module contributes no naming of its
+        own, so when the rule changed there this assertion changed with it."""
         from services import worktrees
         made: list[str] = []
         monkeypatch.setattr(worktrees, "create_branch",
@@ -478,5 +485,5 @@ class TestChoosingABranch:
         offer = chat_worktree.pin_offer("demo", current_ref="master")
         offer["default"]["work_id"] = "9f0d2c8b"
         out = chat_worktree.apply_choice("demo", offer, "new_branch")
-        assert made == ["t-9f0d2c8b"]
-        assert out["branch_slug"] == "t-9f0d2c8b" and out["created"] is True
+        assert made == ["unnamed-9f0d2c8b"]
+        assert out["branch_slug"] == "unnamed-9f0d2c8b" and out["created"] is True

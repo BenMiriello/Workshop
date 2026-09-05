@@ -185,17 +185,21 @@ def test_the_disambiguated_slug_is_deterministic(project, tmp_path,
 # ---------------------------------------------------------------------------
 
 def test_a_worktree_with_no_title_is_still_created_and_addressable(project):
-    """A nameless unit of work beats no tree.
+    """A nameless unit of work beats no tree, and is still not named after hex.
 
     The rule is "never created without a human-readable name", not "never
-    created": when nothing can supply a title the id is still a name, and the
-    tree has to be reachable through every lookup that takes a branch slug.
+    created": when nothing can supply a title the tree is still made, but it is
+    called `unnamed-<short>` rather than the raw id. This assertion used to read
+    `t-30777f91367b4c7b`, which is the defect -- the tree has to be reachable
+    through every lookup that takes a branch slug AND has to be readable in the
+    list where the operator meets it.
     """
     from services import worktrees
 
     result = worktrees.allocate_task_worktree("proj", "30777f91367b4c7b")
 
-    assert result["branch_slug"] == "t-30777f91367b4c7b"
+    assert result["branch_slug"] == "unnamed-30777f91"
+    assert not worktrees.reads_as_machine_id(result["branch_slug"])
     assert result["display_name"] is None
     assert Path(result["dir"]).is_dir()
 
@@ -213,12 +217,26 @@ def test_a_worktree_with_no_title_is_still_created_and_addressable(project):
 
 
 def test_an_empty_title_falls_back_to_the_id_rather_than_failing(project):
-    """A chat with a blank title is a real state, not a caller error."""
+    """A chat with a blank title is a real state, not a caller error.
+
+    A blank title is not a title, so this takes the unnamed path and gets a name
+    from it. What it must NOT do is raise: the chat has already asked to write.
+    """
     from services import worktrees
 
     result = worktrees.allocate_task_worktree("proj", "abc123def", title="   ")
 
-    assert result["branch_slug"] == "abc123def"
+    assert result["branch_slug"] == "unnamed-abc123de"
+    assert Path(result["dir"]).is_dir()
+
+
+def test_an_id_that_is_already_readable_is_kept_whole(project):
+    """An id can be a name. `sec-a6-harden-...` was one of the six on disk."""
+    from services import worktrees
+
+    result = worktrees.allocate_task_worktree("proj", "sec-a6-harden-containers")
+
+    assert result["branch_slug"] == "sec-a6-harden-containers"
     assert Path(result["dir"]).is_dir()
 
 
@@ -243,15 +261,20 @@ def test_an_untitled_id_reused_still_refuses_rather_than_forking(project):
 def test_a_hex_named_tree_made_before_the_change_is_still_resolvable(project):
     """The pre-existing worktrees are addressed by slug and must stay so.
 
-    Made the old way (the id as the name), then read back through the same
-    lookups a chat pinned to it uses. Nothing here parses the name.
+    THE READ SIDE STAYS PERMISSIVE while the write side stops. This tree is made
+    with raw git, the way the code that produced `a89d3bd46dfc48c6bcfe4ca49c6399
+    62` on this installation did, because `create_branch` now refuses that name
+    and `allocate_task_worktree` no longer derives it -- so the only honest way
+    to get one is to put it there. Then it is read back through the same lookups
+    a chat pinned to it uses. Nothing here parses the name, which is what keeps
+    a record or a pinned chat that still cites a legacy slug working.
     """
     from services import worktrees
 
-    legacy = worktrees.allocate_task_worktree(
-        "proj", "a89d3bd46dfc48c6bcfe4ca49c639962")
-    slug = legacy["branch_slug"]
-    assert slug == "a89d3bd46dfc48c6bcfe4ca49c639962"
+    slug = "a89d3bd46dfc48c6bcfe4ca49c639962"
+    target = worktrees.BRANCHES_ROOT / "proj" / slug
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _git(project, "worktree", "add", "-b", f"wt/proj/{slug}", str(target))
 
     assert worktrees.branch_dir("proj", slug).is_dir()
     assert slug in {b["branch_slug"] for b in worktrees.list_branches("proj")}
@@ -262,3 +285,103 @@ def test_a_hex_named_tree_made_before_the_change_is_still_resolvable(project):
     # And a new, titled tree in the same project does not disturb it.
     worktrees.allocate_task_worktree("proj", "t-999", title="Something else")
     assert worktrees.branch_dir("proj", slug).is_dir()
+
+
+# ---------------------------------------------------------------------------
+# the proof: no path emits a branch named after a machine id
+# ---------------------------------------------------------------------------
+#
+# THIS IS THE CLAIM, and it is a claim about EVERY WRITER, so it is asserted
+# against every writer rather than against the one that was reported. The
+# operator reported the symptom on the branch list -- "all of the branches below
+# have just a long sort of string of letters and numbers as the name" -- and the
+# previous fix changed the one caller that was known to have a title. It left
+# `t-<hex>` and BARE `<hex>` reachable from two other doors, which is why three
+# of the six trees on this installation still carry hex names today.
+#
+# There are exactly three doors into a branch name and they are enumerated here:
+#   1. `branch_slug_for_work` -- the ticket path and the chat offer path
+#   2. `create_branch`        -- the no-ticket path and the HTTP route
+#   3. `allocate_task_worktree` -- which goes through (1) and is asserted anyway,
+#      because "it calls the safe one" is exactly the assumption that broke.
+# `provision_worktree` is not a fourth: it forwards to (3) with the same title
+# and work id, adding only the dependency clone.
+
+def test_no_creation_path_can_emit_a_branch_named_after_a_machine_id(project):
+    """Every writer, against every shape of id that has been seen on disk."""
+    from services import worktrees
+
+    # The exact strings that ended up as directory names under
+    # branches/development/, plus the two shapes they generalise to.
+    machine_ids = [
+        "a89d3bd46dfc48c6bcfe4ca49c639962",   # bare 32-hex: starts with a letter
+        "bc81b563abe14333be4e8626dc8182bd",
+        "d8676bbabd924e7e8d4e6d18d48dbcdc",
+        "cb311b87376f46dbab5203a5da5806d4",
+        "30777f91367b4c7b862df419cc9a36e2",
+        "26c69d40",                            # uuid4().hex[:8], the offer path
+        "0346adcc66784569bd9051ed12e3617b",    # starts with a digit -> `t-` shape
+        "4a79ffc515844ca2a48a369b7ca7b0a7",
+    ]
+
+    for i, work_id in enumerate(machine_ids):
+        # Door 1 and 3: an untitled unit of work.
+        slug = worktrees.branch_slug_for_work("proj", work_id=work_id)
+        assert not worktrees.reads_as_machine_id(slug), (
+            f"branch_slug_for_work named a branch after the id {work_id!r}: {slug!r}")
+
+        allocated = worktrees.allocate_task_worktree(f"proj", work_id)
+        assert not worktrees.reads_as_machine_id(allocated["branch_slug"])
+        assert not worktrees.reads_as_machine_id(Path(allocated["dir"]).name)
+        # The branch is never simply the id. A short id survives INSIDE
+        # `unnamed-26c69d40`, which is the point -- the tree stays traceable to
+        # its work -- but it is no longer what the branch is called.
+        assert allocated["branch"] != f"wt/proj/{work_id}"
+        assert allocated["branch_slug"] != worktrees.branch_slug_for(work_id)
+
+        # And a title that is ITSELF an id is not a name either: it takes the
+        # same door and must not get through it on the strength of being passed
+        # in the title argument.
+        titled = worktrees.branch_slug_for_work(
+            "proj", title=work_id, work_id=f"other{i}")
+        assert not worktrees.reads_as_machine_id(titled)
+
+    # Door 2: a slug handed in from outside, which is what the HTTP route does.
+    for work_id in machine_ids:
+        with pytest.raises(ValueError, match="machine id"):
+            worktrees.create_branch("proj", worktrees.branch_slug_for("t-" + work_id))
+        with pytest.raises(ValueError, match="machine id"):
+            worktrees.create_branch("proj", worktrees.branch_slug_for(work_id))
+
+
+def test_the_route_that_takes_a_slug_refuses_a_machine_id(project):
+    """`routes/worktrees.py` hands `create_branch` the request body verbatim.
+
+    Asserted at the service boundary rather than over HTTP because that is where
+    the refusal lives and where a future second route would meet it too.
+    """
+    from services import worktrees
+
+    with pytest.raises(ValueError, match="machine id"):
+        worktrees.create_branch("proj", "a89d3bd46dfc48c6bcfe4ca49c639962")
+
+    # A real name through the same door is unaffected.
+    made = worktrees.create_branch("proj", "chat-toolbar-fixes")
+    assert made["branch_slug"] == "chat-toolbar-fixes"
+
+
+def test_reads_as_machine_id_is_the_one_definition(project):
+    """The predicate itself, since both refusals are keyed on it.
+
+    A name with words in it is a name however much hex it contains, and a short
+    id is not a wall -- `branchName` in the frontend would show either in full.
+    """
+    from services import worktrees
+
+    for value in ("a89d3bd46dfc48c6bcfe4ca49c639962", "t-26c69d40",
+                  "abc123def", "deadbeef", "0123456789abcdef"):
+        assert worktrees.reads_as_machine_id(value), value
+
+    for value in ("chat-toolbar-fixes", "unnamed-a89d3bd4", "sec-a6-harden",
+                  "t-999", "t-42", "fix-the-toolbar", "faced"):
+        assert not worktrees.reads_as_machine_id(value), value

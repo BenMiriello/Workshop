@@ -31,6 +31,7 @@ import {
   shortHttpError,
 } from "@workshop/ui";
 import Chat from "../components/Chat";
+import { branchName } from "../components/chat/chatBranch";
 import { userStorage } from "../lib/storage";
 
 // Build-agent surface = chat-first. Opening a builder lands you in the CHAT (the
@@ -55,11 +56,11 @@ type TreeNode = {
 type PaneTab = "editor" | "preview" | "diff" | "prompt" | "notes";
 const WORKBENCH_KEY = "ws-agent-build-workbench";
 
-type Worktree = {
-  branch_slug: string;
-  branch: string;
-  dir: string;
-};
+// GENERATED FROM THE BACKEND'S OWN SCHEMA, never hand-written -- the same rule
+// `chatBranch.ts` states for `ChatWorktree`. The hand-written version of this
+// type declared three fields, so `display_name` and `default_ref` were on the
+// wire and invisible here, and the picker below drew branch_slug raw.
+type Worktree = components["schemas"]["BranchRow"];
 
 type PreviewStatus = {
   running: boolean;
@@ -784,15 +785,22 @@ export default function AgentBuild() {
                 aria-label="Branch"
                 title={`Turns run in ${agent.cwd || "this agent's directory"}. Changing this moves the next turn, not the one in flight.`}
               >
-                {/* ONE NAME FOR THE TRUNK, EVERYWHERE. The chat toolbar's tree
-                    pill calls it "Shared tree" and this used to call it "Main
-                    branch", which is two names for one place in the two
-                    controls that do the same job. It is also the more accurate
-                    of the two: what matters about it is that everything else is
-                    in it, not what git happens to call the ref. */}
-                <option value="">Shared tree</option>
+                {/* ONE NAME FOR THE TRUNK, EVERYWHERE, AND IT IS THE REF'S OWN
+                    NAME. This control and the chat toolbar's branch pill do the
+                    same job and had two different words for one place: "Main
+                    branch" here, then "Shared tree" here after that, against
+                    the pill's `main`. The operator asked what the second one
+                    even was -- "Is 'shared tree' the name of the work tree, or
+                    is it something else?" -- and it was neither, it was `main`
+                    said twice. `default_ref` is the branches layer's answer, so
+                    a repo whose trunk is `master` says master.
+
+                    EVERY OTHER ROW IS NAMED BY `branchName`, the same rule the
+                    pill and its move list use. This list printed `branch_slug`
+                    raw, which drew a column of 32-character hex. */}
+                <option value="">{worktrees[0]?.default_ref || "Main"}</option>
                 {worktrees.map((w) => (
-                  <option key={w.branch_slug} value={w.branch_slug}>{w.branch_slug}</option>
+                  <option key={w.branch_slug} value={w.branch_slug}>{branchName(w)}</option>
                 ))}
               </Select>
               <Button size="sm" variant="ghost" onClick={() => setNewBranchOpen(true)} disabled={pinBusy}>
@@ -801,7 +809,7 @@ export default function AgentBuild() {
             </Row>
           ) : agent.project_slug ? (
             <Row style={{ gap: "var(--space-2)" }}>
-              <StatusPill status="stopped">Shared tree</StatusPill>
+              <StatusPill status="stopped">No branch yet</StatusPill>
               <Button size="sm" variant="ghost" onClick={() => setNewBranchOpen(true)}>
                 <Plus aria-hidden /> New branch
               </Button>

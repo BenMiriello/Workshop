@@ -453,13 +453,22 @@ def test_the_first_write_makes_the_worktree_and_nobody_asked_for_it(workshop,
 # --- the return trip ----------------------------------------------------------
 
 def test_an_unpinned_chat_is_told_there_is_nothing_to_merge(workshop):
+    """And it is told so in ONE word for the place, which is `branch`.
+
+    This assertion used to read `"shared tree" in reason`, which is the second
+    word the operator asked about -- "Is 'shared tree' the name of the work
+    tree, or is it something else?" It was a second name for the trunk, so the
+    sentence now says what is actually true of this chat (it has no branch of
+    its own) in the vocabulary every other surface uses.
+    """
     state = chat_worktree.diff(_thread("thread-a", "Just asking"),
                                workshop["provider"],
                                fallback_cwd=str(workshop["proj"]))
 
     assert state["pinned"] is False
     assert state["mergeable"] is False
-    assert "shared tree" in state["reason"]
+    assert "not on a branch of its own" in state["reason"]
+    assert "shared tree" not in state["reason"]
 
 
 def test_the_diff_names_the_files_and_the_ref_it_would_merge_into(workshop):

@@ -230,11 +230,22 @@ def _pinned_branch(thread: dict | None, provider: Any) -> str | None:
 
 
 def _default_ref(project_slug: str | None) -> str:
-    """What the shared tree is called, for the read-only line section 10.2 asks
-    for. Asked of the branches layer, whose policy naming is (section 13.2), so
-    a repo whose trunk is `master` is not described as `main`."""
+    """The trunk's own name, for the read-only line section 10.2 asks for.
+
+    Asked of the branches layer, whose policy naming is (section 13.2), so a
+    repo whose trunk is `master` is not described as `main`.
+
+    ONE WORD, AND IT IS THE REF'S OWN. This used to answer "the shared tree" for
+    a chat with no project, which put a second term for one place into a
+    sentence that already had the first: the operator, on the chat's own tree
+    section, "We have one that's called 'shared tree main'. So it means we're
+    working on main. Why are there two terms here? Is 'shared tree' the name of
+    the work tree, or is it something else?" It was neither -- it was `main`
+    again. With no project there is no trunk to name, so this gives what
+    `worktrees.default_ref` gives when it cannot resolve one: `HEAD`, which is
+    true of every repository and is git's word rather than an invented one."""
     if not project_slug:
-        return "the shared tree"
+        return "HEAD"
     return worktrees.default_ref(project_slug)
 
 
@@ -640,8 +651,8 @@ def diff(thread: dict | None, provider: Any, *, fallback_cwd: str) -> dict:
         "reason": "",
     }
     if not (tree.pinned and tree.project_slug):
-        out["reason"] = ("This chat is working in the shared tree, so there is "
-                         "nothing to merge back. A worktree is made the first "
+        out["reason"] = ("This chat is not on a branch of its own, so there is "
+                         "nothing to merge back. A branch is made the first "
                          "time it writes.")
         return out
     try:
@@ -664,8 +675,9 @@ def diff(thread: dict | None, provider: Any, *, fallback_cwd: str) -> dict:
         out["reason"] = f"The diff could not be read ({exc})."
         return out
     if not out["ahead"] and not out["uncommitted"]:
-        out["reason"] = (f"Nothing has been done in this worktree yet: it is "
-                         f"level with {out['base_ref'] or 'the shared tree'}.")
+        out["reason"] = (f"Nothing has been done on this branch yet: it is "
+                         f"level with "
+                         f"{out['base_ref'] or _default_ref(tree.project_slug)}.")
         return out
     out["mergeable"] = True
     return out
@@ -744,11 +756,11 @@ def merge(thread_id: str, thread: dict | None, provider: Any, *,
             done = git_service.commit(state["cwd"], text)
         except Exception as exc:
             return {"ok": False, "commit": "", "committed": [],
-                    "reason": f"The worktree's own changes could not be committed ({exc})."}
+                    "reason": f"This branch's own changes could not be committed ({exc})."}
         if not added["ok"] or not done["ok"]:
             detail = (added.get("detail") or done.get("detail") or "").strip()
             return {"ok": False, "commit": "", "committed": [],
-                    "reason": f"The worktree's own changes could not be committed: {detail[:300]}"}
+                    "reason": f"This branch's own changes could not be committed: {detail[:300]}"}
         committed = list(state["uncommitted"])
 
     try:

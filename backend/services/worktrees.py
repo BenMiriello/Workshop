@@ -50,6 +50,7 @@ Public surface:
   branch_slug_for(value) -> str         an arbitrary work id, as a branch slug
   branch_slug_for_work(project_slug, *, title, work_id) -> str
                                         a unit of work, as a FREE branch slug
+  reads_as_machine_id(slug) -> bool     is this slug an id rather than a name
   live_branches() -> dict            every tree there is, joined with its record
   merge_branch(project_slug, branch_slug, *, message="") -> dict
   discard_branch(project_slug, branch_slug, *, force=False) -> dict
@@ -91,6 +92,38 @@ PROJECTS_REGISTRY = Path(os.environ.get(
 
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 
+# WHEN A SLUG IS A MACHINE ID RATHER THAN A NAME: the whole thing is hex, at
+# least this long, optionally behind the `t-` prefix `_kebab_branch_slug` puts
+# on an id that starts with a digit. Both spellings are the same defect --
+# `a89d3bd46dfc48c6bcfe4ca49c639962` and `t-26c69d40` are equally unreadable --
+# and the operator named it directly: "all of the branches below have just a
+# long sort of string of letters and numbers as the name. so why aren't we
+# naming them something that makes more sense or something that fits what the
+# branch actually is."
+#
+# EIGHT, and it is deliberately far STRICTER than the frontend's HEX_ID_MIN of
+# 24 (`frontend/src/components/chat/chatBranch.ts`). They are not the same
+# number spelled twice; they answer different questions. That one asks "is this
+# too wide to show on a 390px bar", so it may only shorten what it is given.
+# This one asks "may this become a branch's name at all", and at minting time
+# there is always a better answer available, so it refuses far earlier.
+#
+# Eight is the width of the shortest id this system actually mints: section
+# 10.4's no-ticket work id is `uuid4().hex[:8]`, which is where the five
+# `t-26c69d40` records on this installation came from. A threshold above it
+# would let that exact reported name through, which is the whole point of the
+# check. It is also still below any real title: a title of two or more words
+# slugifies with a dash in it and cannot match at all, so the only false
+# positive available is a ONE-WORD title of eight or more letters spelled out of
+# a-f alone, and English has none (`defaced` and `effaced` are seven).
+_MACHINE_ID_MIN_HEX = 8
+_MACHINE_ID_RE = re.compile(r"^(?:t-)?[0-9a-f]{%d,}$" % _MACHINE_ID_MIN_HEX)
+
+# How much of an unnamed unit of work's id survives into `unnamed-<tail>`.
+# Eight characters is short enough to read at a glance and long enough that two
+# different units of work do not land on the same tree.
+_UNNAMED_ID_KEEP = 8
+
 # Guard against exhausting the volume mid-clone. Override with
 # WORKSHOP_MIN_WORKTREE_FREE_BYTES if running on a smaller disk.
 MIN_FREE_BYTES: int = int(
@@ -128,6 +161,45 @@ def _kebab_branch_slug(value: str) -> str:
     if not v or not v[0].isalpha():
         v = f"t-{v}" if v else "t"
     return v[:48].rstrip("-")
+
+
+def reads_as_machine_id(value: str) -> bool:
+    """Is this slug an id wearing a name's clothes?
+
+    PUBLISHED BECAUSE IT IS THE PROOF, not just a helper. "No path emits a bare
+    hex branch name" is a claim about every writer, so the claim needs one
+    predicate every writer is measured against and every test can call. A second
+    copy of this regex anywhere else would be the same question answered twice,
+    which is what section 13.2 of `workspace-ownership-and-leases-2026-08-22.md`
+    forbids.
+
+    Read-only by design: it says what a slug IS, never what to do about it. The
+    two callers decide that differently -- `branch_slug_for_work` replaces the
+    id with a name it derives, and `create_branch` refuses.
+    """
+    return bool(_MACHINE_ID_RE.match((value or "").strip().lower()))
+
+
+def _unnamed_slug(work_id: str) -> str:
+    """The slug for a unit of work that arrived with no title of its own.
+
+    A work id is not always opaque -- `only-once` and `sec-a6` are ids too, and
+    they already read as the work -- so an id that is a name is kept whole. Only
+    an id that `reads_as_machine_id` is replaced, and it is replaced rather than
+    truncated: `unnamed-30777f91` says the thing that is actually true (nothing
+    named this work) in the one word that says it, where `t-30777f91367b4c7b`
+    said only that a machine was here.
+
+    A PURE FUNCTION OF THE WORK ID, with no date and no counter in it, because
+    `branch_slug_for_work` relies on that: the untitled path returns its base
+    slug undisambiguated so that a second allocation under one id collides and
+    raises "already exists" instead of quietly forking a second tree.
+    """
+    slug = _kebab_branch_slug(work_id)
+    if not reads_as_machine_id(slug):
+        return slug
+    tail = slug[2:] if slug.startswith("t-") else slug
+    return f"unnamed-{tail[:_UNNAMED_ID_KEEP]}"
 
 
 def _project_record(project_slug: str) -> dict:
@@ -268,9 +340,23 @@ def create_branch(project_slug: str, branch_slug: str, *,
     "writing with no ticket is common and not second-class: it gets a branch a
     ticket can adopt later". So the record is written with `ticket_id` NULL
     rather than with the branch slug pressed into service as one.
+
+    IT ALSO TAKES A SLUG FROM OUTSIDE, which is why the machine-id refusal is
+    here as well as in `branch_slug_for_work`. This is the other door:
+    `routes/worktrees.py` hands it whatever the request body carried, so a
+    caller that skipped the naming rule -- or a caller that reached for a work
+    id because it had one -- would otherwise mint exactly the branch names this
+    module now exists to prevent. Two writers, one rule, and the rule is a
+    refusal rather than a rename because a caller that named a branch after an
+    id has a name it did not pass, and silently substituting one would hide that.
     """
     project_slug = _validate_slug(project_slug, "project_slug")
     branch_slug = _validate_slug(branch_slug, "branch_slug")
+    if reads_as_machine_id(branch_slug):
+        raise ValueError(
+            f"branch slug {branch_slug!r} is a machine id, not a name. A branch "
+            f"is named after its work: pass the work's title to "
+            f"branch_slug_for_work and use the slug it returns.")
     project_dir = _project_dir(project_slug)
     branch = _branch_name(project_slug, branch_slug)
     target = _branch_path(project_slug, branch_slug)
@@ -384,6 +470,19 @@ def list_branches(project_slug: str) -> list[dict]:
     Only returns worktrees whose branch starts with wt/<project_slug>/.
     The main worktree is excluded. `display_name` is joined from records,
     best-effort: absent when there is no relational store.
+
+    EVERY ROW CARRIES `default_ref`, THE TRUNK'S OWN NAME, because a control
+    that lists branches also has to offer the trunk and has to call it
+    something. The two controls that do this disagreed: the chat toolbar's pill
+    names it by its ref (`main`) and the build agent's picker called it "Shared
+    tree", which is a term nothing else in the product uses and which the
+    operator asked about directly -- "Is 'shared tree' the name of the work
+    tree, or is it something else?". It was neither; it was a second word for
+    `main`. Naming the trunk is this module's policy (`default_ref`, section
+    13.2), so the answer travels with the list rather than being invented once
+    per control, and a repo whose trunk is `master` is not described as `main`.
+    It repeats per row because the wire shape here is a bare list; it is
+    computed once.
     """
     project_slug = _validate_slug(project_slug, "project_slug")
     project_dir = _project_dir(project_slug)
@@ -391,6 +490,7 @@ def list_branches(project_slug: str) -> list[dict]:
         entries = git_service.worktree_list(project_dir)
     except git_service.GitError:
         return []
+    trunk = _canonical_branch(project_slug, project_dir) or "HEAD"
     prefix = f"wt/{project_slug}/"
     items: list[dict] = []
     for entry in entries:
@@ -409,6 +509,7 @@ def list_branches(project_slug: str) -> list[dict]:
             # has to know that; re-deriving it meant a second `git worktree list`.
             "locked": bool(entry.get("locked")),
             "display_name": None,
+            "default_ref": trunk,
         })
     # Enrich with display_name from records, best-effort.
     recs_list = _record(worktree_records.list_records,
@@ -1201,14 +1302,32 @@ def branch_slug_for_work(project_slug: str, *, title: str | None = None,
     which is what an unnamed unit of work has and is better than refusing to
     make a tree. A slug that is already taken gets a short deterministic
     suffix -- only on collision, so the common case reads as the work.
+
+    THERE ARE EXACTLY TWO CASES AND NEITHER OF THEM IS A HEX WALL. Either a
+    title names the work, or `_unnamed_slug` does; the branch is never handed
+    the raw id. This is stated as a two-branch `if` rather than as "slugify
+    whatever we have, then check it" ON PURPOSE: the old single expression
+    `_kebab_branch_slug(title or work_id)` could not tell the two apart
+    afterwards, and it emitted `t-<hex>` for an id starting with a digit and a
+    BARE 32-hex name for one starting with a letter. Three of the six trees on
+    this installation were named that second way and nothing caught it, because
+    a bare hex name is indistinguishable from a very unlucky title unless you
+    know which input it came from. Here we know.
     """
     project_slug = _validate_slug(project_slug, "project_slug")
     # A blank title is the same fact as no title -- a chat that has not been
     # named yet carries "" or a run of spaces, not None -- and slugifying it
     # would name the tree `t`.
     title = (title or "").strip() or None
+    # A title that is itself an id is not a name. It happens: a chat auto-titled
+    # from its own thread id, an importer that put the ticket id in the title
+    # field. Such a title is dropped here rather than trusted, so the `unnamed`
+    # path catches it too and there is no way past this function with a hex wall.
+    if title and reads_as_machine_id(_kebab_branch_slug(title)):
+        title = None
     label = "title" if title else "work_id"
-    base = _validate_slug(_kebab_branch_slug(title or work_id), label)
+    base = _validate_slug(
+        _kebab_branch_slug(title) if title else _unnamed_slug(work_id), label)
     if not _slug_is_taken(project_slug, base):
         return base
     if not title:

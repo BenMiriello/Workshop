@@ -56,6 +56,13 @@ class BranchRow(BaseModel):
     # raw t-<hex> slug instead.
     display_name: str | None = None
     head: str | None = None
+    # The trunk this project's branches are cut from, BY ITS OWN NAME. Declared
+    # for the reason display_name above it had to be (ADR 0023 clause 6: an
+    # undeclared field is dropped): a control that lists branches also offers
+    # the trunk, and without this it has to invent a word for it. Two of them
+    # did, and disagreed. Same for every row of one project; the wire shape here
+    # is a bare list, so it rides on the row.
+    default_ref: str | None = None
     # git refuses to remove or prune a locked worktree, and every tree the task
     # allocator makes is locked, so a caller deciding whether one can be reaped
     # has to know.
