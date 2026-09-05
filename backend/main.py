@@ -31,6 +31,7 @@ from routes import presence as presence_routes
 from routes import control as control_routes
 from routes import leases as leases_routes
 from services import app_registry
+from services import app_mount_record
 # Imported HERE rather than inside `lifespan` like its neighbours: this module is
 # a timer around two shell commands (stdlib plus `wsplatform.paths`), so there is
 # no heavy import to defer and no cycle to break, and a function-local import
@@ -512,20 +513,46 @@ app.include_router(voice.router, tags=["voice"], dependencies=_USER)
 app.include_router(voice_stream.router, tags=["voice"])
 app.include_router(push.router, dependencies=_USER)
 
-# Installed apps — finance/budget/commute/location/birds/health/… mount from the
-# built-in catalog (services/app_registry), gated by this instance's installed-app
-# registry. A fresh clone installs nothing and mounts none of these; each app
-# carries its own auth (declared in its AppSpec). Adding/removing an app is an
-# installed-apps edit, never a change to this file. See docs/apps-are-pluggable.md.
+# Installed apps mount from the built-in catalog (services/app_registry), gated
+# by this instance's installed-app registry. A fresh clone installs nothing and
+# mounts none of these; each app carries its own auth (declared in its AppSpec).
+# Adding/removing an app is an installed-apps edit, never a change to this file.
+# See docs/apps-are-pluggable.md.
+#
+# THE RESULT IS RECORDED, and `/healthz` serves the record. Mounting zero apps
+# is a legitimate fresh-clone state and mounting zero apps off a roster that
+# names eight is a total outage, and until 2026-09-05 this loop expressed both
+# as the same silence. `record_mounted` is what tells them apart, from inside
+# the process, which is the only place the resolved roster path is knowable.
 app_registry.ensure_identity_manifests()
-for _spec in app_registry.installed_specs():
-    for _m in _spec.mounts:
-        app.include_router(
-            _m.router,
-            prefix=_m.prefix,
-            tags=list(_m.tags) or None,
-            dependencies=list(_m.deps),
-        )
+
+
+def _mount_installed_apps(target: FastAPI) -> dict:
+    """Mount every installed app's routers onto `target`, and return the record
+    of what that actually did.
+
+    A FUNCTION, not a bare module-level loop, so the ids it accumulates are a
+    local and this file gains no process-local mutable state
+    (`scripts/check_no_process_globals.py`, target-architecture §2.6).
+    """
+    ids: list[str] = []
+    before = len(target.routes)
+    for spec in app_registry.installed_specs():
+        for m in spec.mounts:
+            target.include_router(
+                m.router,
+                prefix=m.prefix,
+                tags=list(m.tags) or None,
+                dependencies=list(m.deps),
+            )
+        ids.append(spec.id)
+    return app_mount_record.build(ids, len(target.routes) - before)
+
+
+# HELD ON THE APP, not in a module global: the record describes THIS app
+# object's mounting pass, and a per-process global would let one uvicorn worker
+# serve another's answer.
+app.state.apps = _mount_installed_apps(app)
 
 # Internal machine-to-machine infra — loopback only, no personal data, not public.
 app.include_router(relay.router, dependencies=_LOOPBACK)
@@ -636,6 +663,20 @@ async def healthz():
     on, reported by the process that is sitting on it rather than inferred by
     whoever is asking. Null when the query fails, which is honest; a caller must
     not read null as agreement.
+
+    `apps` is the third of the same kind, and it is the one that cost two days.
+    Every app 404'd while this endpoint said `ok`, because nothing served said
+    which installed-apps roster this process read or what it managed to mount
+    off it -- and the roster path is anchored to the module's own location, so
+    two checkouts of the same source on one host resolve two different files. An
+    agent in a sandbox cannot read `/proc/<pid>/cwd` to settle it. The process
+    can, so the process answers: the resolved path, the roster it read, and the
+    app ids whose routers are actually mounted, recorded at mount time rather
+    than re-read now.
+
+    UNAUTHENTICATED, so it carries app ids and one filesystem path and nothing
+    else -- no route table, no configuration, no data. That is the same
+    disclosure the launcher already makes to any caller.
     """
     return {
         "ok": True,
@@ -643,4 +684,5 @@ async def healthz():
         "started_at": _STARTED_AT,
         "pid": os.getpid(),
         "schema": _live_schema_revision(),
+        "apps": getattr(app.state, "apps", None) or app_mount_record.unmounted(),
     }

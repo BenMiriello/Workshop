@@ -26,11 +26,14 @@
 # an agent reasoning about other agents' in-flight work is inventing a problem
 # the tooling already owns.
 #
-# ONE SURFACE IS REPORTED AND NEVER APPLIED: the database schema. Every other
-# check here ends in this script fixing the thing; the schema check ends in it
-# telling you and refusing to restart the backend on top of the gap. Applying a
-# migration to a live database is a deliberate act with a blast radius this
-# script cannot judge, so it stays the operator's, in a terminal. See section 2.
+# TWO SURFACES ARE REPORTED AND NEVER APPLIED. The database schema (section 2):
+# every other check here ends in this script fixing the thing; the schema check
+# ends in it telling you and refusing to restart the backend on top of the gap,
+# because applying a migration to a live database is a deliberate act with a
+# blast radius this script cannot judge, so it stays the operator's, in a
+# terminal. And the app roster (section 3b): the running process reports which
+# apps it mounted and from which roster file, and a disagreement there is a
+# configuration fault that no restart and no rebuild resolves.
 #
 # WHAT IT COSTS (measured 2026-08-13, so nobody has to guess again):
 #   bundle rebuild   ~17s, and NOTHING restarts -- the edge serves dist from
@@ -343,6 +346,56 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 3b. The APPS the running backend actually mounted, against the roster.
+#
+#     Every other check on this page compares SOURCE, and that is exactly why
+#     this one had to be added. On 2026-09-04 every app route on this
+#     installation answered 404 for two days while this script printed
+#     "ok backend" and "in sync" on every run: the source was identical, the
+#     source id matched, and what differed was which `.runtime/installed-apps
+#     .json` the running process resolved -- instance state, which no source
+#     hash covers and which nothing served ever printed.
+#
+#     So this asks the RUNNING PROCESS what it mounted and from where (the
+#     `apps` record on /healthz) and compares that against the roster in this
+#     tree. It is the only comparison here whose two sides are not both source.
+#     It reports and never fixes: a restart cannot fix a roster that names apps
+#     the venv does not carry, and it cannot fix a process reading a different
+#     file than this tree holds.
+# ---------------------------------------------------------------------------
+APPS_STATE="unknown"
+APPS_MSG="apps: COULD NOT DETERMINE -- scripts/backend_apps_state.py did not run"
+APPS_FIX=""
+if [ -f scripts/backend_apps_state.py ]; then
+  apps_line="$(python3 scripts/backend_apps_state.py --tsv 2>/dev/null | tail -1)"
+  if [ -n "$apps_line" ]; then
+    APPS_STATE="${apps_line%%$'\t'*}"
+    apps_rest="${apps_line#*$'\t'}"
+    APPS_MSG="${apps_rest%%$'\t'*}"
+    APPS_FIX="${apps_rest#*$'\t'}"
+  fi
+fi
+
+APPS_UNKNOWN=0   # the comparison did not happen; this is NOT "in sync"
+case "$APPS_STATE" in
+  ok)
+    ok "$APPS_MSG" ;;
+  unresolved|roster_differs|unreadable)
+    # Real drift this script will not close. `stale`, not `plan`: printing
+    # "apply" would promise a fix that no step below performs.
+    stale "$APPS_MSG"
+    [ -n "$APPS_FIX" ] && say "          $APPS_FIX" ;;
+  unreachable)
+    # The backend section above has already said the backend is not answering;
+    # do not say it twice, but do not let it read as agreement either.
+    APPS_UNKNOWN=1 ;;
+  *)
+    APPS_UNKNOWN=1
+    warn "$APPS_MSG"
+    [ -n "$APPS_FIX" ] && say "          $APPS_FIX" ;;
+esac
+
+# ---------------------------------------------------------------------------
 # 3 + 4. Two surfaces with no self-reported id: the Vite dev server (reads
 #        frontend/.env only at service start) and the public edge (its own
 #        code, backend/workshop_public_app.py).
@@ -432,10 +485,12 @@ if [ "$CHECK" = 1 ]; then
     [ "$MIG_BLOCKS" = 1 ] && say "  ...except the schema, which apply.sh will not touch: $MIG_FIX"
   elif [ "$MIG_UNKNOWN" = 1 ]; then
     say "NOT in sync as far as this can tell: the schema could not be measured (above)"
+  elif [ "$APPS_UNKNOWN" = 1 ]; then
+    say "NOT in sync as far as this can tell: what the backend mounted could not be measured ($APPS_MSG)"
   else
     say "in sync"
   fi
-  exit $(( DRIFT || MIG_UNKNOWN ))
+  exit $(( DRIFT || MIG_UNKNOWN || APPS_UNKNOWN ))
 fi
 [ "$FAILED" = 1 ] && { say "apply: something failed (above)"; exit 1; }
 # Never let a skip pass for a success. Something deliberately not done still has
@@ -443,5 +498,6 @@ fi
 [ "$UI_SKIPPED" = 1 ] && say "apply: the bundle is still STALE by choice (uncommitted UI work above)"
 [ "$BE_SKIPPED" = 1 ] && say "apply: the backend is still STALE by choice ($BE_SKIP_WHY)"
 [ "$MIG_UNKNOWN" = 1 ] && say "apply: the schema was NOT compared (above), so this run cannot claim in sync"
-[ "$ACTED" = 0 ] && [ "$DRIFT" = 0 ] && [ "$MIG_UNKNOWN" = 0 ] && say "already in sync; nothing to do"
+[ "$APPS_UNKNOWN" = 1 ] && say "apply: what the backend mounted was NOT compared ($APPS_MSG), so this run cannot claim in sync"
+[ "$ACTED" = 0 ] && [ "$DRIFT" = 0 ] && [ "$MIG_UNKNOWN" = 0 ] && [ "$APPS_UNKNOWN" = 0 ] && say "already in sync; nothing to do"
 exit 0

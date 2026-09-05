@@ -43,6 +43,8 @@ differ:
 - **The Vite dev server**, which reads `frontend/.env` only at service start.
 - **The public edge**, when `backend/workshop_public_app.py` itself changes.
 - **The database schema** — reported, never applied. See below.
+- **Which apps the running backend actually mounted**, and from which roster
+  file — reported, never applied. See below.
 
 Both of the first two comparisons are exact, because the running thing reports
 its own version. That is what makes the script idempotent and what makes "did my
@@ -50,6 +52,50 @@ change land" answerable instead of assumed.
 
 `bash scripts/apply.sh --check` reports drift and changes nothing. It is a good
 first move when you pick up work someone else left.
+
+## The other surface it reports and never fixes: what the backend mounted
+
+Every check above compares SOURCE to SOURCE, and that is exactly why this one
+had to be added. On 2026-09-04 every app route on this installation answered
+404 for two days while `apply.sh --check` printed `ok backend` and `in sync` on
+every run. The source was identical and its id matched; what differed was which
+`.runtime/installed-apps.json` the running process resolved. That path is
+anchored to the module's own location, so two checkouts of one source on one
+host read two different rosters — and a roster is instance state that no source
+hash covers.
+
+Nothing served said which one it had read, and it could not be established from
+outside either: an agent in a sandbox does not share the backend's mount
+namespace, so `/proc/<pid>/cwd` and `/proc/<pid>/environ` are unreadable and
+every check measured the checker's own filesystem instead.
+
+So the process answers for itself. `GET /healthz` carries an `apps` record —
+the resolved roster path, the roster it read, the ids whose routers it actually
+mounted, the catalog it had to draw from, and the route count — pinned at mount
+time rather than recomputed per request. Run it directly:
+
+```
+python3 scripts/backend_apps_state.py
+```
+
+| what it prints | what it means |
+| --- | --- |
+| `ok` | the process mounted everything its roster names, and that roster agrees with this tree's (or this tree has none, which a linked worktree and a fresh clone both legitimately do) |
+| `unresolved` | the roster names apps the process did not mount. Those routes are answering 404 right now; the usual cause is that their distributions are not installed into the backend venv (`python3 scripts/install_apps.py`) |
+| `roster_differs` | the process read a different roster file than this tree holds. This is the outage above, and note that the process looks internally consistent while it happens |
+| `unreadable` | one side's roster is present and cannot be parsed |
+| `unreported` | the backend answers but carries no `apps` record, so it is running code from before this existed. Restart it once |
+| `unreachable` | nothing answered on the backend port |
+
+The last two are **not** in sync and `apply.sh` says so rather than staying
+quiet, the same way an unmeasurable schema does. Neither a restart nor a
+rebuild resolves the first four: they are configuration, so the script reports
+and names the fix.
+
+An empty roster with nothing mounted is a **blank instance**, which is a
+correct state — a fresh clone installs no apps — and it stays silent. The
+distinction between that and a roster of eight serving nothing is the entire
+point; they used to produce the same empty list and the same empty log.
 
 ## The one surface it reports and never fixes: the schema
 
@@ -219,6 +265,11 @@ of them; the entry point is `apply.sh`.
 - `scripts/migration_state.py` — the tree's alembic head against the live
   `alembic_version`, as one `state<TAB>headline<TAB>remedy` line. One SELECT, no
   writes, no alembic invocation. Run it directly to see the schema answer alone.
+- `scripts/backend_apps_state.py` — what the RUNNING backend mounted and from
+  which roster file, against the roster in this tree. Same
+  `state<TAB>headline<TAB>remedy` contract under `--tsv`; run it bare for a
+  readable report, `--json` for the raw record. Read-only: one GET to
+  `/healthz` and one file read.
 
 ## Where instructions live
 
