@@ -1,8 +1,8 @@
 {
-  "_open_tickets": 213,
+  "_open_tickets": 197,
   "per_scope_without_executable_acceptance": {
-    "development": 168,
-    "workshop": 7
+    "development": 149,
+    "workshop": 6
   },
-  "without_executable_acceptance": 175
+  "without_executable_acceptance": 155
 }
