@@ -105,7 +105,7 @@ def _claude_env() -> dict:
     # token to a child TODAY. Until stage 4 moves the call sites, flipping the
     # deployment mode without this check would leave the old path quietly
     # serving everyone from the operator's account.
-    from services import model_credentials
+    from services import model_credentials, model_providers
 
     if model_credentials.is_multi_user():
         raise RuntimeError(
@@ -133,6 +133,26 @@ def _claude_env() -> dict:
     # would have been put straight back and every spawned turn would have billed
     # against it. Nothing else here can undo this line.
     env.pop("ANTHROPIC_API_KEY", None)
+
+    # LAST, so a token the operator set through the app wins over the file.
+    #
+    # This is the line that makes the Providers screen real. Before it, the one
+    # credential every turn depends on was the one credential the product could
+    # not change: the file was the only source, so a paste in the UI could only
+    # ever have been decoration. Read per call, exactly like `auth_env` above
+    # and for the same measured reason — an import-time constant that missed the
+    # key stayed empty for the life of the process — so a credential set at
+    # 10:00 is spent by the turn at 10:01 with no restart.
+    #
+    # It cannot introduce an API key path: `subscription_token` resolves the
+    # SUBSCRIPTION provider only, and the pop above has already run. A stored
+    # `anthropic_api` key is unreachable from here by construction, not by
+    # convention.
+    principal = model_credentials.current_principal()
+    if principal is not None:
+        token = model_credentials.subscription_token(principal)
+        if token:
+            env[model_providers.CLAUDE_CLI.env_var] = token
     return env
 
 

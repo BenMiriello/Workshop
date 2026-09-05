@@ -14,6 +14,7 @@ distinction out.
 from __future__ import annotations
 
 import asyncio
+import json
 
 from services import auth_health
 from services.mcp_health import KIND_DANGER, KIND_OK, KIND_STOPPED, KIND_WARN
@@ -187,3 +188,73 @@ def test_check_all_sorts_worst_first_and_never_raises():
     from services.mcp_health import SEVERITY
     sev = [SEVERITY.get(r["kind"], 2) for r in rows]
     assert sev == sorted(sev)
+
+
+# ---- verifying a token someone just pasted ----------------------------------
+#
+# The shapes below are MEASURED, not invented: `claude -p --output-format json`
+# was run on 2026-09-05 with a syntactically plausible but invalid
+# CLAUDE_CODE_OAUTH_TOKEN. It exited 0 and printed the failure in the result
+# object, which is why the exit code cannot be the signal.
+
+_MEASURED_401 = json.dumps({
+    "is_error": True,
+    "duration_api_ms": 0,
+    "num_turns": 1,
+    "total_cost_usd": 0,
+    "terminal_reason": "api_error",
+    "subtype": "success",
+    "api_error_status": 401,
+    "result": "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
+    "type": "result",
+})
+
+_OK_RESULT = json.dumps({
+    "is_error": False,
+    "subtype": "success",
+    "result": "ok",
+    "type": "result",
+    "total_cost_usd": 0.0001,
+})
+
+
+def test_a_rejected_token_is_a_failure_even_though_the_cli_exits_zero():
+    ok, why = auth_health.parse_verify_result(_MEASURED_401, 0)
+    assert ok is False
+    assert "401" in why
+    assert "OAuth access token is invalid" in why
+
+
+def test_a_working_token_verifies():
+    ok, why = auth_health.parse_verify_result(_OK_RESULT, 0)
+    assert ok is True
+    assert why == ""
+
+
+def test_a_banner_before_the_json_is_tolerated():
+    noisy = "Warning: no stdin data received in 3s.\n" + _OK_RESULT
+    assert auth_health.parse_verify_result(noisy, 0)[0] is True
+
+
+def test_unreadable_output_is_not_a_pass():
+    """A verdict is never invented. 'Could not check' is not 'works'."""
+    for raw, rc in (("", 0), ("not json", 0), ("", 1), ("<html>", 2)):
+        ok, why = auth_health.parse_verify_result(raw, rc)
+        assert ok is False
+        assert why
+
+
+def test_the_verify_parser_never_raises():
+    for raw in ("", "{", "null", "[]", "{}", '{"is_error": "yes"}', "\x00"):
+        assert isinstance(auth_health.parse_verify_result(raw, 0), tuple)
+
+
+def test_a_verification_failure_never_quotes_the_token():
+    token = "sk-ant-oat01-super-secret-value"
+    payload = json.dumps({
+        "is_error": True,
+        "api_error_status": 401,
+        "result": "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
+    })
+    _ok, why = auth_health.parse_verify_result(payload, 0)
+    assert token not in why

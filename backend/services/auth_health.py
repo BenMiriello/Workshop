@@ -311,3 +311,126 @@ async def cached_check_all(*, force: bool = False) -> tuple[list[dict], float, b
         _CACHE.invalidate(_CACHE_KEY)
         return rows, time.time(), False
     return rows, _CACHE.put(_CACHE_KEY, rows), False
+
+
+# --------------------------------------------------- verifying a PASTED token
+
+_CLAUDE_CACHE = TtlCache(AUTH_TTL_S)
+_CLAUDE_KEY = "claude"
+
+
+async def cached_check_claude(*, force: bool = False) -> tuple[dict, bool]:
+    """`check_claude`, at most once per `AUTH_TTL_S`. Returns `(row, cached)`.
+
+    Split out from `cached_check_all` so a screen that only asks about the model
+    credential does not also shell out to `gh`. Same rule as that cache: a run
+    that could not read the CLI is not remembered, so a busy moment does not
+    stick as "unavailable".
+    """
+    if not force:
+        hit = _CLAUDE_CACHE.get(_CLAUDE_KEY)
+        if hit is not None:
+            return hit[0], True
+    row = await check_claude()
+    if row.get("kind") == KIND_STOPPED:
+        _CLAUDE_CACHE.invalidate(_CLAUDE_KEY)
+        return row, False
+    _CLAUDE_CACHE.put(_CLAUDE_KEY, row)
+    return row, False
+
+
+def invalidate_claude_cache() -> None:
+    """Forget the cached Claude row. Called after a credential is set or
+    cleared, so the screen that just changed it does not read a 60 second old
+    answer about the credential it replaced."""
+    _CLAUDE_CACHE.invalidate(_CLAUDE_KEY)
+    _CACHE.invalidate(_CACHE_KEY)
+
+
+# The cheapest turn that still proves a token reaches Anthropic. Haiku, one
+# turn, tools off, and a prompt short enough that a pass costs a fraction of a
+# cent. See `verify_claude_token` for why a real call is the only honest check.
+_VERIFY_PROMPT = "ok"
+
+
+def parse_verify_result(raw: str, returncode: int) -> tuple[bool, str]:
+    """Did `claude -p --output-format json` prove the token works? `(ok, why not)`.
+
+    Pure, total, never raises, and never returns any part of the token.
+
+    MEASURED, not guessed. Run with a syntactically plausible but invalid
+    `CLAUDE_CODE_OAUTH_TOKEN` on 2026-09-05, the CLI exited 0 and printed a
+    result object carrying `is_error: true`, `api_error_status: 401`,
+    `terminal_reason: "api_error"` and
+    `result: "Failed to authenticate. API Error: 401 OAuth access token is
+    invalid."`, having billed zero tokens. Two things follow and both are
+    load-bearing: the EXIT CODE cannot be the signal, and a failed verification
+    is free.
+
+    It also did NOT fall through to the CLI's own stored credentials, which is
+    the fact that makes this check meaningful: the environment variable wins, so
+    a bad token pasted here would really have broken every turn.
+    """
+    text = (raw or "").strip()
+    start, end = text.find("{"), text.rfind("}")
+    data: dict = {}
+    if start != -1 and end > start:
+        try:
+            parsed = json.loads(text[start:end + 1])
+            if isinstance(parsed, dict):
+                data = parsed
+        except (json.JSONDecodeError, ValueError):
+            data = {}
+
+    if not data:
+        if returncode == 0:
+            # Nothing readable and no complaint. Do not invent a verdict.
+            return False, ("The CLI returned no readable result, so the token "
+                           "could not be checked.")
+        return False, f"`claude -p` exited {returncode} without a readable result."
+
+    if not data.get("is_error"):
+        return True, ""
+
+    detail = str(data.get("result") or "").strip()
+    status = data.get("api_error_status")
+    if not detail:
+        detail = str(data.get("terminal_reason") or "the call failed")
+    if status:
+        detail = f"{detail} (HTTP {status})"
+    return False, detail[:300]
+
+
+async def verify_claude_token(token: str) -> tuple[bool, str]:
+    """Does this subscription token actually work? `(ok, why not)`.
+
+    A REAL CALL, and it has to be. `claude auth status` reports what is
+    configured and does not contact Anthropic (module docstring), so it answers
+    "true" for a token that will 401 on the next turn. This runs one Haiku turn
+    with the candidate token in the environment and reads the result object.
+
+    The cost objection that keeps this out of the health probe does not apply
+    here. That probe runs whenever a settings page mounts; this runs once, when
+    a person presses Save, and a failure is billed nothing at all. Storing an
+    unverified token would be worse than either: the environment variable
+    OVERRIDES the credentials the CLI holds for itself, so a bad paste does not
+    sit inert, it takes every turn down until someone finds it.
+
+    The token is never logged, never echoed, and never returned in the message.
+    """
+    from services import llm_router
+
+    env = llm_router._claude_env()
+    env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+    env.pop("ANTHROPIC_API_KEY", None)
+    res = await _run([llm_router.CLAUDE_CLI, "-p", "--model", llm_router.TIER_HAIKU,
+                      "--max-turns", "1", "--output-format", "json",
+                      _VERIFY_PROMPT], env=env)
+    if res is None:
+        return False, ("The `claude` CLI is not installed or not on PATH, so "
+                       "the token could not be checked.")
+    raw, rc = res
+    if rc == -1:
+        return False, (f"The check did not finish within {int(PROBE_TIMEOUT_S)}s. "
+                       "Try again.")
+    return parse_verify_result(raw, rc)

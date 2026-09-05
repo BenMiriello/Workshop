@@ -42,19 +42,18 @@ def _path(slug: str) -> Path:
 WORKSPACE_SLUG = "_workspace"
 
 
-def load(slug: str) -> dict[str, str]:
-    """All stored values for a project. Empty dict if none. Internal/runner use
-    only — do NOT return this through an API.
+def load_at(path: Path, slug: str) -> dict[str, str]:
+    """`load()`, for a store whose file is addressed directly.
 
-    Reads plaintext and encrypted files alike, so turning encryption on does not
-    strand what is already stored. An encrypted file that CANNOT be decrypted
-    raises rather than reading as empty: "no secrets here" and "this deployment
-    cannot read its own store" are different answers, and returning the first
-    for the second would tell the operator to paste their credentials again.
+    THE SLUG IS STILL REQUIRED, and it is not the file name. It is the AAD bound
+    into both layers of the encrypted envelope (`secrets_crypto.encrypt`), so it
+    is what stops one principal's file being renamed over another's. Passing the
+    path and the slug separately is what lets a store MOVE without every value
+    in it failing authentication afterwards.
     """
     from services import secrets_crypto
 
-    p = _path(slug)
+    p = Path(path)
     if not p.exists():
         return {}
     try:
@@ -70,16 +69,32 @@ def load(slug: str) -> dict[str, str]:
         return {}
 
 
-def _write(slug: str, values: dict[str, str]) -> None:
-    root = _root()
-    root.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(root, 0o700)
-    except OSError:
-        pass
+def load(slug: str) -> dict[str, str]:
+    """All stored values for a project. Empty dict if none. Internal/runner use
+    only — do NOT return this through an API.
+
+    Reads plaintext and encrypted files alike, so turning encryption on does not
+    strand what is already stored. An encrypted file that CANNOT be decrypted
+    raises rather than reading as empty: "no secrets here" and "this deployment
+    cannot read its own store" are different answers, and returning the first
+    for the second would tell the operator to paste their credentials again.
+    """
+    return load_at(_path(slug), slug)
+
+
+def write_at(path: Path, slug: str, values: dict[str, str]) -> None:
+    """Serialise `values` to `path`, encrypted when a KEK is configured.
+
+    Creates the file 0600 from the start so a value never sits world readable,
+    and replaces atomically so a crashed write cannot truncate a store. The
+    parent directory is created but its mode is left alone: a caller-supplied
+    directory (an owner's runtime partition) holds more than secrets and is not
+    this module's to lock down.
+    """
     from services import secrets_crypto
 
-    p = _path(slug)
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".json.tmp")
     # Encrypted when a key encryption key is configured, plaintext otherwise.
     # A plaintext file therefore becomes encrypted on its next write, with no
@@ -100,10 +115,19 @@ def _write(slug: str, values: dict[str, str]) -> None:
         pass
 
 
-def set_values(slug: str, values: dict[str, str]) -> None:
-    """Merge new key→value pairs into the store. A blank/None value DELETES the
-    key (the UI 'clear' affordance). Never logs the values."""
-    cur = load(slug)
+def _write(slug: str, values: dict[str, str]) -> None:
+    root = _root()
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(root, 0o700)
+    except OSError:
+        pass
+    write_at(_path(slug), slug, values)
+
+
+def _merge(cur: dict[str, str], values: dict[str, str]) -> dict[str, str]:
+    """Apply an update to a loaded store. A blank/None value DELETES the key
+    (the UI 'clear' affordance)."""
     for k, v in values.items():
         k = str(k).strip()
         if not k:
@@ -112,16 +136,31 @@ def set_values(slug: str, values: dict[str, str]) -> None:
             cur.pop(k, None)
         else:
             cur[k] = str(v)
-    _write(slug, cur)
+    return cur
+
+
+def set_values_at(path: Path, slug: str, values: dict[str, str]) -> None:
+    """`set_values()` against a directly addressed file. Never logs the values."""
+    write_at(path, slug, _merge(load_at(path, slug), values))
+
+
+def delete_key_at(path: Path, slug: str, key: str) -> bool:
+    cur = load_at(path, slug)
+    if key in cur:
+        cur.pop(key, None)
+        write_at(path, slug, cur)
+        return True
+    return False
+
+
+def set_values(slug: str, values: dict[str, str]) -> None:
+    """Merge new key→value pairs into the store. A blank/None value DELETES the
+    key (the UI 'clear' affordance). Never logs the values."""
+    _write(slug, _merge(load(slug), values))
 
 
 def delete_key(slug: str, key: str) -> bool:
-    cur = load(slug)
-    if key in cur:
-        cur.pop(key, None)
-        _write(slug, cur)
-        return True
-    return False
+    return delete_key_at(_path(slug), slug, key)
 
 
 def status(slug: str, keys: list[str]) -> dict[str, bool]:

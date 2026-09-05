@@ -1,9 +1,24 @@
 """HTTP surface for the model-provider and credential store.
 
-Stage 1 of docs/platform-redesign/providers-credentials-and-limits-2026-08-23.md:
-a key can be registered, verified, stored encrypted, and removed. Nothing in
-this module ever returns the stored key value -- only presence, label, provider
-metadata, and the last four characters as a UI hint.
+WHAT A CALLER CAN DO HERE: list the providers this deployment offers, add or
+replace a credential for one, and remove it. Nothing in this module ever returns
+a stored credential value. What comes back out is presence, provenance, whether
+a turn can actually run on it, and the last four characters as a UI hint.
+
+THE SUBSCRIPTION IS SETTABLE HERE TOO, and that is the point of this surface
+rather than a detail of it. The one credential every turn depends on used to be
+readable only from a dotfile the product never mentions, so "change my Claude
+credential" was an ssh session and a restart. It is now a paste and a Save, and
+`llm_router._claude_env()` reads the store per call, so the next turn uses it.
+
+VERIFY BEFORE STORE, for every provider, following `routes/trackers.py` exactly:
+a cheap shape check catches a paste error, then a real call decides. For an API
+key that call is the vendor's own models endpoint. For the subscription it is
+one Haiku turn, because `claude auth status` does not contact Anthropic and
+would pass a token that 401s on the next real turn (`services/auth_health`).
+Skipping it would be worse than a slow Save: the environment variable overrides
+the credentials the CLI holds for itself, so an unverified bad paste takes every
+turn down rather than sitting inert.
 """
 from __future__ import annotations
 
@@ -11,16 +26,51 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from services import model_credentials, model_providers, ownership
+from services import auth_health, model_credentials, model_providers, ownership
 
 router = APIRouter(prefix="/model-providers", tags=["model-providers"])
 
 
+class ProviderRow(BaseModel):
+    """One provider as a settings screen sees it. Carries no credential."""
+
+    id: str
+    label: str
+    auth_mode: str
+    multi_user: bool
+    restriction: str
+    console_url: str
+    runtime_ready: bool
+    # This principal supplied a credential through this surface.
+    stored: bool
+    # A credential resolves at all: stored here, in the deployment's auth file,
+    # or held by the CLI itself.
+    configured: bool
+    # Configured AND this deployment can execute a turn on it. The two are not
+    # the same and used to be reported as one boolean, which is how a key that
+    # nothing routes to displayed exactly like the subscription serving every
+    # turn.
+    usable: bool
+    # "principal" | "deployment" | "cli" | null. Answers "I pasted a token, why
+    # does it still say it is reading the file".
+    source: str | None = None
+    last4: str | None = None
+    # For the subscription row only: what the CLI itself reports about its own
+    # sign-in state, and the caveat that reading local config is not proof.
+    cli_state: str | None = None
+    cli_detail: str | None = None
+
+
 async def _probe(provider_id: str, value: str) -> tuple[bool, str]:
-    """Live-check a key against the provider's API. Returns (ok, error_msg)."""
+    """Live-check a credential against the provider. Returns (ok, error_msg).
+
+    The message is the PROVIDER's own words wherever it gave any, because
+    "invalid_api_key: this key was revoked" tells the operator what to do and
+    "verification failed" does not.
+    """
     provider = model_providers.get(provider_id)
     if provider.auth_mode == model_providers.AUTH_SUBSCRIPTION:
-        return True, ""
+        return await auth_health.verify_claude_token(value)
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             if provider_id == "anthropic_api":
@@ -59,18 +109,51 @@ async def _probe(provider_id: str, value: str) -> tuple[bool, str]:
     return False, msg
 
 
-@router.get("")
+async def _rows(principal_id: int) -> list[dict]:
+    """Every offerable provider, with the credential facts filled in.
+
+    The CLI probe runs ONLY for the subscription row and only when nothing is
+    configured through the app or the auth file, because that is the one case
+    where the answer is otherwise wrong: on an installation whose CLI is signed
+    in with its own stored credentials, the store and the file are both empty
+    and the screen would report "not signed in" while every turn works.
+    `model_credentials.status()` cannot answer this itself and must not learn
+    to: it is a synchronous store, and this is a subprocess.
+    """
+    rows = [
+        {**r, "last4": model_credentials.key_tail(principal_id, r["id"])}
+        for r in model_credentials.status(principal_id)
+    ]
+    for row in rows:
+        if row["auth_mode"] != model_providers.AUTH_SUBSCRIPTION:
+            continue
+        cli, _cached = await auth_health.cached_check_claude()
+        row["cli_state"] = cli.get("state") or None
+        row["cli_detail"] = cli.get("detail") or cli.get("unverified_because") or None
+        if not row["configured"] and cli.get("kind") == auth_health.KIND_OK:
+            row["configured"] = True
+            row["usable"] = model_providers.get(row["id"]).runtime_ready
+            row["source"] = "cli"
+    return rows
+
+
+@router.get("", response_model=list[ProviderRow])
 async def list_providers() -> list[dict]:
-    principal_id = ownership.current_owner()
-    rows = model_credentials.status(principal_id)
-    return [{**r, "last4": model_credentials.key_tail(principal_id, r["id"])} for r in rows]
+    return await _rows(ownership.current_owner())
 
 
 class CredentialIn(BaseModel):
     value: str = Field(min_length=1)
 
 
-@router.put("/{provider_id}/credential")
+def _one(rows: list[dict], provider_id: str) -> dict:
+    row = next((r for r in rows if r["id"] == provider_id), None)
+    if row is None:
+        raise HTTPException(500, "provider not found after the write")
+    return row
+
+
+@router.put("/{provider_id}/credential", response_model=ProviderRow)
 async def set_credential(provider_id: str, body: CredentialIn) -> dict:
     principal_id = ownership.current_owner()
     value = body.value.strip()
@@ -94,17 +177,16 @@ async def set_credential(provider_id: str, body: CredentialIn) -> dict:
         raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
-    rows = model_credentials.status(principal_id)
-    row = next((r for r in rows if r["id"] == provider_id), None)
-    if row is None:
-        raise HTTPException(500, "provider not found after store")
-    return {**row, "last4": model_credentials.key_tail(principal_id, provider_id)}
+    # The health row is cached for a minute and has just become wrong about the
+    # credential it describes. Forget it, or the screen that made the change
+    # reads a stale answer about the token it replaced.
+    auth_health.invalidate_claude_cache()
+    return _one(await _rows(principal_id), provider_id)
 
 
-@router.delete("/{provider_id}/credential")
+@router.delete("/{provider_id}/credential", response_model=ProviderRow)
 async def clear_credential(provider_id: str) -> dict:
     principal_id = ownership.current_owner()
     model_credentials.clear_credential(principal_id, provider_id)
-    rows = model_credentials.status(principal_id)
-    row = next((r for r in rows if r["id"] == provider_id), {})
-    return {**row, "last4": None}
+    auth_health.invalidate_claude_cache()
+    return _one(await _rows(principal_id), provider_id)

@@ -184,10 +184,41 @@ def test_is_encrypted_never_raises():
 # ---- the credential seam on top of it ---------------------------------------
 
 
-def test_per_principal_credentials_are_encrypted_end_to_end(store, key, monkeypatch):
+def test_per_principal_credentials_are_encrypted_end_to_end(store, key, tmp_path,
+                                                            monkeypatch):
     from services import model_credentials as mc
+    from services import ownership
+
+    monkeypatch.setattr(ownership, "_RUNTIME", tmp_path / "runtime")
     monkeypatch.setenv(mc.MODE_ENV, mc.MODE_MULTI_USER)
     mc.set_credential(1, "anthropic_api", "sk-ant-principal-one")
-    raw = (store / "principal:1.json").read_text()
+    raw = mc.credentials_path(1).read_text()
     assert "sk-ant-principal-one" not in raw
     assert mc.resolve(1, "anthropic_api").value == "sk-ant-principal-one"
+
+
+def test_a_store_stays_readable_after_it_moves_to_the_owner_partition(
+        store, key, tmp_path, monkeypatch):
+    """The move must not cost the operator their keys.
+
+    The slug is bound into both layers of the envelope as AAD, so an encrypted
+    file that moved would fail authentication if the slug moved with it. It does
+    not: the file name changes and `principal:<id>` does not.
+    """
+    from services import model_credentials as mc
+    from services import ownership
+
+    monkeypatch.setattr(ownership, "_RUNTIME", tmp_path / "runtime")
+    monkeypatch.setenv(mc.MODE_ENV, mc.MODE_MULTI_USER)
+
+    # Write it the old way: encrypted, in the flat secrets directory.
+    secrets_store.set_values("principal:3", {"anthropic_api.credential": "sk-ant-old"})
+    legacy = store / "principal:3.json"
+    assert legacy.exists() and sc.is_encrypted(legacy.read_text())
+
+    assert mc.migrate_legacy_files() == 1
+    assert not legacy.exists()
+    assert mc.credentials_path(3).exists()
+    assert mc.resolve(3, "anthropic_api").value == "sk-ant-old"
+    # Idempotent: a second pass finds nothing left to move.
+    assert mc.migrate_legacy_files() == 0

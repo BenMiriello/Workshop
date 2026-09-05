@@ -55,6 +55,31 @@ log = logging.getLogger("workshop.main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Model credentials, before anything can spend one. Two steps, and they fail
+    # differently on purpose.
+    #
+    # The move is HOUSEKEEPING: place any credential store still sitting in the
+    # flat secrets directory into its owner's partition. Every read adopts a
+    # legacy store anyway, so this pass is an optimisation, not a prerequisite,
+    # and it must never be the reason a backend does not start. Hence the catch.
+    #
+    # The encryption check is a REFUSAL, and it is fatal: a pile of other
+    # people's API keys unencrypted on a hosted box is the failure the
+    # encryption layer was built for, and an opt-in protection is an off one. It
+    # can only fire when somebody wrote `multi_user` in the deployment mode.
+    # `require_encryption_in_multi_user` keys on the DECLARED value rather than
+    # the fail-closed reading precisely so that a typo in one config line cannot
+    # keep a single-operator installation from booting.
+    from services import model_credentials as _model_credentials
+    try:
+        moved = _model_credentials.migrate_legacy_files()
+    except Exception as e:  # noqa: BLE001 - housekeeping never blocks a boot
+        log.warning("model credential migration skipped: %s", e)
+    else:
+        if moved:
+            log.info("moved %d model credential store(s) into their owner "
+                     "partition", moved)
+    _model_credentials.require_encryption_in_multi_user()
     # Installed apps: run each installed app's startup hooks + background loops
     # (finance prewarm/categorize, birds env-refresh/atlas). A fresh instance with
     # no apps installed starts none of these. Adding an app never edits this file.

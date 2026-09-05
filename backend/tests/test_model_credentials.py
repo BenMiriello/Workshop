@@ -20,6 +20,16 @@ from services import model_providers as mp
 
 @pytest.fixture(autouse=True)
 def isolated_store(tmp_path, monkeypatch):
+    # BOTH roots, and the second one matters as much as the first. A principal's
+    # credentials live under the owner partition now, so a test that pinned only
+    # WORKSHOP_SECRETS_ROOT wrote real files into this checkout's own
+    # `.runtime/users/<id>/`. `ownership._RUNTIME` is read at import, so it is
+    # patched as an attribute, which is the convention the rest of this suite
+    # already uses (see test_tenancy_file_store_guard, which exists to catch
+    # exactly this).
+    from services import ownership
+
+    monkeypatch.setattr(ownership, "_RUNTIME", tmp_path / "runtime")
     monkeypatch.setenv("WORKSHOP_SECRETS_ROOT", str(tmp_path / "secrets"))
     monkeypatch.setenv("WORKSHOP_AUTH_ENV", str(tmp_path / "auth.env"))
     (tmp_path / "auth.env").write_text("CLAUDE_CODE_OAUTH_TOKEN=operator-token\n")
@@ -287,3 +297,224 @@ def test_the_running_subscription_path_refuses_a_hosted_deployment(hosted):
     with pytest.raises(RuntimeError) as e:
         llm_router._claude_env()
     assert "may only be used by the person who bought it" in str(e.value)
+
+
+# ---- the owner partition ----------------------------------------------------
+
+
+def test_a_credential_lands_in_the_owners_partition(hosted, tmp_path):
+    """Not the flat secrets directory, which per-project app secrets also use.
+
+    A slug collision there would have handed a project a person's model key.
+    """
+    from services import secrets_store
+
+    mc.set_credential(9, "anthropic_api", "sk-ant-nine")
+    assert mc.credentials_path(9).exists()
+    assert mc.credentials_path(9).parent.name == "9"
+    assert not (secrets_store._root() / "principal:9.json").exists()
+
+
+def test_a_credential_file_is_not_world_readable(hosted):
+    import stat
+
+    mc.set_credential(9, "anthropic_api", "sk-ant-nine")
+    mode = stat.S_IMODE(mc.credentials_path(9).stat().st_mode)
+    assert mode == 0o600
+
+
+def test_a_legacy_flat_store_is_adopted_on_first_read(hosted):
+    """A process that did not run the boot migration must not see an empty
+    store. Every read adopts, so a CLI, a worker and a test all agree."""
+    from services import secrets_store
+
+    secrets_store.set_values("principal:4", {"anthropic_api.credential": "sk-ant-four"})
+    assert mc.resolve(4, "anthropic_api").value == "sk-ant-four"
+    assert not (secrets_store._root() / "principal:4.json").exists()
+    assert mc.credentials_path(4).exists()
+
+
+def test_migration_leaves_a_partitioned_store_alone(hosted):
+    """Two versions of a secret are never merged: merging would resurrect a key
+    the operator removed."""
+    from services import secrets_store
+
+    mc.set_credential(5, "anthropic_api", "sk-ant-current")
+    secrets_store.set_values("principal:5", {"anthropic_api.credential": "sk-ant-stale"})
+    mc.migrate_legacy_files()
+    assert mc.resolve(5, "anthropic_api").value == "sk-ant-current"
+
+
+def test_migration_ignores_a_file_that_is_not_a_principal(hosted):
+    from services import secrets_store
+
+    secrets_store.set_values("principal:notanumber", {"A": "1"})
+    assert mc.migrate_legacy_files() == 0
+    assert secrets_store.load("principal:notanumber") == {"A": "1"}
+
+
+# ---- the KEK is mandatory when hosted ---------------------------------------
+
+
+def test_multi_user_refuses_to_start_with_a_plaintext_store(hosted, monkeypatch):
+    from services import secrets_crypto
+
+    monkeypatch.delenv(secrets_crypto.KEK_ENV, raising=False)
+    with pytest.raises(RuntimeError) as e:
+        mc.require_encryption_in_multi_user()
+    assert secrets_crypto.KEK_ENV in str(e.value)
+
+
+def test_multi_user_starts_once_a_kek_is_configured(hosted, monkeypatch):
+    from services import secrets_crypto
+
+    monkeypatch.setenv(secrets_crypto.KEK_ENV, secrets_crypto.generate_kek())
+    mc.require_encryption_in_multi_user()
+
+
+def test_single_operator_gains_no_new_requirement(single, monkeypatch):
+    from services import secrets_crypto
+
+    monkeypatch.delenv(secrets_crypto.KEK_ENV, raising=False)
+    mc.require_encryption_in_multi_user()
+
+
+# ---- the subscription is settable, and a turn picks it up -------------------
+
+
+def test_a_stored_subscription_token_beats_the_auth_file(single):
+    """The whole point of the surface. If the file won, a paste in the UI would
+    appear to succeed and change nothing."""
+    mc.set_credential(6, "claude_cli", "token-from-the-app")
+    cred = mc.resolve(6, "claude_cli")
+    assert cred.value == "token-from-the-app"
+    assert cred.origin == "principal"
+
+
+def test_the_auth_file_still_serves_a_deployment_that_never_used_the_screen(single):
+    assert mc.resolve(6, "claude_cli").value == "operator-token"
+    assert mc.resolve(6, "claude_cli").origin == "deployment"
+
+
+def test_the_turn_path_spends_the_token_set_in_the_app(single, monkeypatch):
+    """Read per call, so there is no restart between Save and the next turn."""
+    from services import auth_store, llm_router
+
+    monkeypatch.setattr(auth_store, "operator_id", lambda: 6)
+    assert llm_router._claude_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "operator-token"
+    mc.set_credential(6, "claude_cli", "token-from-the-app")
+    assert llm_router._claude_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "token-from-the-app"
+    mc.clear_credential(6, "claude_cli")
+    assert llm_router._claude_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "operator-token"
+
+
+def test_a_stored_api_key_never_reaches_the_turn_path(single, monkeypatch):
+    """THE STANDING RULE for this installation: subscription auth only, never
+    ANTHROPIC_API_KEY. Storing an Anthropic key must not create a second
+    credential path into `claude -p`."""
+    from services import auth_store, llm_router
+
+    monkeypatch.setattr(auth_store, "operator_id", lambda: 6)
+    mc.set_credential(6, "anthropic_api", "sk-ant-should-never-be-spent")
+    env = llm_router._claude_env()
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "sk-ant-should-never-be-spent" not in repr(env)
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "operator-token"
+
+
+def test_an_unpinned_call_in_multi_user_gets_no_principal(hosted):
+    """Never "whoever set this box up": that fallback is how one person's
+    subscription would serve another's turn."""
+    from services import ownership
+
+    ownership.clear_current_owner()
+    assert mc.current_principal() is None
+
+
+def test_a_pinned_owner_is_the_principal(single):
+    from services import ownership
+
+    ownership.set_current_owner(11)
+    try:
+        assert mc.current_principal() == 11
+    finally:
+        ownership.clear_current_owner()
+
+
+# ---- status tells the truth about what can run a turn -----------------------
+
+
+def _row(rows, pid):
+    return next(r for r in rows if r["id"] == pid)
+
+
+def test_a_stored_key_is_not_reported_usable_while_nothing_routes_to_it(hosted):
+    """`stored` and `usable` are different questions. They used to be one
+    boolean, so a key the runtime cannot spend displayed exactly like the
+    subscription serving every turn."""
+    mc.set_credential(1, "anthropic_api", "sk-ant-x")
+    row = _row(mc.status(1), "anthropic_api")
+    assert row["stored"] is True
+    assert row["configured"] is True
+    assert row["usable"] is False  # runtime_ready is False for API providers
+    assert row["source"] == "principal"
+
+
+def test_status_says_where_a_configured_credential_came_from(single):
+    assert _row(mc.status(6), "claude_cli")["source"] == "deployment"
+    mc.set_credential(6, "claude_cli", "token-from-the-app")
+    assert _row(mc.status(6), "claude_cli")["source"] == "principal"
+
+
+def test_an_unconfigured_provider_has_no_source(hosted):
+    row = _row(mc.status(1), "anthropic_api")
+    assert row["configured"] is False
+    assert row["usable"] is False
+    assert row["source"] is None
+
+
+def test_status_still_carries_no_values(single):
+    import json
+
+    mc.set_credential(6, "claude_cli", "token-from-the-app-9999")
+    assert "token-from-the-app" not in json.dumps(mc.status(6))
+
+
+# ---- the boot check cannot lock the operator out ----------------------------
+
+
+@pytest.mark.parametrize("value", ["", "multi-user", "MULTI_USER_X", "hosted",
+                                   "sinlge_operator", "true", "single_operator"])
+def test_only_a_declared_multi_user_can_refuse_to_boot(monkeypatch, value):
+    """A typo must not stop a single-operator installation from starting.
+
+    `deployment_mode()` fails closed, so several of these resolve to multi-user
+    for credential decisions, which is right. The boot refusal asks the narrower
+    question, because its failure mode is the whole product rather than a turn.
+    """
+    from services import secrets_crypto
+
+    monkeypatch.delenv(secrets_crypto.KEK_ENV, raising=False)
+    if value:
+        monkeypatch.setenv(mc.MODE_ENV, value)
+    else:
+        monkeypatch.delenv(mc.MODE_ENV, raising=False)
+    mc.require_encryption_in_multi_user()
+
+
+def test_a_declared_multi_user_still_refuses(monkeypatch):
+    from services import secrets_crypto
+
+    monkeypatch.delenv(secrets_crypto.KEK_ENV, raising=False)
+    monkeypatch.setenv(mc.MODE_ENV, "multi_user")
+    with pytest.raises(RuntimeError):
+        mc.require_encryption_in_multi_user()
+
+
+def test_a_typo_still_refuses_a_credential_even_though_it_boots(monkeypatch):
+    """The fail-closed reading is unchanged where it protects an account."""
+    monkeypatch.setenv(mc.MODE_ENV, "multi-user")
+    assert mc.is_multi_user() is True
+    assert mc.multi_user_is_declared() is False
+    with pytest.raises(mc.ProviderNotPermitted):
+        mc.resolve(principal_id=7, provider_id="claude_cli")
