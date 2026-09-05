@@ -123,10 +123,16 @@ else
   # situation this hit on 2026-08-13 (ten files, mid-refactor, not mine).
   #
   # Skipping is safe because it is not the only path: committing rebuilds
-  # automatically (.githooks/post-commit), committing as you go is already the
-  # repo rule, and the :5173 dev origin serves the working tree live for
-  # iterating. So the owner of that work still gets it published, by the act
+  # automatically (.githooks/post-commit), and committing as you go is already
+  # the repo rule. So the owner of that work still gets it published, by the act
   # that already means "this is finished".
+  #
+  # This used to also offer the dev server as the way to watch the working tree
+  # live. That is only true where the dev server is actually running, which an
+  # installation may well have chosen to stop -- it is a second, unauthenticated
+  # origin serving source, and not every deployment wants one. The stamped-
+  # surface check below reports the unit's real state; do not read advice about
+  # a dev origin as a promise that there is one.
   #
   # A stale bundle with a CLEAN tree is a different thing entirely -- a missed
   # hook, a failed build -- and that is the case this must always fix.
@@ -329,6 +335,19 @@ mkdir -p .runtime 2>/dev/null || true
 stamped_surface() {  # <label> <file> <stamp> <unit> <restart-cmd...>
   local label="$1" file="$2" stamp="$3" unit="$4"; shift 4
   [ -f "$file" ] || return 0
+  # A STOPPED SERVICE IS NOT AN IN-SYNC ONE, and this used to report it as one.
+  # The config-file hash was compared first, so whenever it matched the stamp
+  # the line read "ok <label> (<hash>)" -- printed identically whether the unit
+  # was running or had been stopped weeks ago. The state of the unit is the
+  # first question here, not the last: there is nothing to keep in sync with a
+  # process that does not exist, and saying "ok" about it is the kind of
+  # measured-nothing pass this script exists to avoid. Not drift, because a
+  # deliberately stopped surface is a choice rather than staleness -- so it
+  # neither fails the check nor claims success for it.
+  if ! unit_active "$unit"; then
+    warn "$label: $unit is NOT RUNNING (nothing to keep in sync)"
+    return 0
+  fi
   local now prev
   now="$(sha1sum "$file" 2>/dev/null | cut -c1-12)"
   prev="$(cat "$stamp" 2>/dev/null || echo "")"
@@ -344,7 +363,6 @@ stamped_surface() {  # <label> <file> <stamp> <unit> <restart-cmd...>
   if [ "$now" = "$prev" ]; then ok "$label ($now)"; return 0; fi
   plan "$label changed ($prev -> $now)"
   [ "$CHECK" = 1 ] && return 0
-  if ! unit_active "$unit"; then warn "$unit is not running; nothing to restart"; return 0; fi
   if "$@" >/dev/null 2>&1; then
     printf '%s\n' "$now" > "$stamp" 2>/dev/null
     ACTED=1; ok "$label applied"
