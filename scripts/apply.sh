@@ -167,6 +167,29 @@ except Exception:
 fi
 
 # ---------------------------------------------------------------------------
+# 1b. The installed apps' own UI bundles.
+#
+#     A SECOND SURFACE, because an app's screens are no longer in the bundle
+#     above. An app is compiled by its own build into its own directory and
+#     fetched by URL at runtime, so the bundle rebuild that used to carry it
+#     carries nothing now: editing an app page and running this script
+#     published NOTHING, silently, on the one origin the operator looks at.
+#     ui_source_id.sh cannot see it either, and correctly so -- it hashes what
+#     the shell compiles, and the shell does not compile an app.
+#
+#     Deliberately NOT subject to the uncommitted-work guard above. That guard
+#     exists because ONE bundle carries every agent's frontend edits at once, so
+#     building it publishes whatever anyone else has open. An app's bundle is
+#     its own: rebuilding it can only publish that app's own working tree, which
+#     is the tree its own agent is editing.
+# ---------------------------------------------------------------------------
+if [ "$CHECK" = 1 ]; then
+  if ! bash scripts/build_app_ui.sh --check; then DRIFT=1; fi
+else
+  if bash scripts/build_app_ui.sh; then :; else fail "an app UI build failed (above)"; fi
+fi
+
+# ---------------------------------------------------------------------------
 # 2. The database schema: the tree's alembic head against the live database's
 #    alembic_version. REPORTED, NEVER APPLIED.
 #

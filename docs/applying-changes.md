@@ -19,8 +19,8 @@ designed here.
 
 ## Why one command
 
-Four surfaces update four different ways, and every agent that finished a change
-was re-deriving which ones it had touched, which of several commands applied,
+Several surfaces update several different ways, and every agent that finished a
+change was re-deriving which ones it had touched, which of several commands applied,
 and whether it was safe right now. Those judgement calls were the failure, not
 the typing. `apply.sh` removes them: it takes no arguments and asks nothing.
 
@@ -31,6 +31,13 @@ differ:
 - **The UI bundle** the operator's origin serves. `frontend/dist/build-info.json`
   carries the id of the source it was built from; `scripts/ui_source_id.sh`
   computes the id of the source now. Different means rebuild.
+- **Each installed app's own UI bundle**, which is a SEPARATE surface from the
+  one above and has been since the runtime app loader landed. An app's screens
+  are compiled by the app's own build into the app's own directory and fetched
+  by URL, so rebuilding the shell no longer carries them: without this, editing
+  an app page and running the apply step published nothing. `scripts/
+  build_app_ui.sh` compares each app's build inputs against the stamp its last
+  build left, and rebuilds only what moved.
 - **The backend.** `GET /healthz` reports the `source_id` of the code answering;
   `scripts/backend_source_id.sh` computes the id on disk. Different means restart.
 - **The Vite dev server**, which reads `frontend/.env` only at service start.
@@ -137,6 +144,10 @@ Measured 2026-08-13, so nobody has to guess again:
 - **UI rebuild: about 17 seconds, and nothing restarts.** The edge serves
   `frontend/dist` from disk per request, so no requests drop and no stream cuts.
   This is the operation agents were most afraid of and it is the cheapest one.
+- **An app UI rebuild: well under a second each** (measured 2026-09-05 across
+  seven apps, the largest 0.4s), because an app bundle externalizes React, the
+  router and the design kit rather than compiling them. A run with nothing to do
+  only hashes, and nothing restarts either way.
 - **Vite restart: about 2 seconds.** Does not touch the operator's origin.
 - **Backend restart: a few seconds of pause**, deferred until after your reply
   lands. This is the only genuinely disruptive one, which is why it is the only
@@ -198,6 +209,9 @@ of them; the entry point is `apply.sh`.
 - `scripts/restart_backend.sh --deferred` — restart the backend after the
   current turn's reply lands. `--force` skips the wait. Bare restarts refuse
   while a turn is live, which is correct for a human at a terminal.
+- `scripts/build_app_ui.sh` — rebuild the installed apps' own UI bundles.
+  `--check` reports drift without building. It names no app: an app is in scope
+  because its own manifest declares a `ui.entry`.
 - `systemctl --user restart workshop-frontend` — pick up a new `frontend/.env`.
 - `scripts/ui_source_id.sh`, `scripts/backend_source_id.sh` — the two definitions
   of "which version is this". Everything that compares running code to source
