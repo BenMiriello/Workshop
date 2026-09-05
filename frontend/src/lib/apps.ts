@@ -87,6 +87,16 @@ export function appWorkHref(slug: string, lens: WorkLens = "tickets"): string {
   return lens === "tickets" ? base : `${base}?lens=${lens}`;
 }
 
+/** The app's Files tab: the tree and the editor over its working tree.
+ *
+ *  It is also where the chat toolbar's file button goes. That button used to
+ *  open `/agents/<slug>/chat`, a second chat surface wrapped around a workbench
+ *  of its own; the workbench was a file tree, an editor, a diff and a preview
+ *  over the SAME tree this tab reads, and a chat is not two things. */
+export function appFilesHref(slug: string): string {
+  return `/apps/${encodeURIComponent(slug)}/files`;
+}
+
 /** The app's Overview, which absorbed the autonomy brake, the services, the
  *  deploys and the environment (section 7 step 4). */
 export function appOverviewHref(slug: string): string {

@@ -292,7 +292,7 @@ function CreateAgent() {
         });
         if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         const a = await r.json();
-        nav(`/agents/${encodeURIComponent(a.slug)}/chat`);
+        nav(`/chat/${encodeURIComponent(`agent:${a.slug}`)}`);
       } else {
         const body: Record<string, unknown> = {
           name: name.trim(),
@@ -738,15 +738,16 @@ function ExistingAgent({ agentId }: { agentId: string }) {
         }
         actions={
           <Row wrap>
-            {isBuilder ? (
-              <Button size="sm" variant="primary" onClick={() => nav(`/agents/${encodeURIComponent(agent.slug)}/chat`)}>
-                <MessageSquare aria-hidden /> Open work pane
-              </Button>
-            ) : (
-              <Button size="sm" variant="primary" onClick={() => void startChatWithAgent(agent)}>
-                <MessageSquare aria-hidden /> Chat
-              </Button>
-            )}
+            {/* ONE BUTTON, because there is one destination. A maker used to
+                get "Open work pane" (a second chat surface, wrapped in a
+                workbench, at /agents/<slug>/chat) and everything else got
+                "Chat": the same conversation, at `agent:<slug>`, reached two
+                ways and named two things. The work pane is retired
+                (threads-branches-and-pages-2026-08-29.md section 1, a thread is
+                the one entity), so this is the chat, for every agent. */}
+            <Button size="sm" variant="primary" onClick={() => void startChatWithAgent(agent)}>
+              <MessageSquare aria-hidden /> Chat
+            </Button>
             {!editing && (
               <Button size="sm" variant="ghost" onClick={beginEdit}>Edit</Button>
             )}

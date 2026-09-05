@@ -99,18 +99,12 @@ export function resolveCrumbs(pathname: string): Crumb[] {
   if (pathname === "/agents/new") {
     return [{ label: "Roles", to: "/roles" }, { label: "New agent" }];
   }
-  // Agent work pane: /agents/<slug>/chat (and the legacy /agents/build/<slug>
-  // redirect target). Reads Roles / <slug> / Chat.
-  const chatMatch = pathname.match(/^\/agents\/([^/]+)\/chat$/);
-  const buildMatch = pathname.match(/^\/agents\/build\/([^/]+)$/);
-  if (chatMatch || buildMatch) {
-    const slug = decodeURIComponent((chatMatch || buildMatch)![1]);
-    return [
-      { label: "Roles", to: "/roles" },
-      { label: slug, to: `/agents/${encodeURIComponent(slug)}` },
-      { label: "Chat" },
-    ];
-  }
+  // No node for the agent work pane. `/agents/<slug>/chat` and the legacy
+  // `/agents/build/<slug>` are redirects to `/chat/agent:<slug>` now (App.tsx),
+  // and the focused-chat branch above owns that trail: the work pane was a
+  // second chat surface and the chat is the one that survived. A crumb here
+  // would name a page nobody can reach, the same rule the /agents, /runs and
+  // /projects nodes were removed under.
   // Agent detail: /agents/<slug>.
   if (pathname.startsWith("/agents/")) {
     return [

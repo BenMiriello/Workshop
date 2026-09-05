@@ -1,14 +1,14 @@
 import asyncio
 import logging
-import os
 
+from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from routes.api_models import (AgentLimits, AgentTrigger, ContentOut, FileOut, Job, OkOut,
-                               QueueCounts, AwaitingRow, ToolsOut, TreeOut)
+from routes.api_models import (AgentLimits, AgentTrigger, Job, OkOut, QueueCounts,
+                               AwaitingRow, ToolsOut)
 from routes import autonomy_models as am
 from services import (agents_registry, build_agents, dev_servers, jobs, makers,
                       presence, tasks, tool_registry, triggers, work_driver)
@@ -405,94 +405,6 @@ class BuildAgent(BaseModel):
     owner_id: int | None = None
 
 
-class BuildAgentDetail(BuildAgent):
-    """`session_alive` is a REAL check that the CLI session file still exists,
-    not merely "a session id string is stored" -- which stayed true after the
-    session was pruned, so the pill lied."""
-
-    session_alive: bool
-
-
-class InterventionAppendOut(BaseModel):
-    """`ts` is ADR 0023 clause 4 debt: an instant field should be `<verb>_at`.
-    Left as-is because it is the key the caller reads today."""
-
-    ok: bool
-    ts: str
-
-
-class DiffFile(BaseModel):
-    """One changed file. `status` is git's two-character XY porcelain code;
-    `??` means untracked, whose `diff` is the whole file rendered as additions."""
-
-    status: str
-    path: str
-    diff: str
-
-
-class DiffOut(BaseModel):
-    files: list[DiffFile]
-    summary: str
-
-
-class SuggestedCommand(BaseModel):
-    command: str
-    kind: str
-
-
-class PreviewServerStatus(BaseModel):
-    """`dev_servers.status`. `started_at` is a RAW EPOCH FLOAT, which ADR 0023
-    clause 4 bans (every instant on the wire is an RFC3339 UTC string). Typed as
-    what it is rather than silently coerced: converting it is a wire change to
-    the reader that formats it, and this pass does not touch the frontend."""
-
-    running: bool
-    pid: int | None = None
-    port: int | None = None
-    command: str | None = None
-    started_at: float | None = None
-    log_path: str | None = None
-    # Set when a recorded process turned out to be gone and the entry was cleared.
-    stale_pid: int | None = None
-
-
-class PreviewStatusOut(PreviewServerStatus):
-    """Status plus the two boot-time helpers: what to run, and (when stopped)
-    which port to default the picker to. `public_url` is derived from the
-    request host so the link works over the LAN, not just localhost."""
-
-    suggested: SuggestedCommand
-    suggested_port: int | None = None
-    public_url: str | None = None
-
-
-class PreviewStartOut(BaseModel):
-    ok: bool
-    status: PreviewServerStatus | None = None
-    reason: str | None = None
-
-
-class PreviewStopOut(BaseModel):
-    ok: bool
-    reason: str | None = None
-    force_killed: bool | None = None
-
-
-class PreviewLogOut(BaseModel):
-    log: str
-
-
-class CommitOut(BaseModel):
-    """`ok: false` with a `reason` at HTTP 200 is an ADR 0023 clause 3 violation
-    (failure never arrives at 200). Declared rather than fixed: "nothing to
-    commit" is reported, not raised, by the caller today, and turning it into a
-    4xx is a behaviour change to a route the Diff tab reads."""
-
-    ok: bool
-    commit: str | None = None
-    reason: str | None = None
-
-
 class RetireAgentOut(BaseModel):
     ok: bool
     retired: str
@@ -703,13 +615,30 @@ async def list_tools():
     return {"tools": [t.to_dict() for t in tool_registry.catalog()]}
 
 
-# ---- Build agents (Claude Code coding sessions) ----------------------------
-# Distinct kind of Agent per ADR-008. Each Build agent is scoped to a cwd
-# (either a Project directory or a freestanding scratch dir). The chat surface
-# uses contextKey="agent:<slug>", which routes through chat_context's
-# MakerAgentContextProvider (selected by the agent's `role`) and sets cwd at
-# call_cloud spawn time. `build:<slug>` is DELETED as both a context key and a
-# task scope: an agent has one address, and it is `agent:<slug>`.
+# RETIRED: eighteen of the twenty `/agents/build/...` routes (patch, get,
+# session/reset, tree, file get/put, brief get/put, interventions get/post,
+# diff, diff/revert-file, preview status/start/stop/log, commit, and the list
+# read).
+#
+# They were the API of a SECOND ENTITY, and there is no second entity:
+# threads-branches-and-pages-2026-08-29.md section 1 settles that a thread is
+# the one thing, every thread is chattable, and "agent" describes a thread whose
+# `armed` is not `off`. Their only caller was one page (`pages/AgentBuild.tsx`),
+# deleted in the same change, and every capability they carried is served by a
+# route addressed by WORKSPACE rather than by agent slug: `/files` for the tree
+# and the file bytes (the brief and the interventions log are files in that
+# tree), `/git` for diff, revert and commit, `/base-apps/run` for the preview.
+#
+# TWO SURVIVE, and both are the operator's own action rather than a view.
+# `POST /build` is the one call that brings a maker DEFINITION into existence
+# (`services/makers.ensure`, whose header says so and names the two candidates
+# it closed), and `POST /build/{slug}/retire` is how that ends. Deleting them
+# would have removed a capability instead of a duplicate.
+#
+# `services/build_agents.py` and `services/makers.py` STAY. They are read by
+# scripts/dispatch_triggers.sh and scripts/ralph.sh, which is server-side work
+# with no HTTP surface; what went is the door, not the room.
+
 
 class BuildAgentCreate(BaseModel):
     slug: str = Field(min_length=1, max_length=48)
@@ -717,11 +646,6 @@ class BuildAgentCreate(BaseModel):
     purpose: str = ""
     project_slug: str | None = None
     branch_slug: str | None = None
-
-
-@router.get("/build", response_model=list[BuildAgent], response_model_exclude_unset=True)
-async def list_build_agents():
-    return build_agents.list_agents()
 
 
 @router.post("/build", response_model=BuildAgent, response_model_exclude_unset=True)
@@ -738,7 +662,7 @@ async def create_build_agent(body: BuildAgentCreate):
 
     There is no reconciler behind this and there must not be one: a scope with
     no maker definition still works its tickets, because the loop is the maker
-    (`services/makers.py` header, `primitive-roles-2026-07-18.md` §6)."""
+    (`services/makers.py` header, `primitive-roles-2026-07-18.md` sec 6)."""
     try:
         rec = build_agents.create_agent(
             slug=body.slug,
@@ -757,387 +681,10 @@ async def create_build_agent(body: BuildAgentCreate):
     return rec
 
 
-class BuildAgentPatch(BaseModel):
-    """What can be changed about a maker after it exists.
-
-    `branch_slug` IS THE ONE THAT MOVES WHERE ITS TURNS RUN, and it is here
-    because the picker on the agent's own page was inert without it: the value
-    was chosen, held in state, and read by nothing. Three values, three
-    meanings, and the difference matters -- absent leaves the pin alone, a slug
-    moves the agent onto that branch's tree, and an empty string moves it back
-    to the project's main tree. `None` cannot mean "clear it" here because
-    `None` is what "not sent" already means.
-    """
-    name: str | None = Field(default=None, max_length=64)
-    purpose: str | None = Field(default=None, max_length=280)
-    branch_slug: str | None = Field(default=None, max_length=64)
-
-
-@router.patch("/build/{slug}", response_model=BuildAgent, response_model_exclude_unset=True)
-async def patch_build_agent(slug: str, body: BuildAgentPatch):
-    """Rename a maker, restate its purpose, or move it to another branch.
-
-    A branch move takes effect from the NEXT turn (the running one's cwd was
-    fixed at spawn) and keeps the agent's Claude Code session, because the
-    conversation is about the work rather than about the directory.
-    """
-    fields = body.model_dump(exclude_unset=True)
-    try:
-        rec = None
-        if "branch_slug" in fields:
-            rec = build_agents.set_branch(slug, fields["branch_slug"])
-        if body.name is not None or body.purpose is not None:
-            rec = build_agents.rename(slug, name=body.name, purpose=body.purpose)
-        return rec if rec is not None else build_agents.get_agent(slug)
-    except KeyError:
-        raise HTTPException(404, f"build agent not found: {slug}")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-
-
-@router.get("/build/{slug}", response_model=BuildAgentDetail, response_model_exclude_unset=True)
-async def get_build_agent(slug: str):
-    try:
-        rec = build_agents.get_agent(slug)
-    except KeyError:
-        raise HTTPException(404, f"build agent not found: {slug}")
-    # Make the detail view's status honest, matching the roster rule:
-    #  - `state` "running" only if a turn is genuinely in flight (not the stale
-    #    flag that ratcheted on first turn).
-    #  - `session_alive` is a REAL check that the CLI session file still exists,
-    #    not merely "a session id string is stored" (which stayed true after the
-    #    session was pruned, so the pill lied).
-    from services import build_streaming
-    if rec.get("state") == "running" and slug not in agents_registry.live_builder_slugs():
-        rec["state"] = "idle"
-    rec["session_alive"] = build_streaming.session_alive(
-        rec.get("claude_session"), rec.get("cwd") or "")
-    return rec
-
-
 @router.post("/build/{slug}/retire", response_model=OkOut, response_model_exclude_unset=True)
 async def retire_build_agent(slug: str):
     build_agents.retire(slug)
     return {"ok": True}
-
-
-@router.post("/build/{slug}/session/reset", response_model=OkOut, response_model_exclude_unset=True)
-async def reset_build_session(slug: str):
-    """Detach this agent record from its Claude Code session so the next turn
-    starts fresh. Useful when the conversation gets confused or you want to
-    restart the agent's thinking from scratch."""
-    build_agents.reset_session(slug)
-    return {"ok": True}
-
-
-# ---- Build agent file ops (the coding-UI surface) --------------------------
-# Mirror the Project file-IO endpoints but scoped to the build agent's cwd.
-# Path-traversal guard: target must be under the agent's cwd.
-
-from pathlib import Path as _P
-
-class _Content(BaseModel):
-    content: str
-
-
-def _agent_cwd(slug: str) -> _P:
-    try:
-        a = build_agents.get_agent(slug)
-    except KeyError:
-        raise HTTPException(404, f"build agent not found: {slug}")
-    return _P(a["cwd"])
-
-
-def _safe_resolve(root: _P, path: str) -> _P:
-    target = (root / path).resolve()
-    if root.resolve() not in target.parents and target != root.resolve():
-        raise HTTPException(400, "path escapes agent cwd")
-    return target
-
-
-@router.get("/build/{slug}/tree", response_model=TreeOut, response_model_exclude_unset=True)
-async def build_agent_tree(slug: str):
-    root = _agent_cwd(slug)
-    SKIP = {".git", "node_modules", "dist", ".next", "__pycache__"}
-
-    def walk(p: _P) -> list[dict]:
-        items = []
-        for child in sorted(p.iterdir(), key=lambda c: (not c.is_dir(), c.name)):
-            if child.name in SKIP or child.name.startswith("."):
-                continue
-            item = {"name": child.name, "path": str(child.relative_to(root))}
-            if child.is_dir():
-                item["kind"] = "dir"
-                item["children"] = walk(child)
-            else:
-                item["kind"] = "file"
-                try:
-                    item["size"] = child.stat().st_size
-                except OSError:
-                    item["size"] = None
-            items.append(item)
-        return items
-
-    return {"root": str(root), "tree": walk(root) if root.exists() else []}
-
-
-@router.get("/build/{slug}/file", response_model=FileOut, response_model_exclude_unset=True)
-async def build_agent_file_get(slug: str, path: str):
-    root = _agent_cwd(slug)
-    target = _safe_resolve(root, path)
-    if not target.exists() or not target.is_file():
-        raise HTTPException(404, "file not found")
-    try:
-        return {"path": path, "content": target.read_text()}
-    except UnicodeDecodeError:
-        raise HTTPException(415, "binary file")
-
-
-@router.put("/build/{slug}/file", response_model=OkOut, response_model_exclude_unset=True)
-async def build_agent_file_put(slug: str, path: str, body: _Content):
-    root = _agent_cwd(slug)
-    target = _safe_resolve(root, path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(body.content)
-    build_agents.touch(slug)
-    return {"ok": True}
-
-
-@router.get("/build/{slug}/brief", response_model=ContentOut, response_model_exclude_unset=True)
-async def build_agent_brief_get(slug: str):
-    root = _agent_cwd(slug)
-    p = root / "PROJECT.md"
-    return {"content": p.read_text() if p.exists() else ""}
-
-
-@router.put("/build/{slug}/brief", response_model=OkOut, response_model_exclude_unset=True)
-async def build_agent_brief_put(slug: str, body: _Content):
-    root = _agent_cwd(slug)
-    (root / "PROJECT.md").write_text(body.content)
-    build_agents.touch(slug)
-    return {"ok": True}
-
-
-# RETIRED: `GET/PUT /agents/build/{slug}/todo`. A project's TODO.md is served
-# by `GET /projects/{slug}/todo`, and the build spellings had no caller in
-# frontend/, mobile/ or any script -- they were the third way to reach one file.
-# app-is-the-entity-2026-08-20.md sec 5 (`/agents/build/{slug}/...`: "20 routes
-# shadowing /agents/{id}, including a third way to create a ticket, under a
-# `build:` spelling the scope model deleted").
-
-
-@router.get("/build/{slug}/interventions", response_model=ContentOut, response_model_exclude_unset=True)
-async def build_agent_interventions_get(slug: str):
-    root = _agent_cwd(slug)
-    p = root / "INTERVENTIONS.md"
-    return {"content": p.read_text() if p.exists() else ""}
-
-
-# RETIRED: `GET/POST/PATCH/DELETE /agents/build/{slug}/tasks`. This was the
-# "third way to create a ticket" app-is-the-entity-2026-08-20.md sec 5 names,
-# and it wrote into whichever directory `_tasks_root` picked -- the linked
-# project's tree, or the agent's own cwd if it had no project, so two agents on
-# one project shared a store and an unlinked one wrote a private store nothing
-# else read. `/tasks` (routes/tasks_all.py) is the one ticket surface, keyed by
-# scope. No caller in frontend/, mobile/ or any script referenced these.
-
-
-# ---- Interventions: append-only operator nudges (ADR-009 section 5) --------
-# A short note the operator drops into the agent's working dir to bias the
-# next turn without breaking the chat conversation cadence. The existing GET
-# endpoint above reads the file; this POST appends a single stamped line.
-
-
-class _InterventionIn(BaseModel):
-    text: str = Field(min_length=1, max_length=2000)
-
-
-@router.post("/build/{slug}/interventions", response_model=InterventionAppendOut, response_model_exclude_unset=True)
-async def build_agent_interventions_post(slug: str, body: _InterventionIn):
-    from datetime import datetime, timezone
-    text = body.text.strip()
-    if not text:
-        raise HTTPException(400, "text required")
-    root = _agent_cwd(slug)
-    p = root / "INTERVENTIONS.md"
-    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    line = f"[{ts}] operator: {text}\n"
-    existing = p.read_text() if p.exists() else ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(existing + line)
-    build_agents.touch(slug)
-    return {"ok": True, "ts": ts}
-
-
-# ---- Diff + revert + commit ------------------------------------------------
-# Build agents write directly to the working tree. The operator reviews via
-# the Diff tab and can revert per-file or commit a snapshot when satisfied.
-
-import subprocess
-
-
-def _git(slug: str, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    cwd = _agent_cwd(slug)
-    return subprocess.run(
-        ["git", "-C", str(cwd), *args],
-        capture_output=True, text=True, check=check, timeout=15,
-    )
-
-
-@router.get("/build/{slug}/diff", response_model=DiffOut, response_model_exclude_unset=True)
-async def build_agent_diff(slug: str):
-    """Return per-file diff status + per-file unified diff content. Computed
-    against HEAD (working tree + index combined: --cached + worktree). Files
-    untracked by git are listed with status='??' and content from the new file."""
-    cwd = _agent_cwd(slug)
-    if not (cwd / ".git").exists():
-        return {"files": [], "summary": "no git repo"}
-    # Status: get one line per file. -z for null-delim to handle weird names.
-    status_proc = _git(slug, "status", "--porcelain", check=False)
-    files: list[dict] = []
-    for line in status_proc.stdout.splitlines():
-        if not line:
-            continue
-        # First two chars are XY status; rest after one space is the path.
-        xy = line[:2]
-        path = line[3:].strip()
-        # `git diff HEAD -- <path>` shows unified diff for tracked changes.
-        # For untracked (xy='??'), there's no diff vs HEAD; show whole file.
-        if xy.strip() == "??":
-            try:
-                content = (cwd / path).read_text()
-            except (OSError, UnicodeDecodeError):
-                content = "(binary or unreadable)"
-            diff = "@@ new file @@\n" + "\n".join("+" + ln for ln in content.splitlines())
-        else:
-            diff_proc = _git(slug, "diff", "HEAD", "--", path, check=False)
-            diff = diff_proc.stdout
-        files.append({"status": xy, "path": path, "diff": diff})
-    # Summary line: total adds/dels via --shortstat.
-    short_proc = _git(slug, "diff", "HEAD", "--shortstat", check=False)
-    summary = short_proc.stdout.strip() or "no tracked changes"
-    return {"files": files, "summary": summary}
-
-
-class _RevertIn(BaseModel):
-    path: str
-
-
-@router.post("/build/{slug}/diff/revert-file", response_model=OkOut, response_model_exclude_unset=True)
-async def build_agent_revert_file(slug: str, body: _RevertIn):
-    """Restore <path> to HEAD's version. For untracked files, deletes them.
-    Operator-confirmed in the UI."""
-    cwd = _agent_cwd(slug)
-    target = (cwd / body.path).resolve()
-    if cwd.resolve() not in target.parents and target != cwd.resolve():
-        raise HTTPException(400, "path escapes agent cwd")
-    # Check tracked status.
-    tracked = _git(slug, "ls-files", "--error-unmatch", "--", body.path, check=False)
-    if tracked.returncode == 0:
-        _git(slug, "checkout", "HEAD", "--", body.path)
-    else:
-        # Untracked → delete (matches what revert means visually).
-        if target.exists():
-            target.unlink()
-    build_agents.touch(slug)
-    return {"ok": True}
-
-
-class _CommitIn(BaseModel):
-    message: str = "Build agent checkpoint"
-
-
-# ---- Dev-server preview ----------------------------------------------------
-# Each Build agent can run at most one dev server. The Preview tab shows its
-# iframe + boot/stop controls + a tail of the dev-server log.
-
-
-class _StartPreviewIn(BaseModel):
-    command: str
-    port: int = 8501
-
-
-@router.get("/build/{slug}/preview/status", response_model=PreviewStatusOut, response_model_exclude_unset=True)
-async def build_agent_preview_status(slug: str, request: Request):
-    """Status, plus boot-time helpers per ADR-009 section 6.
-
-    When stopped: include a `suggested_port` so the UI can default the port
-    picker without the operator having to think about it. When running:
-    include a `public_url` derived from the request host so the link works
-    over the LAN, not just localhost.
-    """
-    suggestion = dev_servers.suggest_command(str(_agent_cwd(slug)))
-    base = dev_servers.status(slug)
-    payload: dict = {**base, "suggested": suggestion}
-    host = (request.headers.get("host") or "localhost").split(":")[0]
-    if base.get("running"):
-        port = base.get("port")
-        if port:
-            payload["public_url"] = f"http://{host}:{port}/"
-    else:
-        try:
-            payload["suggested_port"] = dev_servers.next_free_port()
-        except RuntimeError:
-            payload["suggested_port"] = None
-    return payload
-
-
-@router.post("/build/{slug}/preview/start", response_model=PreviewStartOut, response_model_exclude_unset=True)
-async def build_agent_preview_start(slug: str, body: _StartPreviewIn):
-    cwd = _agent_cwd(slug)
-    r = dev_servers.start(slug, cwd=str(cwd), command=body.command, port=body.port)
-    if not r.get("ok"):
-        raise HTTPException(400, r.get("reason") or "start failed")
-    build_agents.touch(slug)
-    return r
-
-
-@router.post("/build/{slug}/preview/stop", response_model=PreviewStopOut, response_model_exclude_unset=True)
-async def build_agent_preview_stop(slug: str):
-    return dev_servers.stop(slug)
-
-
-@router.get("/build/{slug}/preview/log", response_model=PreviewLogOut, response_model_exclude_unset=True)
-async def build_agent_preview_log(slug: str):
-    return {"log": dev_servers.tail_log(slug)}
-
-
-@router.post("/build/{slug}/commit", response_model=CommitOut, response_model_exclude_unset=True)
-async def build_agent_commit(slug: str, body: _CommitIn):
-    """Stage everything in the agent's cwd and create a commit. The operator
-    uses this to mark 'this state is good, snapshot it' so they can revert
-    safely later. Committer matches the Workshop Projects identity used at
-    scaffold time so the history reads cleanly."""
-    cwd = _agent_cwd(slug)
-    if not (cwd / ".git").exists():
-        raise HTTPException(400, "no git repo in agent cwd")
-    env = {
-        **os.environ,
-        "GIT_AUTHOR_NAME": "Workshop Projects",
-        "GIT_AUTHOR_EMAIL": "projects@workshop.local",
-        "GIT_COMMITTER_NAME": "Workshop Projects",
-        "GIT_COMMITTER_EMAIL": "projects@workshop.local",
-    }
-    subprocess.run(["git", "-C", str(cwd), "add", "."], env=env, check=True, timeout=15)
-    # If nothing staged, surface that clearly rather than erroring.
-    status = subprocess.run(
-        ["git", "-C", str(cwd), "diff", "--cached", "--quiet"],
-        env=env, timeout=15,
-    )
-    if status.returncode == 0:
-        return {"ok": False, "reason": "nothing to commit"}
-    subprocess.run(
-        ["git", "-C", str(cwd), "commit", "-q", "-m", body.message or "Build agent checkpoint"],
-        env=env, check=True, timeout=15,
-    )
-    build_agents.touch(slug)
-    head = subprocess.run(
-        ["git", "-C", str(cwd), "rev-parse", "HEAD"],
-        env=env, capture_output=True, text=True, check=True, timeout=15,
-    ).stdout.strip()
-    return {"ok": True, "commit": head}
 
 
 def _agent_scope_key(rec: dict) -> str | None:
@@ -1156,7 +703,7 @@ def _agent_scope_key(rec: dict) -> str | None:
     return f"agent:{slug}" if slug else None
 
 
-def _agent_scope_root(rec: dict) -> _P | None:
+def _agent_scope_root(rec: dict) -> Path | None:
     """The tree this agent's tasks live in: its linked project dir, else a
     maker's own cwd. An agent with no project link and no tree of its own has an
     empty queue snapshot.
@@ -1169,7 +716,7 @@ def _agent_scope_root(rec: dict) -> _P | None:
     if root is None and rec.get("role") == "maker" and rec.get("cwd"):
         # A maker that predates the build-agents registry still has a tree.
         root = rec["cwd"]
-    return _P(root) if root else None
+    return Path(root) if root else None
 
 
 def _agent_queue_snapshot(rec: dict) -> dict:

@@ -113,16 +113,6 @@ export const queryKeys = {
      * shorter answer to the longer question is a silent truncation.
      */
     jobs: (agentId: string, limit: number) => ["agents", agentId, "jobs", limit] as const,
-    /** `GET /api/agents/build/{slug}` and the four reads that open with it. */
-    build: (slug: string) => ["agents", slug, "build"] as const,
-    /** `GET /api/agents/build/{slug}/file?path=` -- one file out of the tree. */
-    buildFile: (slug: string, path: string) => ["agents", slug, "build", "file", path] as const,
-    /** `GET /api/agents/build/{slug}/interventions` -- the steering notes. */
-    buildInterventions: (slug: string) => ["agents", slug, "build", "interventions"] as const,
-    /** `GET /api/agents/build/{slug}/diff` -- the working tree's whole diff. */
-    buildDiff: (slug: string) => ["agents", slug, "build", "diff"] as const,
-    /** `GET /api/agents/build/{slug}/preview/{status,log}` -- one fact, two reads. */
-    buildPreview: (slug: string) => ["agents", slug, "build", "preview"] as const,
     autonomyStatus: () => ["agents", "autonomy", "status"] as const,
     autonomyControls: () => ["agents", "autonomy", "status", "controls"] as const,
   },

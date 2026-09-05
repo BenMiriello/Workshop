@@ -27,7 +27,6 @@ import { useAppPlacesState } from "./apps/useAppPlaces";
 // landing surfaces, and a suspense flash on the way into the chat is worse
 // than the bytes.
 const AgentDetail = lazyPage(() => import("./pages/AgentDetail"));
-const AgentBuild = lazyPage(() => import("./pages/AgentBuild"));
 const ProjectNew = lazyPage(() => import("./pages/ProjectNew"));
 
 // A project's own page is now its app's Overview. The slug is the same in both
@@ -89,8 +88,6 @@ const AppRunsTab = lazyPage(() => import("./pages/apps/tabs/AppRunsTab"));
 // them. No peer-app nav strip; the Apps tab is the discovery surface. Which
 // apps exist is src/apps/registry.tsx's business, not this file's.
 
-// Deep-link / mobile-shell compatibility: the builder work pane moved from
-// /agents/build/:slug to /agents/:slug/chat. Keep old links working.
 /** An app's base path lands on the surface the app chose.
  *
  *  This used to be a hardcoded `/chats`, which is the whole of ticket 7d8d733a:
@@ -113,9 +110,18 @@ function AppHomeRedirect() {
   return <Navigate to={app?.landing ?? `/apps/${slug}/chats`} replace />;
 }
 
-function AgentBuildRedirect() {
+/** THE WORK PANE IS THE CHAT. `pages/AgentBuild.tsx` was a second chat surface
+ *  wrapped around a workbench, for an entity that no longer exists: a thread is
+ *  the one thing (threads-branches-and-pages-2026-08-29.md section 1), and its
+ *  address is `agent:<slug>`, which `/chat/:contextKey` already opens. The
+ *  workbench itself was files, an editor, a diff and a preview over one working
+ *  tree, all of which the app's own Files and Work tabs serve.
+ *
+ *  Both old spellings land here, because a deep link in a persisted chat note
+ *  is still a deep link. */
+function AgentChatRedirect() {
   const { slug = "" } = useParams();
-  return <Navigate to={`/agents/${encodeURIComponent(slug)}/chat`} replace />;
+  return <Navigate to={`/chat/${encodeURIComponent(`agent:${slug}`)}`} replace />;
 }
 
 // "Job" was the legacy noun for a Run. Old /jobs/:id deep-links live in chat
@@ -223,8 +229,8 @@ export default function App() {
           <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/usage" element={<Usage />} />
           <Route path="/agents/new" element={<AgentDetail />} />
-          <Route path="/agents/:slug/chat" element={<AgentBuild />} />
-          <Route path="/agents/build/:slug" element={<AgentBuildRedirect />} />
+          <Route path="/agents/:slug/chat" element={<AgentChatRedirect />} />
+          <Route path="/agents/build/:slug" element={<AgentChatRedirect />} />
           <Route path="/agents/:slug" element={<AgentDetail />} />
           <Route path="/chats" element={<Chats />} />
           {/* The archive is its own list, not a filter over /chats. Eager like

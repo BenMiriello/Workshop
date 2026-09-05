@@ -29,7 +29,7 @@ import {
   deriveMode, agentSlug, taskScopeFor, composerPlaceholder,
   isEgressFailure, type AgentBinding, type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
-import { linkedAppSlugs } from "../lib/apps";
+import { appFilesHref as appFilesHrefFor, linkedAppSlugs } from "../lib/apps";
 import { useLogScroll } from "./chat/useLogScroll";
 import { spliceDictation, dictationLost, typedPortion } from "./chat/voiceDictation";
 import { useTurnStream } from "./chat/useTurnStream";
@@ -113,9 +113,6 @@ export type ChatProps = {
   placeholder?: string;
   onAction?: () => void;
   scoped?: boolean;
-  // Hide the toolbar's "open full screen" pop-out. Set when the host already
-  // owns a single expand control for the chat (e.g. AgentBuild's region focus).
-  hideExpand?: boolean;
   // Open a SPECIFIC thread on mount (e.g. resuming a draft project chat from a
   // link) instead of the most-recent one for this scope.
   initialThreadId?: string;
@@ -133,7 +130,7 @@ export type ChatProps = {
 };
 
 export default function Chat({
-  contextKey, mode, variant = "panel", placeholder, onAction, scoped, hideExpand,
+  contextKey, mode, variant = "panel", placeholder, onAction, scoped,
   initialThreadId, navKey, startNew,
 }: ChatProps) {
   // THE AGENT THIS CHAT IS WITH, when it is with one. Build mode is a fact about
@@ -824,7 +821,13 @@ export default function Chat({
   const [confirmCompact, setConfirmCompact] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [mentionSel, setMentionSel] = useState(0);
-  const slug = boundSlug;
+  // WHERE THIS CHAT'S WORKING TREE IS, as an app address. `project_slug`
+  // and the app id name the same slug in the two registries (lib/scope.ts,
+  // appSlugForScope), so an agent-bound chat resolves to the app that owns
+  // the tree it writes in. Null for every chat with no tree.
+  const appFilesHref = boundAgent?.project_slug
+    ? appFilesHrefFor(boundAgent.project_slug)
+    : null;
   // Loaded once per session (lib/apps.ts caches the fetch) and null until it
   // resolves, so the Tickets affordance stays hidden for an app scope rather
   // than showing and then 400ing while this is still in flight.
@@ -1239,8 +1242,6 @@ export default function Chat({
     <ChatToolbar
       variant={variant}
       mode={effectiveMode}
-      slug={slug}
-      hideExpand={hideExpand}
       activeId={activeId}
       activeThreadTitle={thread.activeThreadTitle}
       branchPicker={branchPicker}
@@ -1259,7 +1260,14 @@ export default function Chat({
       needsYouCount={workBadge.needsYou}
       onWorkClick={() => requestAnimationFrame(() => setWorkOpen(drawer !== "work"))}
       onBack={back}
-      onOpenWorkbench={() => navigate(`/agents/${slug}/chat`)}
+      // THE APP'S FILES, not a second chat. `pages/AgentBuild.tsx` used to
+      // wrap this same transcript in a workbench and route to it from here,
+      // which is how a chat and an agent stayed two things. The workbench was a
+      // file tree, an editor, a diff and a preview over ONE working tree, and
+      // the app that owns that tree already serves all four (Files, and Work
+      // for the diff). Null when this chat has no tree, which drops the button
+      // rather than inventing a destination.
+      onOpenFiles={appFilesHref ? () => navigate(appFilesHref) : null}
       onEditTitle={() => thread.setRenameOpen(true)}
       // Route rather than select in place. The chat you picked can be bound to
       // any scope, and the loader already reads `?thread=` as a link to fetch by

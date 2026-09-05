@@ -1,6 +1,6 @@
 import {
   Archive, ChevronLeft, Maximize2, MessagesSquare,
-  MoreVertical, PanelsTopLeft, Plus, Share2, Ticket,
+  FolderTree, MoreVertical, Plus, Share2, Ticket,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@workshop/ui";
@@ -69,17 +69,15 @@ import { workTitle } from "./work/workRows";
 // stay on the row where you can see them.
 
 export default function ChatToolbar({
-  variant, mode, slug, hideExpand,
+  variant, mode,
   activeId, activeThreadTitle, branchPicker, branchPill,
   showProviderPicker, providers, activeProvider, onChooseProvider, turnActive,
   drawer, workCount, needsYouCount, onWorkClick,
-  onBack, onOpenWorkbench, onEditTitle, onOpenThread,
+  onBack, onOpenFiles, onEditTitle, onOpenThread,
   onNewChat, onArchive, onPopOut, onNavigate,
 }: {
   variant: ChatVariant;
   mode: ChatMode;
-  slug: string | null;
-  hideExpand?: boolean;
   activeId: string | null;
   activeThreadTitle?: string;
   showProviderPicker: boolean;
@@ -118,7 +116,7 @@ export default function ChatToolbar({
    *  can apply requestAnimationFrame to avoid layout thrash on tap. */
   onWorkClick?: () => void;
   onBack: () => void;
-  onOpenWorkbench: () => void;
+  onOpenFiles: (() => void) | null;
   onEditTitle: () => void;
   /** Switch to another conversation from the name menu. It may live under a
    *  different scope, so the caller routes rather than setting local state. */
@@ -166,17 +164,20 @@ export default function ChatToolbar({
           <ChevronLeft size={16} aria-hidden />
         </button>
       )}
-      {/* Build agents: open the full workbench (files / editor / preview / diff).
-          Only in the full chat — inside the workbench the chat is already
-          embedded, so the button would be redundant. */}
-      {mode === "build" && slug && variant === "full" && (
+      {/* The working tree this chat writes in, in the app that owns it. There
+          used to be a second chat surface here (a "workbench" wrapping the same
+          transcript in a file tree, an editor, a diff and a preview) and it was
+          the last place a chat and an agent were two different things. It is
+          gone; this is the link to where those four things actually live, and
+          the chat you are reading is the only chat. */}
+      {onOpenFiles && variant === "full" && (
         <button
           className="chat-tb__btn"
-          onClick={onOpenWorkbench}
-          title="Open workbench (files · editor · preview · diff)"
-          aria-label="Open workbench"
+          onClick={onOpenFiles}
+          title="Open this app's files"
+          aria-label="Open this app's files"
         >
-          <PanelsTopLeft size={16} aria-hidden />
+          <FolderTree size={16} aria-hidden />
         </button>
       )}
 
@@ -307,7 +308,7 @@ export default function ChatToolbar({
         <MenuItem icon={<MessagesSquare size={14} />} onSelect={() => onNavigate("/chats")}>
           All chats
         </MenuItem>
-        {variant !== "full" && !hideExpand && (
+        {variant !== "full" && (
           <MenuItem icon={<Maximize2 size={14} />} onSelect={onPopOut}>
             Open full screen
           </MenuItem>
