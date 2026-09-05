@@ -9,10 +9,10 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from services import app_overlay, app_registry, app_runner, gc, manifests, permissions, port_registry, registry
+from services import app_overlay, app_registry, app_runner, app_ui, gc, manifests, permissions, port_registry, registry
 
 from routes.gc_models import GcReport
 
@@ -325,10 +325,147 @@ class PortRegistry(BaseModel):
     allocations: list[PortAllocation]
 
 
+# ---- The runtime app loader (stage-5-app-loader-plan-2026-08-24.md) ---------
+# What an installed app contributes to the SHELL, read from its own manifest and
+# served as data. Declare-then-activate: everything needed to DRAW an app is
+# here, and its bundle is fetched only when one of its declared paths is opened.
+# See services/app_ui.py for why this exists and what it closes.
+
+
+class AppUiCrumb(BaseModel):
+    """A breadcrumb node, keyed by the page's own path."""
+
+    label: str
+    parent: str | None = None
+
+
+class AppUiPage(BaseModel):
+    """One routed contribution. The app declares `{path, export, layout}` and
+    the SHELL constructs the <Route>: an app never builds a route element, which
+    is what keeps the mount vocabulary closed and what makes a second copy of
+    the router unable to break routing."""
+
+    path: str
+    mount: str
+    export: str
+    layout: str | None = None
+    crumb: AppUiCrumb | None = None
+
+
+class AppUiMount(BaseModel):
+    """A non-routed contribution: a layout wrapper or a settings panel."""
+
+    export: str
+    mount: str
+    label: str | None = None
+
+
+class AppUiLink(BaseModel):
+    """Where the app opens, as the switcher and the dock need it."""
+
+    label: str
+    to: str
+
+
+class AppUiUrls(BaseModel):
+    """Content-hashed URLs for this app's built files, relative to the API root.
+
+    The client prefixes its own API base: the browser reaches this API under a
+    prefix the backend does not own, so baking one in here would be a second
+    place that decides where the API lives. Absent for an app whose build is
+    missing, in which case `error` says so."""
+
+    entry: str | None = None
+    styles: list[str] = Field(default_factory=list)
+    provider: str | None = None
+
+
+class AppUiContribution(BaseModel):
+    """One app's whole UI declaration, normalized.
+
+    Returned WITH its `error` rather than dropped when something is wrong: an
+    app missing from this list looks exactly like an app that was never
+    installed, and that silence is the 2026-09-04 outage."""
+
+    id: str
+    contract: int
+    kit: str
+    headless: bool = False
+    icon: str | None = None
+    group: str | None = None
+    order: int | None = None
+    link: AppUiLink | None = None
+    pages: list[AppUiPage] = Field(default_factory=list)
+    layouts: list[AppUiMount] = Field(default_factory=list)
+    settings: list[AppUiMount] = Field(default_factory=list)
+    redirects: dict[str, str] = Field(default_factory=dict)
+    legacy_tabs: dict[str, str] = Field(default_factory=dict)
+    status_endpoint: str | None = None
+    urls: AppUiUrls = Field(default_factory=AppUiUrls)
+    error: str | None = None
+
+
+class AppContributions(BaseModel):
+    """Empty on a fresh instance with nothing installed."""
+
+    contract: int
+    kit: str
+    apps: list[AppUiContribution]
+
+
+class AppRuntimeInfo(BaseModel):
+    """What the SERVED bundle publishes, so an app can be built against it and
+    a mismatch can be refused with a sentence instead of failing at first hook.
+    Read from the build stamp, not from node_modules."""
+
+    contract: int
+    kit: str
+    react: str
+    router: str
+    source_id: str | None = None
+
 # ---- App manifests (data layer only — no enforcement) -----------------------
 # Read-only view of the per-app manifest store (backend/apps.json). See
 # services/manifests.py and docs/app-platform-plan.md section 3. These endpoints
 # expose the declared manifests; nothing here enforces scope or grants.
+
+
+@router.get("/contributions", response_model=AppContributions)
+async def get_app_contributions():
+    """Every installed app's UI declaration.
+
+    THE SEAM THAT REPLACES A REBUILD. The shell used to discover an app with
+    `import.meta.glob`, which Vite resolves at build time, so installing or
+    removing an app meant rebuilding the platform bundle. It reads this instead:
+    an app appears here the moment it is installed and disappears the moment it
+    is removed, with nothing recompiled either way."""
+    return app_ui.contributions()
+
+
+@router.get("/runtime", response_model=AppRuntimeInfo)
+async def get_app_runtime():
+    """The contract and library versions this shell serves to app bundles."""
+    return app_ui.runtime()
+
+
+@router.get("/ui/{app_id}/{asset_path:path}")
+async def get_app_ui_asset(app_id: str, asset_path: str) -> FileResponse:
+    """One built file from an installed app's UI directory.
+
+    Immutable, honestly: every URL the contributions endpoint hands out carries
+    a hash of the file's own bytes, so a rebuilt app is a different URL. Only
+    `.js` and `.css` are served, and only from inside the app's declared build
+    directory -- `asset_path` is caller controlled, so the resolved candidate is
+    compared against the resolved root (services/app_ui.asset)."""
+    try:
+        path, ctype = app_ui.asset(app_id, asset_path)
+    except app_ui.AppUiError as e:
+        raise HTTPException(e.status, e.message)
+    return FileResponse(
+        path,
+        media_type=ctype,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @router.get("/launcher", response_model=LauncherCards, response_model_exclude_unset=True)

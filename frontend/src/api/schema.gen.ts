@@ -1178,6 +1178,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/base-apps/contributions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get App Contributions
+         * @description Every installed app's UI declaration.
+         *
+         *     THE SEAM THAT REPLACES A REBUILD. The shell used to discover an app with
+         *     `import.meta.glob`, which Vite resolves at build time, so installing or
+         *     removing an app meant rebuilding the platform bundle. It reads this instead:
+         *     an app appears here the moment it is installed and disappears the moment it
+         *     is removed, with nothing recompiled either way.
+         */
+        get: operations["get_app_contributions_base_apps_contributions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/base-apps/gc/preview": {
         parameters: {
             query?: never;
@@ -1689,6 +1715,52 @@ export interface paths {
          * @description Stop all services and set desired state = stopped (monitor won't restart).
          */
         post: operations["run_stop_base_apps_run__slug__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/base-apps/runtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get App Runtime
+         * @description The contract and library versions this shell serves to app bundles.
+         */
+        get: operations["get_app_runtime_base_apps_runtime_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/base-apps/ui/{app_id}/{asset_path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get App Ui Asset
+         * @description One built file from an installed app's UI directory.
+         *
+         *     Immutable, honestly: every URL the contributions endpoint hands out carries
+         *     a hash of the file's own bytes, so a rebuilt app is a different URL. Only
+         *     `.js` and `.css` are served, and only from inside the app's declared build
+         *     directory -- `asset_path` is caller controlled, so the resolved candidate is
+         *     compared against the resolved root (services/app_ui.asset).
+         */
+        get: operations["get_app_ui_asset_base_apps_ui__app_id___asset_path__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -9317,6 +9389,18 @@ export interface components {
             /** Apps */
             apps: components["schemas"]["App"][];
         };
+        /**
+         * AppContributions
+         * @description Empty on a fresh instance with nothing installed.
+         */
+        AppContributions: {
+            /** Apps */
+            apps: components["schemas"]["AppUiContribution"][];
+            /** Contract */
+            contract: number;
+            /** Kit */
+            kit: string;
+        };
         /** AppCreateIn */
         AppCreateIn: {
             /** Icon */
@@ -9482,6 +9566,24 @@ export interface components {
             services: components["schemas"]["ServiceSpec"][];
         };
         /**
+         * AppRuntimeInfo
+         * @description What the SERVED bundle publishes, so an app can be built against it and
+         *     a mismatch can be refused with a sentence instead of failing at first hook.
+         *     Read from the build stamp, not from node_modules.
+         */
+        AppRuntimeInfo: {
+            /** Contract */
+            contract: number;
+            /** Kit */
+            kit: string;
+            /** React */
+            react: string;
+            /** Router */
+            router: string;
+            /** Source Id */
+            source_id?: string | null;
+        };
+        /**
          * AppStatus
          * @description Probed on every call, never cached, so the snapshot is current. `desired`
          *     and `deps` are absent on the stop path for an app the runner never held, and
@@ -9533,10 +9635,124 @@ export interface components {
             /** Tickets */
             tickets: components["schemas"]["Task"][];
         };
+        /**
+         * AppUiContribution
+         * @description One app's whole UI declaration, normalized.
+         *
+         *     Returned WITH its `error` rather than dropped when something is wrong: an
+         *     app missing from this list looks exactly like an app that was never
+         *     installed, and that silence is the 2026-09-04 outage.
+         */
+        AppUiContribution: {
+            /** Contract */
+            contract: number;
+            /** Error */
+            error?: string | null;
+            /** Group */
+            group?: string | null;
+            /**
+             * Headless
+             * @default false
+             */
+            headless: boolean;
+            /** Icon */
+            icon?: string | null;
+            /** Id */
+            id: string;
+            /** Kit */
+            kit: string;
+            /** Layouts */
+            layouts?: components["schemas"]["AppUiMount"][];
+            /** Legacy Tabs */
+            legacy_tabs?: {
+                [key: string]: string;
+            };
+            link?: components["schemas"]["AppUiLink"] | null;
+            /** Order */
+            order?: number | null;
+            /** Pages */
+            pages?: components["schemas"]["AppUiPage"][];
+            /** Redirects */
+            redirects?: {
+                [key: string]: string;
+            };
+            /** Settings */
+            settings?: components["schemas"]["AppUiMount"][];
+            /** Status Endpoint */
+            status_endpoint?: string | null;
+            urls?: components["schemas"]["AppUiUrls"];
+        };
+        /**
+         * AppUiCrumb
+         * @description A breadcrumb node, keyed by the page's own path.
+         */
+        AppUiCrumb: {
+            /** Label */
+            label: string;
+            /** Parent */
+            parent?: string | null;
+        };
         /** AppUiIn */
         AppUiIn: {
             /** Agent Button */
             agent_button?: boolean | null;
+        };
+        /**
+         * AppUiLink
+         * @description Where the app opens, as the switcher and the dock need it.
+         */
+        AppUiLink: {
+            /** Label */
+            label: string;
+            /** To */
+            to: string;
+        };
+        /**
+         * AppUiMount
+         * @description A non-routed contribution: a layout wrapper or a settings panel.
+         */
+        AppUiMount: {
+            /** Export */
+            export: string;
+            /** Label */
+            label?: string | null;
+            /** Mount */
+            mount: string;
+        };
+        /**
+         * AppUiPage
+         * @description One routed contribution. The app declares `{path, export, layout}` and
+         *     the SHELL constructs the <Route>: an app never builds a route element, which
+         *     is what keeps the mount vocabulary closed and what makes a second copy of
+         *     the router unable to break routing.
+         */
+        AppUiPage: {
+            crumb?: components["schemas"]["AppUiCrumb"] | null;
+            /** Export */
+            export: string;
+            /** Layout */
+            layout?: string | null;
+            /** Mount */
+            mount: string;
+            /** Path */
+            path: string;
+        };
+        /**
+         * AppUiUrls
+         * @description Content-hashed URLs for this app's built files, relative to the API root.
+         *
+         *     The client prefixes its own API base: the browser reaches this API under a
+         *     prefix the backend does not own, so baking one in here would be a second
+         *     place that decides where the API lives. Absent for an app whose build is
+         *     missing, in which case `error` says so.
+         */
+        AppUiUrls: {
+            /** Entry */
+            entry?: string | null;
+            /** Provider */
+            provider?: string | null;
+            /** Styles */
+            styles?: string[];
         };
         /** AssigneesOut */
         AssigneesOut: {
@@ -20292,6 +20508,26 @@ export interface operations {
             };
         };
     };
+    get_app_contributions_base_apps_contributions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppContributions"];
+                };
+            };
+        };
+    };
     gc_preview_base_apps_gc_preview_get: {
         parameters: {
             query?: never;
@@ -21208,6 +21444,58 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_app_runtime_base_apps_runtime_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppRuntimeInfo"];
+                };
+            };
+        };
+    };
+    get_app_ui_asset_base_apps_ui__app_id___asset_path__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+                asset_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

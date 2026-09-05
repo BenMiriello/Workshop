@@ -246,8 +246,10 @@ def verify(tok: str) -> dict:
     a credential is not a setting whose effect you discover at the next push.
 
     One request, `GET /user`, which needs no scope at all. Nothing here asks
-    about organisations, and nothing here can: that is the veritus separation,
-    and probing it would itself cross the boundary the check is defending.
+    about organisations, and nothing here can. An installation that names an
+    organisation it must never touch (`WORKSHOP_BLOCKED_REPO_OWNERS`) would have
+    that boundary crossed by the very act of enumerating memberships to check
+    it, so the check is the scope refusal below instead.
     """
     tok = (tok or "").strip()
     if not tok:
