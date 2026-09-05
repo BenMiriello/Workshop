@@ -1,0 +1,21 @@
+{
+  "name": "sample-widget",
+  "ui": {
+    "contract": 1,
+    "kit": "^0.7",
+    "dir": "dist/ui",
+    "entry": "app.js",
+    "styles": ["app.css"],
+    "icon": "sliders",
+    "order": 900,
+    "link": { "label": "Sample Widget", "to": "/apps/sample-widget" },
+    "pages": [
+      {
+        "path": "/apps/sample-widget",
+        "mount": "app.route",
+        "export": "Home",
+        "crumb": { "label": "Sample Widget", "parent": "/apps" }
+      }
+    ]
+  }
+}

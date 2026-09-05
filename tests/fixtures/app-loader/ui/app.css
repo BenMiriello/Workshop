@@ -1,0 +1,9 @@
+/* The browser-side proof that this app's OWN stylesheet loaded.
+ *
+ * Trap B renders an app unstyled on the built origin only: a chunk stylesheet
+ * is emitted, is served, and is never requested, because a bundle fetched by
+ * URL gets no preload helper. A custom property is checked with one
+ * getComputedStyle call and cannot be satisfied by the shell's own sheet. */
+.wsfix-probe {
+  --wsfix-loaded: 1;
+}

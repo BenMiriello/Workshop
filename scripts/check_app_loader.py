@@ -9,6 +9,11 @@ look.
                       every map value naming a file that is actually there.
     --app DIR         an APP's build. Exactly the stylesheets its manifest
                       declares, the entry its manifest names, and no React.
+    both together     every bare specifier the app's bundle imports is a key in
+                      the shell's map. That is the pairing the two halves make:
+                      an externalized specifier with no map entry is a bare
+                      specifier in the browser, which fails in a way that reads
+                      like a loader bug and is not one.
 
 TRAP A, two Reacts. The browser keys modules by URL. An import map value
 pointing into `/node_modules/` (whose dev URL carries a `?v=` token that moves)
@@ -62,6 +67,41 @@ def _read_manifest(app_dir: Path) -> dict:
     raise SystemExit(f"check_app_loader: {app_dir} has no workshop.app.json")
 
 
+def import_map_of(dist: Path) -> dict[str, str] | None:
+    index = dist / "index.html"
+    if not index.is_file():
+        return None
+    maps = re.findall(r'<script type="importmap">(.*?)</script>',
+                      index.read_text(encoding="utf-8"), re.S)
+    if len(maps) != 1:
+        return None
+    try:
+        return (json.loads(maps[0]) or {}).get("imports", {})
+    except json.JSONDecodeError:
+        return None
+
+
+# `import ... from "x"` and bare `import "x"` in an emitted ESM bundle. The app
+# build externalizes exactly the SHARED list, so anything matching here is
+# something the browser will resolve through the map or fail on.
+_BARE_IMPORT = re.compile(r"""\bimport\s*(?:[^"';]*?\bfrom\s*)?["']([^."'][^"']*)["']""")
+
+
+def check_specifiers(app_entry: Path, imports: dict[str, str]) -> list[str]:
+    source = app_entry.read_text(encoding="utf-8", errors="ignore")
+    missing = sorted({
+        spec for spec in _BARE_IMPORT.findall(source) if spec not in imports
+    })
+    if not missing:
+        return []
+    return [
+        f"this app imports {', '.join(missing)} and the shell's import map does not "
+        "publish it, so the browser cannot resolve it. Either add it to SHARED in "
+        "@workshop/app-build (and a module beside frontend/src/runtime/shared) or stop "
+        "externalizing it."
+    ]
+
+
 def check_dist(dist: Path) -> list[str]:
     failures: list[str] = []
     index = dist / "index.html"
@@ -79,11 +119,26 @@ def check_dist(dist: Path) -> list[str]:
 
     html = index.read_text(encoding="utf-8")
     maps = re.findall(r'<script type="importmap">(.*?)</script>', html, re.S)
-    if len(maps) != 1:
+    shared = [p for p in assets if p.name.startswith("shared-")]
+    if not maps and not shared:
+        # A build made before this stage existed has neither the map nor the
+        # entries it names. That is not a regression, it is an old bundle, and
+        # calling it a failure would make this command fail for everyone until
+        # the next apply step. NOT a pass either: exit 2 says unmeasured.
+        print(f"check_app_loader: the build at {dist} predates the runtime loader "
+              "(no import map and no shared runtime entries). Run the apply step, "
+              "then re-run this.")
+        raise SystemExit(2)
+    if len(maps) == 0:
+        failures.append(
+            "index.html carries no import map, and this build DOES emit the shared runtime "
+            "entries, so an app bundle would fail on every bare specifier. The plugin ran "
+            "and injected nothing.")
+    elif len(maps) > 1:
         failures.append(
             f"index.html carries {len(maps)} import maps. Multiple maps in one document are "
             "not supported in Firefox and only the first is honoured elsewhere.")
-    else:
+    if len(maps) == 1:
         first_module = html.find('<script type="module"')
         if first_module != -1 and html.find('<script type="importmap">') > first_module:
             failures.append(
@@ -155,7 +210,14 @@ def main() -> int:
     if args.dist:
         failures += check_dist(Path(args.dist).resolve())
     if args.app:
-        failures += check_app(Path(args.app).resolve())
+        app_dir = Path(args.app).resolve()
+        failures += check_app(app_dir)
+        if args.dist:
+            imports = import_map_of(Path(args.dist).resolve())
+            ui = (_read_manifest(app_dir).get("ui") or {})
+            entry = app_dir / str(ui.get("dir") or "dist/ui") / str(ui.get("entry") or "app.js")
+            if imports is not None and entry.is_file():
+                failures += check_specifiers(entry, imports)
 
     if failures:
         print("check_app_loader: FAIL")

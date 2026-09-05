@@ -175,7 +175,11 @@ function refuseKitCss() {
 export function defineWorkshopApp(options = {}) {
   const root = path.resolve(options.root ?? process.cwd());
   const outDir = options.outDir ?? "dist/ui";
-  const entry = options.entry ?? "ui/index.ts";
+  // `ui/index.tsx` first: an app's entry usually renders something. Both are
+  // tried so an app that declares neither still builds.
+  const entry = options.entry ?? (
+    fs.existsSync(path.join(root, "ui/index.tsx")) ? "ui/index.tsx" : "ui/index.ts"
+  );
   const manifest = readManifest(root);
   const inputs = { app: path.resolve(root, entry) };
   if (options.providerEntry) {
@@ -203,6 +207,13 @@ export function defineWorkshopApp(options = {}) {
       rollupOptions: {
         input: inputs,
         external: SHARED,
+        // WITHOUT THIS THE BUNDLE HAS NO EXPORTS. Vite builds an app, not a
+        // library, so its default is `preserveEntrySignatures: false`: an entry
+        // is an executable start point and its exports are tree-shaken away.
+        // Measured 2026-09-05 -- the first fixture build emitted four
+        // side-effect imports and nothing else, which loads fine and provides
+        // no screens.
+        preserveEntrySignatures: "strict",
         output: {
           format: "es",
           entryFileNames: "[name].js",

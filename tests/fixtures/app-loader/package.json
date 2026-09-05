@@ -1,0 +1,10 @@
+{
+  "name": "@workshop-fixture/sample-widget",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A fictional app that exists to prove the runtime loader installs and removes one without a rebuild.",
+  "peerDependencies": {
+    "@workshop/ui": "^0.7"
+  }
+}
