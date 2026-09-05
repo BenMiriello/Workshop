@@ -384,9 +384,16 @@ def _project_dirs() -> dict[str, Path]:
         return {}
     out: dict[str, Path] = {}
     for slug, p in (reg.get("projects") or {}).items():
-        d = p.get("dir") if isinstance(p, dict) else None
-        if d:
-            out[slug] = Path(d)
+        if not isinstance(p, dict):
+            continue
+        try:
+            # Namespace-correct: see paths.project_dir. A project whose tree
+            # cannot be found in this namespace is left OUT of the map rather
+            # than mapped to a path that exists and holds nothing, which is
+            # what discovering agent definition files under it would have done.
+            out[slug] = paths.project_dir(slug, p)
+        except paths.TreeUnresolvable:
+            continue
     return out
 
 

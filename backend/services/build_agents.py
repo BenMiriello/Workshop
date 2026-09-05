@@ -82,7 +82,16 @@ def _project_dir(slug: str) -> Path | None:
     except Exception:
         return None
     p = (reg.get("projects") or {}).get(slug)
-    return Path(p["dir"]) if p and p.get("dir") else None
+    if not isinstance(p, dict):
+        return None
+    try:
+        # Namespace-correct rather than the registry's stored spelling; see
+        # paths.project_dir. None here already means "no tree", so an
+        # unresolvable tree answers None too -- but through one resolver, so it
+        # cannot disagree with the other callers about where the tree is.
+        return paths.project_dir(slug, p)
+    except paths.TreeUnresolvable:
+        return None
 
 
 def list_agents() -> list[dict]:

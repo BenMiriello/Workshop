@@ -2157,7 +2157,16 @@ class ProjectContextProvider(ContextProvider):
                     # than about a tree. Deriving it means there is one answer.
                     self.dir = paths.workshop_root()
                 elif rec.get("dir"):
-                    self.dir = _Path(rec["dir"])
+                    # Same derivation for every other project, through the one
+                    # resolver: `paths.project_dir` prefers the tree derived
+                    # from `projects_root()` over the registry's stored
+                    # spelling, so this reasoning is not the self project's
+                    # alone. It falls back to the stored path for a genuinely
+                    # external tree, which is the case this branch was for.
+                    try:
+                        self.dir = paths.project_dir(slug, rec)
+                    except paths.TreeUnresolvable:
+                        self.dir = _Path(rec["dir"])
         except Exception:
             pass
 

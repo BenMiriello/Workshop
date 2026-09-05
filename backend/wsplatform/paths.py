@@ -91,6 +91,73 @@ def projects_registry() -> Path:
         "WORKSHOP_PROJECTS_REGISTRY", str(runtime_dir() / "projects.json")))
 
 
+class TreeUnresolvable(RuntimeError):
+    """A project record names a tree that does not exist in THIS namespace.
+
+    Raised rather than returned, because every historical caller of the raw
+    `dir` string degraded to an empty answer instead: `list_branches` returned
+    `[]`, the merged-worktree sweep found zero candidates, and both read as
+    "nothing to do" rather than "I could not find the tree". An exception is
+    the difference between those two.
+    """
+
+
+def project_dir(slug: str, record: dict) -> Path:
+    """The project's working tree, resolved in the CURRENT mount namespace.
+
+    THE STORED `dir` IS NOT PORTABLE, AND IT IS NOT WRONG EITHER. The backend
+    service and an agent can see the same content at two different absolute
+    paths (a service unit rooted one place, a sandboxed agent's bind mount
+    rooted another). A `dir` written by one is a correct answer for that
+    namespace and a path to an empty directory -- or to nothing -- in the
+    other. Measured: a record's `dir` pointed at a tree with 6 worktrees from
+    the service's view and at a husk holding three files from an agent's, and
+    every caller that joined the string straight onto `git` silently answered
+    "no branches".
+
+    So the tree is DERIVED wherever it is derivable, because every path this
+    installation lays out is already a function of `workshop_root()`, which is
+    computed from this file's own location and is therefore correct in
+    whichever namespace is asking:
+
+      * a record declaring `self: true` IS the platform checkout -> `workshop_root()`
+      * a record whose `dir` ends in `<something>/projects/<slug>` is a tree in
+        the standard layout -> `projects_root()/<slug>`
+      * anything else is a genuinely external tree (an imported repo somewhere
+        else on the host) and the stored string is the only answer there is
+
+    The derived candidate is preferred only when it EXISTS; otherwise the
+    stored path is tried, and if neither exists this raises `TreeUnresolvable`
+    naming both candidates. Refusing loudly is the point: the alternative,
+    which is what every call site did before, is an empty list that cannot be
+    told apart from a project with no work in it.
+    """
+    stored_raw = record.get("dir") if isinstance(record, dict) else None
+    stored = Path(str(stored_raw)).expanduser() if stored_raw else None
+
+    candidates: list[Path] = []
+    if isinstance(record, dict) and record.get("self"):
+        candidates.append(workshop_root())
+    elif stored is not None and stored.parent.name == "projects":
+        candidates.append(projects_root() / stored.name)
+    if stored is not None:
+        candidates.append(stored)
+
+    for cand in candidates:
+        if cand.is_dir():
+            return cand
+
+    if not candidates:
+        raise TreeUnresolvable(
+            f"project {slug!r} has no `dir` in the registry, so it names no "
+            f"tree at all")
+    tried = ", ".join(str(c) for c in candidates)
+    raise TreeUnresolvable(
+        f"project {slug!r} has no working tree in this namespace (tried: "
+        f"{tried}). The registry `dir` is one namespace's spelling; see "
+        f"paths.project_dir.")
+
+
 def chat_cwd() -> Path:
     """Working directory for a chat turn that has no scope of its own.
 

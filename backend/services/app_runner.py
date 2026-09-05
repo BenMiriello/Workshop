@@ -168,10 +168,11 @@ def _project_dir(slug: str) -> Path:
     rec = (data.get("projects") or {}).get(slug) if isinstance(data, dict) else None
     if not rec:
         raise AppError(f"project not found: {slug}", status=404)
-    cwd = rec.get("dir")
-    if not cwd or not Path(cwd).is_dir():
-        raise AppError(f"project dir missing for {slug}: {cwd}", status=400)
-    return Path(cwd)
+    try:
+        # One resolver for the tree, namespace-correct: see paths.project_dir.
+        return paths.project_dir(slug, rec)
+    except paths.TreeUnresolvable as e:
+        raise AppError(str(e), status=400) from e
 
 
 def _read_manifest_file(project_dir: Path) -> dict | None:

@@ -89,9 +89,24 @@ class CheckpointReport(BaseModel):
     note: str | None = None
 
 
+class SkippedProject(BaseModel):
+    """A project the scan could not examine, and why.
+
+    Declared for the same reason `GcRuntimes.available` is: an empty
+    `candidates` because every project was unreadable must not read the same as
+    an empty `candidates` because nothing is merged. The scan used to `continue`
+    in silence and the two were identical on the wire."""
+
+    model_config = ConfigDict(extra="allow")
+
+    project_slug: str | None = None
+    reason: str | None = None
+
+
 class GcWorktrees(BaseModel):
     """`candidates` on a preview, `reaped`/`failed` after an apply. `count` means
-    candidates before and reaped after."""
+    candidates before and reaped after. `skipped` is carried in BOTH cases: a
+    sweep that examined nothing has to say so, whether or not it applied."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -100,6 +115,8 @@ class GcWorktrees(BaseModel):
     candidates: list[MergedWorktree] | None = None
     reaped: list[MergedWorktree] | None = None
     failed: list[MergedWorktree] | None = None
+    skipped: list[SkippedProject] | None = None
+    skipped_count: int | None = None
 
 
 class GcRuntimes(BaseModel):

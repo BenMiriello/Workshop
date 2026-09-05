@@ -217,12 +217,19 @@ def _project_record(project_slug: str) -> dict:
 
 
 def _project_dir(project_slug: str) -> Path:
-    """Locate the project's main directory via projects.json."""
+    """Locate the project's main directory via projects.json.
+
+    Resolution is `paths.project_dir`'s, not a raw `Path(p["dir"])`: the stored
+    string is one mount namespace's spelling of the tree and can name an empty
+    directory in another, which is how `list_branches` came to answer `[]` for
+    a project holding six worktrees. Unresolvable raises rather than returning
+    a path that exists but is not the tree.
+    """
     p = _project_record(project_slug)
-    pd = Path(p["dir"])
-    if not pd.exists():
-        raise ValueError(f"project directory missing: {pd}")
-    return pd
+    try:
+        return paths.project_dir(project_slug, p)
+    except paths.TreeUnresolvable as e:
+        raise ValueError(str(e)) from e
 
 
 def _project_repo(project_slug: str) -> dict | None:
@@ -488,7 +495,13 @@ def list_branches(project_slug: str) -> list[dict]:
     project_dir = _project_dir(project_slug)
     try:
         entries = git_service.worktree_list(project_dir)
-    except git_service.GitError:
+    except git_service.GitError as e:
+        # An empty list here means "git could not enumerate worktrees", which
+        # is not the same answer as "this project has none". Nothing downstream
+        # can tell them apart from the return value, so the distinction is
+        # recorded where it can be read.
+        log.warning("list_branches(%s): git could not enumerate worktrees in "
+                    "%s: %s", project_slug, project_dir, e)
         return []
     trunk = _canonical_branch(project_slug, project_dir) or "HEAD"
     prefix = f"wt/{project_slug}/"

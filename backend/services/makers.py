@@ -162,8 +162,17 @@ def runnable_scopes() -> list[dict]:
     except (OSError, ValueError):
         data = {}
     for slug, raw in sorted((data.get("projects") or {}).items()):
-        d = (raw or {}).get("dir")
-        if not d:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            # Resolve BEFORE asking `is_self_dir` or `key_for_root`: both
+            # compare against `workshop_root()`, which is computed for THIS
+            # mount namespace, while the registry's stored `dir` is whichever
+            # namespace wrote it. Comparing the two directly is how the
+            # self-project fell out of this list entirely (no scope, silently
+            # skipped) when the two namespaces disagreed. See paths.project_dir.
+            d = str(paths.project_dir(slug, raw))
+        except paths.TreeUnresolvable:
             continue
         is_self = dev_mode.is_self_dir(d)
         if is_self and not dev_mode.dev_mode_on():

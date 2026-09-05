@@ -39,6 +39,7 @@ from services import manifests
 # catalog. We deliberately import its helpers rather than re-implement the
 # projects.json read/write (one writer, no divergent shapes).
 from routes import projects as projects_routes
+from wsplatform import paths
 
 Kind = Literal["app", "kit"]
 
@@ -214,9 +215,11 @@ def publish(
     if not project:
         raise RegistryError(f"project not found: {slug}", status=404)
 
-    repo = Path(project["dir"])
-    if not repo.exists():
-        raise RegistryError(f"project dir missing on disk: {repo}", status=400)
+    try:
+        # One resolver, namespace-correct: see paths.project_dir.
+        repo = paths.project_dir(slug, project)
+    except paths.TreeUnresolvable as e:
+        raise RegistryError(str(e), status=400) from e
     if not _is_git_repo_with_commit(repo):
         raise RegistryError(
             f"project '{slug}' is not a git repo with at least one commit", status=400
@@ -500,9 +503,11 @@ def update_from_upstream(slug: str) -> dict[str, Any]:
             status=400,
         )
 
-    repo = Path(project["dir"])
-    if not repo.exists():
-        raise RegistryError(f"project dir missing on disk: {repo}", status=400)
+    try:
+        # One resolver, namespace-correct: see paths.project_dir.
+        repo = paths.project_dir(slug, project)
+    except paths.TreeUnresolvable as e:
+        raise RegistryError(str(e), status=400) from e
     if not _is_git_repo_with_commit(repo):
         raise RegistryError(
             f"project '{slug}' is not a git repo with at least one commit",

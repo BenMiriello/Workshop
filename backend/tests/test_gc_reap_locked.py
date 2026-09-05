@@ -259,3 +259,46 @@ def test_gc_dry_run_reports_but_does_not_remove(locked_merged_env):
     assert ctx["wt_dir"].exists(), "dry-run must not delete the directory"
     # Branch ref should still exist.
     assert git_service.rev_parse(ctx["proj_dir"], ctx["branch"], verify=True) is not None
+
+
+# ---------------------------------------------------------------------------
+# A project the sweep cannot examine is REPORTED, not dropped
+# ---------------------------------------------------------------------------
+# MEASURED 2026-09-05. `list_merged_worktrees` skipped an unexaminable project
+# with a bare `continue`, so a sweep that reached NO project produced the same
+# empty `candidates` as a sweep that reached every project and found nothing
+# merged, and the autonomous run reported success on both. On the live install
+# one of seven projects was reachable and six were skipped in silence, because
+# the registry's `dir` strings were another mount namespace's spelling.
+
+def test_a_project_whose_tree_is_missing_is_reported_as_skipped(
+        tmp_path, monkeypatch):
+    registry = tmp_path / "projects.json"
+    registry.write_text(json.dumps({"projects": {
+        "vanished": {"dir": str(tmp_path / "nowhere" / "projects" / "vanished")},
+    }}))
+    monkeypatch.setattr(wt_mod, "PROJECTS_REGISTRY", registry)
+
+    result = gc.reap_merged_worktrees(apply=False)
+
+    assert result["count"] == 0
+    assert result["skipped_count"] == 1
+    assert result["skipped"][0]["project_slug"] == "vanished"
+    assert result["skipped"][0]["reason"]
+
+
+def test_a_reachable_project_with_nothing_merged_reports_no_skips(
+        tmp_path, monkeypatch):
+    """The other half of the distinction: zero candidates AND zero skips means
+    the sweep really did look and really did find nothing."""
+    proj_dir = tmp_path / "quiet"
+    proj_dir.mkdir()
+    _init_repo(proj_dir)
+    registry = tmp_path / "projects.json"
+    registry.write_text(json.dumps({"projects": {"quiet": {"dir": str(proj_dir)}}}))
+    monkeypatch.setattr(wt_mod, "PROJECTS_REGISTRY", registry)
+
+    result = gc.reap_merged_worktrees(apply=False)
+
+    assert result["count"] == 0
+    assert result["skipped_count"] == 0

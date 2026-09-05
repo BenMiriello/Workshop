@@ -24,6 +24,7 @@ import logging
 from pathlib import Path
 
 from services import git_service, worktrees
+from wsplatform import paths
 
 log = logging.getLogger("workshop.gc")
 
@@ -48,9 +49,8 @@ def _projects() -> dict:
         return {}
 
 
-def list_merged_worktrees() -> list[dict]:
-    """Across all registered projects, list worktree branches already merged
-    into main. Each item: project_slug, branch_slug, branch, dir, merged=True.
+def scan_merged_worktrees() -> tuple[list[dict], list[dict]]:
+    """`(candidates, skipped)` across all registered projects.
 
     CANONICAL "MERGED" CHECK: git_service.is_ancestor(project_dir, branch, main)
     against the LOCAL main branch. worktrees.cleanup_merged uses the same check.
@@ -61,22 +61,39 @@ def list_merged_worktrees() -> list[dict]:
     main to origin/<base> after every remote merge so both refs agree; (3) no
     network call or fetched origin ref is needed. cleanup_merged now delegates
     to this same check so one definition exists.
+
+    A SKIP IS REPORTED, NOT SWALLOWED. Every project this scan cannot examine
+    used to `continue` in silence, so "no project could be examined" and "every
+    project was examined and had nothing merged" produced the identical empty
+    list, and the sweep reported success either way. Each skip now carries the
+    project and the reason, and `reap_merged_worktrees` puts them in its report
+    where the caller can see them.
     """
     out: list[dict] = []
+    skipped: list[dict] = []
+
+    def skip(slug: str, reason: str) -> None:
+        skipped.append({"project_slug": slug, "reason": reason})
+        log.warning("gc: skipping project %s: %s", slug, reason)
+
     for slug, entry in _projects().items():
-        pdir = entry.get("dir")
-        if not pdir:
-            continue
-        project_dir = Path(pdir)
-        if not project_dir.exists():
+        try:
+            # Namespace-correct: the registry's `dir` string is one mount
+            # namespace's spelling, and joining it verbatim onto git is how
+            # this scan found zero candidates while worktrees sat on disk.
+            project_dir = paths.project_dir(slug, entry)
+        except paths.TreeUnresolvable as e:
+            skip(slug, str(e))
             continue
         try:
             main = git_service.main_branch(project_dir)
-        except Exception:
+        except Exception as e:
+            skip(slug, f"no main branch in {project_dir}: {type(e).__name__}: {e}")
             continue
         try:
             branches = worktrees.list_branches(slug)
-        except Exception:
+        except Exception as e:
+            skip(slug, f"could not list branches: {type(e).__name__}: {e}")
             continue
         for b in branches:
             branch = b.get("branch")
@@ -91,18 +108,28 @@ def list_merged_worktrees() -> list[dict]:
                         "dir": b.get("dir"),
                         "merged": True,
                     })
-            except Exception:
+            except Exception as e:
+                skip(slug, f"merge check failed for {branch}: "
+                           f"{type(e).__name__}: {e}")
                 continue
-    return out
+    return out, skipped
+
+
+def list_merged_worktrees() -> list[dict]:
+    """Just the candidates from `scan_merged_worktrees`, for callers that act on
+    them and do not report. Each item: project_slug, branch_slug, branch, dir,
+    merged=True."""
+    return scan_merged_worktrees()[0]
 
 
 def reap_merged_worktrees(*, apply: bool = False) -> dict:
     """Report (apply=False) or remove (apply=True) merged worktrees. Removal
     reuses worktrees.discard_branch, which is the same safe teardown the merge
     path uses (worktree remove --force + branch -D)."""
-    merged = list_merged_worktrees()
+    merged, skipped = scan_merged_worktrees()
     if not apply:
-        return {"applied": False, "candidates": merged, "count": len(merged)}
+        return {"applied": False, "candidates": merged, "count": len(merged),
+                "skipped": skipped, "skipped_count": len(skipped)}
     reaped, failed = [], []
     for m in merged:
         try:
@@ -119,7 +146,8 @@ def reap_merged_worktrees(*, apply: bool = False) -> dict:
         except Exception as e:
             failed.append({**m, "error": f"{type(e).__name__}: {e}"})
     return {"applied": True, "reaped": reaped, "failed": failed,
-            "count": len(reaped)}
+            "count": len(reaped),
+            "skipped": skipped, "skipped_count": len(skipped)}
 
 
 # --------------------------------------------------------------------------
@@ -165,11 +193,16 @@ def checkpoint_report(*, keep: int = CHECKPOINT_KEEP) -> list[dict]:
     """Per-project checkpoint thinning report across registered projects."""
     out: list[dict] = []
     for slug, entry in _projects().items():
-        pdir = entry.get("dir")
-        if not pdir:
-            continue
-        repo = Path(pdir)
-        if not repo.exists():
+        try:
+            repo = paths.project_dir(slug, entry)
+        except paths.TreeUnresolvable as e:
+            # Reported as a row rather than dropped, for the same reason the
+            # merged scan reports its skips: a project missing from the report
+            # is indistinguishable from a project with nothing to thin.
+            out.append({"project_slug": slug, "repo": str(entry.get("dir") or ""),
+                        "is_repo": False, "total_checkpoints": 0, "kept": 0,
+                        "squashable": 0, "candidates": [], "note": str(e)})
+            log.warning("gc: checkpoint report skipping %s: %s", slug, e)
             continue
         rep = describe_checkpoint_thinning(repo, keep=keep)
         rep["project_slug"] = slug

@@ -121,3 +121,87 @@ def test_project_sensitivity_reads_the_real_registry(monkeypatch, tmp_path):
     assert permissions._scope_sensitivity("project:open") == "shareable"
     # An unknown project still falls back to the safe-but-usable default.
     assert permissions._scope_sensitivity("project:nope") == "shareable"
+
+
+# --- a project's tree, resolved for THIS mount namespace ---------------------
+#
+# The same failure as above, one level in. The backend service and a sandboxed
+# agent can see one tree at two absolute paths, so the registry's stored `dir`
+# is correct in whichever namespace wrote it and names an empty directory -- or
+# nothing -- in the other. Measured 2026-09-05: `worktrees.list_branches` and
+# `gc.list_merged_worktrees` both answered "nothing here" about a tree they were
+# looking at through the wrong path, and neither said so.
+
+def test_the_self_project_resolves_to_this_namespaces_root(monkeypatch, tmp_path):
+    """`self: true` means "this checkout", so the answer is derived, never the
+    stored string -- which is the OTHER namespace's spelling of the same tree,
+    and which here exists as an empty husk exactly as it did on the live box."""
+    here = tmp_path / "here"
+    here.mkdir()
+    husk = tmp_path / "elsewhere"
+    husk.mkdir()
+    monkeypatch.setenv("WORKSHOP_ROOT", str(here))
+
+    resolved = paths.project_dir("development", {"self": True, "dir": str(husk)})
+    assert resolved == here
+
+
+def test_a_standard_project_resolves_under_this_namespaces_projects_root(
+        monkeypatch, tmp_path):
+    here = tmp_path / "here"
+    (here / "projects" / "alpha").mkdir(parents=True)
+    (tmp_path / "elsewhere" / "projects" / "alpha").mkdir(parents=True)
+    monkeypatch.setenv("WORKSHOP_ROOT", str(here))
+
+    resolved = paths.project_dir(
+        "alpha", {"dir": str(tmp_path / "elsewhere" / "projects" / "alpha")})
+    assert resolved == here / "projects" / "alpha"
+
+
+def test_an_external_tree_keeps_its_stored_path(monkeypatch, tmp_path):
+    """A project imported from somewhere else on the host is not in the standard
+    layout and has no derivable answer; the stored path is the only one there
+    is, and it must still be honoured."""
+    here = tmp_path / "here"
+    here.mkdir()
+    external = tmp_path / "opt" / "some-repo"
+    external.mkdir(parents=True)
+    monkeypatch.setenv("WORKSHOP_ROOT", str(here))
+
+    assert paths.project_dir("ext", {"dir": str(external)}) == external
+
+
+def test_an_unresolvable_tree_raises_rather_than_answering_empty(
+        monkeypatch, tmp_path):
+    """THE POINT OF THE WHOLE THING. Returning a path that exists but is not the
+    tree, or a path that does not exist at all, makes every caller answer `[]`,
+    and `[]` is indistinguishable from a project with no work in it."""
+    here = tmp_path / "here"
+    here.mkdir()
+    monkeypatch.setenv("WORKSHOP_ROOT", str(here))
+
+    with pytest.raises(paths.TreeUnresolvable) as e:
+        paths.project_dir("gone", {"dir": str(tmp_path / "nowhere" / "projects" / "gone")})
+    assert "gone" in str(e.value)
+
+    with pytest.raises(paths.TreeUnresolvable):
+        paths.project_dir("dirless", {})
+
+
+def test_list_branches_refuses_a_tree_it_cannot_find(monkeypatch, tmp_path):
+    """`worktrees.list_branches` used to return `[]` for this. The empty list
+    reached the branch picker, the merged-worktree sweep and the autonomous
+    run, and all three read it as "nothing to do"."""
+    from services import worktrees
+
+    here = tmp_path / "here"
+    here.mkdir()
+    reg = tmp_path / "projects.json"
+    reg.write_text(json.dumps({"projects": {
+        "gone": {"dir": str(tmp_path / "nowhere" / "projects" / "gone")}}}),
+        encoding="utf-8")
+    monkeypatch.setenv("WORKSHOP_ROOT", str(here))
+    monkeypatch.setattr(worktrees, "PROJECTS_REGISTRY", reg)
+
+    with pytest.raises(ValueError):
+        worktrees.list_branches("gone")
