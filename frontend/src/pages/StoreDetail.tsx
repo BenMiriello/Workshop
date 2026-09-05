@@ -6,34 +6,26 @@ import {
 import { Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice, StatusDot, Badge, Tag, Skeleton, Field, Input, Textarea, shortHttpError } from "@workshop/ui";
 
 import { tierKind as tierKindFor } from "../lib/stores";
+import type { components } from "../api/schema.gen";
 
-type Store = {
-  uri: string;
-  owner_app: string;
-  name: string;
-  type?: string | null;
-  path?: string;
-  host_project?: string | null;
-  tier?: string;
-};
-
-type Policy = {
-  uri_prefix?: string;
-  tier?: string;
-  identity?: string;
-  verbs?: string[];
-  [k: string]: unknown;
-};
-
-type Grant = {
-  id?: string;
-  token?: string;
-  identity?: string;
-  uri?: string;
-  verbs?: string[];
-  expiry?: string | null;
-  [k: string]: unknown;
-};
+// NAMED FROM THE GENERATED CLIENT. These three were written by hand here and
+// two of them were WRONG, which is the whole reason this page's Policies and
+// Grants sections have been lying:
+//
+//   * a policy's URI field is `store_uri` (routes/stores.py StorePolicyRow),
+//     never `uri_prefix`. The filter read `p.uri_prefix ?? ""`, so the second
+//     half of its `||` was `uriBase.startsWith("")`, which is TRUE for every
+//     policy: the section headed "Policies matching this URI" listed all of
+//     them, for every store.
+//   * a grant pointing at a STORE is a `resource_grant` (it carries `store_uri`,
+//     `verbs` and `subtree`). `grants` is the app-to-app capability list and
+//     carries from/to/capability/mode with no uri at all, so the old filter
+//     `(g.uri || "").startsWith(found.uri)` was always false and the section
+//     headed "Grants pointing at this store" was ALWAYS EMPTY -- which reads
+//     exactly like "nothing has access to this store yet".
+type Store = components["schemas"]["StoreRow"];
+type Policy = components["schemas"]["StorePolicyRow"];
+type Grant = components["schemas"]["ResourceGrant"];
 
 // Store detail — the Store entity's home. Shows what the store IS (URI, owner
 // app, host project, filesystem path, adapter type, policy tier), the policies
@@ -46,7 +38,7 @@ export default function StoreDetail() {
   const [store, setStore] = useState<Store | null>(null);
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [grants, setGrants] = useState<Grant[]>([]);
-  const [contents, setContents] = useState<{ items?: unknown[]; text?: string; [k: string]: unknown } | null>(null);
+  const [contents, setContents] = useState<components["schemas"]["StoreRead"] | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
@@ -64,19 +56,21 @@ export default function StoreDetail() {
         fetch("/api/grants"),
       ]);
       if (!sr.ok) throw new Error(`stores: ${shortHttpError(sr.status, sr.statusText, await sr.text().catch(() => ""))}`);
-      const sj = await sr.json();
-      const found = (sj.stores as Store[]).find((s) => s.owner_app === app && s.name === name);
+      const sj = (await sr.json()) as components["schemas"]["StoreCatalog"];
+      const found = sj.stores.find((s) => s.owner_app === app && s.name === name);
       if (!found) { setErr("store not declared"); setLoading(false); return; }
       setStore(found);
       if (pr.ok) {
-        const pj = await pr.json();
-        // filter policies that match this URI prefix
+        const pj = (await pr.json()) as components["schemas"]["StorePolicies"];
+        // A policy governs this store when its `store_uri` IS this store, or
+        // when it is a subtree policy over a prefix of it. Both directions are
+        // kept because either can be the more specific record.
         const uriBase = found.uri;
-        setPolicies((pj.policies as Policy[]).filter((p) => (p.uri_prefix ?? "").startsWith(uriBase) || uriBase.startsWith(p.uri_prefix ?? "")));
+        setPolicies(pj.policies.filter((p) => p.store_uri.startsWith(uriBase) || uriBase.startsWith(p.store_uri)));
       }
       if (gr.ok) {
-        const gj = await gr.json();
-        setGrants((gj.grants as Grant[] || []).filter((g) => (g.uri || "").startsWith(found.uri)));
+        const gj = (await gr.json()) as components["schemas"]["GrantsDocument"];
+        setGrants((gj.resource_grants ?? []).filter((g) => g.store_uri.startsWith(found.uri)));
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -99,7 +93,7 @@ export default function StoreDetail() {
         body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setContents(await r.json());
+      setContents((await r.json()) as components["schemas"]["StoreRead"]);
     } catch (e) {
       setBanner(e instanceof Error ? e.message : String(e));
       setContents(null);
@@ -114,7 +108,7 @@ export default function StoreDetail() {
     try {
       const r = await fetch(`/api/stores/export?uri=${encodeURIComponent(store.uri)}`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = await r.json();
+      const j = (await r.json()) as components["schemas"]["StoreExport"];
       setBanner(`Exported to ${j.path}`);
     } catch (e) {
       setBanner(e instanceof Error ? e.message : String(e));
@@ -197,11 +191,13 @@ export default function StoreDetail() {
                   {policies.map((p, i) => (
                     <Row key={i} wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
                       <Badge>{p.tier || "unknown"}</Badge>
-                      <code style={{ fontSize: "var(--fs-xs)" }}>{p.uri_prefix}</code>
-                      {(p.verbs || []).length > 0 && (
-                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{(p.verbs || []).join(", ")}</span>
+                      <code style={{ fontSize: "var(--fs-xs)" }}>{p.store_uri}</code>
+                      {(p.verbs_max || []).length > 0 && (
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{p.verbs_max.join(", ")}</span>
                       )}
-                      {p.identity && <Tag hue="turquoise">{String(p.identity)}</Tag>}
+                      {(p.requesters_allow || []).map((who) => (
+                        <Tag key={who} hue="turquoise">{who}</Tag>
+                      ))}
                     </Row>
                   ))}
                 </Stack>
@@ -219,13 +215,13 @@ export default function StoreDetail() {
                 <Stack gap="sm">
                   {grants.map((g, i) => (
                     <Row key={i} wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                      {g.identity && <Tag hue="orchid">{g.identity}</Tag>}
+                      <Tag hue="orchid">{g.to}</Tag>
                       {(g.verbs || []).length > 0 && (
-                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{(g.verbs || []).join(", ")}</span>
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{g.verbs.join(", ")}</span>
                       )}
-                      <code style={{ fontSize: "var(--fs-xs)" }}>{g.uri}</code>
-                      {g.expiry && (
-                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>until {g.expiry}</span>
+                      <code style={{ fontSize: "var(--fs-xs)" }}>{g.store_uri}</code>
+                      {g.subtree && (
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>and everything under it</span>
                       )}
                     </Row>
                   ))}

@@ -27,10 +27,10 @@ import {
 
 import { Markdown } from "@workshop/ui/markdown";
 import {
-  type Task, type TaskLink, TASK_STATUSES, LATITUDES, TASK_EXECUTIONS, TASK_EFFORTS,
+  type Task, type TaskLink, TASK_STATUSES, TASK_EXECUTIONS, TASK_EFFORTS,
   taskStatusKind, taskStatusLabel, title as titleOf, description as descriptionOf,
-  scopeLabel, scopeHref, ticketHref, ticketKey, executionLabel, latitudeDesc,
-  latitudeSourceLabel, readinessLine, readinessTone, triageLabel,
+  scopeLabel, scopeHref, ticketHref, ticketKey, executionLabel,
+  readinessLine, readinessTone, triageLabel,
 } from "../lib/tasks";
 import { appWorkHref } from "../lib/apps";
 import { appSlugForScope } from "../lib/scope";
@@ -211,7 +211,7 @@ export default function TicketDetail() {
     try {
       const r = await fetch(`/api/changes?ticket_id=${encodeURIComponent(id)}&limit=20`);
       if (!r.ok) { setChange(null); return; }
-      const j = await r.json();
+      const j = (await r.json()) as components["schemas"]["ChangeCollection"];
       const open = (j.changes || []).find(isOpenChange) ?? (j.changes || [])[0] ?? null;
       setChange(open);
     } catch {
@@ -262,7 +262,7 @@ export default function TicketDetail() {
         body: JSON.stringify({ run: false }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = await r.json();
+      const j = (await r.json()) as components["schemas"]["TaskApproveOut"];
       const gaps = j?.readiness?.missing?.length ?? 0;
       say(gaps
         ? `Approved and queued, with ${gaps} thing${gaps === 1 ? "" : "s"} the ticket still does not say.`
@@ -287,7 +287,7 @@ export default function TicketDetail() {
         return;
       }
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = await r.json();
+      const j = (await r.json()) as components["schemas"]["TaskRunOut"];
       say(j.job_id
         ? "Run started. It appears under Runs below."
         : "The run was accepted but returned no id.");
@@ -715,30 +715,6 @@ export default function TicketDetail() {
                   onPick={(v) => { void patch({ execution: v }); }}
                   options={[{ value: "", label: "Not classified" },
                     ...TASK_EXECUTIONS.map((v) => ({ value: v, label: v }))]}
-                />
-              )}
-            />
-            {/* The EFFECTIVE value with its source, because null means inherit:
-                a latitude shown without where it came from is how an inherited
-                setting gets mistaken for a deliberate one. */}
-            <PropRow
-              label="Latitude"
-              value={
-                <span title={latitudeDesc(task.effective_latitude?.value)}>
-                  {task.effective_latitude?.value ?? "standard"}
-                  <span className="ws-muted">
-                    {" · "}{latitudeSourceLabel(task.effective_latitude?.source)}
-                  </span>
-                </span>
-              }
-              editor={(done) => (
-                <PickEditor
-                  label="Latitude"
-                  value={task.latitude ?? ""}
-                  done={done}
-                  onPick={(v) => { void patch({ latitude: v }); }}
-                  options={[{ value: "", label: "Inherit from the scope" },
-                    ...LATITUDES.map((v) => ({ value: v, label: v }))]}
                 />
               )}
             />

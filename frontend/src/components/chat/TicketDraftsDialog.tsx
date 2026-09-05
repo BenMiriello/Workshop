@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ChevronRight, RefreshCw, Trash2 } from "lucide-react";
 import { Modal, Button, Stack, Row, Tag, Field, Input, Textarea, StateBlock, Skeleton, catFor, Notice, shortHttpError } from "@workshop/ui";
 import { scopeLabel } from "../../lib/tasks";
+import type { components } from "../../api/schema.gen";
 
 // Turning a conversation into tickets, as a review step.
 //
@@ -48,21 +49,13 @@ import { scopeLabel } from "../../lib/tasks";
 //   - Read-only-ness. §3a makes drafts the one editable exception in the chat
 //     surface: an unapproved draft is not yet a ticket, and its body is the
 //     entire spec the worker will read.
-export type Draft = {
-  id: string;
-  title: string;
-  body: string;
-  status: string;
-  labels?: string[];
-  dedup?: string;
-};
-
-type Payload = {
-  drafts: Draft[];
-  scope?: string;
-  generated_at: string | null;
-  messages_since: number;
-};
+// NAMED FROM THE GENERATED CLIENT, not written out here. These three shapes
+// were hand-copies of what the routes answer, so a backend field rename would
+// have typechecked while reading `undefined` -- the failure mode
+// scripts/check_response_types.py exists to stop.
+export type Draft = components["schemas"]["DraftTask"];
+type Payload = components["schemas"]["TicketDrafts"];
+type Scope = components["schemas"]["TicketScope"];
 
 // `confidence:likely` etc. rides as a label rather than a schema field.
 function confidenceOf(d: Draft): string | null {
@@ -101,7 +94,7 @@ export default function TicketDraftsDialog({
   onClose: () => void;
 }) {
   const [payload, setPayload] = useState<Payload | null>(null);
-  const [scope, setScope] = useState<{ scope: string; runnable: boolean } | null>(null);
+  const [scope, setScope] = useState<Scope | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [proposing, setProposing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -122,8 +115,10 @@ export default function TicketDraftsDialog({
     if (!chatId) return;
     try {
       const [d, s] = await Promise.all([
-        fetch(`/api/chat/threads/${encodeURIComponent(chatId)}/ticket-drafts`).then((r) => r.json()),
-        fetch(`/api/chat/threads/${encodeURIComponent(chatId)}/ticket-scope`).then((r) => r.json()),
+        fetch(`/api/chat/threads/${encodeURIComponent(chatId)}/ticket-drafts`)
+          .then((r) => r.json() as Promise<Payload>),
+        fetch(`/api/chat/threads/${encodeURIComponent(chatId)}/ticket-scope`)
+          .then((r) => r.json() as Promise<Scope>),
       ]);
       setPayload(d);
       setScope(s);
@@ -140,7 +135,7 @@ export default function TicketDraftsDialog({
     try {
       const r = await fetch(`/api/chat/threads/${encodeURIComponent(chatId)}/ticket-drafts`, { method: "POST" });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = await r.json();
+      const j = (await r.json()) as Payload;
       setPayload({ ...j, messages_since: 0 });
     } catch (e) {
       setErr(String(e));
@@ -160,7 +155,8 @@ export default function TicketDraftsDialog({
     (async () => {
       await loadStored();
       if (cancelled) return;
-      const r = await fetch(`/api/chat/threads/${encodeURIComponent(chatId)}/ticket-drafts`).then((x) => x.json());
+      const r = await fetch(`/api/chat/threads/${encodeURIComponent(chatId)}/ticket-drafts`)
+        .then((x) => x.json() as Promise<Payload>);
       if (!cancelled && (!r.drafts || r.drafts.length === 0) && !r.generated_at) void propose();
     })();
     return () => { cancelled = true; };
@@ -199,7 +195,7 @@ export default function TicketDraftsDialog({
         },
       );
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = await r.json();
+      const j = (await r.json()) as components["schemas"]["TaskApproveOut"];
       const where = scopeLabel(payload.scope);
       setApproved(j.run?.job_id
         ? `"${d.title}" is filed in ${where} and running.`
