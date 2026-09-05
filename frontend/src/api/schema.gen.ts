@@ -259,8 +259,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Build Agents */
-        get: operations["list_build_agents_agents_build_get"];
+        get?: never;
         put?: never;
         /**
          * Create Build Agent
@@ -276,230 +275,9 @@ export interface paths {
          *
          *     There is no reconciler behind this and there must not be one: a scope with
          *     no maker definition still works its tickets, because the loop is the maker
-         *     (`services/makers.py` header, `primitive-roles-2026-07-18.md` §6).
+         *     (`services/makers.py` header, `primitive-roles-2026-07-18.md` sec 6).
          */
         post: operations["create_build_agent_agents_build_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Build Agent */
-        get: operations["get_build_agent_agents_build__slug__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Patch Build Agent
-         * @description Rename a maker, restate its purpose, or move it to another branch.
-         *
-         *     A branch move takes effect from the NEXT turn (the running one's cwd was
-         *     fixed at spawn) and keeps the agent's Claude Code session, because the
-         *     conversation is about the work rather than about the directory.
-         */
-        patch: operations["patch_build_agent_agents_build__slug__patch"];
-        trace?: never;
-    };
-    "/agents/build/{slug}/brief": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Build Agent Brief Get */
-        get: operations["build_agent_brief_get_agents_build__slug__brief_get"];
-        /** Build Agent Brief Put */
-        put: operations["build_agent_brief_put_agents_build__slug__brief_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}/commit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Build Agent Commit
-         * @description Stage everything in the agent's cwd and create a commit. The operator
-         *     uses this to mark 'this state is good, snapshot it' so they can revert
-         *     safely later. Committer matches the Workshop Projects identity used at
-         *     scaffold time so the history reads cleanly.
-         */
-        post: operations["build_agent_commit_agents_build__slug__commit_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}/diff": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Build Agent Diff
-         * @description Return per-file diff status + per-file unified diff content. Computed
-         *     against HEAD (working tree + index combined: --cached + worktree). Files
-         *     untracked by git are listed with status='??' and content from the new file.
-         */
-        get: operations["build_agent_diff_agents_build__slug__diff_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}/diff/revert-file": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Build Agent Revert File
-         * @description Restore <path> to HEAD's version. For untracked files, deletes them.
-         *     Operator-confirmed in the UI.
-         */
-        post: operations["build_agent_revert_file_agents_build__slug__diff_revert_file_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}/file": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Build Agent File Get */
-        get: operations["build_agent_file_get_agents_build__slug__file_get"];
-        /** Build Agent File Put */
-        put: operations["build_agent_file_put_agents_build__slug__file_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}/interventions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Build Agent Interventions Get */
-        get: operations["build_agent_interventions_get_agents_build__slug__interventions_get"];
-        put?: never;
-        /** Build Agent Interventions Post */
-        post: operations["build_agent_interventions_post_agents_build__slug__interventions_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}/preview/log": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Build Agent Preview Log */
-        get: operations["build_agent_preview_log_agents_build__slug__preview_log_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}/preview/start": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Build Agent Preview Start */
-        post: operations["build_agent_preview_start_agents_build__slug__preview_start_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}/preview/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Build Agent Preview Status
-         * @description Status, plus boot-time helpers per ADR-009 section 6.
-         *
-         *     When stopped: include a `suggested_port` so the UI can default the port
-         *     picker without the operator having to think about it. When running:
-         *     include a `public_url` derived from the request host so the link works
-         *     over the LAN, not just localhost.
-         */
-        get: operations["build_agent_preview_status_agents_build__slug__preview_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}/preview/stop": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Build Agent Preview Stop */
-        post: operations["build_agent_preview_stop_agents_build__slug__preview_stop_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -517,99 +295,6 @@ export interface paths {
         put?: never;
         /** Retire Build Agent */
         post: operations["retire_build_agent_agents_build__slug__retire_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}/session/reset": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reset Build Session
-         * @description Detach this agent record from its Claude Code session so the next turn
-         *     starts fresh. Useful when the conversation gets confused or you want to
-         *     restart the agent's thinking from scratch.
-         */
-        post: operations["reset_build_session_agents_build__slug__session_reset_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}/tasks": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Build Agent Tasks List */
-        get: operations["build_agent_tasks_list_agents_build__slug__tasks_get"];
-        put?: never;
-        /** Build Agent Tasks Add */
-        post: operations["build_agent_tasks_add_agents_build__slug__tasks_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}/tasks/{task_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Build Agent Tasks Delete */
-        delete: operations["build_agent_tasks_delete_agents_build__slug__tasks__task_id__delete"];
-        options?: never;
-        head?: never;
-        /** Build Agent Tasks Patch */
-        patch: operations["build_agent_tasks_patch_agents_build__slug__tasks__task_id__patch"];
-        trace?: never;
-    };
-    "/agents/build/{slug}/todo": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Build Agent Todo Get */
-        get: operations["build_agent_todo_get_agents_build__slug__todo_get"];
-        /** Build Agent Todo Put */
-        put: operations["build_agent_todo_put_agents_build__slug__todo_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/build/{slug}/tree": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Build Agent Tree */
-        get: operations["build_agent_tree_agents_build__slug__tree_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -922,7 +607,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Apps */
+        /**
+         * List Apps
+         * @description The roster, from the table, with the table brought level with the two
+         *     file registries first.
+         *
+         *     THE RECONCILE IS HERE AND NOT IN THE SERVICE because it is a
+         *     request-boundary concern: it needs the acting tenant, and it must not fire
+         *     for every internal `apps_svc.list_apps()` call. In the steady state it costs
+         *     one SELECT and writes nothing; when an app has just been installed or a
+         *     project just created, it is the difference between listing it and not. It
+         *     never raises -- see `services.apps.reconcile_from_registries`.
+         */
         get: operations["list_apps_apps_get"];
         put?: never;
         /** Create App */
@@ -1912,6 +1608,30 @@ export interface paths {
         put?: never;
         /** Analyze Register Station */
         post: operations["analyze_register_station_birds_analyze_station_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/birds/app-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * App Summary
+         * @description THE COUNT IS WHAT SAYS WHETHER THERE IS A FEED HERE YET.
+         *
+         *     The `available` flag on the yard summary is unconditionally true, so it
+         *     answers nothing; reading it meant a fresh instance rendered "0 species, 0
+         *     today" in the ok tone and the "no detections yet" branch was unreachable.
+         */
+        get: operations["app_summary_birds_app_summary_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3144,6 +2864,23 @@ export interface paths {
          *     use PUT /plan for those.
          */
         patch: operations["patch_plan_budget_plan_patch"];
+        trace?: never;
+    };
+    "/budget/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Summary */
+        get: operations["get_summary_budget_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/changes": {
@@ -5040,6 +4777,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/commute/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Summary */
+        get: operations["summary_commute_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/commute/targets": {
         parameters: {
             query?: never;
@@ -5621,6 +5375,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/finance/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Summary
+         * @description A CARD MUST NOT REPORT AS FACT SOMETHING IT COULD NOT ASK ABOUT.
+         *
+         *     The balances read carries the answer, so a failure there fails the whole
+         *     line: substituting an empty roster rendered a 502 from the bank as the
+         *     sentence "0 accounts". Raising lets the shell say "unavailable" instead.
+         *
+         *     The cache read is diagnostics and supplies only the "updated" half, so
+         *     losing THAT drops that half and keeps the count.
+         */
+        get: operations["get_summary_finance_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/finance/transactions": {
         parameters: {
             query?: never;
@@ -5977,6 +5758,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Status */
+        get: operations["get_status_github_get"];
+        put?: never;
+        post?: never;
+        /** Delete Connection */
+        delete: operations["delete_connection_github_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/github/client-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Client Id */
+        put: operations["put_client_id_github_client_id_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/github/device": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Device */
+        post: operations["start_device_github_device_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/github/device/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Poll Device */
+        post: operations["poll_device_github_device_poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/github/helper": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Helper */
+        put: operations["put_helper_github_helper_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/github/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Token */
+        put: operations["put_token_github_token_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/grants": {
         parameters: {
             query?: never;
@@ -6123,6 +6007,20 @@ export interface paths {
          *     on, reported by the process that is sitting on it rather than inferred by
          *     whoever is asking. Null when the query fails, which is honest; a caller must
          *     not read null as agreement.
+         *
+         *     `apps` is the third of the same kind, and it is the one that cost two days.
+         *     Every app 404'd while this endpoint said `ok`, because nothing served said
+         *     which installed-apps roster this process read or what it managed to mount
+         *     off it -- and the roster path is anchored to the module's own location, so
+         *     two checkouts of the same source on one host resolve two different files. An
+         *     agent in a sandbox cannot read `/proc/<pid>/cwd` to settle it. The process
+         *     can, so the process answers: the resolved path, the roster it read, and the
+         *     app ids whose routers are actually mounted, recorded at mount time rather
+         *     than re-read now.
+         *
+         *     UNAUTHENTICATED, so it carries app ids and one filesystem path and nothing
+         *     else -- no route table, no configuration, no data. That is the same
+         *     disclosure the launcher already makes to any caller.
          */
         get: operations["healthz_healthz_get"];
         put?: never;
@@ -6380,6 +6278,30 @@ export interface paths {
         put?: never;
         /** Post Owntracks */
         post: operations["post_owntracks_location_owntracks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/location/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Summary
+         * @description A ping age is INFORMATION, NOT HEALTH.
+         *
+         *     Significant-change tracking only pings on movement, so hours old while
+         *     stationary is the normal resting state and must not read as a problem. The
+         *     ok tone is spent only on a genuinely recent fix; everything else is neutral.
+         */
+        get: operations["get_summary_location_summary_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -8847,8 +8769,6 @@ export interface components {
             id: string;
             /** Last Active */
             last_active?: string | null;
-            /** Latitude */
-            latitude?: string | null;
             limits?: components["schemas"]["AgentLimits"] | null;
             /** Memory */
             memory?: unknown;
@@ -8904,8 +8824,6 @@ export interface components {
              * @default
              */
             human: string;
-            /** Latitude */
-            latitude?: string | null;
             /** Name */
             name: string;
             /**
@@ -8928,8 +8846,6 @@ export interface components {
             definition?: string | null;
             /** Delegatable */
             delegatable?: boolean | null;
-            /** Latitude */
-            latitude?: string | null;
             limits?: components["schemas"]["AgentLimits"] | null;
             /** Mentionable */
             mentionable?: boolean | null;
@@ -9000,8 +8916,6 @@ export interface components {
             id: string;
             /** Last Active */
             last_active?: string | null;
-            /** Latitude */
-            latitude?: string | null;
             limits?: components["schemas"]["AgentLimits"] | null;
             /**
              * Linked Chat Ids
@@ -9103,7 +9017,8 @@ export interface components {
         };
         /**
          * AgentJobsOut
-         * @description Not the ADR 0023 envelope; see `BuildTasksOut`.
+         * @description Not the ADR 0023 collection envelope: the key is `jobs`, not
+         *     `items`, and it is what the agent page reads.
          */
         AgentJobsOut: {
             /** Agent Id */
@@ -10540,73 +10455,6 @@ export interface components {
             slug: string;
         };
         /**
-         * BuildAgentDetail
-         * @description `session_alive` is a REAL check that the CLI session file still exists,
-         *     not merely "a session id string is stored" -- which stayed true after the
-         *     session was pruned, so the pill lied.
-         */
-        BuildAgentDetail: {
-            /** Branch Slug */
-            branch_slug?: string | null;
-            /** Claude Session */
-            claude_session?: string | null;
-            /** Created */
-            created?: string | null;
-            /** Cwd */
-            cwd?: string | null;
-            /** Kind */
-            kind?: string | null;
-            /** Last Active */
-            last_active?: string | null;
-            /** Name */
-            name: string;
-            /** Owner Id */
-            owner_id?: number | null;
-            /** Project Slug */
-            project_slug?: string | null;
-            /**
-             * Purpose
-             * @default
-             */
-            purpose: string;
-            /** Session Alive */
-            session_alive: boolean;
-            /** Slug */
-            slug: string;
-            /** State */
-            state?: string | null;
-        };
-        /**
-         * BuildAgentPatch
-         * @description What can be changed about a maker after it exists.
-         *
-         *     `branch_slug` IS THE ONE THAT MOVES WHERE ITS TURNS RUN, and it is here
-         *     because the picker on the agent's own page was inert without it: the value
-         *     was chosen, held in state, and read by nothing. Three values, three
-         *     meanings, and the difference matters -- absent leaves the pin alone, a slug
-         *     moves the agent onto that branch's tree, and an empty string moves it back
-         *     to the project's main tree. `None` cannot mean "clear it" here because
-         *     `None` is what "not sent" already means.
-         */
-        BuildAgentPatch: {
-            /** Branch Slug */
-            branch_slug?: string | null;
-            /** Name */
-            name?: string | null;
-            /** Purpose */
-            purpose?: string | null;
-        };
-        /**
-         * BuildTasksOut
-         * @description Not the ADR 0023 collection envelope: changing this key is a wire change
-         *     to a route the build-agent Tasks tab reads, and the ADR's one non-optional
-         *     migration rule is that such a change lands with its frontend edit.
-         */
-        BuildTasksOut: {
-            /** Tasks */
-            tasks: components["schemas"]["Task"][];
-        };
-        /**
          * Capabilities
          * @description What this provider exposes, in the "<app>.<verb>" shape used across the
          *     Workshop. Every entry maps to a route in this file.
@@ -11072,6 +10920,14 @@ export interface components {
             /** Session Reset */
             session_reset: boolean;
         };
+        /** ClientIdIn */
+        ClientIdIn: {
+            /**
+             * Client Id
+             * @default
+             */
+            client_id: string;
+        };
         /** CommitBody */
         CommitBody: {
             /**
@@ -11098,21 +10954,6 @@ export interface components {
             commits: components["schemas"]["CommitRecord"][];
             /** Repo */
             repo: string;
-        };
-        /**
-         * CommitOut
-         * @description `ok: false` with a `reason` at HTTP 200 is an ADR 0023 clause 3 violation
-         *     (failure never arrives at 200). Declared rather than fixed: "nothing to
-         *     commit" is reported, not raised, by the caller today, and turning it into a
-         *     4xx is a behaviour change to a route the Diff tab reads.
-         */
-        CommitOut: {
-            /** Commit */
-            commit?: string | null;
-            /** Ok */
-            ok: boolean;
-            /** Reason */
-            reason?: string | null;
         };
         /** CommitRecord */
         CommitRecord: {
@@ -11593,6 +11434,66 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** DevicePollIn */
+        DevicePollIn: {
+            /** Device Code */
+            device_code: string;
+        };
+        /**
+         * DevicePollOut
+         * @description `pending` while the operator is still on github.com, `connected` after.
+         *
+         *     The connection fields are the same ones `GET /github` returns, flattened in
+         *     so a client that just finished the flow does not have to re-fetch to render.
+         */
+        DevicePollOut: {
+            /**
+             * Client Id Set
+             * @default false
+             */
+            client_id_set: boolean;
+            /**
+             * Connected
+             * @default false
+             */
+            connected: boolean;
+            /** Connected At */
+            connected_at?: string | null;
+            /** Detail */
+            detail: string;
+            /**
+             * Device Available
+             * @default false
+             */
+            device_available: boolean;
+            /**
+             * Helper Installed
+             * @default false
+             */
+            helper_installed: boolean;
+            /**
+             * Helper Path
+             * @default
+             */
+            helper_path: string;
+            /**
+             * Login
+             * @default
+             */
+            login: string;
+            /**
+             * Scopes
+             * @default []
+             */
+            scopes: string[];
+            /**
+             * Source
+             * @default
+             */
+            source: string;
+            /** Status */
+            status: string;
+        };
         /**
          * DeviceRevoked
          * @description `removed` is how many rows the prefix matched, so revoking an
@@ -11619,6 +11520,19 @@ export interface components {
             /** Last Seen */
             last_seen?: string | null;
         };
+        /** DeviceStartOut */
+        DeviceStartOut: {
+            /** Device Code */
+            device_code: string;
+            /** Expires In */
+            expires_in: number;
+            /** Interval */
+            interval: number;
+            /** User Code */
+            user_code: string;
+            /** Verification Uri */
+            verification_uri: string;
+        };
         /** DeviceTokenBody */
         DeviceTokenBody: {
             /** Label */
@@ -11635,13 +11549,6 @@ export interface components {
             device_token: string;
             /** Label */
             label: string;
-        };
-        /** DiffOut */
-        DiffOut: {
-            /** Files */
-            files: components["schemas"]["routes__agents__DiffFile"][];
-            /** Summary */
-            summary: string;
         };
         /**
          * DiffResult
@@ -11842,7 +11749,6 @@ export interface components {
             depends_on: string[];
             /** Discovered From */
             discovered_from?: string | null;
-            effective_latitude?: components["schemas"]["EffectiveLatitude"] | null;
             /** Effort */
             effort?: string | null;
             /**
@@ -11872,8 +11778,6 @@ export interface components {
             labels: string[];
             /** Last Heartbeat */
             last_heartbeat?: string | null;
-            /** Latitude */
-            latitude?: string | null;
             /** Lease Until */
             lease_until?: string | null;
             links?: components["schemas"]["TaskLinks"] | null;
@@ -11930,18 +11834,6 @@ export interface components {
             target_id: string;
             /** Target Scope */
             target_scope?: string | null;
-        };
-        /**
-         * EffectiveLatitude
-         * @description The RESOLVED latitude plus where it came from. The source travels with
-         *     the value because an inherited value rendered as if it were set is how the
-         *     null-means-inherit bug becomes invisible on screen.
-         */
-        EffectiveLatitude: {
-            /** Source */
-            source: string;
-            /** Value */
-            value: string;
         };
         /**
          * EffortCaps
@@ -12316,7 +12208,8 @@ export interface components {
         /**
          * GcWorktrees
          * @description `candidates` on a preview, `reaped`/`failed` after an apply. `count` means
-         *     candidates before and reaped after.
+         *     candidates before and reaped after. `skipped` is carried in BOTH cases: a
+         *     sweep that examined nothing has to say so, whether or not it applied.
          */
         GcWorktrees: {
             /** Applied */
@@ -12329,6 +12222,10 @@ export interface components {
             failed?: components["schemas"]["MergedWorktree"][] | null;
             /** Reaped */
             reaped?: components["schemas"]["MergedWorktree"][] | null;
+            /** Skipped */
+            skipped?: components["schemas"]["SkippedProject"][] | null;
+            /** Skipped Count */
+            skipped_count?: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -12363,6 +12260,11 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HelperIn */
+        HelperIn: {
+            /** Enabled */
+            enabled: boolean;
         };
         /** HistoryRecord */
         HistoryRecord: {
@@ -12509,17 +12411,6 @@ export interface components {
             surfaces: Record<string, never>;
             /** Title */
             title: string;
-        };
-        /**
-         * InterventionAppendOut
-         * @description `ts` is ADR 0023 clause 4 debt: an instant field should be `<verb>_at`.
-         *     Left as-is because it is the key the caller reads today.
-         */
-        InterventionAppendOut: {
-            /** Ok */
-            ok: boolean;
-            /** Ts */
-            ts: string;
         };
         /** InterventionIn */
         InterventionIn: {
@@ -14197,78 +14088,6 @@ export interface components {
              */
             ttl_sec: number;
         };
-        /** PreviewLogOut */
-        PreviewLogOut: {
-            /** Log */
-            log: string;
-        };
-        /**
-         * PreviewServerStatus
-         * @description `dev_servers.status`. `started_at` is a RAW EPOCH FLOAT, which ADR 0023
-         *     clause 4 bans (every instant on the wire is an RFC3339 UTC string). Typed as
-         *     what it is rather than silently coerced: converting it is a wire change to
-         *     the reader that formats it, and this pass does not touch the frontend.
-         */
-        PreviewServerStatus: {
-            /** Command */
-            command?: string | null;
-            /** Log Path */
-            log_path?: string | null;
-            /** Pid */
-            pid?: number | null;
-            /** Port */
-            port?: number | null;
-            /** Running */
-            running: boolean;
-            /** Stale Pid */
-            stale_pid?: number | null;
-            /** Started At */
-            started_at?: number | null;
-        };
-        /** PreviewStartOut */
-        PreviewStartOut: {
-            /** Ok */
-            ok: boolean;
-            /** Reason */
-            reason?: string | null;
-            status?: components["schemas"]["PreviewServerStatus"] | null;
-        };
-        /**
-         * PreviewStatusOut
-         * @description Status plus the two boot-time helpers: what to run, and (when stopped)
-         *     which port to default the picker to. `public_url` is derived from the
-         *     request host so the link works over the LAN, not just localhost.
-         */
-        PreviewStatusOut: {
-            /** Command */
-            command?: string | null;
-            /** Log Path */
-            log_path?: string | null;
-            /** Pid */
-            pid?: number | null;
-            /** Port */
-            port?: number | null;
-            /** Public Url */
-            public_url?: string | null;
-            /** Running */
-            running: boolean;
-            /** Stale Pid */
-            stale_pid?: number | null;
-            /** Started At */
-            started_at?: number | null;
-            suggested: components["schemas"]["SuggestedCommand"];
-            /** Suggested Port */
-            suggested_port?: number | null;
-        };
-        /** PreviewStopOut */
-        PreviewStopOut: {
-            /** Force Killed */
-            force_killed?: boolean | null;
-            /** Ok */
-            ok: boolean;
-            /** Reason */
-            reason?: string | null;
-        };
         /** Project */
         Project: {
             /**
@@ -14330,10 +14149,6 @@ export interface components {
          *     project scope. It is a different axis from an AGENT's `autonomy_mode`
          *     (`reactive | supervised | autonomous`); see the note on
          *     `routes/agents.py::RosterAgent`.
-         *
-         *     `latitude` stays null when unset: this scope is one level of the latitude
-         *     cascade, not the bottom of it, so a defaulted value here would read as a
-         *     choice nobody made.
          */
         ProjectAutonomyOut: {
             /** Autonomy */
@@ -14344,8 +14159,6 @@ export interface components {
              */
             awaiting: components["schemas"]["AwaitingRow"][];
             last_run?: components["schemas"]["Job"] | null;
-            /** Latitude */
-            latitude?: string | null;
             limits?: components["schemas"]["AgentLimits"] | null;
             queue: components["schemas"]["QueueCounts"];
             /** Running */
@@ -14367,8 +14180,6 @@ export interface components {
         ProjectAutonomyPutOut: {
             /** Autonomy */
             autonomy: string;
-            /** Latitude */
-            latitude?: string | null;
             limits?: components["schemas"]["AgentLimits"] | null;
             /** Running */
             running: boolean;
@@ -14462,6 +14273,40 @@ export interface components {
             modes: components["schemas"]["ModesPayload"];
             /** Tools Active */
             tools_active: boolean;
+        };
+        /**
+         * ProviderRow
+         * @description One provider as a settings screen sees it. Carries no credential.
+         */
+        ProviderRow: {
+            /** Auth Mode */
+            auth_mode: string;
+            /** Cli Detail */
+            cli_detail?: string | null;
+            /** Cli State */
+            cli_state?: string | null;
+            /** Configured */
+            configured: boolean;
+            /** Console Url */
+            console_url: string;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Last4 */
+            last4?: string | null;
+            /** Multi User */
+            multi_user: boolean;
+            /** Restriction */
+            restriction: string;
+            /** Runtime Ready */
+            runtime_ready: boolean;
+            /** Source */
+            source?: string | null;
+            /** Stored */
+            stored: boolean;
+            /** Usable */
+            usable: boolean;
         };
         /**
          * PublicUser
@@ -15123,8 +14968,6 @@ export interface components {
             id?: string | null;
             /** Last Active */
             last_active?: string | null;
-            /** Latitude */
-            latitude?: string | null;
             limits?: components["schemas"]["AgentLimits"] | null;
             maker?: components["schemas"]["MakerSummary"] | null;
             /** Memory */
@@ -15599,6 +15442,23 @@ export interface components {
             template: string;
         };
         /**
+         * SkippedProject
+         * @description A project the scan could not examine, and why.
+         *
+         *     Declared for the same reason `GcRuntimes.available` is: an empty
+         *     `candidates` because every project was unreadable must not read the same as
+         *     an empty `candidates` because nothing is merged. The scan used to `continue`
+         *     in silence and the two were identical on the wire.
+         */
+        SkippedProject: {
+            /** Project Slug */
+            project_slug?: string | null;
+            /** Reason */
+            reason?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * SlotPool
          * @description One pool's limit and what is actually in it. The active counts are the
          *     only view the system has of how many model processes it is holding.
@@ -15779,6 +15639,30 @@ export interface components {
             status: string;
         };
         /**
+         * StatusOut
+         * @description What a settings surface may know about the connection. No secret.
+         */
+        StatusOut: {
+            /** Client Id Set */
+            client_id_set: boolean;
+            /** Connected */
+            connected: boolean;
+            /** Connected At */
+            connected_at?: string | null;
+            /** Device Available */
+            device_available: boolean;
+            /** Helper Installed */
+            helper_installed: boolean;
+            /** Helper Path */
+            helper_path: string;
+            /** Login */
+            login: string;
+            /** Scopes */
+            scopes: string[];
+            /** Source */
+            source: string;
+        };
+        /**
          * StoppedRuntime
          * @description A dev-server entry whose process is gone. `pid` and `port` are what it
          *     HELD, which is the useful part of the report: a port still registered to a
@@ -15953,13 +15837,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** SuggestedCommand */
-        SuggestedCommand: {
-            /** Command */
-            command: string;
-            /** Kind */
-            kind: string;
-        };
         /** Surfaces */
         Surfaces: {
             /** Integrated */
@@ -15999,12 +15876,12 @@ export interface components {
          * Task
          * @description The canonical Task on the wire.
          *
-         *     The first 39 fields are `services/tasks.py::_normalize`'s output verbatim,
+         *     The first 38 fields are `services/tasks.py::_normalize`'s output verbatim,
          *     including the four it PROJECTS rather than stores (`text`, `owner`,
          *     `blocked_request`, `exec`). The trailing block is what the route layer
-         *     stamps on the way out (`tasks_all._with_latitude` / `_with_triage` /
-         *     `_detail`); each defaults to None because not every route computes them --
-         *     `POST /agents/build/{slug}/tasks` returns a store record with none of them.
+         *     stamps on the way out (`tasks_all._with_triage` / `_detail`); each defaults
+         *     to None because not every route computes them -- a bare store record read
+         *     through `services/tasks.py` carries none of them.
          */
         Task: {
             acceptance?: components["schemas"]["TaskAcceptance"] | null;
@@ -16041,7 +15918,6 @@ export interface components {
             depends_on: string[];
             /** Discovered From */
             discovered_from?: string | null;
-            effective_latitude?: components["schemas"]["EffectiveLatitude"] | null;
             /** Effort */
             effort?: string | null;
             /**
@@ -16071,8 +15947,6 @@ export interface components {
             labels: string[];
             /** Last Heartbeat */
             last_heartbeat?: string | null;
-            /** Latitude */
-            latitude?: string | null;
             /** Lease Until */
             lease_until?: string | null;
             links?: components["schemas"]["TaskLinks"] | null;
@@ -16219,8 +16093,6 @@ export interface components {
             execution?: string | null;
             /** Labels */
             labels?: string[] | null;
-            /** Latitude */
-            latitude?: string | null;
             /**
              * Priority
              * @default 0
@@ -16275,7 +16147,7 @@ export interface components {
          *     adapter can read what it must NOT send to a remote tracker.
          *
          *     A PROJECTION, never stored: `tasks.py` builds it as
-         *     `{k: rec.get(k) for k in EXEC_FIELDS}`, so all fourteen keys are always
+         *     `{k: rec.get(k) for k in EXEC_FIELDS}`, so all thirteen keys are always
          *     present and every one of them is also declared flat on `Task` below. Read
          *     them flat; this exists for the sync adapters. `extra="allow"` so widening
          *     `EXEC_FIELDS` cannot silently drop the new one from the wire.
@@ -16297,8 +16169,6 @@ export interface components {
             job_ids?: string[] | null;
             /** Last Heartbeat */
             last_heartbeat?: string | null;
-            /** Latitude */
-            latitude?: string | null;
             /** Lease Until */
             lease_until?: string | null;
             /** Max Attempts */
@@ -16432,8 +16302,6 @@ export interface components {
             execution?: string | null;
             /** Labels */
             labels?: string[] | null;
-            /** Latitude */
-            latitude?: string | null;
             /** Max Attempts */
             max_attempts?: number | null;
             /** Priority */
@@ -17088,6 +16956,11 @@ export interface components {
             /** Spec Hash */
             spec_hash?: string | null;
         };
+        /** TokenIn */
+        TokenIn: {
+            /** Token */
+            token: string;
+        };
         /** ToolCreate */
         ToolCreate: {
             /** Ceiling */
@@ -17281,8 +17154,6 @@ export interface components {
         TriggersIn: {
             /** Cron */
             cron?: string | null;
-            /** Latitude */
-            latitude?: string | null;
             limits?: components["schemas"]["AgentLimits"] | null;
             /** Preset */
             preset?: string | null;
@@ -17591,7 +17462,6 @@ export interface components {
             depends_on: string[];
             /** Discovered From */
             discovered_from?: string | null;
-            effective_latitude?: components["schemas"]["EffectiveLatitude"] | null;
             /** Effort */
             effort?: string | null;
             /**
@@ -17621,8 +17491,6 @@ export interface components {
             labels: string[];
             /** Last Heartbeat */
             last_heartbeat?: string | null;
-            /** Latitude */
-            latitude?: string | null;
             /** Lease Until */
             lease_until?: string | null;
             links?: components["schemas"]["TaskLinks"] | null;
@@ -17896,28 +17764,10 @@ export interface components {
              */
             verb: string;
         };
-        /** _CommitIn */
-        _CommitIn: {
-            /**
-             * Message
-             * @default Build agent checkpoint
-             */
-            message: string;
-        };
-        /** _Content */
-        _Content: {
-            /** Content */
-            content: string;
-        };
         /** _CreateIn */
         _CreateIn: {
             /** Branch Slug */
             branch_slug: string;
-        };
-        /** _InterventionIn */
-        _InterventionIn: {
-            /** Text */
-            text: string;
         };
         /** _MergeIn */
         _MergeIn: {
@@ -17940,34 +17790,91 @@ export interface components {
              */
             title: string;
         };
-        /** _RevertIn */
-        _RevertIn: {
-            /** Path */
-            path: string;
-        };
-        /** _StartPreviewIn */
-        _StartPreviewIn: {
-            /** Command */
-            command: string;
-            /**
-             * Port
-             * @default 8501
-             */
-            port: number;
-        };
-        /** _TaskCreate */
-        _TaskCreate: {
-            /** Parent */
-            parent?: string | null;
+        /**
+         * AppSummary
+         * @description The line this app's launcher card shows, in the shape the shell reads.
+         *
+         *     Declared in `workshop.app.json` as `ui.status.endpoint` and fetched with the
+         *     roster, so the card is drawn without loading a byte of this app's bundle.
+         *     It used to be a function inside the frontend module the platform compiled,
+         *     which is why the platform had to compile this app at all.
+         *
+         *     Named `app-summary` rather than `summary` because `/birds/summary` is the
+         *     yard's own totals and was here first.
+         */
+        birds_app__routes__AppSummary: {
             /** Text */
             text: string;
+            /** Tone */
+            tone: string;
         };
-        /** _TaskPatch */
-        _TaskPatch: {
-            /** Status */
-            status?: string | null;
+        /**
+         * AppSummary
+         * @description The line this app's launcher card shows, in the shape the shell reads.
+         *
+         *     Declared in `workshop.app.json` as `ui.status.endpoint` and fetched with the
+         *     roster, so the card is drawn without loading a byte of this app's bundle.
+         *     It used to be a function inside the frontend module the platform compiled,
+         *     which is why the platform had to compile this app at all.
+         *
+         *     A tone of `muted` means the line is a description rather than a state: what
+         *     this app is for is constant, and a constant is not a signal, so it must not
+         *     take a status colour.
+         */
+        budget_app__routes__AppSummary: {
             /** Text */
-            text?: string | null;
+            text: string;
+            /** Tone */
+            tone: string;
+        };
+        /**
+         * AppSummary
+         * @description The line this app's launcher card shows, in the shape the shell reads.
+         *
+         *     Declared in `workshop.app.json` as `ui.status.endpoint` and fetched with the
+         *     roster, so the card is drawn without loading a byte of this app's bundle.
+         *     It used to be a function inside the frontend module the platform compiled,
+         *     which is why the platform had to compile this app at all.
+         *
+         *     A tone of `muted` means the line is a description rather than a state: what
+         *     this app is for is constant, and a constant is not a signal, so it must not
+         *     take a status colour.
+         */
+        commute_app__routes__AppSummary: {
+            /** Text */
+            text: string;
+            /** Tone */
+            tone: string;
+        };
+        /**
+         * AppSummary
+         * @description The line this app's launcher card shows, in the shape the shell reads.
+         *
+         *     Declared in `workshop.app.json` as `ui.status.endpoint` and fetched with the
+         *     roster, so the card is drawn without loading a byte of this app's bundle.
+         *     It used to be a function inside the frontend module the platform compiled,
+         *     which is why the platform had to compile this app at all.
+         */
+        finance_app__routes__AppSummary: {
+            /** Text */
+            text: string;
+            /** Tone */
+            tone: string;
+        };
+        /**
+         * AppSummary
+         * @description The line this app's launcher card shows, in the shape the shell reads.
+         *
+         *     Declared in `workshop.app.json` as `ui.status.endpoint` and fetched with the
+         *     roster, so the card is drawn without loading a byte of this app's bundle.
+         *     It used to be a function inside the frontend module the platform compiled,
+         *     which is why the platform had to compile this app at all.
+         */
+        location_app__routes__AppSummary: {
+            /** Text */
+            text: string;
+            /** Tone */
+            tone: string;
         };
         /** Backlinks */
         notes_app__routes__Backlinks: {
@@ -17997,19 +17904,6 @@ export interface components {
             path: string;
             /** Snippet */
             snippet: string;
-        };
-        /**
-         * DiffFile
-         * @description One changed file. `status` is git's two-character XY porcelain code;
-         *     `??` means untracked, whose `diff` is the whole file rendered as additions.
-         */
-        routes__agents__DiffFile: {
-            /** Diff */
-            diff: string;
-            /** Path */
-            path: string;
-            /** Status */
-            status: string;
         };
         /** RegisterBody */
         routes__auth__RegisterBody: {
@@ -18712,26 +18606,6 @@ export interface operations {
             };
         };
     };
-    list_build_agents_agents_build_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BuildAgent"][];
-                };
-            };
-        };
-    };
     create_build_agent_agents_build_post: {
         parameters: {
             query?: never;
@@ -18765,503 +18639,6 @@ export interface operations {
             };
         };
     };
-    get_build_agent_agents_build__slug__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BuildAgentDetail"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    patch_build_agent_agents_build__slug__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BuildAgentPatch"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BuildAgent"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_brief_get_agents_build__slug__brief_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ContentOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_brief_put_agents_build__slug__brief_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_Content"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OkOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_commit_agents_build__slug__commit_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_CommitIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CommitOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_diff_agents_build__slug__diff_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DiffOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_revert_file_agents_build__slug__diff_revert_file_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_RevertIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OkOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_file_get_agents_build__slug__file_get: {
-        parameters: {
-            query: {
-                path: string;
-            };
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FileOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_file_put_agents_build__slug__file_put: {
-        parameters: {
-            query: {
-                path: string;
-            };
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_Content"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OkOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_interventions_get_agents_build__slug__interventions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ContentOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_interventions_post_agents_build__slug__interventions_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_InterventionIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InterventionAppendOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_preview_log_agents_build__slug__preview_log_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PreviewLogOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_preview_start_agents_build__slug__preview_start_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_StartPreviewIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PreviewStartOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_preview_status_agents_build__slug__preview_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PreviewStatusOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_preview_stop_agents_build__slug__preview_stop_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PreviewStopOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     retire_build_agent_agents_build__slug__retire_post: {
         parameters: {
             query?: never;
@@ -19280,270 +18657,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reset_build_session_agents_build__slug__session_reset_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OkOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_tasks_list_agents_build__slug__tasks_get: {
-        parameters: {
-            query?: {
-                include_done?: boolean;
-            };
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BuildTasksOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_tasks_add_agents_build__slug__tasks_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_TaskCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Task"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_tasks_delete_agents_build__slug__tasks__task_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeletedOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_tasks_patch_agents_build__slug__tasks__task_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_TaskPatch"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Task"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_todo_get_agents_build__slug__todo_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ContentOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_todo_put_agents_build__slug__todo_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_Content"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OkOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    build_agent_tree_agents_build__slug__tree_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                slug: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TreeOut"];
                 };
             };
             /** @description Validation Error */
@@ -21808,6 +20921,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    app_summary_birds_app_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["birds_app__routes__AppSummary"];
                 };
             };
         };
@@ -24175,6 +23308,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_summary_budget_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["budget_app__routes__AppSummary"];
                 };
             };
         };
@@ -26945,6 +26098,26 @@ export interface operations {
             };
         };
     };
+    summary_commute_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["commute_app__routes__AppSummary"];
+                };
+            };
+        };
+    };
     get_targets_commute_targets_get: {
         parameters: {
             query?: never;
@@ -27787,6 +26960,26 @@ export interface operations {
             };
         };
     };
+    get_summary_finance_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["finance_app__routes__AppSummary"];
+                };
+            };
+        };
+    };
     get_transactions_finance_transactions_get: {
         parameters: {
             query?: {
@@ -28477,6 +27670,198 @@ export interface operations {
             };
         };
     };
+    get_status_github_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusOut"];
+                };
+            };
+        };
+    };
+    delete_connection_github_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusOut"];
+                };
+            };
+        };
+    };
+    put_client_id_github_client_id_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientIdIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_device_github_device_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceStartOut"];
+                };
+            };
+        };
+    };
+    poll_device_github_device_poll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DevicePollIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevicePollOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_helper_github_helper_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HelperIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_token_github_token_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TokenIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_grants_grants_get: {
         parameters: {
             query?: never;
@@ -29130,6 +28515,26 @@ export interface operations {
             };
         };
     };
+    get_summary_location_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["location_app__routes__AppSummary"];
+                };
+            };
+        };
+    };
     post_update_location_update_post: {
         parameters: {
             query?: never;
@@ -29583,7 +28988,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>[];
+                    "application/json": components["schemas"]["ProviderRow"][];
                 };
             };
         };
@@ -29609,7 +29014,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ProviderRow"];
                 };
             };
             /** @description Validation Error */
@@ -29640,7 +29045,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ProviderRow"];
                 };
             };
             /** @description Validation Error */
