@@ -10,6 +10,48 @@ Everything labelled "measured" was run against the working tree on 2026-08-24 an
 
 ---
 
+## 0. Where this stands, 2026-09-05, measured
+
+Added after the fact and kept to commands, because this plan's own rule is that
+the counts are the status. **`bash scripts/check_app_loader.sh` (exit 0) is the
+authority on the mechanism, and `python3 scripts/check_no_app_names.py` is the
+authority on the migrations.** Nothing below may be read as a claim about the
+stage as a whole.
+
+In the tree, per the commit sequence in section 7:
+
+| step | in the tree | where |
+|---|---|---|
+| 0 | not needed | the ratchet reads 23 and passes; the three fixture literals were renamed on 2026-09-04 |
+| 1 | yes | `frontend/src/runtime/shared/`, `frontend/plugins/importmap.ts`, `frontend/src/apps/importmap.test.ts`, `scripts/check_app_loader.py --dist` |
+| 2 | yes | `packages/app-build/`, `tests/fixtures/app-loader/` |
+| 3 | yes | `backend/services/app_ui.py`, three routes on `/base-apps`, `backend/tests/test_app_ui_contract.py` |
+| 4 | yes | `frontend/src/apps/{contract.ts,declarations.tsx,loader.ts,AppRouteHost.tsx}`; the dual path is in `registry.tsx` |
+| 5-11 | NO | not one app has been built onto it |
+
+Four differences from what section 2 proposed, each because the tree moved or
+the plan was wrong about this repo:
+
+- **`@tanstack/react-query` is in `SHARED`.** Measured: app pages import it 25
+  times, and a second copy is a second React context, which reads as undefined.
+- **The host services are `@workshop/app-host`, a SHELL module in the import
+  map, not a kit export.** Apps declare `kit: "^0.7"` and the kit is at 0.7.9,
+  so adding an export to it is a minor bump that every declared range excludes:
+  a fleet-wide refusal for a piece of host wiring. The types ship from
+  `@workshop/app-build/host`.
+- **The preset needs `preserveEntrySignatures: "strict"`.** Vite builds an app
+  rather than a library, so the first fixture build tree-shook the default
+  export away and emitted four side-effect imports and nothing else.
+- **`check_app_loader.py --dist` looks for `react.production.min.js`, not the
+  internals property.** That property is a NAME react-dom and the jsx runtime
+  both reference, so it appears in three chunks of a correct build.
+
+Section 9's four operator decisions are all still open, and none of them blocks
+steps 5 to 11 on this machine: an app here builds against the monorepo it sits
+in.
+
+---
+
 ## 1. What is actually in the way, measured
 
 ```

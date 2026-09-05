@@ -40,7 +40,7 @@ occupancy is **UNMEASURED** here rather than reported as zero.
 | 7 | Pause a run at the budget cap (`70860d58`, P100) | Stop at the line, resume without redoing work | ticket `70860d58`; `limits-plan-audit-2026-08-24.md` §2.1 | **UNBUILT** | `grep -rn "budget_cap\|pause_at_cap" backend/services/work_driver.py` → 0; `jobs.py` carries `budget` as an opaque dict only |
 | 8 | Prompt-budget chain | Nothing declares, measures or bounds a turn's prefix | `agent-context-plan-2026-08-24.md`; tickets `0e810bf9` `4614bfee` `c971b8f9` `f8fced4a` `1f0d6dcd` | **UNBUILT** | `grep -rn PROMPT_BLOCKS backend/ scripts/` → **0**; `ls scripts/check_prompt_size.py` → No such file; `grep -n "PROJECT.md" backend/services/semantic_index.py` → **0** |
 | 9 | Hosting / artifact / release chain | No artifact store, no release or deployment record | `hosting-apps-design-2026-08-24.md`, `app-artifact-spec-2026-08-24.md`; tickets `fb93c4d2` `9ed7a34b` `80709722` `0cae7ab2` | **UNBUILT** | `grep -rn "class Artifact\|class Release\|class Deployment" backend/ --include=*.py` → 0 (only sqlalchemy internals); `ls .runtime/artifacts` → No such directory |
-| 10 | Stage-5 runtime app loader (`86564637`) | Install an app without rebuilding the shell | `stage-5-app-loader-plan-2026-08-24.md` | **UNBUILT** | `grep -rn "importMap\|import-map" frontend/ backend/` → one comment, `frontend/src/apps/registry.tsx:54`, naming it as not built |
+| 10 | Stage-5 runtime app loader (`86564637`) | Install an app without rebuilding the shell | `stage-5-app-loader-plan-2026-08-24.md` | **MECHANISM BUILT 2026-09-05; no app migrated onto it** | `bash scripts/check_app_loader.sh` → exit 0: a fixture app is built, installed, listed, served, removed and gone, with the shell's build stamp byte-identical either side. `python3 scripts/check_no_app_names.py` → 23, unmoved, because that is what the per-app migrations (plan §7 steps 5-11) move and none has run |
 | 11 | Delete the deploy subsystem (`726d75a9`) | It has never run once and still boots | `REVIEW-plan-vs-reality-2026-08-29.md` §5 Tier 1 row 7 | **UNBUILT → DONE 2026-09-04** | `grep -n deploy backend/main.py` → `:25` imports `routes.deploys`, `:434` mounts it. **Scope correction:** the routes were NOT unreferenced — `AppOverviewTab.tsx:73` rendered `<DeploysPanel>` on a live route, so this was a backend+frontend vertical, not a backend deletion. **Stale premise in the ticket:** it claims the watcher logs on every boot; that loop was removed 2026-09-01 (`main.py:74-88`) |
 | 12 | Delete `services/latitude.py` | Ordered deleted 2026-08-25; null on 100% of tickets | ~~`REVIEW…` §5.1; `AUDIT-2026-08-31.md`~~ **CORRECTED: ticket `3b1c5432` + `work-status-contract-2026-08-24.md:159`** | **UNBUILT (scope was understated ~4x; deferred, inventory written into `3b1c5432`)** | ~~6 live import sites~~ **The original grep only matched `from services…import latitude` lines.** True surface: ~20 backend files, plus `scripts/ralph.sh:548` (shells `python3 -m services.latitude` and writes the resolved value into every sweep's instructions), `scripts/reviewer.sh` (LATITUDE decides block-vs-guess), `scripts/project_ralph.sh` (rc=7), `scripts/project_tasks.py --latitude`, the `ticket.latitude` column + `ck_ticket_latitude` constraint, and 4 frontend modules. Neither cited document contains the word "latitude": `grep -ic latitude docs/platform-redesign/REVIEW-plan-vs-reality-2026-08-29.md docs/platform-redesign/AUDIT-2026-08-31.md` → **0, 0**. Also conflicts with open ticket `77b22987` (SEC-A2) |
 | 13 | ~~`services/triager.py` (1,004 lines) never executed~~ **CORRECTED 2026-09-04: NOT DEAD** | It is the role runner for `role: triager` agents and the dispatcher calls it | `WHY…` §5.1 | **~~UNBUILT (dead)~~ → LIVE, KEPT** | The original grep was scoped to `backend/` and never looked in `scripts/`. `grep -n "triager" scripts/dispatch_triggers.sh` → `:534` `_dispatch_triager`, `:549` `from services import triager`, `:550` `triager.has_due_notes(scope_key)`, `:588` registered in `ROLE_HANDLERS`. `grep -rln "role: triager" agents/_templates/` → `note-triager.md`, `inbox-watcher.md`. This installation has no *instantiated* triager agent, which is an installation fact, not a dead mechanism |
@@ -140,11 +140,43 @@ declarative and is the only one the other three need. **~5h.**
 
 ## Items 9 and 10 — hosting and the app loader
 
-**Missing:** the whole chain. No artifact store, no release record, no runtime
-loader. Stage 7 (extraction) landed on 2026-09-04 and explicitly did not touch
-these; `registry.tsx:54` says so in a comment.
+**REWRITTEN 2026-09-05: item 10 was measured again after the loader landed. The
+original text is kept below, because a backlog that only ever grows is a
+backlog nobody believes.**
+
+> ~~**Missing:** the whole chain. No artifact store, no release record, no runtime
+> loader. Stage 7 (extraction) landed on 2026-09-04 and explicitly did not touch
+> these; `registry.tsx:54` says so in a comment.~~
+
+**Item 9 (hosting) is unchanged:** no artifact store, no release record.
 **Smallest next step:** `fb93c4d2`, the content-addressed artifact store under
 `.runtime/artifacts`. It is the only one with no dependency. **~6h.**
+
+**Item 10: the MECHANISM is in the tree and no app uses it yet**, which are two
+different facts and both matter.
+
+What `bash scripts/check_app_loader.sh` proves today, exit 0: an app directory
+with a `ui` block and a bundle built by `@workshop/app-build` is listed by
+`GET /base-apps/contributions` the moment its id is in the installed-apps
+roster, its bundle and stylesheet are served under content-hashed immutable
+URLs, both stop being reachable the moment the id is removed, and
+`frontend/dist/build-info.json` is byte-identical either side of the whole
+cycle. The shell reads that endpoint (`frontend/src/apps/declarations.tsx`) and
+merges it into the catalog every other surface already consumes, so nothing
+downstream had to change.
+
+What has NOT happened is plan §7 steps 5 to 11: not one of this installation's
+apps has been built onto it. They still reach the shell through the build-time
+`import.meta.glob`, and a runtime declaration only shadows that when it can
+actually activate, so each app can be moved one at a time and reverted. That is
+also why `check_no_app_names.py` still reads 23: the per-app migrations are what
+move that number, and none has run.
+**Smallest next step:** the app with one route, no provider, no group and no
+status endpoint. It needs a `ui/index.tsx` exporting `{contract, exports}`, its
+route data in the `ui.pages` block its manifest already carries, and its legacy
+class names carried into its own stylesheet (`stage-4b-kit-promotions-2026-08-24.md`),
+after which `bash scripts/check_app_loader.sh --dist frontend/dist` and a
+screenshot of its route on the built origin are the acceptance. **~4h.**
 
 ## Items 11-13 — three deletions that were decided and not done
 
