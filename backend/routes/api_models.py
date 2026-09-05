@@ -380,8 +380,8 @@ class Task(BaseModel):
     including the four it PROJECTS rather than stores (`text`, `owner`,
     `blocked_request`, `exec`). The trailing block is what the route layer
     stamps on the way out (`tasks_all._with_triage` / `_detail`); each defaults
-    to None because not every route computes them --
-    `POST /agents/build/{slug}/tasks` returns a store record with none of them.
+    to None because not every route computes them -- a bare store record read
+    through `services/tasks.py` carries none of them.
     """
 
     id: str
