@@ -204,7 +204,7 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
       const params = apiQuery(urlFilters, sort, PAGE_SIZE, (page - 1) * PAGE_SIZE);
       const r = await fetch(`/api/tasks?${params.toString()}`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      return r.json();
+      return r.json() as Promise<TasksResp>;
     },
     enabled: view !== "board",
     staleTime: 0,
@@ -214,7 +214,7 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
     queryKey: queryKeys.tasks.scopes(),
     queryFn: async (): Promise<string[]> => {
       const r = await fetch("/api/tasks/scopes");
-      const j: components["schemas"]["ScopesOut"] | null = r.ok ? await r.json() : null;
+      const j = r.ok ? ((await r.json()) as components["schemas"]["ScopesOut"]) : null;
       return orderScopes(j?.scopes ?? []);
     },
     staleTime: 60_000,
@@ -226,7 +226,7 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
     queryFn: async (): Promise<LabelCount[]> => {
       const p = labelScope ? `?scope=${encodeURIComponent(labelScope)}` : "";
       const r = await fetch(`/api/tasks/labels${p}`);
-      const j: components["schemas"]["LabelsOut"] | null = r.ok ? await r.json() : null;
+      const j = r.ok ? ((await r.json()) as components["schemas"]["LabelsOut"]) : null;
       return (j?.labels ?? []) as LabelCount[];
     },
     staleTime: 30_000,
@@ -321,7 +321,7 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
     queryFn: async (): Promise<LabelCount[]> => {
       const p = labelScope ? `?scope=${encodeURIComponent(labelScope)}` : "";
       const r = await fetch(`/api/tasks/assignees${p}`);
-      const j: components["schemas"]["AssigneesOut"] | null = r.ok ? await r.json() : null;
+      const j = r.ok ? ((await r.json()) as components["schemas"]["AssigneesOut"]) : null;
       return (j?.assignees ?? []) as LabelCount[];
     },
     staleTime: 30_000,
@@ -632,10 +632,14 @@ export default function TicketsView({ scope: lockedScope = null, header = true }
           scopes={lockedScope ? [lockedScope] : scopes}
           initialScope={urlFilters.scope ?? "workshop"}
           onClose={() => setCreating(false)}
-          onCreated={(t) => {
+          onCreated={(created) => {
             setCreating(false);
             void qc.invalidateQueries({ queryKey: queryKeys.tasks.all() });
-            nav(ticketHref(t.scope ?? "workshop", t.id));
+            // `task` is null only when dedup declined to create one (an exact
+            // match with nothing to return). There is nothing to open then, so
+            // the list refresh above is the whole answer.
+            const t = created.task;
+            if (t) nav(ticketHref(t.scope ?? "workshop", t.id));
           }}
         />
       )}
@@ -665,7 +669,7 @@ function CreateTicket({
   scopes: string[];
   initialScope: string;
   onClose: () => void;
-  onCreated: (t: Task) => void;
+  onCreated: (created: components["schemas"]["TaskCreateOut"]) => void;
 }) {
   const [scope, setScope] = useState(initialScope);
   const [title, setTitle] = useState("");
@@ -693,7 +697,12 @@ function CreateTicket({
         }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      onCreated(await r.json());
+      // POST /api/tasks answers TaskCreateOut -- the task INSIDE a dedup
+      // envelope ({task, decision, matched_id, cosine, message}), never a bare
+      // Task. This handed the envelope straight to onCreated, which read
+      // `t.id` off it and got undefined, so filing a ticket from this page
+      // navigated to /tickets/workshop/undefined.
+      onCreated((await r.json()) as components["schemas"]["TaskCreateOut"]);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setBusy(false);

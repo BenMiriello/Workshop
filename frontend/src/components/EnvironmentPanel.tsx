@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { KeyRound, ExternalLink, RefreshCw, Pencil, X } from "lucide-react";
 import { Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, Badge, Skeleton, Field, Input, shortHttpError } from "@workshop/ui";
+import type { components } from "../api/schema.gen";
 
 // Environment / secrets panel for a project. The app manifest declares env
 // REQUIREMENTS (key + metadata, no values); the operator fills VALUES here; the
@@ -9,24 +10,12 @@ import { Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, Badge, S
 // are SET, never their values (the check_secrets semantics) — so secrets show a
 // "Set" pill + a Replace input, never a readable value.
 
-type Requirement = {
-  key: string;
-  description: string;
-  required: boolean;
-  secret: boolean;
-  example: string;
-  how_to_obtain: string;
-  service: string;
-  group: string;
-  set: boolean;
-};
-type EnvOverview = {
-  slug: string;
-  self?: boolean;
-  requirements: Requirement[];
-  undeclared_set: string[];
-  missing_required: string[];
-};
+// NAMED FROM THE GENERATED CLIENT. Written out here, these two claimed every
+// string field was always present; the route declares eight of the nine as
+// optional-and-nullable (routes EnvRequirementOut), so `description` and
+// `how_to_obtain` could be null while the type said string.
+type Requirement = components["schemas"]["EnvRequirementOut"];
+type EnvOverview = components["schemas"]["EnvOverview"];
 
 function HowTo({ text }: { text: string }) {
   if (!text) return null;
@@ -58,7 +47,7 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
     try {
       const r = await fetch(`/api/base-apps/run/${slug}/env`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setData(await r.json());
+      setData((await r.json()) as EnvOverview);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -80,7 +69,7 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
         body: JSON.stringify({ values }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setData(await r.json());
+      setData((await r.json()) as EnvOverview);
       setDraft({}); setEditing(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -93,7 +82,7 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
     setSaving(true);
     try {
       const r = await fetch(`/api/base-apps/run/${slug}/env/${encodeURIComponent(key)}`, { method: "DELETE" });
-      if (r.ok) setData(await r.json());
+      if (r.ok) setData((await r.json()) as EnvOverview);
     } finally {
       setSaving(false);
     }
@@ -189,7 +178,7 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
                           {r.description}
                         </p>
                       )}
-                      <HowTo text={r.how_to_obtain} />
+                      <HowTo text={r.how_to_obtain ?? ""} />
                       {editing && (
                         <div style={{ marginTop: "var(--space-2)" }}>
                           <Field>

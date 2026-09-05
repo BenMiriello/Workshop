@@ -19,6 +19,7 @@ import { scopeIsRunnable, type Pickup } from "../../lib/scopePickup";
 import { scopeLabel, ticketHref } from "../../lib/tasks";
 import { runHref } from "../../lib/jobs";
 import { shortHttpError } from "@workshop/ui";
+import type { components } from "../../api/schema.gen";
 
 // ---- Wire shape (matches the A.1 contract) ---------------------------------
 export type UiCardFieldType =
@@ -175,7 +176,7 @@ const createProject: UiCardHandler = async (state) => {
     body: JSON.stringify(body),
   });
   if (r.ok) {
-    const p = await r.json();
+    const p = (await r.json()) as components["schemas"]["Project"];
     return {
       status: "success",
       slug: p.slug || slug,

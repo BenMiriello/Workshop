@@ -138,8 +138,10 @@ function TemplateField({
     setErr(null);
     setTemplates(null);
     fetch("/api/projects/templates")
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))))
-      .then((items: { slug: string; label?: string; hint?: string }[]) => {
+      .then((r) => (r.ok
+        ? (r.json() as Promise<components["schemas"]["ProjectTemplate"][]>)
+        : Promise.reject(new Error(`${r.status}`))))
+      .then((items) => {
         if (cancelled) return;
         const mapped = items.map((t) => ({ slug: t.slug, label: t.label || t.slug, hint: t.hint || "" }));
         // Empty state: always guarantee at least `blank`.
@@ -207,8 +209,10 @@ function TaskScopeField({
     setErr(null);
     setScopes(null);
     fetch("/api/tasks/scopes")
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))))
-      .then((j: components["schemas"]["ScopesOut"]) => {
+      .then((r) => (r.ok
+        ? (r.json() as Promise<components["schemas"]["ScopesOut"]>)
+        : Promise.reject(new Error(`${r.status}`))))
+      .then((j) => {
         if (cancelled) return;
         const list = j.scopes ?? [];
         // Always keep the prefilled scope selectable even if it has no store yet.
