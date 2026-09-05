@@ -42,7 +42,7 @@ The consolidation contract:
 - Promote a repeated correction to a preference and a repeated procedure to a
   skill. A skill is only PROPOSED (a skill-proposal note the operator confirms);
   you never auto-activate a skill, because a skill changes future behavior broadly.
-- Enforce the `MEMORY.md` index cap so the always-loaded layer stays bounded,
+- Enforce the `INDEX.md` index cap so the always-loaded layer stays bounded,
   demoting cold notes to a linked archive.
 - Advance the watermark on success.
 

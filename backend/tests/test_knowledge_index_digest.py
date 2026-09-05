@@ -105,8 +105,8 @@ class TestNoMetadataStillParses:
         disk before this change."""
         d = knowledge.scope_dir("workshop")
         (d / "ancient.md").write_text("# Ancient note\n\nno marker at all\n")
-        # It must be in the MEMORY.md index too, same as any note.
-        idx = d / "MEMORY.md"
+        # It must be in the scope index too, same as any note.
+        idx = d / knowledge.INDEX_FILENAME
         idx.write_text("# Knowledge index\n\n- [Ancient note](ancient.md)\n")
 
         block = knowledge.index_block("workshop")

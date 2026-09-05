@@ -125,7 +125,7 @@ const MOVED: Record<string, string> = {
   ...appLegacyTabs(),
 };
 
-export default function Memory() {
+export default function MemoryPage() {
   const [searchParams] = useSearchParams();
   const tab = searchParams.get("tab");
   const moved = tab ? MOVED[tab] : undefined;

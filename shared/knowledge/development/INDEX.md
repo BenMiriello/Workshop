@@ -3,6 +3,7 @@
 - [Compaction is the provider's /compact; Workshop's fold is deleted](compaction-is-the-provider-s-compact-workshop-s-1a05016e44d.md)
 - [Compaction is the provider's own /compact, not something Workshop designs or implements](compaction-is-the-provider-s-own-compact-not-som-1a05016e44a.md)
 - [Demoted memory archive](memory-archive.md) - notes demoted from the index (progressive disclosure)
+- [shoot.sh cannot screenshot a chat route](shoot-sh-cannot-screenshot-a-chat-route-1a06ad7a340.md)
 - [A backend capability is not delivered until it is a visible, manageable feature in the...](system/a-backend-capability-is-not-delivered-until-it-i-1a04c6f4e30.md)
 - [A background shorthand resets the caret it paints](system/a-background-shorthand-resets-the-caret-it-paint-1a002fb6e3a.md)
 - [A card that files a duplicate ticket looks like nothing happened](system/a-card-that-files-a-duplicate-ticket-looks-like-1a008879724.md)

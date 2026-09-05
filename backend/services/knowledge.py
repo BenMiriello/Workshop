@@ -8,7 +8,7 @@ path.
 
 Scope model (see `scope_for_context`): one of `workshop`, `project:<slug>`,
 `app:<name>`, `agent:<id>`, `role:<role>`. Each scope maps to a directory
-holding `MEMORY.md` (the index) plus one `<note-id>.md` per note.
+holding `INDEX.md` (the index) plus one `<note-id>.md` per note.
 
 TWO AXES, NOT ONE. Scope used to name only a PLACE, and place is the wrong sole
 axis for how agents learn. Two reviewers working in two different projects share
@@ -34,7 +34,7 @@ log = logging.getLogger("workshop.knowledge")
 _NOTE_ID_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)?")
 _SLUG_RE = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*", re.IGNORECASE)
 
-# MEMORY.md index line: "- [Title](note-id.md) - one-line hook"
+# INDEX.md index line: "- [Title](note-id.md) - one-line hook"
 # `id` may be a path (e.g. user/note-name.md) for notes filed in subdirectories.
 _INDEX_RE = re.compile(
     r"^-\s+\[(?P<title>.*)\]\((?P<id>[a-z0-9/-]+)\.md\)(?:\s+-\s+(?P<hook>.*))?\s*$"
@@ -247,13 +247,38 @@ def _atomic_write(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-# --- MEMORY.md index ---------------------------------------------------------
+# --- INDEX.md index ----------------------------------------------------------
+# Memory is the PLACE, a note is the THING, and this file is the scope's index
+# of notes -- so it is named for what it indexes, not for the surface that
+# renders it. It was `MEMORY.md` until 2026-09-05, which named the place at the
+# file end of the stack while `Memory.tsx` named the thing at the page end: the
+# same defect, mirrored. Renaming it costs nothing because the index is a pure
+# mirror of the `.md` files beside it and is never injected into a prompt
+# (`index_block` builds from `_ranked_notes`, which reads the note files).
+INDEX_FILENAME = "INDEX.md"
+_LEGACY_INDEX_FILENAME = "MEMORY.md"
+
+
 def _index_path(scope_key: str, *, create: bool = False) -> Path:
-    return scope_dir(scope_key, create=create) / "MEMORY.md"
+    """The scope's index file, migrating a pre-rename `MEMORY.md` on the way.
+
+    A store written before the rename has the index under the old name, and a
+    missing index is not an error here (`_read_index` returns {} and
+    `list_notes` falls back to a directory scan), so a store that never
+    migrated would silently lose every title and hook until something wrote a
+    note. The rename is done once, in the one place that resolves the path.
+    """
+    d = scope_dir(scope_key, create=create)
+    path = d / INDEX_FILENAME
+    legacy = d / _LEGACY_INDEX_FILENAME
+    if not path.exists() and legacy.exists():
+        with contextlib.suppress(OSError):
+            os.replace(legacy, path)
+    return path
 
 
 def _read_index(scope_key: str) -> dict:
-    """note_id -> {title, hook}. Empty if MEMORY.md is missing."""
+    """note_id -> {title, hook}. Empty if the index file is missing."""
     p = _index_path(scope_key)
     out: dict = {}
     if not p.exists():
@@ -282,9 +307,9 @@ def _write_index(scope_key: str, entries: dict) -> None:
 
 
 # --- index cap (Claude Code 200-line always-loaded rule) ---------------------
-# The MEMORY.md index is the always-loaded layer: a fresh worker reads it into
-# its stable prefix every turn, and Claude Code loads only the first 200 lines of
-# a MEMORY.md, so an unbounded index silently truncates (and bloats the cached
+# The scope index is the always-loaded layer: a fresh worker reads it into
+# its stable prefix every turn, and an agent harness typically loads only the
+# first 200 lines of one, so an unbounded index silently truncates (and bloats the cached
 # prefix). enforce_index_cap keeps it bounded by demoting the least-recently-
 # referenced notes into a linked archive: their bodies move under an `archive/`
 # subdir (out of the top-level note glob, so they leave the ambient index and the
@@ -297,7 +322,7 @@ _INDEX_HEADER_LINES = 2  # "# Knowledge index" + blank line, per _write_index
 
 
 def enforce_index_cap(scope_key: str, max_lines: int = 200) -> dict:
-    """Bound a scope's MEMORY.md index to ``max_lines`` total lines. When it is
+    """Bound a scope's INDEX.md to ``max_lines`` total lines. When it is
     over, demote the least-recently-referenced notes (oldest file mtime first)
     into the ``archive/`` subdir and catalog them in the ``memory-archive`` note,
     trimming the index so the always-loaded layer stays bounded. Returns
@@ -406,7 +431,7 @@ def _list_notes_cache_key(scope_key: str, d: Path) -> tuple:
 
 
 def list_notes(scope_key: str) -> list[dict]:
-    """[{id, title, hook, updated}] for the scope. Parses MEMORY.md, falls back
+    """[{id, title, hook, updated}] for the scope. Parses INDEX.md, falls back
     to a directory scan for any `<id>.md` the index does not mention."""
     _parse_scope(scope_key)
     d = scope_dir(scope_key)
@@ -430,7 +455,7 @@ def list_notes(scope_key: str) -> list[dict]:
         seen.add(note_id)
     for f in sorted(d.rglob("*.md")):
         rel = f.relative_to(d)
-        if rel.name == "MEMORY.md":
+        if rel.name in (INDEX_FILENAME, _LEGACY_INDEX_FILENAME):
             continue
         parts = rel.parts
         if len(parts) > 1 and parts[0] == "archive":
@@ -787,7 +812,7 @@ def get_note(scope_key: str, note_id: str) -> str | None:
 # last week, and one distilled during compaction were byte-identical on
 # re-entry, so nothing downstream could weigh them differently. Author, reach,
 # and chat ride in an HTML comment on the first line of the body rather than in
-# MEMORY.md: the index line is regex-parsed with an already-optional ` - hook`
+# INDEX.md: the index line is regex-parsed with an already-optional ` - hook`
 # tail, and a second optional tail there would be ambiguous for any hook
 # containing " - ".
 #
@@ -1009,7 +1034,7 @@ def _put_note_sync(scope_key: str, note_id: str, title: str, content: str, hook:
     """Write a note (source of truth on disk).
 
     1. write `<note-id>.md` atomically,
-    2. upsert the MEMORY.md index line (kept sorted).
+    2. upsert the INDEX.md index line (kept sorted).
     Returns {scope, note_id}.
 
     `author` is an origin string (see services/origin): "operator", "self",
@@ -1179,7 +1204,7 @@ async def delete_note(scope_key: str, note_id: str) -> dict:
 # operator-readable and operator-editable, which is the definition of a note
 # here. This installation is already reducing eleven parallel memory
 # substrates; adding a twelfth to fix a memory problem would be the joke
-# writing itself. So it is `<scope>/working-state.md`, indexed in MEMORY.md,
+# writing itself. So it is `<scope>/working-state.md`, indexed in INDEX.md,
 # rendered by the Memory page, searchable, backlinked, versioned -- all of it
 # for free, because it went into the store that already exists.
 #

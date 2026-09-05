@@ -324,17 +324,18 @@ class TestB5TheGpuNoteIsTrue:
         is injected into every turn's KNOWLEDGE block -- so a corrected note
         with a stale index line still ships the falsehood.
 
-        Searches every MEMORY.md under the knowledge root for the same reason
-        `_body` searches for the note: the layer is scope-partitioned now, so
-        the index that carries this line is `<scope>/MEMORY.md`, not the flat
-        root file this used to read. `next()` over the wrong file raised
+        Searches every scope index under the knowledge root for the same
+        reason `_body` searches for the note: the layer is scope-partitioned
+        now, so the index that carries this line is `<scope>/INDEX.md`, not the
+        flat root file this used to read. `next()` over the wrong file raised
         StopIteration, which is an unreadable failure for "the line is not
         here".
         """
+        from services import knowledge
         from wsplatform import paths
 
         root = paths.workshop_root() / "shared" / "knowledge"
-        lines = [ln for index in sorted(root.rglob("MEMORY.md"))
+        lines = [ln for index in sorted(root.rglob(knowledge.INDEX_FILENAME))
                  for ln in index.read_text().splitlines()
                  if self.NOTE_ID in ln] if root.is_dir() else []
         if not lines:

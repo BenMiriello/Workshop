@@ -26,7 +26,7 @@ The write path is the mem0/ACE shape the design (Section 6) settled on:
           times) in the scope's learnings, recording a skill-proposal note for
           the operator to confirm. Skill CREATION stays operator-confirmed: the
           keeper drafts, it never auto-activates a skill.
-  Cap     the scope MEMORY.md index (Claude Code 200-line rule) via
+  Cap     the scope INDEX.md (200-line always-loaded rule) via
           knowledge.enforce_index_cap.
   Advance the watermark on success.
 

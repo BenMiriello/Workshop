@@ -14,7 +14,7 @@ links to) the effects it actually had.
 These tests redirect `knowledge._root`, NOT just `ownership._RUNTIME`. The
 `workshop` scope resolves through `paths.workshop_root()`, so a test that
 redirects only the runtime writes real notes into the operator's tracked
-`shared/knowledge/` and pollutes MEMORY.md. That happened while writing this
+`shared/knowledge/` and pollutes the scope index. That happened while writing this
 file; the fixture is the fix.
 """
 from __future__ import annotations
@@ -41,7 +41,8 @@ NOTE_REPLY = (
 
 
 def _notes(store):
-    return sorted(p.name for p in store.glob("*.md") if p.name != "MEMORY.md")
+    return sorted(p.name for p in store.glob("*.md")
+                  if p.name != knowledge.INDEX_FILENAME)
 
 
 def test_applying_twice_writes_twice(store):

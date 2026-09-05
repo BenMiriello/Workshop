@@ -18,7 +18,7 @@ into source dirs.
 ## Tier 2: durable scoped Notes (the knowledge store)
 
 Durable scoped facts and running notes go into the knowledge Notes store
-(`services/knowledge.py`) at the right scope. Per-scope `MEMORY.md` index plus one
+(`services/knowledge.py`) at the right scope. Per-scope `INDEX.md` index plus one
 `<id>.md` per note, injected into that scope's chat context and searchable on recall.
 
 - `workshop` -> shared cross-cutting facts (`shared/knowledge/`, committed)
