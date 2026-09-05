@@ -12,6 +12,7 @@ See ADR-008 and docs/projects-hub.md (in clawd-house/docs).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -26,10 +27,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from routes.api_models import (AgentLimits, AgentTrigger, AwaitingRow, ContentOut, FileOut, Job, OkOut,
                                QueueCounts, TreeOut)
+from services import apps as apps_svc
 from services import tasks, jobs, triggers
 from wsplatform import paths
 from wsplatform.http import DEFAULT_PAGE, MAX_PAGE
 from services import scope_owner
+
+log = logging.getLogger("workshop.projects")
 
 router = APIRouter()
 
@@ -83,8 +87,27 @@ def _load_registry() -> dict:
 
 
 def _save_registry(data: dict) -> None:
+    """Write the projects registry, then carry the change into the `app` table.
+
+    THE CHOKEPOINT ON PURPOSE. Every write to this file goes through here (this
+    module's own eight call sites plus `services/registry.py` and
+    `routes/agents.py`), so this is the one place that can guarantee the app
+    roster does not fall behind the file. A project created, renamed or retired
+    without it left `app` holding the roster as of whenever somebody last ran
+    `db/app_backfill --apply`, and nothing reported the gap because a stale
+    roster looks exactly like a current one. See
+    `services.apps.reconcile_from_registries`.
+
+    Reconciliation never raises and never blocks the write: the file is the
+    thing being written, the table follows it, and an instance with no database
+    is still a working instance.
+    """
     _registry().parent.mkdir(parents=True, exist_ok=True)
     _registry().write_text(json.dumps(data, indent=2) + "\n")
+    result = apps_svc.reconcile_from_registries()
+    if not result.get("ok"):
+        log.info("projects registry written; app table not reconciled: %s",
+                 result.get("reason"))
 
 
 def _ensure_project(slug: str) -> dict:

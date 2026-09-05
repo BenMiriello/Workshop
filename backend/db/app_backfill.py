@@ -41,7 +41,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from db.engine import owner_session, tenant_session  # noqa: E402
-from services import app_links, app_registry  # noqa: E402
+from services import app_links  # noqa: E402
+from services import apps as apps_svc  # noqa: E402
 
 
 def _org_id(s) -> str | None:
@@ -49,38 +50,6 @@ def _org_id(s) -> str | None:
         "SELECT id FROM organization WHERE slug = 'workshop' "
         "AND deleted_at IS NULL")).one_or_none()
     return None if row is None else str(row[0])
-
-
-def _display_name(slug: str, project_title: str | None) -> str:
-    """The card title if the catalog has one, else the project's own title,
-    else a title-cased slug. Never a hardcoded per-app string -- every branch
-    here reads a name FROM something, and the fallback is generic string
-    manipulation, not a lookup table of app names."""
-    spec = app_registry.BUILTIN_APPS.get(slug)
-    if spec is not None and spec.card and spec.card.get("title"):
-        return str(spec.card["title"])
-    if project_title and project_title != slug:
-        return project_title
-    return slug.replace("-", " ").replace("_", " ").title()
-
-
-def _icon(slug: str, project_icon: str | None = None) -> str | None:
-    """The catalog card's icon if this app ships one, else the icon the linked
-    project DECLARES for itself.
-
-    The second branch is the whole point. `_icon` used to read the built-in
-    catalog and nothing else, so an app that does not ship UI in this bundle was
-    iconless BY CONSTRUCTION: no declaration could ever reach it, and the
-    frontend fell back to a two-letter monogram among a row of glyphs. That is
-    the platform refusing to read a declaration, which is the same failure as
-    the platform hardcoding one.
-
-    Still names no app. Both branches read a value FROM something."""
-    spec = app_registry.BUILTIN_APPS.get(slug)
-    if spec is not None and spec.card and spec.card.get("icon"):
-        return str(spec.card["icon"])
-    icon = (project_icon or "").strip()
-    return icon or None
 
 
 def plan() -> dict:
@@ -94,39 +63,33 @@ def plan() -> dict:
 
 
 def _backfill_apps(s) -> dict[str, str]:
-    """Upsert one `app` row per roster slug. Returns slug -> app_id."""
+    """Upsert one `app` row per roster slug. Returns slug -> app_id.
+
+    The column values come from `services.apps.desired_rows()`, which is the one
+    definition of what the registry merge means -- so this CLI and the live
+    reconcile (`services.apps.reconcile`, which runs on the `/apps` read and
+    after every projects-registry write) cannot drift apart.
+    """
     from db import app_repo
-    from wsplatform import dev_mode
 
     org_id = _org_id(s)
     if org_id is None:
         raise RuntimeError(
             "no 'workshop' organization; run db/backfill.py first")
 
-    roster = app_links.load()
+    # `dev_only` rides in `want`, from the project's own `self: true`
+    # declaration. The installation's own source gets a row like any other app,
+    # and the catalog filter hides it on a production install; it does NOT get
+    # left out of the table, because an absent row cannot own chats, notes or
+    # tickets, which is what left its pages empty.
+    #
+    # This used to be a second, hardcoded upsert spelling the slug, forced by
+    # app_links excluding that same slug from the roster by name. Both literals
+    # are gone: the registry declares it and both sides read the declaration
+    # (CLAUDE.md: an app declares what it is).
     ids: dict[str, str] = {}
-    for slug in app_links.all_app_slugs():
-        project_slug = app_links.linked_project_slug(slug)
-        project_title = None
-        project_icon = None
-        if project_slug:
-            entry = roster.projects.get(project_slug) or {}
-            project_title = entry.get("title")
-            project_icon = entry.get("icon")
-        # `dev_only` from the project's own `self: true` declaration. The
-        # installation's own source gets a row like any other app, and the
-        # catalog filter hides it on a production install; it does NOT get
-        # left out of the table, because an absent row cannot own chats,
-        # notes or tickets, which is what left its pages empty.
-        #
-        # This used to be a second, hardcoded upsert spelling the slug, forced
-        # by app_links excluding that same slug from the roster by name. Both
-        # literals are gone: the registry declares it and both sides read the
-        # declaration (CLAUDE.md: an app declares what it is).
-        row = app_repo.upsert_app(
-            s, org_id, slug=slug, name=_display_name(slug, project_title),
-            icon=_icon(slug, project_icon), project_slug=project_slug,
-            dev_only=app_links.is_self_slug(slug))
+    for slug, want in apps_svc.desired_rows().items():
+        row = app_repo.upsert_app(s, org_id, slug=slug, **want)
         ids[slug] = row["id"]
 
     return ids

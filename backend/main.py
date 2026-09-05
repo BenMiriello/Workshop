@@ -197,6 +197,14 @@ async def lifespan(app: FastAPI):
             log.info("chat turn rename: %s", renamed)
     except Exception as e:
         log.error("chat turn rename failed at startup: %s", e)
+    # NO APP-REGISTRY RECONCILE HERE, deliberately. The `app` table is kept in
+    # step with the two file registries by `services.apps.reconcile_from_registries`,
+    # which needs a TENANT, and a tenant is resolved from the acting owner --
+    # which startup does not have. It runs on the `/apps` read and after every
+    # projects-registry write instead, both of which do. `owner_session` would
+    # supply a tenant without one, and is exactly the trap `services/tenancy`
+    # records falling into: the serving process does not hold that credential,
+    # so it raises in production and passes under pytest.
     try:
         from services import build_streaming
         build_streaming.reattach_running_turns()

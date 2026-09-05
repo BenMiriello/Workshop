@@ -169,7 +169,18 @@ def _unavailable() -> HTTPException:
 
 @router.get("", response_model=AppCollection, response_model_exclude_unset=True)
 async def list_apps(kind: str | None = None, archived: bool | None = None) -> dict:
+    """The roster, from the table, with the table brought level with the two
+    file registries first.
+
+    THE RECONCILE IS HERE AND NOT IN THE SERVICE because it is a
+    request-boundary concern: it needs the acting tenant, and it must not fire
+    for every internal `apps_svc.list_apps()` call. In the steady state it costs
+    one SELECT and writes nothing; when an app has just been installed or a
+    project just created, it is the difference between listing it and not. It
+    never raises -- see `services.apps.reconcile_from_registries`.
+    """
     try:
+        apps_svc.reconcile_from_registries()
         return {"apps": apps_svc.list_apps(kind=kind, archived=archived)}
     except apps_svc.AppsUnavailable:
         raise _unavailable()

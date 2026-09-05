@@ -27,12 +27,13 @@ import logging
 from datetime import timezone
 from typing import Any
 
-from services import tenancy
+from services import app_links, app_registry, tenancy
 
 log = logging.getLogger("workshop.apps")
 
 __all__ = [
     "AppsUnavailable", "AppNotFound", "SlugTaken",
+    "reconcile_from_registries",
     "list_apps", "get_app", "get_app_by_slug", "create_app", "update_app",
     "delete_app", "chats_for_app", "tickets_for_app", "notes_for_app",
     "runs_for_app", "agents_for_app",
@@ -82,6 +83,190 @@ def _shape(row: dict) -> dict:
         "created_at": _iso(row.get("created_at")),
         "updated_at": _iso(row.get("updated_at")),
     }
+
+
+# --- keeping the table in step with the file registries ----------------------
+
+def _display_name(slug: str, project_title: str | None) -> str:
+    """The card title if the catalog ships one, else the project's own title,
+    else a title-cased slug. Never a hardcoded per-app string -- every branch
+    reads a name FROM something, and the fallback is generic string
+    manipulation, not a lookup table of app names."""
+    spec = app_registry.BUILTIN_APPS.get(slug)
+    if spec is not None and spec.card and spec.card.get("title"):
+        return str(spec.card["title"])
+    if project_title and project_title != slug:
+        return project_title
+    return slug.replace("-", " ").replace("_", " ").title()
+
+
+def _icon(slug: str, project_icon: str | None = None) -> str | None:
+    """The catalog card's icon if this app ships one, else the icon the linked
+    project DECLARES for itself.
+
+    The second branch is the whole point. This read the built-in catalog and
+    nothing else, so an app that does not ship UI in this bundle was iconless BY
+    CONSTRUCTION: no declaration could ever reach it, and the frontend fell back
+    to a two-letter monogram among a row of glyphs. That is the platform
+    refusing to read a declaration, which is the same failure as the platform
+    hardcoding one.
+
+    Still names no app. Both branches read a value FROM something."""
+    spec = app_registry.BUILTIN_APPS.get(slug)
+    if spec is not None and spec.card and spec.card.get("icon"):
+        return str(spec.card["icon"])
+    icon = (project_icon or "").strip()
+    return icon or None
+
+
+def desired_rows() -> dict[str, dict]:
+    """slug -> the `app` row the registries say should exist, right now.
+
+    The ONE place the registry merge becomes column values, so the hand-run
+    backfill (`db/app_backfill.py`, which imports this) and the live reconcile
+    below cannot disagree about what a row should hold. Reads only files;
+    touches no database.
+    """
+    roster = app_links.load()
+    out: dict[str, dict] = {}
+    for slug in app_links.all_app_slugs():
+        project_slug = app_links.linked_project_slug(slug)
+        entry = (roster.projects.get(project_slug) or {}) if project_slug else {}
+        out[slug] = {
+            "name": _display_name(slug, entry.get("title")),
+            "icon": _icon(slug, entry.get("icon")),
+            "project_slug": project_slug,
+            "dev_only": app_links.is_self_slug(slug),
+        }
+    return out
+
+
+def reconcile(org_id: str) -> dict:
+    """Bring the `app` table into step with the two file registries, and ARCHIVE
+    the rows the registries no longer name.
+
+    WRITES ONLY WHAT DIFFERS, because this runs on a read path (`list_apps`) as
+    well as after every projects-registry write. The steady state is one SELECT
+    and no UPDATE.
+
+    TAKES `org_id` RATHER THAN RESOLVING IT. `owner_session` is the admin
+    connection and the serving process deliberately does not hold it -- the same
+    trap `services/tenancy.org_for_owner` records having fallen into, where
+    every resolution raised in the running backend and passed under pytest. The
+    caller supplies the tenant it is already acting for.
+
+    A DEPARTED APP IS ARCHIVED, NOT DELETED. `archived_at` is set instead of the
+    row being removed, because the row is what the app's chats and tickets are
+    keyed to (`chat_thread.app_id` FKs to it); dropping it would orphan them,
+    and re-adding the app later would mint a NEW id, which is exactly the
+    rename-is-a-fork bug the surrogate key exists to prevent. An app that comes
+    back is un-archived by the next reconcile and keeps everything it owned.
+
+    IT NEVER OVERWRITES A LABEL ON A ROW THAT ALREADY EXISTS. `slug`, `name` and
+    `icon` are the user's to set (`PATCH /apps/{id}`, design doc sec 5.1: "a
+    rename is a PATCH and not a migration"), and this loop runs on a read path.
+    A reconcile that re-derived them would silently undo the rename on the very
+    next request -- and, worse, it matches an existing row by the app's REGISTRY
+    LINK (`project_slug`) before its slug, so a renamed app is recognised as
+    itself rather than treated as a departure plus an arrival, which would
+    archive its chats' owner and mint a new id for the same app. What a
+    reconcile does write on an existing row is exactly the two DERIVED facts:
+    the registry link and `dev_only`, plus a label that is still unset.
+
+    `python -m db.app_backfill --apply` remains the force-resync: it upserts
+    every field from the registries. That is the deliberate, hand-run sledge-
+    hammer; this is the live loop, and the live loop is conservative.
+    """
+    from datetime import datetime
+
+    from db import app_repo
+    from db.engine import tenant_session
+
+    desired = desired_rows()
+    now = datetime.now(timezone.utc)
+    created: list[str] = []
+    written: list[str] = []
+    archived: list[str] = []
+    restored: list[str] = []
+
+    with tenant_session(org_id) as s:
+        rows = app_repo.list_apps(s, org_id, dev_only=None)
+        by_slug = {r["slug"]: r for r in rows}
+        by_project = {r["project_slug"]: r for r in rows if r.get("project_slug")}
+
+        matched: set[str] = set()
+        for slug, want in desired.items():
+            row = by_project.get(want["project_slug"]) if want["project_slug"] else None
+            if row is None:
+                row = by_slug.get(slug)
+            if row is None:
+                app_repo.upsert_app(s, org_id, slug=slug, **want)
+                created.append(slug)
+                continue
+            matched.add(row["slug"])
+            fields = {k: want[k] for k in ("project_slug", "dev_only")
+                      if row.get(k) != want[k]}
+            # A label the user has never set is not a label the user set.
+            for k in ("name", "icon"):
+                if not row.get(k) and want[k]:
+                    fields[k] = want[k]
+            if fields:
+                app_repo.update_app(s, org_id, row["id"], **fields)
+                written.append(row["slug"])
+            if row.get("archived_at"):
+                app_repo.update_app(s, org_id, row["id"], archived_at=None)
+                restored.append(row["slug"])
+
+        for slug, row in by_slug.items():
+            if slug not in matched and not row.get("archived_at"):
+                app_repo.update_app(s, org_id, row["id"], archived_at=now)
+                archived.append(slug)
+
+    return {"apps": sorted(desired), "count": len(desired),
+            "created": sorted(created), "written": sorted(written),
+            "archived": sorted(archived), "restored": sorted(restored)}
+
+
+def reconcile_from_registries() -> dict:
+    """Re-derive the `app` roster from the two file registries. Never raises.
+
+    THE ONE REGISTRY IS THE TABLE; the two files are still where an install and
+    a project are WRITTEN, so something has to carry a change from them into it.
+    Until this existed nothing did: the rows were written by a person running
+    `python -m db.app_backfill --apply` and by nothing else, so an app installed
+    or a project created after that run had no row, `/apps` did not list it, and
+    its chats, tickets and notes had no owner -- with no error anywhere, because
+    a stale roster is shaped exactly like a current one. That is the same defect
+    as a silent empty read, only slower to see.
+
+    Called from `GET /apps` (so a read is never served off a stale roster) and
+    from `routes/projects._save_registry` (so a project write lands in the table
+    immediately). Both run inside a request, which is what supplies the tenant:
+    `owner_session` is the ADMIN connection and the serving process
+    deliberately does not hold it, so there is no owner-less path to reconcile
+    on -- see the same lesson recorded in `services/tenancy.org_for_owner`.
+
+    Returns `{"ok": False, "reason": ...}` rather than raising when there is no
+    relational store, no acting owner, or the write fails: an instance with no
+    database is a supported instance, and reconciliation is a background
+    correctness concern that must never turn a working read into an error.
+    """
+    if not tenancy.configured() or not tenancy.available():
+        return {"ok": False, "reason": "no relational store configured/reachable"}
+    try:
+        org_id, _ = tenancy.org_and_user()
+    except Exception as e:
+        return {"ok": False, "reason": f"no acting tenant: {type(e).__name__}: {e}"}
+    try:
+        result = reconcile(str(org_id))
+    except Exception as e:
+        log.warning("app registry reconcile failed: %s", e)
+        return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+    if any(result.get(k) for k in ("created", "written", "archived", "restored")):
+        log.info("app registry reconciled: created %s; updated %s; archived %s; "
+                 "restored %s", result["created"], result["written"],
+                 result["archived"], result["restored"])
+    return {"ok": True, **result}
 
 
 # --- the app entity itself ---------------------------------------------------
@@ -137,7 +322,6 @@ def create_app(*, slug: str, name: str, icon: str | None = None,
     to derive from)."""
     from db import app_repo
     from db.engine import tenant_session
-    from services import app_links
 
     org_id, _ = _require_db()
     if project_slug is None:
@@ -341,7 +525,7 @@ def runs_for_app(app_id: str, *, limit: int = 50) -> list[dict]:
     project (runs are `project_slug`-keyed files -- see the design doc's
     stage-A instruction to use the app<->project link rather than a second
     mapping). Empty when unlinked, same reasoning as `tickets_for_app`."""
-    from services import app_links, jobs
+    from services import jobs
 
     app = _app_or_404(app_id)
     project_slug = app_links.linked_project_slug(app["slug"])

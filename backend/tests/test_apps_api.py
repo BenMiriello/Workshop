@@ -248,3 +248,72 @@ class TestLinkedVsUnlinked:
 async def _put_note(scope_key: str) -> None:
     from services import knowledge
     await knowledge.put_note(scope_key, "readme", "Readme", "Some content.")
+
+
+class TestTheTableTracksTheFileRegistries:
+    """`GET /apps` reconciles the table from the two file registries first.
+
+    Before this, `app` rows were written by a person running
+    `python -m db.app_backfill --apply` and by nothing else: an app installed or
+    a project created after that run simply had no row, `/apps` did not list it,
+    and nothing anywhere reported the gap -- a stale roster is shaped exactly
+    like a current one.
+    """
+
+    def _registries(self, tmp_path, installed=(), projects=None):
+        import json as _json
+        (tmp_path / ".runtime").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "installed-apps.json").write_text(
+            _json.dumps({"installed": list(installed)}), encoding="utf-8")
+        (tmp_path / ".runtime" / "projects.json").write_text(
+            _json.dumps({"projects": projects or {}}), encoding="utf-8")
+
+    def test_a_project_created_after_the_last_backfill_is_listed(
+            self, client, tmp_path):
+        self._registries(tmp_path, projects={"newly-made": {"title": "Newly Made"}})
+        slugs = [a["slug"] for a in client.get("/apps").json()["apps"]]
+        assert "newly-made" in slugs
+
+    def test_a_departed_app_is_archived_and_keeps_its_id(self, client, tmp_path):
+        """Archived, never deleted: the row is what `chat_thread.app_id` points
+        at, and re-adding the app must not mint a second identity for it."""
+        self._registries(tmp_path, projects={"here-then-gone": {"title": "Here"}})
+        first = [a for a in client.get("/apps").json()["apps"]
+                 if a["slug"] == "here-then-gone"][0]
+
+        self._registries(tmp_path, projects={})
+        again = [a for a in client.get("/apps?archived=true").json()["apps"]
+                 if a["slug"] == "here-then-gone"]
+        assert again and again[0]["archived_at"], "should be archived, not gone"
+        assert again[0]["id"] == first["id"]
+
+        # ...and coming back restores the SAME row.
+        self._registries(tmp_path, projects={"here-then-gone": {"title": "Here"}})
+        back = [a for a in client.get("/apps").json()["apps"]
+                if a["slug"] == "here-then-gone"][0]
+        assert back["id"] == first["id"]
+        assert back["archived_at"] is None
+
+    def test_a_renamed_app_is_not_re_derived_back(self, client, tmp_path):
+        """"A slug is a label, never an identity" (design doc sec 4.1), so a
+        rename is a PATCH. A reconcile that re-derived the slug from the
+        registry would undo it on the very next request, and matching by slug
+        alone would read the rename as a departure plus an arrival -- archiving
+        the row the app's chats point at and minting a new id for the same app.
+        """
+        self._registries(tmp_path, projects={"old-name": {"title": "Old Name"}})
+        before = [a for a in client.get("/apps").json()["apps"]
+                  if a["slug"] == "old-name"][0]
+
+        renamed = client.patch(f"/apps/{before['id']}",
+                               json={"slug": "new-name", "name": "New Name"})
+        assert renamed.status_code == 200, renamed.text
+
+        after = client.get("/apps").json()["apps"]
+        rows = [a for a in after if a["id"] == before["id"]]
+        assert rows, "the renamed app must survive the reconcile"
+        assert rows[0]["slug"] == "new-name"
+        assert rows[0]["name"] == "New Name"
+        assert rows[0]["archived_at"] is None
+        assert not [a for a in after if a["slug"] == "old-name"], \
+            "the registry slug must not resurrect as a second row"
