@@ -26,6 +26,7 @@ import { Boxes } from "lucide-react";
 import { Card, Prop, Props, SectionLabel, StateBlock, Tag, catFor } from "@workshop/ui";
 
 import AutonomyPanel from "../../../components/AutonomyPanel";
+import RepositoryPanel from "../../../components/RepositoryPanel";
 import AppServicesPanel from "../../../components/AppServicesPanel";
 import EnvironmentPanel from "../../../components/EnvironmentPanel";
 import type { AppRecord } from "../../../lib/apps";
@@ -65,6 +66,11 @@ function OverviewBody({ app }: { app: AppRecord }) {
         </Card>
       </section>
 
+      {/* The repository connection, ticket d12a0332. `POST /projects/<slug>/
+          connect-github` had been live with no caller since ProjectDetail was
+          deleted; this is the surface that half of the ticket asked for. The
+          brief still has no home here, which is the ticket's other half. */}
+      <RepositoryPanel slug={slug} />
       {/* The autonomy brake. It used to sit in two places (here and the top of
           the Deploys page); the Deploys page is gone, so this is the one. */}
       <AutonomyPanel slug={slug} />

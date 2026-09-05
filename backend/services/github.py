@@ -92,6 +92,28 @@ def repo_base_name(slug: str, scratch: bool) -> str:
     return f"workshop-{slug}" if scratch else slug
 
 
+def _env() -> dict:
+    """The environment every `gh` and `git` call here runs in.
+
+    It carries the GitHub account the operator connected in Settings: `GH_TOKEN`
+    for `gh`, and an `http.extraHeader` for `git`, neither of which touches argv
+    or `.git/config`. Before this, every call in this module depended on the host
+    user having run `gh auth login` at some point, which is a credential on disk
+    that nobody can fix from the product. See `services/github_identity.py`.
+
+    Guarded and falling back to the ambient environment, because these helpers
+    also run from sweeps and CLIs where no owner is pinned. An unauthenticated
+    `gh` reports "not signed in", which is a workable answer; a raised
+    OwnerUnset out of an environment builder is not.
+    """
+    try:
+        from services import github_identity
+
+        return github_identity.gh_env(base=github_identity.git_env())
+    except Exception:
+        return dict(os.environ)
+
+
 def _run(args: list[str], *, cwd: str | None = None, check: bool = True,
          timeout: int = 120) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -100,6 +122,7 @@ def _run(args: list[str], *, cwd: str | None = None, check: bool = True,
         capture_output=True,
         text=True,
         check=check,
+        env=_env(),
         timeout=timeout,
     )
 
@@ -113,7 +136,7 @@ def _repo_exists(owner: str, name: str) -> bool:
     """
     r = subprocess.run(
         ["gh", "repo", "view", f"{owner}/{name}"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, env=_env(), timeout=60,
     )
     if r.returncode == 0:
         return True
@@ -144,7 +167,7 @@ def _default_branch(owner: str, name: str) -> str:
     r = subprocess.run(
         ["gh", "repo", "view", f"{owner}/{name}",
          "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, env=_env(), timeout=60,
     )
     b = (r.stdout or "").strip()
     return b or "main"
@@ -207,7 +230,7 @@ def bind_repo(dir: str, remote_url: str) -> dict:
     # Point origin at the remote (add, or reset if one already exists).
     existing = subprocess.run(
         ["git", "-C", dir, "remote", "get-url", "origin"],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True, text=True, env=_env(), timeout=15,
     )
     verb = "set-url" if existing.returncode == 0 else "add"
     try:
@@ -220,7 +243,7 @@ def bind_repo(dir: str, remote_url: str) -> dict:
     # Resolve default branch from the remote HEAD, falling back to gh, then main.
     head = subprocess.run(
         ["git", "-C", dir, "symbolic-ref", "refs/remotes/origin/HEAD"],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True, text=True, env=_env(), timeout=15,
     )
     default_branch = ""
     if head.returncode == 0:
@@ -281,7 +304,7 @@ def merge_pr(dir: str, head: str, base: str) -> dict:
     _run(["git", "-C", dir, "checkout", base], timeout=30, check=False)
     ff = subprocess.run(
         ["git", "-C", dir, "merge", "--ff-only", f"origin/{base}"],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, env=_env(), timeout=30,
     )
     return {
         "ok": True,
@@ -299,7 +322,7 @@ def enable_rerere(dir: str) -> None:
     """
     subprocess.run(
         ["git", "-C", dir, "config", "rerere.enabled", "true"],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True, text=True, env=_env(), timeout=15,
     )
 
 
@@ -317,7 +340,7 @@ def rebase_onto(dir: str, base: str) -> dict:
     reject_blocked(base)
     fetch = subprocess.run(
         ["git", "-C", dir, "fetch", "origin", base],
-        capture_output=True, text=True, timeout=180,
+        capture_output=True, text=True, env=_env(), timeout=180,
     )
     if fetch.returncode != 0:
         detail = ((fetch.stderr or "") + (fetch.stdout or "")).strip()[:300]
@@ -325,7 +348,7 @@ def rebase_onto(dir: str, base: str) -> dict:
 
     rebase = subprocess.run(
         ["git", "-C", dir, "rebase", f"origin/{base}"],
-        capture_output=True, text=True, timeout=180,
+        capture_output=True, text=True, env=_env(), timeout=180,
     )
     if rebase.returncode == 0:
         return {"ok": True, "conflict": False, "detail": ""}
@@ -335,7 +358,7 @@ def rebase_onto(dir: str, base: str) -> dict:
     # again, then report the conflict for the caller to park on.
     subprocess.run(
         ["git", "-C", dir, "rebase", "--abort"],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, env=_env(), timeout=30,
     )
     return {"ok": False, "conflict": True, "detail": detail or "rebase conflict"}
 
@@ -351,7 +374,7 @@ def list_open_prs(remote: str) -> list[dict]:
     r = subprocess.run(
         ["gh", "pr", "list", "--repo", remote,
          "--json", "number,title,headRefName,url,state,isDraft"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, env=_env(), timeout=60,
     )
     if r.returncode != 0:
         return []
@@ -372,7 +395,7 @@ def ahead_behind(dir: str, base: str) -> dict:
     r = subprocess.run(
         ["git", "-C", dir, "rev-list", "--left-right", "--count",
          f"origin/{base}...HEAD"],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, env=_env(), timeout=30,
     )
     if r.returncode != 0:
         return {"ahead": 0, "behind": 0}
@@ -394,6 +417,6 @@ def is_merged(dir: str, branch: str, base: str) -> bool:
     """
     r = subprocess.run(
         ["git", "-C", dir, "merge-base", "--is-ancestor", branch, f"origin/{base}"],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, env=_env(), timeout=30,
     )
     return r.returncode == 0

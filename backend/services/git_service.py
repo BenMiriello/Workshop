@@ -67,14 +67,33 @@ class GitError(RuntimeError):
 
 
 def git_env() -> dict:
-    """Ambient environment plus the neutral committer identity."""
-    return {
+    """Ambient environment, the neutral committer identity, and the connected
+    GitHub account's credential when there is one.
+
+    The credential is layered in HERE rather than at the push call site, because
+    fetch, ls-remote and push all need it and a private remote makes even a read
+    fail without it. It arrives as an `http.extraHeader` through `GIT_CONFIG_*`,
+    so the token never reaches argv or `.git/config`; see
+    `services/github_identity.git_env`. With no account connected this is
+    exactly what it always was.
+
+    Guarded, because git runs on paths that have no owner pinned (a background
+    sweep, a CLI) and an unauthenticated git command is a far better outcome
+    there than a raised OwnerUnset out of a helper.
+    """
+    env = {
         **os.environ,
         "GIT_AUTHOR_NAME": IDENTITY_NAME,
         "GIT_AUTHOR_EMAIL": IDENTITY_EMAIL,
         "GIT_COMMITTER_NAME": IDENTITY_NAME,
         "GIT_COMMITTER_EMAIL": IDENTITY_EMAIL,
     }
+    try:
+        from services import github_identity
+
+        return github_identity.git_env(base=env)
+    except Exception:
+        return env
 
 
 def _run(repo: Path | str, args: list[str], *, check: bool = True,

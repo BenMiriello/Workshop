@@ -20,6 +20,7 @@ from routes import agents, projects, base_apps, relay, services, events, jobs, p
 from routes import files as files_routes
 from routes import mcp as mcp_routes
 from routes import model_providers_routes
+from routes import github_identity_routes
 from routes import tools as tools_routes
 from routes import stores as stores_routes
 from routes import apps as apps_routes
@@ -458,6 +459,12 @@ app.include_router(tools_routes.router, dependencies=_OPERATOR)
 # Stage 1: list, add, remove. The key is stored encrypted and never returned
 # (docs/platform-redesign/providers-credentials-and-limits-2026-08-23.md §3b).
 app.include_router(model_providers_routes.router, dependencies=_OPERATOR)
+# Settings -> Apps: the GitHub account this installation pushes and opens pull
+# requests as. Beside the model keys because it is the same kind of thing, an
+# outbound credential the operator registers once, stored in their own runtime
+# partition and never returned
+# (backend/services/github_identity.py says why it exists).
+app.include_router(github_identity_routes.router, dependencies=_OPERATOR)
 
 # Platform per-user primitives — owner-scoped to the authenticated user. These
 # are the shell (chat, voice, push), NOT apps: apps build on them, so they mount

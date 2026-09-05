@@ -31,6 +31,7 @@ import {
 } from "../lib/memoryPolicy";
 import AutonomyControls from "../components/AutonomyControls";
 import InstalledApps from "./settings/InstalledApps";
+import GitHubAccount from "./settings/GitHubAccount";
 import Trackers from "./settings/Trackers";
 import CustomInstructions from "./settings/CustomInstructions";
 
@@ -112,9 +113,15 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
           which is the question this page already answers; it had a row of its
           own because it arrived on its own, not because it is a different
           kind of thing. */}
+      {/* GITHUB FOLDS IN HERE for the same reason trackers did. The account
+          this installation pushes and opens pull requests as is a thing it is
+          connected to, and it belongs beside the tracker that spends the same
+          kind of credential. It goes ABOVE the tracker because a tracker
+          connection is one use of a GitHub account and this is the account. */}
       {tab === "apps" && (
         <>
           <InstalledApps />
+          <GitHubAccount />
           <Trackers embedded />
         </>
       )}
