@@ -179,6 +179,34 @@ def set_default_mode(mode: str) -> str:
 # operator asking for "my default" means — a chat that made a choice keeps it.
 
 
+def get_default_model() -> str | None:
+    """The operator's own model default — "which model do my chats use".
+
+    Rung 5 of `services/model_resolution`, below a scope's own declaration and
+    above the deployment default. Stored as a bare id and NOT validated here:
+    which models exist is a function of what providers are configured, and the
+    resolver already skips a rung naming a model this deployment cannot reach.
+    Validating here would mean a model that went away could fail a read."""
+    v = _read_prefs().get("default_model")
+    if not isinstance(v, str):
+        return None
+    return v.strip() or None
+
+
+def set_default_model(model: str | None) -> str | None:
+    """Persist the operator's model default. Empty/None clears it (back to the
+    deployment default). Raises ValueError on a model nothing can reach, because
+    unlike a read this is somebody looking at the control."""
+    from services import llm_providers
+
+    value = (model or "").strip() or None
+    if value is not None and llm_providers.find(value) is None:
+        raise ValueError(
+            f"unknown model {model!r}; pick one of {llm_providers.model_ids()}")
+    _write_pref("default_model", value)
+    return value
+
+
 def get_default_effort() -> str | None:
     """The operator's preferred effort level, or None for "no preference".
 

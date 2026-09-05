@@ -75,42 +75,56 @@ from services import tool_registry as _tool_registry  # noqa: E402
 from services import operator_notify  # noqa: E402
 from wsplatform import paths
 
-PICKABLE_MODELS: list[str] = [
-    _llm.TIER_OPUS_5,     # claude-opus-5
-    _llm.TIER_OPUS,       # claude-opus-4-8
-    _llm.TIER_FABLE,      # claude-fable-5
-    _llm.TIER_SONNET_5,   # claude-sonnet-5
-    _llm.TIER_SONNET,     # claude-sonnet-4-6
-    _llm.TIER_HAIKU,      # claude-haiku-4-5-20251001
-]
+def pickable_models() -> list[str]:
+    """The models this deployment can actually run a turn on, in catalog order.
 
-# Short tier-name aliases accepted from the API alongside the full ids.
+    A FUNCTION AND NOT A LIST, because it is a function of what is configured.
+    It used to be six hardcoded Claude ids, which is correct for exactly one
+    provider and wrong the moment there are two: a model list that cannot shrink
+    when a provider goes away offers the operator a choice that 400s.
+    `services/llm_providers` owns the catalog; this is the composer's view of it.
+    """
+    from services import llm_providers
+
+    return llm_providers.model_ids()
+
+
+# Short tier-name aliases accepted from the API alongside the full ids. Composed
+# from `llm_router.TIERS`, which is where a tier's handle is declared, plus the
+# two spellings the composer has always sent.
 MODEL_ALIASES: dict[str, str] = {
+    **_llm.TIERS,
     "opus5": _llm.TIER_OPUS_5,
-    "opus": _llm.TIER_OPUS,
-    "fable": _llm.TIER_FABLE,
     "sonnet5": _llm.TIER_SONNET_5,
-    "sonnet": _llm.TIER_SONNET,
-    "haiku": _llm.TIER_HAIKU,
 }
 
 
 def normalize_model(value: str | None) -> str | None:
     """Map an incoming model selector value (short tier name OR full id) to a
-    full, pickable model id. Returns None for blank input; raises ValueError if
-    the value isn't one of the three pickable models."""
+    model id this deployment can reach. Returns None for blank input.
+
+    STOPPED BEING A MEMBERSHIP TEST AGAINST A HARDCODED LIST on 2026-09-05: it
+    is now a lookup against the configured providers' catalogs
+    (`services/llm_providers`), which is what lets a second provider add models
+    without editing this function. Still raises for a value nothing can reach,
+    because every caller that wants tolerance already catches it — and the two
+    that want it most (a thread's stored pin, an agent's declared model) now get
+    it from `services/model_resolution` instead of catching by hand.
+    """
     if value is None:
         return None
     v = value.strip()
     if not v:
         return None
-    if v in MODEL_ALIASES:
-        return MODEL_ALIASES[v]
-    if v in PICKABLE_MODELS:
-        return v
+    from services import llm_providers
+
+    candidate = MODEL_ALIASES.get(v, v)
+    info = llm_providers.find(candidate)
+    if info is not None:
+        return info.id
     raise ValueError(
-        f"unknown model {value!r}; pick one of {PICKABLE_MODELS} "
-        f"or a tier name {list(MODEL_ALIASES)}"
+        f"unknown model {value!r}; pick one of {llm_providers.model_ids()} "
+        f"or a tier name {sorted(MODEL_ALIASES)}"
     )
 
 
@@ -1907,10 +1921,27 @@ class ContextProvider:
     # cross-cutting chat without a clear data domain doesn't justify the surface.
     allowed_tools: list[str] = []
     mcp_servers: list[str] = []
-    # Provider default model (full id). Resolution order at call time is:
-    # explicit body.model > thread.model > this default. Assistants default to
-    # the fast tier; builders override to a strong tier (see subclasses).
-    default_model: str = _llm.TIER_HAIKU
+    # WHAT THIS SCOPE DECLARES, and None means it declares nothing.
+    #
+    # This was `default_model: str = _llm.TIER_HAIKU` — a class constant every
+    # scope inherited, which made a scope that had merely never chosen look
+    # exactly like one that had chosen the cheap tier. An inherited constant
+    # answering rung 4 of the resolution order (`services/model_resolution`) is
+    # what would make rung 5, the operator's own default, unreachable: every
+    # scope would have "declared" something above it. A subclass or an app that
+    # genuinely picks a model sets this; everything else falls through.
+    declared_model: str | None = None
+
+    @property
+    def default_model(self) -> str:
+        """What a turn in this scope runs on when nobody picked anything.
+
+        Still a plain attribute to every reader (`describe_provider` returns it
+        and the composer's payload shape is unchanged); it is now DERIVED, so
+        the seed constant lives in one place instead of on four classes."""
+        from services import llm_providers
+
+        return self.declared_model or llm_providers.deployment_default().id
 
     def knowledge_scope(self) -> str:
         """The knowledge scope_key this provider reads/writes (workshop /
@@ -2116,8 +2147,8 @@ class ProjectContextProvider(ContextProvider):
     # signals routes/chat.py to switch into the project-build branch.
     allowed_tools = []
     mcp_servers = []
-    # Builders default to a strong model for codegen quality; opus is selectable.
-    default_model = _llm.TIER_SONNET
+    # Builders DECLARE a strong model for codegen quality; opus is selectable.
+    declared_model = _llm.TIER_SONNET
 
     def __init__(self, slug: str):
         self.slug = slug
@@ -2275,7 +2306,7 @@ class MakerAgentContextProvider(ContextProvider):
     label = "Agent · maker"
     allowed_tools = []
     mcp_servers = []
-    default_model = _llm.TIER_SONNET
+    declared_model = _llm.TIER_SONNET
 
     def __init__(self, slug: str):
         # Defer build_agents import to avoid circulars at module load.
@@ -2344,8 +2375,12 @@ class AssistantAgentContextProvider(ContextProvider):
 
     Reachable for the first time as of thread T2. It was written in July and
     every route to it went through `_promotion_patch`, which rewrote the key that
-    selects it before any read could see it."""
-    default_model = _llm.TIER_HAIKU
+    selects it before any read could see it.
+
+    DECLARES NO MODEL. It used to restate the base class's own constant, which
+    read as a choice and was not one; an agent chat now falls through to the
+    operator's default and then the deployment's, which is the same model today
+    and the right one when either of those changes."""
 
     def __init__(self, slug: str, record: dict):
         self.slug = slug
@@ -2730,13 +2765,14 @@ def _provider_entry(provider: ContextProvider, label: str | None = None) -> dict
     # about vendors and models.
     pref_effort = chat_store.get_default_effort()
     pref_mode = chat_store.get_default_permission_mode()
+    models = pickable_models()
     return {
         "key": provider.key,
         "label": label if label is not None else provider.label,
-        "models": list(PICKABLE_MODELS),
+        "models": models,
         "default_model": provider.default_model,
         "tools_active": tools_active,
-        "model_caps": {m: model_caps.caps_for(m, pref_effort) for m in PICKABLE_MODELS},
+        "model_caps": {m: model_caps.caps_for(m, pref_effort) for m in models},
         # Vendor-level, so it sits beside the models rather than inside each one:
         # a permission mode is a property of the CLI running the turn, not of the
         # model answering it.

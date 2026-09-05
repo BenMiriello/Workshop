@@ -54,7 +54,13 @@ class AppPersona(ContextProvider):
         from services import chat_context as _cc
         self.allowed_tools = list(dict.fromkeys([*d["tools"], *_cc.WORKSHOP_TOOLKIT]))
         self.mcp_servers = list(dict.fromkeys([*d["mcp_servers"], "workshop"]))
-        self.default_model = _llm.tier(d["model"], ContextProvider.default_model)
+        # AN APP DECLARES ITS MODEL OR IT DECLARES NOTHING. `d["model"]` is the
+        # `model:` line in the app's own persona file, which IS the per-app
+        # default rung 4 of `services/model_resolution` reads. An app that names
+        # nothing leaves this None and falls through to the operator's default
+        # and then the deployment's, rather than pinning the seed constant.
+        declared = str(d.get("model") or "").strip()
+        self.declared_model = _llm.TIERS.get(declared.lower(), declared) or None
         self.definition_path = d["definition_path"]
         self._persona = d["persona"]
 

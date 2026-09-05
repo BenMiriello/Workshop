@@ -48,6 +48,7 @@ from services import context_report
 from services import mcp_health
 from services import mcp_registry
 from services import model_caps
+from services import model_resolution
 from services import task_scope
 from services import scope_version
 from services import agent_authority
@@ -231,91 +232,39 @@ class SpawnTask(BaseModel):
     run: bool = False             # file AND run now (open a Job, launch a worker)
 
 
-def _resolve_model(
-    body_model: str | None,
-    thread: dict,
-    provider: chat_context.ContextProvider,
-) -> str:
-    """Resolution order: explicit body.model > thread.model > provider default.
-    Returns a full model id. Raises HTTPException(400) on an invalid body.model."""
+def _choose(t: dict, *, model: str | None = None, effort: str | None = None,
+            permission_mode: str | None = None, agentic: bool = True,
+            ) -> model_resolution.ModelChoice:
+    """THE model/effort/permission-mode decision for a turn on this thread.
+
+    The three ad-hoc chains that used to live here -- `_resolve_model`,
+    `_resolve_effort` and `_resolve_permission_mode`, plus `_agent_effort` three
+    thousand lines down -- are GONE, not wrapped. They are one function in
+    `services/model_resolution` now, in one documented order, and the answer
+    says which rung of that order decided it. This is the route's adapter to it:
+    it turns the resolver's ValueErrors into the 400s this API has always
+    returned for an explicit value it cannot honour.
+    """
+    return _resolve(t, model_resolution.ModelRequest.from_thread(
+        t, model=model, effort=effort, permission_mode=permission_mode,
+        agentic=agentic))
+
+
+def _resolve(t: dict, request: model_resolution.ModelRequest
+             ) -> model_resolution.ModelChoice:
+    """The one call into the resolver, and the one place its ValueError becomes
+    a 400. Both `_choose` (a chat turn) and the agent-mention path go through
+    here, so there is exactly one adapter and not two."""
     try:
-        explicit = chat_context.normalize_model(body_model)
+        return model_resolution.resolve_model(
+            ownership.owner_or_none(), t.get("context_key"), request)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    if explicit:
-        return explicit
-    # thread.model was already normalized when persisted, but normalize again
-    # defensively (tolerate hand-edited thread files).
-    try:
-        stored = chat_context.normalize_model(thread.get("model"))
-    except ValueError:
-        stored = None
-    if stored:
-        return stored
-    return provider.default_model
 
 
-def _resolve_effort(body_effort: str | None, thread: dict, model: str) -> str | None:
-    """Resolution order: explicit body.effort > thread.effort > operator pref >
-    the model's own default (None).
-
-    None means "send no --effort at all", which is the model's own default and
-    byte-identical to the argv a chat spawns today. That matters beyond tidiness:
-    effort is part of the rendered prompt, so emitting it where it was never
-    chosen would cost every untouched chat its prompt-cache prefix.
-
-    Two rules about a level the resolved model doesn't support:
-
-      - from the BODY it is dropped to None, full stop. That is the operator's
-        live click and it wins over every stored tier, even when the win is
-        "fall back to the model default".
-      - from the THREAD or the PREF it is skipped, and the next tier down is
-        consulted. A thread carrying `xhigh` from when it was on Opus should not
-        blank out an operator default of `max` just because Sonnet 4.6 has no
-        `xhigh` rung.
-
-    Raises 400 only for a value that isn't a level at all — and only from the
-    body, since a stored tier the operator cannot see must never fail a turn."""
-    try:
-        explicit = model_caps.normalize_effort(body_effort, model)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    if explicit:
-        return explicit
-    if (body_effort or "").strip():
-        return None
-    for candidate in (thread.get("effort"), chat_store.get_default_effort()):
-        try:
-            level = model_caps.normalize_effort(candidate, model)
-        except ValueError:
-            continue
-        if level:
-            return level
-    return None
-
-
-def _resolve_permission_mode(body_mode: str | None, thread: dict) -> str:
-    """Resolution order: explicit body > thread > operator pref > the platform
-    default.
-
-    Always returns a mode (never None): unlike effort, there is no "let the
-    vendor decide" here — the CLI has its own default and it is not the one this
-    chat has always run at, so the value is made explicit at every spawn.
-
-    The operator pref sits BELOW the thread, so setting a default never reaches
-    into a chat that has chosen for itself; it moves the chats that never did."""
-    try:
-        explicit = model_caps.normalize_permission_mode(body_mode)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    if explicit:
-        return explicit
-    try:
-        stored = model_caps.normalize_permission_mode(thread.get("permission_mode"))
-    except ValueError:
-        stored = None
-    return (stored or chat_store.get_default_permission_mode()
-            or model_caps.DEFAULT_PERMISSION_MODE)
+def _resolve_model(t: dict, model: str | None = None) -> str:
+    """Just the model id, for the readers that want nothing else."""
+    return _choose(t, model=model).model_id
 
 
 def _accepted_mode(value: str | None, field: str = "mode") -> str:
@@ -2339,7 +2288,7 @@ async def thread_context(thread_id: str):
     if t is None:
         raise HTTPException(404, "thread not found")
     provider = chat_context.get_provider(t.get("context_key"))
-    model = _resolve_model(None, t, provider)
+    model = _resolve_model(t)
     stored = t.get("context_tokens")
     measured = int(stored) if isinstance(stored, (int, float)) and stored > 0 else 0
 
@@ -2628,7 +2577,7 @@ async def thread_context_detail(thread_id: str, refresh: bool = False):
     if t is None:
         raise HTTPException(404, "thread not found")
     provider = chat_context.get_provider(t.get("context_key"))
-    model = _resolve_model(None, t, provider)
+    model = _resolve_model(t)
     window = _window_for(model, int(t.get("context_tokens") or 0))
     session = t.get("claude_session")
     base = {
@@ -3273,29 +3222,6 @@ def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None
                                   client_id=client_id)
 
 
-def _agent_effort(rec: dict, slug: str, model: str, chat_effort: str | None) -> str | None:
-    """The effort level a mentioned agent's turn runs at.
-
-    The agent's declared level wins, then the chat's, then the model's own
-    default (None) — and every candidate is checked against THE MODEL THAT WILL
-    ACTUALLY RUN, which may be the agent's rather than the composer's. A level
-    that model has no rung for is skipped rather than passed through: the CLI
-    accepts every level for every model and then ignores the ones the API does
-    not implement, so passing it would be a control that does nothing.
-
-    Tolerant, like the model override beside it: nothing here fails a turn the
-    operator started by addressing an agent."""
-    for candidate in (rec.get("effort"), chat_effort):
-        try:
-            level = model_caps.normalize_effort(candidate, model)
-        except ValueError:
-            log.warning("agent %s: effort %r is not a level; ignoring", slug, candidate)
-            continue
-        if level:
-            return level
-    return None
-
-
 async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict,
                                     content: str, model: str, turn_id: str,
                                     effort: str | None = None,
@@ -3382,37 +3308,32 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
     agent_denied = agent_authority.disallowed_for(
         unattended=agent_authority.is_unattended(rec.get("autonomy")))
 
-    # The agent's OWN model, when its definition pins one. An @mentioned agent
-    # used to run on whatever the composer happened to be set to, so an agent
-    # declared to run on a cheap tier answered on the expensive one and vice
-    # versa, silently, depending on a dropdown that is about the chat's
-    # assistant. The definition is the agent; the composer is the chat.
+    # THE AGENT'S OWN MODEL, EFFORT AND POSTURE, through the one resolver.
     #
-    # Tolerant on the way in: a definition naming a model this build cannot pick
-    # falls back to the composer's rather than failing the turn, because the
-    # operator addressing an agent should get an answer, not a 400 about a file
-    # they may not have written. It is logged so the bad value is findable.
-    if rec.get("model"):
-        try:
-            declared = chat_context.normalize_model(rec.get("model"))
-            if declared:
-                model = declared
-        except ValueError as e:
-            log.warning("agent %s declares a model this build cannot pick (%s); "
-                        "using the chat's model instead", slug, e)
-
-    # The agent's own TURN POSTURE, on the same terms as its model: what the
-    # definition declares wins over the chat, because a reviewer should be able
-    # to be careful inside a conversation that is otherwise on Auto. An agent
-    # that declares nothing changes nothing.
+    # An @mentioned agent used to run on whatever the composer happened to be set
+    # to, so an agent declared to run on a cheap tier answered on the expensive
+    # one and vice versa, silently, depending on a dropdown that is about the
+    # chat's assistant. The definition is the agent; the composer is the chat, so
+    # the declaration sits at rung 3 and outranks the chat's own pins.
     #
-    # Effort is re-normalized against the model settled on JUST ABOVE, not the
-    # chat's. The two can differ (an agent pinning Sonnet 4.6 inside a chat on
-    # Opus 5), and `--effort xhigh` on a model without an xhigh rung is accepted
-    # by the CLI and then quietly ignored — the exact failure model_caps exists
-    # to prevent.
-    effort = _agent_effort(rec, slug, model, effort)
-    permission_mode = rec.get("permission_mode") or permission_mode
+    # Tolerance is the resolver's now, and it is the same tolerance: a definition
+    # naming a model this deployment cannot reach is SKIPPED with a named reason
+    # and the next rung answers, because the operator addressing an agent should
+    # get an answer, not a 400 about a file they may not have written.
+    #
+    # Effort is judged against the model settled here, not the chat's. The two
+    # can differ (an agent pinning Sonnet 4.6 inside a chat on Opus 5), and
+    # `--effort xhigh` on a model without an xhigh rung is accepted by the CLI
+    # and then quietly ignored — the exact failure model_caps exists to prevent.
+    choice = _resolve(thread, model_resolution.ModelRequest.for_agent(
+        slug, rec, chat_model=model, chat_effort=effort,
+        chat_permission_mode=permission_mode))
+    if choice.notes:
+        log.warning("agent %s: model resolved from %s (%s)",
+                    slug, choice.source, "; ".join(choice.notes))
+    model = choice.model_id
+    effort = choice.effort
+    permission_mode = choice.permission_mode
 
     # This agent's session IN THIS THREAD. Every mention used to spawn with no
     # session, so an agent rebuilt its preamble, definition and knowledge layers
@@ -3705,14 +3626,20 @@ async def _turn_for_message(thread_id: str, t: dict, content: str,
     provider = chat_context.get_provider(t.get("context_key"))
     if model is not None and model != t.get("model"):
         chat_store.set_thread_model(thread_id, model)
-    model = model or _resolve_model(None, t, provider)
-    # Effort resolves against the model we just settled on, not the one stored
-    # on the thread, so switching model and level in the same send is judged by
-    # what the operator is actually looking at.
-    effort = _resolve_effort(effort_in, t, model)
+    # ONE CALL SETTLES ALL THREE. Effort and permission mode are resolved
+    # against the model that will actually run, not the one stored on the
+    # thread, so switching model and level in the same send is judged by what
+    # the operator is looking at. That ordering is now the resolver's, not this
+    # function's: see services/model_resolution.
+    choice = _choose(t, model=model, effort=effort_in, permission_mode=mode_in)
+    model = choice.model_id
+    effort = choice.effort
     if effort_in is not None and effort != t.get("effort"):
         chat_store.set_thread_effort(thread_id, effort)
-    permission_mode = _resolve_permission_mode(mode_in, t)
+    permission_mode = choice.permission_mode
+    if choice.notes:
+        log.info("thread %s: model resolved from %s (%s)",
+                 thread_id, choice.source, "; ".join(choice.notes))
 
     from services import mentions as _mentions
     _chat_scope = knowledge.scope_for_context(t.get("context_key") or "general")
@@ -4021,13 +3948,12 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
         chat_store.set_thread_model(thread_id, model)
         t = chat_store.get_thread(thread_id) or t
     if effort_in is not None:
-        _eff = _resolve_effort(
-            effort_in, t, _resolve_model(model, t, chat_context.get_provider(t.get("context_key"))))
+        _eff = _choose(t, model=model, effort=effort_in).effort
         if _eff != t.get("effort"):
             chat_store.set_thread_effort(thread_id, _eff)
             t = chat_store.get_thread(thread_id) or t
     if mode_in is not None:
-        _pm = _resolve_permission_mode(mode_in, t)
+        _pm = _choose(t, permission_mode=mode_in).permission_mode
         if _pm != t.get("permission_mode"):
             chat_store.set_thread_permission_mode(thread_id, _pm)
             t = chat_store.get_thread(thread_id) or t

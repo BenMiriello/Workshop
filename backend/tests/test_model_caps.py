@@ -9,7 +9,14 @@ import pytest
 from fastapi import HTTPException
 
 from services import model_caps
-from routes.chat import _resolve_effort
+from routes.chat import _choose
+
+
+def _resolve_effort(turn_effort, thread, model):
+    """The effort a turn on `model` runs at, through the ROUTE's adapter, so
+    the 400 for a value that is not a level at all is exercised too. The chain
+    itself is `services/model_resolution`; this file pins the effort half."""
+    return _choose(thread, model=model, effort=turn_effort).effort
 
 
 class TestEffortsForModel:

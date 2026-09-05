@@ -89,7 +89,7 @@ class TestDeclaredModel:
         from services import chat_context
 
         rec = rec_for(["name: probe", "model: haiku"])
-        assert chat_context.normalize_model(rec["model"]) in chat_context.PICKABLE_MODELS
+        assert chat_context.normalize_model(rec["model"]) in chat_context.pickable_models()
 
 
 class TestCapabilitiesAreDeclarationOnly:

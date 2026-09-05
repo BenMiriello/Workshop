@@ -14,17 +14,22 @@ single value:
 The operator pref is read through `chat_store`, so every test that exercises it
 pins an owner — an unpinned read is deliberately silent (no preference) and would
 make these pass for the wrong reason.
+
+THESE PROPERTIES OUTLIVED THEIR FUNCTIONS. `routes.chat._resolve_effort`,
+`_resolve_permission_mode` and `_agent_effort` were three separate chains and are
+now one (`services/model_resolution.resolve_model`). Every assertion below is the
+one it was; only the call spelling moved, which is the point of pinning
+behaviour rather than helpers.
 """
+
+import dataclasses
 
 import pytest
 
 from routes.chat import (
     POST_PLAN_MODE,
-    _agent_effort,
     _mode_suggestion,
     _post_plan_mode,
-    _resolve_effort,
-    _resolve_permission_mode,
 )
 from services import (
     agents_registry,
@@ -32,8 +37,32 @@ from services import (
     chat_context,
     chat_store,
     model_caps,
+    model_resolution,
     ownership,
 )
+
+
+def _resolve_effort(turn_effort, thread, model):
+    """The effort a turn on `model` runs at. `model` is passed as the explicit
+    ask so the level is judged against exactly the model named."""
+    request = model_resolution.ModelRequest.from_thread(
+        thread, model=model, effort=turn_effort)
+    return model_resolution.resolve_model(1, None, request).effort
+
+
+def _resolve_permission_mode(turn_mode, thread):
+    request = model_resolution.ModelRequest.from_thread(
+        thread, model="claude-opus-5", permission_mode=turn_mode)
+    return model_resolution.resolve_model(1, None, request).permission_mode
+
+
+def _agent_effort(rec, slug, model, chat_effort):
+    """What an @mentioned agent's turn runs at, on the model it will run on."""
+    request = dataclasses.replace(
+        model_resolution.ModelRequest.for_agent(
+            slug, rec, chat_model=None, chat_effort=chat_effort),
+        model=model)
+    return model_resolution.resolve_model(1, None, request).effort
 
 
 @pytest.fixture()
