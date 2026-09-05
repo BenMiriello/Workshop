@@ -19,7 +19,7 @@ Verbs (all take a scope directory as the first positional):
       # satisfy it: a filing whose finish line is prose leaves the worker to
       # invent one and the reviewer to guess at it. services/ticket_format owns
       # the rule; docs/ticket-writing.md says how to choose the check.
-      [--max-attempts N] [--effort s|m|l] [--latitude strict|standard|open]
+      [--max-attempts N] [--effort s|m|l]
       [--execution code|judgement|external] [--type bug|feature|task]
       # --execution is the UNATTENDED selection predicate. Unset = unclassified
       # = never picked up by a sweep (fail closed). It never narrows what a
@@ -34,9 +34,6 @@ Verbs (all take a scope directory as the first positional):
       # --source-ref is what the ticket came FROM (a chat thread id for
       # --source chat). Omit it and the ticket is orphaned: nothing links it
       # back to the conversation that asked for it.
-      # --latitude is what the worker may do where THIS ticket does not say.
-      # Omit it to INHERIT the scope's setting (that is not the same as
-      # `--latitude standard`, which pins the default onto the ticket).
       # --criterion is repeatable and attaches a machine-checkable assertion the
       # gate EXECUTES (exit0 by default, or an expected stdout substring). The
       # 'desc::' and '::expect' segments are optional: 'cmd' alone => exit0 gate.
@@ -96,7 +93,6 @@ if (importlib.util.find_spec("sqlalchemy") is None
         os.execv(str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]])
 
 from services import tasks, ticket_format  # noqa: E402
-from services.latitude import LATITUDES as _LATITUDES  # noqa: E402
 
 # What to type instead, on THIS command. `ticket_format.ACCEPTANCE_HINT` says
 # what an acceptance is; this says how to spell one here.
@@ -260,8 +256,6 @@ def _slim(t: dict | None) -> dict:
         "blocked_reason": t.get("blocked_reason"),
         "touches": t.get("touches", []),
         "effort": t.get("effort"),
-        # null = inherit from the scope; ralph.sh resolves the cascade itself.
-        "latitude": t.get("latitude"),
         "claim_token": t.get("claim_token"),
         "lease_until": t.get("lease_until"),
         "last_heartbeat": t.get("last_heartbeat"),
@@ -352,7 +346,6 @@ def main(argv: list[str]) -> int:
                          "(expect defaults to exit0; a bare 'cmd' is allowed)")
     sp.add_argument("--max-attempts", type=int, default=None)
     sp.add_argument("--effort", default=None)
-    sp.add_argument("--latitude", default=None, choices=(None, *_LATITUDES))
     sp.add_argument("--discovered-from", default=None)
     sp.add_argument("--provenance", default=None)
     sp.add_argument("--execution", default=None,
@@ -499,7 +492,6 @@ def main(argv: list[str]) -> int:
                 max_attempts=a.max_attempts, effort=a.effort,
                 execution=a.execution,
                 type=a.type,
-                latitude=a.latitude,
                 discovered_from=a.discovered_from, provenance=a.provenance,
                 # ref is what makes a ticket navigable back to where it came
                 # from: the ticket page links to the chat, and the chat lists
