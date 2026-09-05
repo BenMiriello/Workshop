@@ -25,6 +25,14 @@ root only has to LOOK like one: `<tmp>/projects/widgets` maps to
 `$WORKSHOP_ROOT/.runtime`, which the fixture owns. No predicate is patched, and
 `test_the_arming_gate_is_load_bearing` disarms the scope and watches the same
 selection disappear -- so this file can never go quietly green and empty again.
+
+EVERY SWEEP HERE NAMES A WORKER, and every ticket it may pick up is assigned to
+that worker, because an unattended selection is assignee-scoped as of
+2026-09-05 (docs/what-may-run-unattended-2026-09-04.md; the rule itself is
+pinned by `test_unattended_requires_assignee.py`). That is deliberately NOT
+folded into the skip tests as the reason they skip: `_ticket` assigns, so a
+ticket refused below is refused by the gate the test is named for, and this file
+goes on measuring what it always measured.
 """
 from __future__ import annotations
 
@@ -46,6 +54,16 @@ READY_BODY = (
     "Start from: backend/services/tracker_bindings.py\n"
     "Boundaries: do not touch the chat store."
 )
+
+
+# The worker every sweep in this file runs as. `operator` would not do: the
+# unattended path refuses the human, which is the point of the rule.
+WORKER = "agent:widgets-maker"
+
+
+def _sweep(root: Path):
+    """What the background sweep sees: assignee-scoped, unattended."""
+    return tasks.next_ready(root, assignee=WORKER, unattended=True)
 
 
 def _store(root: Path) -> Path:
@@ -73,35 +91,37 @@ def root(tmp_path: Path, monkeypatch) -> Path:
 
 
 def _ticket(root: Path, *, title: str, execution=None, body: str = READY_BODY,
-            priority: int = 0) -> dict:
+            priority: int = 0, assignee: str | None = WORKER) -> dict:
     return tasks.add(root, title=title, body=body, execution=execution,
-                     priority=priority, touches=["backend/services/x.py"])
+                     priority=priority, touches=["backend/services/x.py"],
+                     assignee=assignee)
 
 
 def test_unattended_skips_unclassified(root: Path) -> None:
     """The fail-closed case. An unclassified ticket is not `code`."""
     _ticket(root, title="Unclassified but perfectly well specified")
     assert tasks.next_ready(root) is not None
-    assert tasks.next_ready(root, unattended=True) is None
+    assert _sweep(root) is None
 
 
 @pytest.mark.parametrize("execution", ["judgement", "external"])
 def test_unattended_skips_non_code(root: Path, execution: str) -> None:
     _ticket(root, title="Not for a machine", execution=execution)
     assert tasks.next_ready(root) is not None
-    assert tasks.next_ready(root, unattended=True) is None
+    assert _sweep(root) is None
 
 
 def test_unattended_skips_unready(root: Path) -> None:
     """`code` is necessary and not sufficient: the spec still has to be adequate."""
-    tasks.add(root, title="Fix the thing", body="", execution="code")
+    tasks.add(root, title="Fix the thing", body="", execution="code",
+              assignee=WORKER)
     assert tasks.next_ready(root) is not None
-    assert tasks.next_ready(root, unattended=True) is None
+    assert _sweep(root) is None
 
 
 def test_unattended_picks_a_code_and_ready_ticket(root: Path) -> None:
     t = _ticket(root, title="Bind a scope to an external tracker", execution="code")
-    picked = tasks.next_ready(root, unattended=True)
+    picked = _sweep(root)
     assert picked is not None and picked["id"] == t["id"]
 
 
@@ -129,14 +149,14 @@ def test_the_root_ticket_case(root: Path) -> None:
     human = tasks.next_ready(root)
     assert human is not None and human["id"] == root_ticket["id"]
 
-    sweep = tasks.next_ready(root, unattended=True)
+    sweep = _sweep(root)
     assert sweep is not None and sweep["id"] == buildable["id"]
 
 
 def test_ordering_within_the_eligible_set_is_still_priority_first(root: Path) -> None:
     _ticket(root, title="Lower priority", execution="code", priority=1)
     high = _ticket(root, title="Higher priority", execution="code", priority=90)
-    picked = tasks.next_ready(root, unattended=True)
+    picked = _sweep(root)
     assert picked is not None and picked["id"] == high["id"]
 
 
@@ -144,16 +164,16 @@ def test_dependencies_still_gate_unattended(root: Path) -> None:
     dep = _ticket(root, title="The prerequisite", execution="code")
     blocked = tasks.add(root, title="The dependent", body=READY_BODY,
                         execution="code", depends_on=[dep["id"]],
-                        touches=["backend/services/x.py"])
-    picked = tasks.next_ready(root, unattended=True)
+                        touches=["backend/services/x.py"], assignee=WORKER)
+    picked = _sweep(root)
     assert picked is not None and picked["id"] == dep["id"]
     tasks.update(root, dep["id"], status="done")
-    picked = tasks.next_ready(root, unattended=True)
+    picked = _sweep(root)
     assert picked is not None and picked["id"] == blocked["id"]
 
 
 def test_empty_queue_returns_none(root: Path) -> None:
-    assert tasks.next_ready(root, unattended=True) is None
+    assert _sweep(root) is None
 
 
 def test_the_arming_gate_is_load_bearing(root: Path) -> None:
@@ -167,11 +187,11 @@ def test_the_arming_gate_is_load_bearing(root: Path) -> None:
     emptying every skip test in the file.
     """
     t = _ticket(root, title="Bind a scope to an external tracker", execution="code")
-    picked = tasks.next_ready(root, unattended=True)
+    picked = _sweep(root)
     assert picked is not None and picked["id"] == t["id"]
 
     _store(root).write_text(json.dumps({}))
-    assert tasks.next_ready(root, unattended=True) is None
+    assert _sweep(root) is None
     # And the human path is untouched by arming, which is the other half of the
     # ratified rule: the gate refuses a sweep, never a person.
     assert tasks.next_ready(root) is not None

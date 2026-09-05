@@ -274,10 +274,35 @@ def _all_owner_ids() -> list[int]:
 # unattended=True)` is the whole predicate, and it is a conjunction of five
 # independent consents: the scope is armed (`scope_execution.is_armed_root`,
 # fail-closed at reactive), the ticket is `todo` with its dependencies met, its
-# `execution` is `code`, `ticket_readiness.check` passes on its spec, and -- new
-# here -- a thread was armed to receive it. No second predicate is written,
-# because a second predicate is a second answer.
+# `execution` is `code`, `ticket_readiness.check` passes on its spec, the ticket
+# is ASSIGNED to the worker this thread answers as (`ready_ticket_worker`), and
+# a thread was armed to receive it. No second predicate is written, because a
+# second predicate is a second answer.
 READY_TICKET_ARMED = "on-ready-ticket"
+
+
+def ready_ticket_worker(row: dict) -> str | None:
+    """WHO this armed thread would be working as, or None if it is nobody.
+
+    An unattended selection is assignee-scoped (`tasks.next_ready`), so this pass
+    has to name the worker it is seeding on behalf of rather than asking "is
+    there any ready work at all" -- that question selects the whole backlog, and
+    it is the one the operator declined to arm.
+
+    The answer already exists on the thread and is not invented here: an
+    `agent:<slug>` chat IS answered by that agent (chat_store `_document`: "the
+    key IS the answer"), and `agent_id` carries the historical case where the
+    scope no longer exists. A general or scope-level thread is answered by no
+    agent, names no worker, and therefore selects nothing until the operator
+    assigns a ticket to somebody.
+    """
+    ck = (row.get("context_key") or "").strip()
+    if ck.startswith("agent:"):
+        return ck
+    aid = (row.get("agent_id") or "").strip()
+    if not aid:
+        return None
+    return aid if aid.startswith("agent:") else f"agent:{aid}"
 
 
 def ready_ticket_seed(task: dict) -> str:
@@ -327,7 +352,8 @@ def seed_ready_ticket_threads() -> int:
             root = task_scope.root_for_context(row.get("context_key"))
             if root is None:
                 continue
-            task = tasks.next_ready(root, unattended=True)
+            task = tasks.next_ready(root, assignee=ready_ticket_worker(row),
+                                    unattended=True)
             if not task:
                 continue
             request_continuation(tid, seed=ready_ticket_seed(task),

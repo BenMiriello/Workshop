@@ -143,6 +143,32 @@ def test_readiness_is_asked_unattended_which_is_the_narrow_predicate(store):
     assert all(c.get("unattended") is True for c in store["calls"]), store["calls"]
 
 
+def test_the_worker_the_thread_answers_as_is_the_one_it_selects_for(store):
+    """THE ASSIGNEE-SCOPED HALF of the same selection rule (2026-09-05).
+
+    `unattended=True` alone still asks "is there any ready work in this scope",
+    and the answer to that is the whole backlog: 130 tickets on 2026-09-04, 105
+    of them filed by agents for themselves. An unattended selection is now
+    assignee-scoped, so this pass has to name the worker it is seeding on behalf
+    of -- and the answer is not invented, it is who already answers the chat.
+    """
+    tid = chat_store.create_thread("agent:wstest-maker")["id"]
+    chat_store.set_thread_arming(tid, armed="on-ready-ticket")
+
+    assert chat_drain.seed_ready_ticket_threads() == 1
+    assert [c.get("assignee") for c in store["calls"]] == ["agent:wstest-maker"]
+
+
+def test_a_thread_that_answers_as_nobody_names_nobody(store):
+    """A general or scope-level thread is answered by no agent, so it names no
+    worker and `next_ready` refuses it. Arming such a thread grants nothing on
+    its own, which is the property arming was missing."""
+    _thread("on-ready-ticket")  # context_key "general", no agent_id
+
+    chat_drain.seed_ready_ticket_threads()
+    assert [c.get("assignee") for c in store["calls"]] == [None]
+
+
 def test_an_unresolvable_scope_is_skipped_rather_than_guessed(store, monkeypatch):
     """`root_for_context` is the chokepoint that refuses a scope this owner may
     not reach and refuses the platform's own tree under ADR 0014. A refusal is

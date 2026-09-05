@@ -144,15 +144,28 @@ def test_the_operator_action_is_the_one_thing_that_seeds_a_maker(tree):
     assert "routes/agents.py" in hits[0]
 
 
-def test_a_scope_with_no_maker_definition_is_still_dispatched(tree, tmp_path):
-    """THE MEASUREMENT BEHIND "the loop is the maker".
+def test_a_scope_with_no_maker_is_skipped_for_the_assignment_reason(tree, tmp_path):
+    """THE MEASUREMENT BEHIND "the loop is the maker", updated 2026-09-05.
 
     Not a source assertion: this runs the dispatcher's OWN decision engine --
     the Python heredoc inside `scripts/dispatch_triggers.sh`, extracted
     verbatim -- against a workshop that has a project with a ready ticket and an
-    EMPTY `agents/` directory. It plans the sweep anyway. A maker definition is
-    not a prerequisite for a ticket being worked, and after this change none is
-    created, so this is the property that had to survive.
+    EMPTY `agents/` directory.
+
+    WHAT THIS USED TO ASSERT, and why it changed. It asserted that the sweep is
+    planned anyway: a maker definition is not a prerequisite for a ticket being
+    worked. The planner still never looks at `agents/`, so that property is
+    intact -- but an unattended selection is now assignee-scoped
+    (`docs/what-may-run-unattended-2026-09-04.md`, `tasks.next_ready`), and a
+    PROJECT sweep runs as nobody. Nobody is not a worker, so the queue below is
+    full of work this dispatch may not select, and planning the sweep would
+    launch a Job that claims nothing and finishes as a clean zero-task success.
+
+    So the dispatcher asks the question the sweep will answer -- `has_ready` is
+    `unattended=True` there for exactly this reason -- and skips. The assertion
+    is on the REASON, not merely on the empty plan: an empty plan is what a
+    missing registry, an unreadable dir or a dead code path also produce, and
+    this test has to keep telling those apart from the rule it is about.
     """
     root = tmp_path / "ws"
     (root / ".runtime").mkdir(parents=True)
@@ -184,8 +197,10 @@ def test_a_scope_with_no_maker_definition_is_still_dispatched(tree, tmp_path):
     plan = subprocess.run([sys.executable, "-c", _planner_source()],
                           env=env, capture_output=True, text=True, timeout=120)
     assert plan.returncode == 0, plan.stderr
-    assert [ln.split("\t")[:2] for ln in plan.stdout.splitlines() if ln.strip()] \
-        == [["project", "widgets"]]
+    assert [ln.split("\t")[:2] for ln in plan.stdout.splitlines() if ln.strip()] == []
+    # Named, not silent. "skipped because nobody may run it" and "idle" are
+    # different facts and the operator acts on them differently.
+    assert "skip-unassigned\tproject:widgets" in plan.stderr, plan.stderr
 
 
 def test_a_trigger_less_maker_is_reported_as_resident_not_undispatchable(tree, tmp_path):

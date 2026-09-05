@@ -143,6 +143,24 @@ STATUSES = {"draft", "todo", "doing", "in_review", "blocked", "parked", "done",
 TERMINAL = {"done", "cancelled"}
 DEFAULT_OWNER = "operator"  # canonical assignee for the human
 
+
+def is_worker_assignee(who: str | None) -> bool:
+    """Is this assignee a WORKER, i.e. something an unattended sweep may run as?
+
+    The operator is not a worker and neither is nobody. Every other assignee
+    (`agent:<slug>`) is. This is the whole vocabulary the unattended selection
+    rule needs: see `next_ready`, and docs/what-may-run-unattended-2026-09-04.md
+    for the measurement that produced it.
+    """
+    return bool((who or "").strip()) and str(who).strip() != DEFAULT_OWNER
+
+
+# What the last unattended refusal said, per process, so a resident loop that
+# polls twice a minute logs the refusal when it BEGINS and when the number
+# changes rather than 120 times an hour. Keyed by (root, assignee) -> the count
+# it last reported. A log memo, not state anything reads back.
+_LAST_REFUSAL: dict[tuple[str, str], int] = {}
+
 # Two-level status (ticket-system-consolidation-2026-08-12 §3.1). The eight named
 # statuses above stay exactly as they are; this is the coarse CATEGORY every
 # other tracker also models, so a board can group without inventing lanes.
@@ -1997,11 +2015,20 @@ def next_ready(root: Path, *, assignee: str | None = None,
     'first todo'. Reconciles first so a task added by any route is seen, and
     reclaims stale claims so a crashed sweep's task becomes ready again.
 
-    ``unattended`` adds the two phase-4 selection rules, and is passed by the
-    SWEEP and by nothing else:
+    ``unattended`` adds the phase-4 selection rules, and is passed by the SWEEP
+    and by nothing else:
 
+        assignee names a worker              (somebody delegated this ON PURPOSE)
+        the ticket is assigned to that worker
         execution == "code"                  (a machine can do it at all)
         ticket_readiness.check(t)["ok"]       (the spec is adequate)
+
+    The first two are the assignee-scoped selection rule: an unattended sweep
+    that names no worker selects NOTHING, however full the queue is, and a
+    worker sees only what is assigned to it. `operator` is not a worker. That is
+    what keeps arming a scope from arming its whole backlog; the attended path
+    below is untouched by it, because a person acting on their own instruction
+    is not a sweep.
 
     It is an extra predicate rather than a change of meaning because this same
     function is what a MANUAL run path consults, and readiness must never refuse
@@ -2040,14 +2067,72 @@ def next_ready(root: Path, *, assignee: str | None = None,
         return bool(ticket_readiness.check(t).get("ok"))
 
     def in_scope(t: dict) -> bool:
+        # THE UNATTENDED PATH IS ALWAYS ASSIGNEE-SCOPED, and `operator` is not a
+        # worker. Every other gate above is a filter over everything ever filed:
+        # `todo`, deps met, `execution == code`, readiness. None of them is a
+        # decision about a PARTICULAR ticket, so arming one scope armed the whole
+        # backlog at once -- measured on 2026-09-04 as 130 of 184 open tickets,
+        # 105 of them filed by an agent for itself
+        # (docs/what-may-run-unattended-2026-09-04.md). Requiring the sweep to
+        # NAME a worker, and matching only what is actually assigned to it, takes
+        # that set to zero and makes every increment a per-ticket act: assigning
+        # the ticket is the grant, unassigning is the revocation. No new field,
+        # no new store, no approval step.
+        #
+        # The unassigned fallback below is deliberately NOT reused here. It
+        # exists so an agent sweep can pick up work nobody claimed, which is the
+        # opposite of this rule: an unassigned ticket must not be eligible, or
+        # unassigning would not revoke anything.
+        if unattended:
+            return (is_worker_assignee(assignee)
+                    and (t.get("assignee") or DEFAULT_OWNER) == assignee)
         if assignee is None:
             return True
         a = t.get("assignee") or DEFAULT_OWNER
         return a == assignee or a is None or t.get("assignee") is None
 
-    cands = [t for t in tasks if ready(t) and in_scope(t)]
+    # Computed once and shared: `ready` runs ticket_readiness over every task,
+    # and the refusal message below needs the same set.
+    eligible = [t for t in tasks if ready(t)]
+    cands = [t for t in eligible if in_scope(t)]
+    if unattended and not cands:
+        _log_unattended_refusal(root, assignee, len(eligible))
     cands.sort(key=lambda t: (-_as_int(t.get("priority"), 0), t.get("created") or ""))
     return cands[0] if cands else None
+
+
+def _log_unattended_refusal(root: Path, assignee: str | None, ready_count: int) -> None:
+    """Say WHY an unattended sweep selected nothing, when the answer is not "the
+    queue is empty".
+
+    A sweep that is refused and a sweep with no work to do both return None, and
+    for the operator those are opposite facts: one means the queue is drained,
+    the other means work is waiting for a decision only he can make. This
+    codebase has produced four separate defects in two days whose whole shape was
+    a refusal that looked like a clean zero, so the refusal gets a line.
+
+    WARNING rather than INFO on purpose: the sweeps read this through
+    `scripts/project_tasks.py`, a CLI that configures no logging, so anything
+    below WARNING is dropped by the last-resort handler and never reaches the
+    sweep log. Repetition is bounded by `_LAST_REFUSAL` instead.
+    """
+    if ready_count <= 0:
+        return  # genuinely nothing to run: "no ready tasks" is the true answer.
+    key = (str(root), str(assignee or ""))
+    if _LAST_REFUSAL.get(key) == ready_count:
+        return
+    _LAST_REFUSAL[key] = ready_count
+    if not is_worker_assignee(assignee):
+        log.warning(
+            "unattended selection refused: no worker was named (assignee=%r), so "
+            "none of the %d ticket(s) that pass every other gate in %s may be "
+            "selected. Assign one to a worker to run it.",
+            assignee, ready_count, root)
+    else:
+        log.warning(
+            "unattended sweep for %s selected nothing: %d ticket(s) in %s pass "
+            "every other gate and none is assigned to it.",
+            assignee, ready_count, root)
 
 
 # ---- Mutations -------------------------------------------------------------

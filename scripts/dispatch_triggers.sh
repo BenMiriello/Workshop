@@ -298,8 +298,23 @@ def save_state(state: dict) -> None:
     tmp.replace(STATE_PATH)
 
 def has_ready(root: Path, assignee=None) -> bool:
+    """Would the sweep this is about to launch actually select something?
+
+    Asked with `unattended=True`, which is the predicate the sweep itself
+    selects with. A looser question here launches a Job that claims nothing,
+    finishes as a clean zero-task success, and is re-launched on the next tick --
+    the dispatcher and the sweep silently disagreeing, which is the failure mode
+    project_ralph.sh's own final status pass already calls out.
+
+    An unattended selection is assignee-scoped, so a dispatch with no worker to
+    name selects nothing no matter what is in the queue. That is answered here
+    rather than in `next_ready`, so a dispatcher tick does not log the same
+    refusal for every project twice a minute.
+    """
+    if not tasks.is_worker_assignee(assignee):
+        return False
     try:
-        return tasks.next_ready(root, assignee=assignee) is not None
+        return tasks.next_ready(root, assignee=assignee, unattended=True) is not None
     except Exception:
         return False
 
@@ -429,6 +444,11 @@ for slug, p in sorted(projects.items()):
     if awaiting_unchanged(slug, root):
         continue
     if not has_ready(root):
+        # A project sweep runs as nobody, and an unattended selection is
+        # assignee-scoped, so this scope has nothing it MAY run even when its
+        # queue is full. Named, not silent: "skipped" and "idle" are different
+        # facts and the operator acts on them differently.
+        print(f"skip-unassigned\tproject:{slug}", file=sys.stderr)
         continue
     ok, reason = usage_ledger.can_admit(slug)
     if not ok:
@@ -544,7 +564,7 @@ def _dispatch_maker(a, slug, ctx):
         print(f"skip-circuit\tagent:{slug}\t{cb_reason}", file=sys.stderr)
         return None
     if not has_ready(Path(root), assignee=f"agent:{slug}"):
-        return None
+        return None  # nothing is assigned to this agent; next_ready says why.
     if not _budget_ok(slug):
         return None
     ctx["half_open"] = cb_half_open

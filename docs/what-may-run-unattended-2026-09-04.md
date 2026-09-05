@@ -89,13 +89,57 @@ What that buys, in this checkout, today:
 The cost is that "arm the scope and let it work the queue" stops being a thing
 you can do in one action. That is the point.
 
+## Built, 2026-09-05
+
+The rule above is now the code. `tasks.next_ready`'s `in_scope` refuses every
+ticket on the unattended path unless the sweep NAMES a worker and the ticket is
+assigned to that worker; `operator` is not a worker and neither is nobody. The
+attended path is byte-identical, because readiness and arming must never refuse a
+person and neither may this.
+
+Measured on the live store the same way as the table above, with the override
+still engaged and `development` still the one armed scope:
+
+| | before | after |
+|---|---|---|
+| `next_ready(root, unattended=True)` | a ticket | **None** |
+| `next_ready(root, assignee="agent:x", unattended=True)` | None | None |
+| `next_ready(root)` (attended) | a ticket | a ticket |
+| tickets an armed sweep may select | 119 | **0** |
+
+(The store grew between the two dates, so re-measure rather than comparing 119
+to the 130 above: 119 is the same `todo` + `code` + readiness count taken on
+2026-09-05, when the store held 444 tickets and 167 were `todo`. All 119 carried
+`assignee: operator`.)
+
+Nothing was armed and nothing was turned on to build it. The other readers of the
+unattended path were made to agree with the rule rather than to work around it:
+
+- **`chat_drain.seed_ready_ticket_threads`** names the worker the armed thread
+  answers as (`ready_ticket_worker`: an `agent:<slug>` chat IS answered by that
+  agent). A general or scope-level thread answers as nobody and selects nothing,
+  so arming such a thread grants nothing on its own.
+- **`dispatch_triggers.has_ready`** asks with `unattended=True`, which is the
+  predicate the sweep it is about to launch will select with. A project sweep
+  runs as nobody, so it is skipped and the skip is named (`skip-unassigned`)
+  rather than launching a Job that claims nothing and finishes as a clean
+  zero-task success.
+- **`next_ready` itself logs the refusal** at WARNING, naming the count of
+  tickets that pass every other gate, because a refusal and an empty queue are
+  opposite facts that both return `None`. Repetition is bounded per process, so
+  a resident runner reports it when it begins and when the number changes.
+
+Pinned by `backend/tests/test_unattended_requires_assignee.py` (the rule),
+`test_next_ready_unattended.py` (the existing gates, now assignee-scoped),
+`test_armed_on_ready_ticket.py` (the thread's worker) and `test_makers.py` (the
+dispatcher skips, and says why).
+
 ## What this document is not
 
-It is not a plan and it does not authorise anything. The change it describes is
-three lines in `tasks.next_ready`'s `in_scope`, and it was deliberately **not
-made** here: it changes what may run, which is the operator's decision and is
-outside the boundaries of the tickets this work was done under (`152856ba`
-scheduling only, `2f1b6a66` no second predicate).
+It was not a plan and it did not authorise anything; the section above records
+what was built afterwards, in separate work. The measurement is what this file is
+for. Turning autonomy ON is still the operator's decision and the
+override at `.runtime/autonomy-override.json` is still engaged.
 
 The measurements are reproducible:
 
