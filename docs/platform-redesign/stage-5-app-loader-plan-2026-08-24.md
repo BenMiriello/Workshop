@@ -27,7 +27,38 @@ In the tree, per the commit sequence in section 7:
 | 2 | yes | `packages/app-build/`, `tests/fixtures/app-loader/` |
 | 3 | yes | `backend/services/app_ui.py`, three routes on `/base-apps`, `backend/tests/test_app_ui_contract.py` |
 | 4 | yes | `frontend/src/apps/{contract.ts,declarations.tsx,loader.ts,AppRouteHost.tsx}`; the dual path is in `registry.tsx` |
-| 5-11 | NO | not one app has been built onto it |
+| 5-9 | yes | every app in `apps/` has a `ui/index.tsx`, a `vite.config.js` and a `ui` block in its manifest; no `apps/*/ui/module.tsx` remains, so the shell's `EXTRACTED` glob matches nothing. Measured by `bash scripts/build_app_ui.sh --check` and by `contributions()` reporting no `error` for any installed app |
+| 10 | no | the four legacy redirects are still in `App.tsx` |
+| 11 | no | `frontend/src/apps/registry.tsx` still exists and still merges three sources, two of which are now always empty here |
+
+Two things steps 5 to 9 needed that section 7 did not anticipate, both because
+the tree moved between 2026-08-24 and 2026-09-05:
+
+- **The apps were already extracted**, on 2026-09-04, so the per-app literal
+  counts in section 1 are historical: the ratchet fell from 302 to 23 with that
+  extraction, and NONE of the 23 that remain is an app frontend. What steps 5 to
+  9 moved is not the count, it is what the shell COMPILES. Do not read a
+  stationary 23 as these steps not having happened; read
+  `bash scripts/build_app_ui.sh --check`.
+- **`apply.sh` did need a change after all**, contrary to section 3.3. That
+  paragraph was written when no app had migrated, and it is true only of an app
+  whose bundle someone else rebuilds. With every app out of the shell's build,
+  nothing in the deploy path compiled them: `scripts/build_app_ui.sh` is now a
+  surface of `apply.sh`, in the same compare-then-act shape as the bundle.
+
+Two things steps 5 to 9 did NOT do, and both are visible in a browser rather
+than in a command:
+
+- **Nothing here has been looked at on the built origin.** Every app was
+  verified by `check_app_loader.py --app`/`--dist`, by the contribution reading
+  clean, by `npm run typecheck`, by 1,775 frontend tests and by 149 app backend
+  tests. None of that can see a layout.
+- **The class names travelled by RENAME.** Each app's rules were prefixed rather
+  than copied under their old names, because an app's stylesheet is linked into
+  the same document as the platform's and a global `.card` would otherwise win
+  everywhere once that app had been opened. The declarations are unchanged, so
+  nothing should move; birds (195 attributes) and budget (21 class families) are
+  where to look first if something did.
 
 Four differences from what section 2 proposed, each because the tree moved or
 the plan was wrong about this repo:
