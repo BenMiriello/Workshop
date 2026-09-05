@@ -9,18 +9,37 @@ Either gave a chat full agentic tools (bypassPermissions, no --allowedTools) at
 a cwd nothing had vetted. See the 2026-08-11 scope-separation security audit
 section 2.
 """
-import importlib
-
-
 import pytest
 
 
 @pytest.fixture
 def ctx():
-    """Clean reload so module-level state (e.g. the general provider's tool
-    list) is not shared with whatever ran before this test."""
+    """The module itself. DO NOT `importlib.reload` it here.
+
+    This fixture used to reload `chat_context` "so module-level state (e.g. the
+    general provider's tool list) is not shared with whatever ran before this
+    test". It bought nothing and cost seven tests in another file.
+
+    Nothing bought: the only mutable module state is the `_general` singleton's
+    tool list, and no test in this suite writes it — `test_chat_modes` mutates a
+    freshly constructed `ContextProvider()`, not the singleton. `provider_map()`
+    is rebuilt per call and reads `dev_mode` per call, so the dev-mode tests do
+    not need a fresh import either.
+
+    What it cost: a reload REBINDS the module's classes to new objects while
+    every other module and every already-imported test module keeps the old
+    ones. pytest imports test modules at COLLECTION time, so
+    `test_worktree_isolation_end_to_end._Project` had already subclassed the
+    pre-reload `ProjectContextProvider`; after the reload,
+    `is_build_provider` — an `isinstance` against the NEW class — answered False
+    for it, `chat_worktree._project_of` returned None, and seven worktree tests
+    failed with "this chat is not on a branch of its own". They passed when that
+    file ran alone, which is what made it read as a broken feature for a day.
+
+    Reloading a module that defines classes used in `isinstance` checks
+    corrupts the process; it does not isolate it.
+    """
     from services import chat_context
-    importlib.reload(chat_context)
     return chat_context
 
 

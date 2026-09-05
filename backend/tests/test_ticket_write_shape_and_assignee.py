@@ -156,19 +156,62 @@ def test_create_returns_the_detail_shape(client, roots):
     _assert_is_a_detail_record(rec, client, "workshop")
 
 
+# The keys that only a PROJECTOR may stamp. `scope` is deliberately absent: it
+# rides on unrelated payloads (run-status, job receipts) that are not task
+# records, so including it would flag lines that are not the regression.
+_PROJECTED = {"origin", "readiness", "links", "state_type", "ready", "blocked_by"}
+
+# The two functions allowed to stamp them, and what each is for. `_detail` is
+# the single-task shape; `_with_triage` is the list-row shape, and they stamp
+# the same derived fields on purpose so a card and the page it opens agree.
+_PROJECTORS = {"_detail", "_with_triage"}
+
+
 def test_no_single_task_route_hand_builds_its_own_shape():
-    """The structural half of the fix: one helper, so a route added later
-    cannot quietly ship the old five-key record. Every route that returns ONE
-    task must end at `_detail`, which is the only place the projected keys are
-    stamped; a route that builds its own dict is the regression this pins."""
+    """The structural half of the fix: the projection lives in ONE place per
+    shape, so a route added later cannot quietly ship the old five-key record.
+
+    Stated as a property of the module rather than as a list of accepted line
+    spellings. The previous version of this test allowlisted four exact
+    prefixes (`return _detail(`, `task = _detail(`, ...) and was simply wrong
+    about the tree — three long-standing call sites spell it
+    `out["task"] = _detail(...)` and `return {"task": _detail(...), ...}`, all
+    of which DO reach the helper. It failed on arrival and told nobody anything.
+
+    The regression actually worth catching is a route that re-implements the
+    projection instead of calling a projector. That is visible as a stamp of
+    the derived keys somewhere else in the module, so that is what is asserted.
+    The complementary half — a route that FORGETS to project — is already
+    covered by every `_assert_is_a_detail_record` test above, which compares a
+    mutating route's record against the detail GET key for key.
+    """
+    import ast
     import inspect
-    src = inspect.getsource(tasks_all)
-    builders = sorted(line.strip() for line in src.splitlines()
-                      if "_detail(" in line and "def _detail" not in line)
-    assert builders, "no route reaches _detail; the helper was bypassed"
-    for line in builders:
-        assert line.startswith(("return _detail(", "task = _detail(",
-                                "rec = _detail(", "out = _detail(")), line
+
+    tree = ast.parse(inspect.getsource(tasks_all))
+    spans = {n.name: (n.lineno, n.end_lineno) for n in ast.walk(tree)
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+             and n.name in _PROJECTORS}
+    assert spans.keys() == _PROJECTORS, f"projector renamed or removed: {spans.keys()}"
+
+    def inside_a_projector(lineno: int) -> bool:
+        return any(lo <= lineno <= hi for lo, hi in spans.values())
+
+    strays = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if (isinstance(target, ast.Subscript)
+                    and isinstance(target.slice, ast.Constant)
+                    and target.slice.value in _PROJECTED
+                    and not inside_a_projector(node.lineno)):
+                strays.append(f"line {node.lineno}: stamps {target.slice.value!r}")
+
+    assert not strays, (
+        "a task record's derived keys are stamped outside "
+        f"{sorted(_PROJECTORS)}, which means the projection was re-implemented "
+        f"rather than called: {strays}")
 
 
 # ---- Fix 3: the assignee, at the store level --------------------------------

@@ -20,7 +20,8 @@ import json
 
 import pytest
 
-from services import build_streaming, chat_store, ownership, voice_worker
+from services import (build_streaming, chat_store, ownership, usage_ledger,
+                      voice_worker)
 
 
 @pytest.fixture
@@ -113,9 +114,17 @@ class TestAnInterruptIsAnswered:
 
 class TestACancelledTurnIsStillBilled:
     def test_usage_arriving_after_the_cancel_is_recorded(self, turn, monkeypatch):
+        # Patch the LEDGER, not `_record_spend`. A fake standing in for
+        # `_record_spend` has to re-declare its signature, and when the real one
+        # grew an `envelope` argument (so voice reads `modelUsage` through the
+        # same seam the text path does) the two-argument fake started raising
+        # TypeError inside the pump, which swallows it — so this test failed
+        # with "the tokens went unrecorded" while the product was fine. Going
+        # one layer down means the assertion runs the real spend path and cannot
+        # drift from it again.
         seen: list[int] = []
-        monkeypatch.setattr(voice_worker, "_record_spend",
-                            lambda t, usage: seen.append(int((usage or {}).get("output_tokens", 0))))
+        monkeypatch.setattr(usage_ledger, "record",
+                            lambda scope, tokens, **kw: seen.append(int(tokens)))
         w = _worker()
         w.current = turn
         # The turn is closed the instant the operator barges in...

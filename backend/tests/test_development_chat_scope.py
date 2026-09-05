@@ -13,8 +13,6 @@ top-level key when dev mode is on, and the platform repo appears exactly ONCE.
 A row under both Development and Projects would be the alias multiplication
 ADR 0014 exists to remove.
 """
-import importlib
-
 from pathlib import Path
 
 import pytest
@@ -22,9 +20,20 @@ import pytest
 
 @pytest.fixture
 def ctx(monkeypatch):
-    """chat_context with a clean import, so module-level state is not shared."""
+    """The module itself. DO NOT `importlib.reload` it here.
+
+    `list_providers()` goes through `provider_map()`, which is rebuilt per call
+    and reads `dev_mode.dev_mode_on()` per call precisely so the flag is not
+    frozen at import — so these tests never needed a fresh import, and
+    `monkeypatch.setenv` is enough.
+
+    A reload rebinds the module's classes to new objects while already-imported
+    modules keep the old ones, which breaks every `isinstance` check against
+    them process-wide. See the fixture in
+    `tests/test_chat_provider_containment.py` for the seven worktree tests that
+    cost, and why they only failed in the full suite.
+    """
     from services import chat_context
-    importlib.reload(chat_context)
     return chat_context
 
 
