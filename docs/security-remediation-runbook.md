@@ -172,20 +172,47 @@ stay; if not, it still needs sudo (the service user's `tailscale serve` is acces
 `sudo tailscale serve --https=8445 off`
 
 ### L2 — Vite dev server (:5173) served to the tailnet via Serve 8443
-Source/source-map/FS exposure. **The dev server is now stopped** (2026-09-05):
-`systemctl --user stop workshop-frontend.service`, and `:5173` refuses connections, so Serve 8443
-now fronts a dead port and the source is no longer reachable through it. Two things remain, both
-needing a shell the agent does not have:
+Source/source-map/FS exposure. **Stopping the service does not stop the dev server, and that is the
+finding.** Measured 2026-09-05: `systemctl --user stop workshop-frontend.service` did take `:5173`
+down — and `scripts/frontends_watchdog.sh`, which cron runs every two minutes, brought it back 60
+seconds later. The log line is explicit:
 
-1. **It is stopped but still enabled**, so it comes back at the next boot or login. Make it stick:
-   `systemctl --user disable workshop-frontend.service`. An agent cannot: the systemd user unit
-   directory is not in its mount namespace, so `disable`, `is-enabled` and `list-unit-files` fail for
-   *every* unit (including `docker.service`) while `systemctl --user show` still reports
-   `UnitFileState=enabled` through the manager. Stop and start work; the file-touching verbs do not.
-2. **Drop the mapping**: `sudo tailscale serve --https=8443 off`. Needs root — the service user's
-   `tailscale serve` is access-denied, and `tailscaled.sock` is not reachable as that user.
+```
+[2026-09-05T08:12:01-07:00] frontend 'workshop' down on :5173 — restarting (no systemd unit)
+[2026-09-05T08:12:01-07:00]   relaunched 'workshop'
+```
 
-To put the dev origin back at any time: `systemctl --user start workshop-frontend.service`.
+Two things make this worse than a plain restart. It took the **fallback** branch — cron's
+environment has no `DBUS_SESSION_BUS_ADDRESS`, so the watchdog's `systemctl --user show -p LoadState`
+probe returns empty, it concludes there is no unit, and it relaunches vite with `setsid nohup`
+**outside systemd**. The result is the "two owners for one port" state the watchdog's own header
+warns about: `systemctl --user show -p ActiveState` says `inactive` while `:5173` is served by a bare
+`node .../node_modules/.bin/vite` parented to the watchdog. Anyone checking the unit concludes the
+dev server is off. It also comes up **without the unit's `EnvironmentFile`**, so it has none of the
+`WORKSHOP_CANONICAL_ORIGIN` / `WORKSHOP_TAILNET_HOST` values `vite.config.ts` needs for host
+acceptance — the relaunch is not even equivalent to the unit.
+
+**So the opt-out had to go where the resurrection happens, and now it is there.**
+`scripts/frontends_watchdog.sh` reads `WORKSHOP_DEV_SERVER` (via `scripts/lib/instance.sh`, because
+cron passes almost no environment) and skips the dev server entirely when it is `0`, logging that it
+did. Default stays `1`, so a fresh clone is unaffected. Both branches tested.
+
+**Remaining, and now it is three lines rather than host archaeology:**
+
+1. **Turn the knob on** — add `WORKSHOP_DEV_SERVER=0` to `~/.config/workshop/instance.env`. An agent
+   cannot: that directory is bind-mounted **read-only** into the turn sandbox (writes fail with
+   `Read-only file system`).
+2. **Stop it once** — `systemctl --user stop workshop-frontend.service` and kill any bare
+   `node .../.bin/vite` still holding `:5173`. With the knob set, the watchdog leaves it down.
+   Also `systemctl --user disable workshop-frontend.service` so it does not return at boot; an agent
+   cannot, because the systemd user unit directory is not in its mount namespace and the file-touching
+   verbs (`disable`, `is-enabled`, `list-unit-files`) fail for *every* unit, `docker.service`
+   included, while `systemctl --user show` still answers through the manager.
+3. **Drop the mapping** — `sudo tailscale serve --https=8443 off`. Needs root; the service user's
+   `tailscale serve` is access-denied and `tailscaled.sock` is not reachable as that user.
+
+To put the dev origin back at any time: delete the `WORKSHOP_DEV_SERVER` line (or set it to `1`) and
+`systemctl --user start workshop-frontend.service`.
 
 Not a substitute, and worth recording so nobody reaches for it as one: `server.fs.strict` already
 defaults to **true** in Vite 5 (this tree is on 5.4.21), so setting it in `frontend/vite.config.ts`
@@ -296,7 +323,8 @@ Applied by the service user already (no root): edge `/auto-pr` block, `/tools` L
 bound to loopback, registration fail-closed, `/docs` off, `auth.db`/`letta.env` perms, WebFetch
 egress coverage, recursive-claude clamps + depth guard, app-container `no-new-privileges`, mobile
 bridge write-only + origin-lock + debug gating, ~~open-wearables exposure stopped~~ (see M2: the
-frontend was still live on `0.0.0.0:3100` on 2026-09-05), Vite dev server `:5173` stopped (L2).
+frontend was still live on `0.0.0.0:3100` on 2026-09-05), L2 dev-server opt-out built (`:5173` is
+still up until the knob is set — see L2).
 
 A status line saying a thing is stopped is worth exactly as much as the last time somebody ran
 `ss -tln`. Two entries in this file said "stopped" about a port that was listening. Re-measure before

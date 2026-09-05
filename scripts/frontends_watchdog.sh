@@ -17,9 +17,31 @@
 # alone, so re-runs never double-spawn. Backend (uvicorn :8000) is deliberately
 # NOT managed here — it carries env-sensitive secrets and must be restarted by
 # hand with its EnvironmentFile, not blind-relaunched.
+#
+# AN INSTALLATION MAY NOT WANT A DEV SERVER AT ALL, and until 2026-09-05 this
+# script gave it no way to say so. A dev server is a second origin serving
+# unbuilt source, and a deployment whose users are on the built bundle has no
+# reason to run one. Because this watchdog re-checks every two minutes and will
+# relaunch OUTSIDE systemd when it cannot reach the user bus (cron's env has no
+# DBUS_SESSION_BUS_ADDRESS, so the `show -p LoadState` probe below comes back
+# empty and the fallback wins), simply stopping the unit does not stop the dev
+# server: it comes back within two minutes as a bare process this script owns,
+# and `systemctl --user status` then reports the unit inactive while the port is
+# very much listening. That is measured, not hypothetical — SEC-L2, ticket
+# 61ac9564. So the opt-out has to live here, where the resurrection happens.
+#
+# Set WORKSHOP_DEV_SERVER=0 in ~/.config/workshop/instance.env to opt out. It is
+# read via lib/instance.sh, because cron passes almost no environment and a knob
+# that only works from an interactive shell would be worse than none.
 set -u
 
 WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+
+# Installation identity (WORKSHOP_DEV_SERVER, WORKSHOP_VITE_PORT). Never fatal:
+# a watchdog that dies because the operator has no instance.env is a worse
+# failure than one that runs with defaults.
+# shellcheck source=lib/instance.sh
+. "$WORKSHOP/scripts/lib/instance.sh" 2>/dev/null || true
 RUNTIME="$WORKSHOP/.runtime"
 LOG="$RUNTIME/frontends_watchdog.log"
 mkdir -p "$RUNTIME"
@@ -74,6 +96,13 @@ ensure() {
   log "  relaunched '$name'"
 }
 
-ensure workshop "${WORKSHOP_VITE_PORT:-5173}" "$WORKSHOP/frontend" workshop-frontend.service
+if [ "${WORKSHOP_DEV_SERVER:-1}" = "0" ]; then
+  # Deliberately off for this installation. Say it once per run rather than
+  # silently doing nothing: the failure this guards against is a later reader
+  # finding :5173 dead, assuming the watchdog is broken, and "fixing" it.
+  log "dev server disabled for this installation (WORKSHOP_DEV_SERVER=0) — not starting or restarting it"
+else
+  ensure workshop "${WORKSHOP_VITE_PORT:-5173}" "$WORKSHOP/frontend" workshop-frontend.service
+fi
 # Commute was retired as a standalone app (:8444 PWA) — it's now a native page
 # inside the Workshop frontend at /apps/commute. No separate dev server.
