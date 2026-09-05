@@ -6,24 +6,30 @@
 // rule while still exercising the real router, the real app registry and the
 // real auth context. Same pattern as apps/registry.test.tsx.
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider } from "../../auth/AuthProvider";
 import { BreadcrumbProvider } from "@workshop/ui";
-import { appPlaces } from "../../apps/registry";
+import { declareTestApp, TEST_APP_HOME } from "../../apps/declareForTest";
 import { Shell } from "./Shell";
 
-// SOME app's route, taken from the registry rather than spelled here. These
-// assertions are about "a path that belongs to an installed app", not about
-// which app: a literal name would make this file one more platform source
-// naming an app, which scripts/check_no_app_names.py counts and CLAUDE.md
-// forbids by name ("not a test fixture"). src/apps/registry.tsx is the one
-// frontend file allowed to know an app exists, so asking it is the honest
-// route. A fictional slug is not a substitute: an unregistered path falls back
-// to the Workshop place, so the third test below would assert nothing.
-const APP_HOME = appPlaces()[0]?.home ?? "/apps";
+// SOME app's route, and the app is a FICTIONAL one published through the real
+// declaration path. These assertions are about "a path that belongs to an
+// installed app", not about which app: a real slug would make this file one
+// more platform source naming an app, which scripts/check_no_app_names.py
+// counts and CLAUDE.md forbids by name ("not a test fixture").
+//
+// It has to be a declared app rather than any invented path: an unregistered
+// path falls back to the Workshop place, so the third test below would assert
+// nothing. It used to come from the build-time catalog, which is empty now
+// that an app declares itself over HTTP.
+const APP_HOME = TEST_APP_HOME;
+
+beforeAll(async () => {
+  await declareTestApp();
+});
 
 // The same nesting the app uses: AuthProvider > QueryClientProvider >
 // BreadcrumbProvider > Shell (App.tsx). The avatar reads the signed-in user, so

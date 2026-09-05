@@ -5,10 +5,11 @@
 // Server rendering, no DOM: this stays inside the "pure logic, no DOM harness"
 // rule while still exercising the actual router.
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { APPS, AppSuspense, appCrumbs, appGroups, appRoutes } from "./registry";
+import { declareTestApp } from "./declareForTest";
 
 const NO_MATCH = "data-nomatch";
 
@@ -27,6 +28,13 @@ function renderAt(path: string): string {
     </MemoryRouter>,
   );
 }
+
+// THE CATALOG IS A RUNTIME READ NOW, so under vitest it starts empty and this
+// suite would assert nothing at all. One fictional app is published through the
+// real declaration path first; see `declareForTest`.
+beforeAll(async () => {
+  await declareTestApp();
+});
 
 describe("the app registry mounts", () => {
   it("resolves every route each app declares", () => {
