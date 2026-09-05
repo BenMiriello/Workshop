@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import dataclasses
 
+from pathlib import Path
+
 import pytest
 
 from services import chat_context, chat_store, llm_providers, model_resolution
@@ -331,7 +333,6 @@ class TestThereIsOnlyOneResolver:
     chain in place for a caller that "is not ready yet"."""
 
     def test_the_route_no_longer_carries_its_own_chain(self):
-        from pathlib import Path
 
         src = Path(__file__).resolve().parents[1] / "routes" / "chat.py"
         body = src.read_text()
@@ -341,7 +342,6 @@ class TestThereIsOnlyOneResolver:
             assert f"def {name}(" not in body, f"{name} is back in routes/chat.py"
 
     def test_the_route_calls_the_resolver(self):
-        from pathlib import Path
 
         src = Path(__file__).resolve().parents[1] / "routes" / "chat.py"
         assert "model_resolution.resolve_model(" in src.read_text()

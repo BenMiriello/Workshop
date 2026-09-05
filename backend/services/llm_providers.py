@@ -260,8 +260,24 @@ def providers() -> list[LlmProvider]:
 
     A list rather than a constant because it is a function of configuration:
     what is here is what the deployment can actually run a turn on today.
+
+    The local HTTP provider appends itself only when a base URL is configured,
+    so a deployment that has not set one is unchanged and `configured_provider`
+    answers None rather than a provider that cannot reach anything.
     """
-    return [ClaudeCliProvider()]
+    out: list[LlmProvider] = [ClaudeCliProvider()]
+    # Function-local to break a cycle: `local_model_provider` imports this
+    # module for `Capabilities`, `ModelInfo` and the `LlmProvider` protocol, so
+    # importing it at module scope here would not resolve. This is the one
+    # registration point, and it being missing is why the module sat unimported
+    # and `check_dead_surface` called it a new dead surface: it was written and
+    # never plugged in.
+    from services import local_model_provider
+
+    local = local_model_provider.configured_provider()
+    if local is not None:
+        out.append(local)
+    return out
 
 
 def get(provider_id: str) -> LlmProvider:

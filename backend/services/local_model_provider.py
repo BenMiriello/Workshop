@@ -51,6 +51,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import httpx
+
+from wsplatform import paths
+
 from services import llm_providers
 
 log = logging.getLogger("workshop.local_model_provider")
@@ -88,8 +92,6 @@ def config_path() -> Path:
     the runtime partition beside the other instance state rather than in tracked
     source or in a prompt layer.
     """
-    from wsplatform import paths
-
     return paths.env_path("WORKSHOP_LOCAL_MODEL_CONFIG",
                           "local-model-provider.json")
 
@@ -196,8 +198,6 @@ def forget_probe() -> None:
 
 
 def _client(timeout_s: float):
-    import httpx
-
     return httpx.Client(timeout=httpx.Timeout(timeout_s, connect=CONNECT_TIMEOUT_S))
 
 
