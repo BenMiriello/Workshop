@@ -18,32 +18,18 @@ import type { components } from "../api/schema.gen";
 // Plus a single "Stop all" that does both at once, which is the one place they
 // are allowed to move together because the dialog says so.
 
-type AutonomyStatus = {
-  cron_autonomy: {
-    disabled: boolean;
-    disabled_at: string | null;
-    // Optional because the server STOPPED SENDING IT. `autonomy_status` reads
-    // only `autonomy_override.read()` now; there is no second flag file to
-    // report a path for. It was declared required here, so the type asserted a
-    // field that never arrives and TypeScript could not see the lie.
-    flag_path?: string;
-  };
-  // 2026-07-18 canonical off-switch: JSON overlay at .runtime/autonomy-override.json.
-  // `disabled` above IS that overlay, and nothing else: the legacy
-  // AUTONOMY_DISABLED flag file is gone and the endpoint no longer unions it in.
-  override?: {
-    engaged: boolean;
-    reason?: string | null;
-    engaged_at?: string | null;
-    engaged_by?: string | null;
-  };
-  queue_runner?: {
-    running: boolean;
-    pid: number | null;
-    enabled: boolean;
-    dir?: string;
-  };
-};
+// NAMED FROM THE GENERATED CLIENT, like RunTarget below it. This was written
+// out here, and its own comment already recorded one field the copy had got
+// wrong ("the server STOPPED SENDING IT ... TypeScript could not see the lie").
+// The route declares every one of these: CronAutonomy also carries `reason`,
+// QueueRunnerState also carries last_line, lock_path and log_path, and the
+// whole record carries `jobs`, none of which the copy knew about.
+//
+// The 2026-07-18 off-switch note the copy carried is still true and is kept:
+// `cron_autonomy.disabled` IS the .runtime/autonomy-override.json overlay and
+// nothing else; the legacy AUTONOMY_DISABLED flag file is gone and the endpoint
+// no longer unions it in.
+type AutonomyStatus = components["schemas"]["AutonomyStatus"];
 
 // A tree the runner may be pointed at. ADR 0014: a run target is NAMED, never
 // defaulted, so this list is what the operator names one from. The platform

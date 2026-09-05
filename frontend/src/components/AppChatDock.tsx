@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import ChatDock from "./ChatDock";
+import type { components } from "../api/schema.gen";
 
 // Manifest-gated wrapper around ChatDock. Every app mounts this; whether the
 // floating assistant button actually renders is driven by the app's manifest
@@ -22,7 +23,7 @@ export default function AppChatDock({ appId, contextKey, title, placeholder, onA
   useEffect(() => {
     let alive = true;
     fetch(`/api/base-apps/manifests/${appId}`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? (r.json() as Promise<components["schemas"]["AppManifest"]>) : null))
       .then((m) => {
         if (alive) setShow(m?.ui?.agent_button !== false);
       })

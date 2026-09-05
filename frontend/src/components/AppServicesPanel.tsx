@@ -6,6 +6,7 @@ import { Boxes, ExternalLink, RefreshCw, Play, Square, ScrollText, RotateCw, Eye
 
 import { appWorkInFlight, type AppStatus, type Service } from "../lib/appServices";
 import { queryKeys } from "../lib/queryKeys";
+import type { components } from "../api/schema.gen";
 
 // Run: the single place a project becomes a running thing on this host. Drives
 // the backend app_runner — one app made of N services (each its own process +
@@ -21,18 +22,10 @@ import { queryKeys } from "../lib/queryKeys";
 // same thing as shipping it to a hosted origin, and this panel only does the
 // former. The model of record for the latter is hosting-apps-design-2026-08-24.
 
-type ManifestService = {
-  name: string; cwd: string; build: string | null; start: string;
-  enabled: boolean; disabled_reason?: string | null; expose: boolean; depends_on: string[];
-};
-type Manifest = {
-  name: string;
-  detected: boolean;
-  self?: boolean;
-  builtin?: boolean;
-  services: ManifestService[];
-  deps: { name: string }[];
-};
+// NAMED FROM THE GENERATED CLIENT. The copy did not know the manifest also
+// carries env_requirements, and described `deps` as `{ name: string }[]` when
+// the route answers DepSpec.
+type Manifest = components["schemas"]["AppRunManifest"];
 
 // Poll fast while anything is in flight (starting/building) so the live state
 // machine is reflected without a manual refresh, slowly once it has settled.
@@ -121,7 +114,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
     try {
       const r = await fetch(`/api/base-apps/run/${slug}/manifest`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setManifest(await r.json());
+      setManifest((await r.json()) as Manifest);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -159,7 +152,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
     setLogText("Loading…");
     try {
       const r = await fetch(`/api/base-apps/run/${slug}/logs?service=${encodeURIComponent(service)}`);
-      const d = await r.json();
+      const d = (await r.json()) as components["schemas"]["ServiceLog"];
       setLogText(d.log || "(no output yet)");
     } catch (e) {
       setLogText(String(e));
