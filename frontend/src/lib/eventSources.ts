@@ -14,6 +14,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { httpFail } from "./http";
 import { queryKeys } from "./queryKeys";
+import type { components } from "../api/schema.gen";
 
 /**
  * What to offer before the answer arrives, and if it never does.
@@ -30,7 +31,7 @@ export function useEventSources(): readonly string[] {
     queryFn: async (): Promise<string[]> => {
       const r = await fetch("/api/events/sources");
       if (!r.ok) throw await httpFail(r);
-      return ((await r.json()) as { sources?: string[] }).sources ?? [];
+      return ((await r.json()) as components["schemas"]["EventSources"]).sources ?? [];
     },
     staleTime: 5 * 60 * 1000,
   });

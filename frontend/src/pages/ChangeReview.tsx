@@ -72,7 +72,7 @@ export default function ChangeReview() {
     try {
       const r = await fetch(`/api/changes/${encodeURIComponent(id)}`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setChange(await r.json());
+      setChange((await r.json()) as Change);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -89,7 +89,7 @@ export default function ChangeReview() {
     try {
       const r = await fetch(`/api/changes/${encodeURIComponent(id)}/diff`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setDiff(await r.json());
+      setDiff((await r.json()) as ChangeDiff);
     } catch (e) {
       setDiff(null);
       setDiffErr(e instanceof Error ? e.message : String(e));
@@ -109,7 +109,7 @@ export default function ChangeReview() {
     try {
       const r = await fetch(`/api/changes/${encodeURIComponent(id)}/refresh`, { method: "POST" });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setChange(await r.json());
+      setChange((await r.json()) as Change);
       await loadDiff();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

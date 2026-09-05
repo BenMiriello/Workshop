@@ -20,6 +20,7 @@ import { AppGlyph, monogram } from "../../lib/appIcon";
 import { useAuth } from "../../auth/AuthProvider";
 import type { Shell } from "./useShell";
 import type { ShellPlace } from "./places";
+import type { components } from "../../api/schema.gen";
 
 /** The signed-in person's initials. The same two-letter rule an app with no
  *  icon falls back to, so it is literally the same function. */
@@ -82,7 +83,7 @@ export function Dock({ shell }: { shell: Shell }) {
         body: JSON.stringify({ slug: `new-project-${rnd}`, title: "New project" }),
       });
       if (!r.ok) throw new Error(await r.text().catch(() => r.statusText));
-      const p = await r.json();
+      const p = (await r.json()) as components["schemas"]["Project"];
       nav(`/chat/${encodeURIComponent(`project:${p.slug}`)}`);
     } catch (e) {
       // A failed create must not blank the shell; report and re-enable.

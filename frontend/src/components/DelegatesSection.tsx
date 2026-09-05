@@ -36,9 +36,9 @@ export default function DelegatesSection() {
     fetch("/api/agents/delegates")
       .then(async (r) => {
         if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-        return r.json();
+        return r.json() as Promise<components["schemas"]["DelegatesOut"]>;
       })
-      .then((d: components["schemas"]["DelegatesOut"]) => { if (live) setItems(d.delegates ?? []); })
+      .then((d) => { if (live) setItems(d.delegates ?? []); })
       .catch((e) => { if (live) setErr(String(e)); });
     return () => { live = false; };
   }, []);

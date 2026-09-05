@@ -101,9 +101,23 @@ const change: Change = {
   updated_at: "2026-09-01T10:00:00Z",
 };
 
+// WorkAgent IS the wire's RosterAgent now, so a fixture has to carry the six
+// fields the route always sends. `threadRole` reads only id, slug and role; the
+// rest are here because the record has them, which is the whole point of naming
+// the generated type instead of copying the three fields one function needs.
+const rosterAgent = (over: Partial<WorkAgent>): WorkAgent => ({
+  autonomy: "off",
+  autonomy_mode: "reactive",
+  capabilities: [],
+  delegatable: false,
+  mentionable: false,
+  triggers: [],
+  ...over,
+});
+
 const agents: WorkAgent[] = [
-  { id: "agent-1", slug: "widths-maker", name: "Widths", role: "maker" },
-  { id: "agent-2", slug: "reviewer", name: "Reviewer", role: "reviewer" },
+  rosterAgent({ id: "agent-1", slug: "widths-maker", name: "Widths", role: "maker" }),
+  rosterAgent({ id: "agent-2", slug: "reviewer", name: "Reviewer", role: "reviewer" }),
 ];
 
 const row = (over: Partial<WorkRow> = {}): WorkRow => ({

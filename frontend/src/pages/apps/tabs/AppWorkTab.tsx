@@ -77,6 +77,7 @@ import HolderControls from "../../../components/holders/HolderControls";
 import { AppTabPage, CollectionBody } from "./AppTabShell";
 import { unlinkedReason } from "./appTabState";
 import { queryKeys } from "../../../lib/queryKeys";
+import type { components } from "../../../api/schema.gen";
 
 // The list route caps at 1000 and defaults to 200. A branch with no change in
 // the first page reads as a branch with no change, so this asks for the cap the
@@ -108,7 +109,7 @@ function WorkBody({ app }: { app: AppRecord }) {
     queryFn: async (): Promise<WorkAgent[]> => {
       const r = await fetch(`/api/apps/${app.id}/agents`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      return ((await r.json()) as { agents?: WorkAgent[] }).agents ?? [];
+      return ((await r.json()) as components["schemas"]["AppAgentList"]).agents ?? [];
     },
     enabled: !!app.project_slug,
   });

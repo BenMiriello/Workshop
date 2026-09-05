@@ -14,6 +14,11 @@ import {
 import { Button, Card, CardGrid, Divider, PageHeader, Notice, Row, SectionLabel, Segmented, Skeleton, StateBlock, StatusDot, Toggle, type SegmentedOption, type StatusKind, shortHttpError } from "@workshop/ui";
 import type { components } from "../api/schema.gen";
 
+// The app manifest, as PUT and GET both answer it. This was written out
+// here as `{ ui?: { agent_button?: boolean } }`, which is one key of a
+// nine-key record and would have kept typechecking if `ui` were renamed.
+type AppManifest = components["schemas"]["AppManifest"];
+
 // Apps page: a uniform grid of cards. Every app — internal or external — looks
 // the same here. Tap a card to enter the app. Privacy-on-glance: cards show
 // generic status (counts / freshness / health) but never specific values like
@@ -96,7 +101,10 @@ const VIEW_OPTIONS: SegmentedOption<ViewMode>[] = [
 // of these (matched to an app by slug == the app's key). We do not fabricate
 // per-app manage data (storage/grants/jobs); those land with the Phase 4/5
 // manifest. Only genuinely known fields are shown.
-type ProjectLite = { slug: string };
+// The projects list, named from the generated client rather than restated:
+// this page reads it only for the slugs, but a hand-written `{ slug: string }`
+// is still a claim about the wire that nothing checks.
+type ProjectLite = components["schemas"]["Project"];
 
 // Async state for the projects lookup (drives the four list states in the
 // expanded panel: loading / loaded / empty / error).
@@ -158,11 +166,11 @@ function AgentButtonSetting({ appId }: { appId: string }) {
   // failure: 404 here is the "absent" arm, and it must not be retried.
   const manifestQuery = useQuery({
     queryKey: queryKeys.apps.manifest(appId),
-    queryFn: async (): Promise<{ ui?: { agent_button?: boolean } } | null> => {
+    queryFn: async (): Promise<AppManifest | null> => {
       const r = await fetch(`/api/base-apps/manifests/${appId}`);
       if (r.status === 404) return null;
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      return await r.json();
+      return (await r.json()) as AppManifest;
     },
   });
   const state: AgentState = saveErr
@@ -195,7 +203,7 @@ function AgentButtonSetting({ appId }: { appId: string }) {
           body: JSON.stringify({ agent_button: next }),
         });
         if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-        qc.setQueryData(key, await r.json());
+        qc.setQueryData(key, (await r.json()) as AppManifest);
       } catch (e) {
         qc.setQueryData(key, prev);   // revert
         setSaveErr(e instanceof Error ? e.message : String(e));
@@ -410,7 +418,7 @@ export default function Apps() {
     queryFn: async (): Promise<ProjectLite[]> => {
       const r = await fetch("/api/projects/");
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      return (await r.json()) as ProjectLite[];
+      return (await r.json()) as ProjectLite[];   // GET /api/projects/ answers Project[]
     },
   });
   // The Set is derived HERE, not in the queryFn: the key names what the

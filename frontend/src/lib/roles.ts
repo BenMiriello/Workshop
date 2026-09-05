@@ -17,6 +17,7 @@
 // decide a row's status kind, its words, and which threads the page lists live
 // here and are executed by roles.test.ts.
 import type { StatusKind } from "@workshop/ui";
+import type { components } from "../api/schema.gen";
 
 // ---- armed ------------------------------------------------------------------
 
@@ -166,21 +167,15 @@ export function rolesFromCatalog(raw: unknown): RoleDefinition[] {
 
 // ---- threads ----------------------------------------------------------------
 
-/** The two fields off the thread summary, plus what a row needs to name the
- *  thread. Declared here rather than taken from `components["schemas"]` because
- *  the generated client is regenerated from the backend's OpenAPI and does not
- *  carry `armed`/`role` until that regeneration runs; every field below IS on
- *  the wire (`routes/chat_models.ThreadSummary`). */
-export type ArmableThread = {
-  id: string;
-  title?: string;
-  scope?: string;
-  context_key?: string;
-  updated_at?: string | null;
-  last_user_at?: string | null;
-  armed?: string | null;
-  role?: string | null;
-};
+/** A thread this page can arm, which is just the thread summary.
+ *
+ *  This was written out by hand with a comment saying the generated client did
+ *  not carry `armed` and `role` yet. It does: `components["schemas"]`
+ *  ThreadSummary carries both, along with title, scope, context_key,
+ *  updated_at and last_user_at. The comment outlived the regeneration, which is
+ *  how a hand-written wire type survives -- so the alias replaces it and the
+ *  reason to keep a copy goes with it. */
+export type ArmableThread = components["schemas"]["ThreadSummary"];
 
 /** Which threads the Roles page lists: everything that is armed OR carries a
  *  role.

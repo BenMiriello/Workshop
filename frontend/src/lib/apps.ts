@@ -17,10 +17,13 @@ let listPromise: Promise<AppRecord[]> | null = null;
 function fetchAppList(): Promise<AppRecord[]> {
   if (!listPromise) {
     listPromise = fetch("/api/apps")
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status} ${r.statusText}`))))
-      // AppCollection, named rather than re-described: this one list backs every
-      // per-app tab, so an envelope rename here empties all seven at once.
-      .then((d: components["schemas"]["AppCollection"]) => d.apps ?? [])
+      // AppCollection, named rather than re-described, and named AT the decode:
+      // this one list backs every per-app tab, so an envelope rename here empties
+      // all seven at once.
+      .then((r) => (r.ok
+        ? (r.json() as Promise<components["schemas"]["AppCollection"]>)
+        : Promise.reject(new Error(`${r.status} ${r.statusText}`))))
+      .then((d) => d.apps ?? [])
       .catch((e) => {
         listPromise = null;
         throw e;

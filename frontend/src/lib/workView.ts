@@ -45,15 +45,13 @@ import { shortSha } from "./sha";
 export type WorkThread = components["schemas"]["AppChat"];
 
 /** One roster agent linked to this app, as `GET /api/apps/{id}/agents` answers
- *  it. The route declares no response model, so this is the shape the app's
- *  agent list
- *  reads off the same payload, not a wire contract. */
-export type WorkAgent = {
-  id?: string;
-  slug: string;
-  name?: string;
-  role?: string | null;
-};
+ *  it.
+ *
+ *  This was four hand-written fields under a comment saying the route declared
+ *  no response model. It does now: the route answers `AppAgentList`, whose rows
+ *  are `RosterAgent`, so the wire contract is nameable and the copy is not a
+ *  contract but a guess with a longer life than the reason for it. */
+export type WorkAgent = components["schemas"]["RosterAgent"];
 
 /** A branch, and everything on it. */
 export type WorkRow = {

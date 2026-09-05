@@ -5,9 +5,17 @@ import {
   roleUsage, rolesFromCatalog, writesGloss, type ArmableThread,
 } from "./roles";
 
+// ArmableThread IS the wire's ThreadSummary now, so the fixture has to supply
+// every field the route always answers with. That is the point: a builder that
+// could omit `context_key` was describing a record the backend never sends.
 const thread = (over: Partial<ArmableThread> & { id: string }): ArmableThread => ({
   title: "a chat",
   scope: "workshop",
+  context_key: "workshop",
+  last_message: "",
+  message_count: 0,
+  mode: "chat",
+  running: false,
   updated_at: "2026-08-29T12:00:00Z",
   armed: "off",
   role: null,

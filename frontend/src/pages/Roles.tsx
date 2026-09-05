@@ -14,6 +14,7 @@ import {
   assignedThreads, isArmed, roleUsage, rolesFromCatalog, writesGloss,
   type Armed, type ArmableThread, type RoleDefinition,
 } from "../lib/roles";
+import type { components } from "../api/schema.gen";
 
 // HOME > ROLES. The surface that replaced the Agents roster.
 //
@@ -187,7 +188,7 @@ export default function Roles() {
     try {
       const r = await fetch(CATALOG_URL);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setCatalog(rolesFromCatalog(await r.json()));
+      setCatalog(rolesFromCatalog((await r.json()) as components["schemas"]["AgentTemplatesOut"]));
     } catch (e) {
       setCatalog(null);
       setCatalogErr(String(e));

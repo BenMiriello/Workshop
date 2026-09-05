@@ -63,9 +63,9 @@ export default function ProjectNew() {
     fetch("/api/projects/templates")
       .then(async (r) => {
         if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-        return r.json();
+        return r.json() as Promise<TemplateInfo[]>;
       })
-      .then((items: TemplateInfo[]) => {
+      .then((items) => {
         setTemplates(items.length ? items : [{ slug: "blank", label: "Blank", hint: "" }]);
       })
       .catch((e) => {
@@ -98,7 +98,7 @@ export default function ProjectNew() {
         }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const p = await r.json();
+      const p = (await r.json()) as components["schemas"]["Project"];
       nav(`/projects/${p.slug}`);
     } catch (e) {
       setErr(String(e));
