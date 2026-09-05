@@ -232,8 +232,8 @@ def main() -> int:
     # answer. "The backend is down" is not "the contract is broken", so it must
     # not be a failure; but it is not a pass either, and returning 0 would let
     # the reviewer gate print clean for a check that never executed. 3 lets the
-    # caller record it as ambiguous, which is what reviewer.sh does with it and
-    # what LATITUDE=strict is there to escalate.
+    # caller record it as ambiguous, which is what reviewer.sh does with it:
+    # an ambiguous check blocks that gate for a decision rather than passing.
     if _get(args.base, "/healthz", "", 5.0)[0] == 0:
         print(f"check_routes_answer: no backend at {args.base}, so nothing was "
               "probed (start it, or pass --base)")

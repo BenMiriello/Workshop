@@ -170,7 +170,7 @@ def test_a_check_that_could_not_run_is_not_a_check_that_did_not_apply(tmp_path):
 
     "No .py file changed" is a non-question. "Python changed and there is no
     typechecker on this box" is the reviewer's honest "I don't know", and it is
-    the thing a strict latitude blocks on. Recording both as a bare `skipped`
+    the thing an ambiguous gate blocks on. Recording both as a bare `skipped`
     would throw that away at exactly the surface where it matters.
     """
     from services.change_gates import gates_from_reviewer

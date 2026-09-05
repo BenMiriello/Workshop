@@ -218,6 +218,17 @@ def main() -> None:
              f"schema: no alembic config at {ALEMBIC_INI.relative_to(REPO)}, "
              f"so this tree declares no schema")
 
+    # CAPTURED BEFORE `live_url`, which is the whole point of the flag.
+    # `live_url` calls `load_config_env`, and that PUTS the configured DSN into
+    # os.environ -- so reading the variable afterwards cannot distinguish "the
+    # caller named a database" from "this installation configures one in its
+    # config file". Every installation that configures a DSN took the second
+    # branch below unconditionally, which meant the running backend was NEVER
+    # asked and every report said "per a direct connection": the measured path
+    # this file exists to provide was unreachable, and the unverified one was
+    # labelled as if that were the only option available.
+    caller_named_a_database = bool(os.environ.get("WORKSHOP_DATABASE_URL", "").strip())
+
     url = live_url()
     if not url:
         emit("not_configured",
@@ -260,7 +271,7 @@ def main() -> None:
     # comparison to be about THAT file. Asking the backend regardless made all
     # five of them read `ok` off the live installation no matter what they set
     # up, which is a check that cannot fail and therefore is not a check.
-    if not os.environ.get("WORKSHOP_DATABASE_URL", "").strip():
+    if not caller_named_a_database:
         from_backend, why_not = live_from_backend()
         if from_backend:
             emit(*_compare(from_backend, head, source="the running backend"))

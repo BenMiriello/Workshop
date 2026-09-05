@@ -17,7 +17,6 @@
 #
 # Usage:
 #   ralph.sh "<task description>" [--baseline-rev <rev>] [--max-iter N] [--max-wall S]
-#            [--latitude strict|standard|open]
 #
 # Exit codes:
 #   0  — reviewer approved (COMPLETE)
@@ -29,9 +28,10 @@
 #   6  : in-run no-progress / thrash park: the run was making no progress (same
 #        reviewer rejection or a near-identical diff repeated, or the per-run token
 #        budget was exceeded), so it was stopped MID-RUN. The caller release/blocks.
-#   7  — reviewer returned `block-for-decision`: a strict-latitude run whose gate
-#        could not establish completeness. The caller blocks the task with the
-#        reviewer's reason and lets the operator decide. Re-firing cannot fix it.
+#   7  — reviewer returned `block-for-decision`: the gate could not establish
+#        completeness, because a check that applied could not run. The caller
+#        blocks the task with the reviewer's reason and lets the operator decide.
+#        Re-firing cannot fix it.
 #   8  : BUDGET-CAP PAUSE (ticket 70860d58). Before each iteration the run asks
 #        the ledger how much of its scope's budget is left, subtracts what it has
 #        spent and not yet billed, and compares that against the cost of its OWN
@@ -147,9 +147,6 @@ RESUME_SESSION="" # --resume-session <id>: continue a run this ticket paused at
                   # starting a fresh one, so the committed work is not redone.
 RESUME_ITER=0     # --resume-iter <n>: the iteration the paused run reached, for
                   # the log and the next bookmark. Advisory; nothing depends on it.
-LATITUDE_ARG=""   # --latitude <strict|standard|open>: the INVOCATION level of the
-                  # latitude cascade (invocation > task > scope > default). Empty
-                  # = this run states no preference and inherits.
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -174,7 +171,6 @@ while [[ $# -gt 0 ]]; do
     --run)           RUN_ID="$2"; shift 2 ;;
     --resume-session) RESUME_SESSION="$2"; shift 2 ;;
     --resume-iter)   RESUME_ITER="$2"; shift 2 ;;
-    --latitude)      LATITUDE_ARG="$2"; shift 2 ;;
     *)               TASK="$1"; shift ;;
   esac
 done
@@ -682,39 +678,6 @@ learn_block() {
      python3 -m services.learnings block --scope "$1" 2>/dev/null) || true
 }
 
-# --- Latitude: what this run may do where the ticket does not say ------------
-# Resolved HERE, at claim time, through the one cascade every reader shares
-# (services/latitude.py): invocation > task > scope > "standard". First non-null
-# wins; a null at any level means INHERIT, never "standard". The scope level is
-# the scope that OWNS THE TREE this task lives in (LEARN_SCOPE is that key, in
-# its prefixed form after P0's F3 fix) — an agent with `latitude: open` in its
-# own frontmatter does not import that permissiveness into a project the operator
-# marked strict.
-#
-# Exported as LATITUDE so both the `claude -p` env and reviewer.sh see the same
-# resolved value; reviewer.sh blocks instead of guessing when it is `strict`.
-LATITUDE_JSON=$( (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.latitude \
-  resolve --scope "$LEARN_SCOPE" \
-  ${TASK_ID:+--store-dir "$STORE_DIR" --task-id "$TASK_ID"} \
-  ${LATITUDE_ARG:+--invocation "$LATITUDE_ARG"} 2>>"$LOG") || true)
-LATITUDE=$(printf '%s' "$LATITUDE_JSON" | python3 -c "import json,sys
-try: print((json.load(sys.stdin) or {}).get('latitude') or 'standard')
-except Exception: print('standard')" 2>/dev/null || echo "standard")
-# A FAILED lookup must not report itself as a successful one. `|| true` above
-# keeps an advisory resolution from failing the run, which is right -- but the
-# source then said `default`, which is the same thing it says when the cascade
-# ran fine and found nothing set. So a crash in the resolver was
-# indistinguishable from "nothing is configured". That is how the OwnerUnset in
-# services.latitude went unnoticed: every line of the log read normal (measured
-# 2026-08-22). The VALUE still falls back to standard; only the SOURCE tells the
-# truth.
-LATITUDE_SOURCE=$(printf '%s' "$LATITUDE_JSON" | python3 -c "import json,sys
-try: print((json.load(sys.stdin) or {}).get('source') or 'default')
-except Exception: print('unresolved: latitude lookup failed, see log')" 2>/dev/null \
-  || echo "unresolved: latitude lookup failed, see log")
-export LATITUDE
-log "latitude=$LATITUDE (source=$LATITUDE_SOURCE scope=${LEARN_SCOPE:-none} task=${TASK_ID:-none})"
-
 # --- the reversibility gate, for a run nobody is watching --------------------
 #
 # THIS is the run agent_authority.IRREVERSIBLE_PATTERNS was written for. The list
@@ -853,34 +816,26 @@ else
   log "workshop search tool: NOT APPLIED (llm_router emitted no inline mcp-config)"
 fi
 
-# The persona paragraph. Latitude is an INSTRUCTION about the residue the ticket
-# left unspecified. It is prompt text: it changes what the model is told to do,
-# and the only thing downstream that reads the value is the strict-and-ambiguous
-# block (rc=7). It is not a permission, and it does not sit "above" a floor that
-# stops anything mid-run — `touches` is audited after the commit, not before the
-# write. Do not describe either one to the model as a thing that binds it: a
-# claim the model can falsify by simply doing the thing teaches it to discount
-# every other line in this prompt.
-LATITUDE_RULE_strict="STRICT: do what the ticket says and nothing more. Where the
-ticket does not say, ASK — do not decide. Raise the question with
-\`project_tasks.py set-awaiting\` (or block the task with a specific reason) and
-stop; a block is a correct outcome here, not a failure."
-LATITUDE_RULE_standard="STANDARD: decide REVERSIBLE things yourself and record the
-choice as task evidence (\`project_tasks.py note\`). BLOCK on anything
-irreversible, on anything outside the task's declared \`touches\`, and on any hard
-gate."
-LATITUDE_RULE_open="OPEN: pursue the goal. Decide freely and report the decisions
-you made at the end, in the task evidence. Stay inside the ticket's declared
-\`touches\`: nothing stops you writing outside them, but the sweep checks the
-committed diff against them afterwards and BLOCKS the ticket if you strayed, so
-work that wanders out of its lane is work the operator has to come back to."
-LATITUDE_RULE_VAR="LATITUDE_RULE_$LATITUDE"
+# THE STANDING RULE for the residue every ticket leaves unspecified. This was a
+# per-run decision-rights dial with three settings, resolved through a cascade at
+# claim time and pasted in here as one of three paragraphs. The dial is gone
+# (ticket 3b1c5432): it was set on 0 of 207 tickets and null on every scope, so
+# every sweep that has ever run took the middle paragraph. That paragraph is what
+# is left, stated unconditionally rather than selected.
+#
+# It is prompt text and it says so. It changes what the model is told to do and
+# nothing enforces it. Do not describe it, or `touches`, to the model as a thing
+# that binds it: a claim the model can falsify by simply doing the thing teaches
+# it to discount every other line in this prompt.
 RALPH_INSTRUCTIONS="$RALPH_INSTRUCTIONS
 
-## Latitude for THIS run: $LATITUDE
-Latitude is what you are authorized to do WHERE THE TICKET DOES NOT SAY. Every
-ticket underspecifies something; this is the standing policy for that residue.
-${!LATITUDE_RULE_VAR}
+## Deciding what the ticket does not say
+Every ticket underspecifies something; this is the standing policy for that
+residue. Decide REVERSIBLE things yourself and record the choice as task evidence
+(\`project_tasks.py note\`). BLOCK on anything irreversible, on anything outside
+the task's declared \`touches\`, and on any hard gate: raise the question with
+\`project_tasks.py set-awaiting\` (or block the task with a specific reason) and
+stop. A block is a correct outcome, not a failure.
 
 REVERSIBLE means: a later \`git revert\` or a one-line edit fully undoes it, there
 is no external side effect, and no third party has observed it. Adding a file is
@@ -1388,12 +1343,12 @@ print(sid)
   log "iter $iter reviewer.complete=$COMPLETE verdict=$VERDICT"
 
   # block-for-decision: the gate would have approved but could not verify what it
-  # needed to, and this run is `strict`, so the answer is "ask", not "assume".
+  # needed to, so the answer is "ask", not "assume".
   # Terminal for the run — another iteration re-runs the same unavailable check.
   # The caller (project_ralph.sh) reads the reason out of the receipt and blocks
   # the task with it.
   if [[ "$VERDICT" == "block-for-decision" ]]; then
-    BLOCK_REASON=$(echo "$REVIEWER_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('blocked_reason') or 'latitude:strict-and-ambiguous')" 2>/dev/null || echo "latitude:strict-and-ambiguous")
+    BLOCK_REASON=$(echo "$REVIEWER_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('blocked_reason') or 'completeness-unestablished')" 2>/dev/null || echo "completeness-unestablished")
     log "BLOCK-FOR-DECISION at iter $iter: $BLOCK_REASON"
     exit_code=7
     break

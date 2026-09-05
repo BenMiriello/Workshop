@@ -88,8 +88,7 @@ def check(task: dict, *, known_ids: Collection[str] | None = None) -> dict:
             # has to read well in both places.
             fail("entry_points", "the body does not say where to start")
 
-    if not (task.get("touches") or task.get("latitude") == "open"
-            or ticket_format.states(body, "boundaries")):
+    if not (task.get("touches") or ticket_format.states(body, "boundaries")):
         fail("boundaries", "the ticket does not say which files it may change")
 
     if known_ids is not None:

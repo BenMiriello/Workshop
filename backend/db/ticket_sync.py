@@ -30,10 +30,6 @@ from sqlalchemy import text
 
 from db.legacy_map import STATUS_TO_STATE, priority_band
 from db.models import SOURCE_KINDS
-# The read-side coercion the work model already owns: junk or a typo reads as
-# None (INHERIT), never as `standard`. Reused rather than restated, so the
-# mirror cannot come to disagree with the module the value belongs to.
-from services.latitude import coerce as _latitude_coerce
 
 log = logging.getLogger(__name__)
 
@@ -74,7 +70,7 @@ _TRACKED = ("title", "body", "status", "priority", "effort", "type", "parent",
             # that is written on the insert and left out here lands once and is
             # frozen forever after. A ticket's first block would save and every
             # later change to it would be silently dropped.
-            "latitude", "max_attempts", "attempts", "awaiting", "assignee",
+            "max_attempts", "attempts", "awaiting", "assignee",
             # The claim fields (def2cbf58df8, T4). Same reasoning, same bug
             # class: `tasks.claim()`/`tasks.heartbeat()` write these on every
             # claim of a relational-scope ticket, and until this tuple named
@@ -90,9 +86,9 @@ _TRACKED = ("title", "body", "status", "priority", "effort", "type", "parent",
 # `claim_token` bump is execution bookkeeping, so writing history for either
 # would be noise in the feed that history is for.
 #
-# `assignee`, `latitude` and `max_attempts` join it: each is a deliberate
-# operator decision about how the ticket is to be worked, which is the same kind
-# of thing as changing its priority. `attempts` and `awaiting` do NOT: `attempts`
+# `assignee` and `max_attempts` join it: each is a deliberate operator decision
+# about how the ticket is to be worked, which is the same kind of thing as
+# changing its priority. `attempts` and `awaiting` do NOT: `attempts`
 # moves on every claim (execution bookkeeping, the same reason `claim_token` is
 # excluded) and `awaiting` is a nested record whose changes the inbox already
 # surfaces properly, so stringifying it into a history row would bury the feed.
@@ -100,7 +96,7 @@ _TRACKED = ("title", "body", "status", "priority", "effort", "type", "parent",
 # fires every few seconds while a worker runs, and a history row per heartbeat
 # would drown the feed in noise nobody reads.
 _HISTORIC = ("title", "body", "status", "priority", "effort", "type",
-             "blocked_reason", "assignee", "latitude", "max_attempts")
+             "blocked_reason", "assignee", "max_attempts")
 
 # The legacy `execution` values, as type names. `None` means no type, which is
 # how the JSON store spelled "not classified".
@@ -240,11 +236,6 @@ def _legacy_view(task: dict) -> dict:
         # time rather than the migration's. Every list sorts by this.
         "updated": _ts(task.get("updated")),
         # --- the execution fields (e9c4a71f0d38) ---------------------------
-        # None means INHERIT from the scope, and coercing a typo to `standard`
-        # would look like a deliberate per-task default and silently undo a
-        # strict scope (services/latitude.py). Coerced rather than validated
-        # because a bad value must not fail the write.
-        "latitude": _latitude_coerce(task.get("latitude")),
         "max_attempts": _positive_int_or_none(task.get("max_attempts")),
         "attempts": _non_negative_int(task.get("attempts")),
         # The block record, whole. Normalized upstream by
@@ -291,7 +282,6 @@ def _row_view(row) -> dict:
         "claim_token": m["claim_token"],
         "created": m["created_at"],
         "updated": m["updated_at"],
-        "latitude": m["latitude"],
         "max_attempts": m["max_attempts"],
         "attempts": m["attempts"] or 0,
         "awaiting": m["awaiting"] or None,
@@ -309,7 +299,7 @@ SELECT t.id, t.external_id, t.title, t.body, t.priority::text AS priority,
        parent.external_id AS parent_legacy,
        t.source_kind, t.source_ref, t.spec_hash, t.touches, t.blocked_reason,
        t.acceptance, t.claim_token,
-       t.latitude, t.max_attempts, t.attempts, t.awaiting, t.assignee,
+       t.max_attempts, t.attempts, t.awaiting, t.assignee,
        t.job_ids, t.lease_until, t.last_heartbeat, t.claim_pid
   FROM ticket t
   JOIN workflow_state ws ON ws.id = t.state_id
@@ -666,13 +656,13 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                     "body, state_id, type_id, priority, effort, closed_at, "
                     "source_kind, source_ref, spec_hash, touches, "
                     "blocked_reason, acceptance, claim_token, "
-                    "latitude, max_attempts, attempts, awaiting, assignee, "
+                    "max_attempts, attempts, awaiting, assignee, "
                     "job_ids, lease_until, last_heartbeat, claim_pid, "
                     "created_at, updated_at, "
                     "external_source, external_id) VALUES (:i, :o, :p, :n, :ti, "
                     ":bo, :st, :ty, CAST(:pr AS ticket_priority), :ef, :cl, "
                     ":sk, :sr, :sh, :tc, :br, CAST(:ac AS jsonb), :ct, "
-                    ":lat, :mx, :at, CAST(:aw AS jsonb), :asg, "
+                    ":mx, :at, CAST(:aw AS jsonb), :asg, "
                     ":jid, :lu, :lh, :cpid, "
                     "COALESCE(:ca, now()), COALESCE(:ua, now()), "
                     "'workshop-json', :ex)"),
@@ -685,7 +675,7 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                      "br": want["blocked_reason"],
                      "ac": _json(want["acceptance"]),
                      "ct": want["claim_token"],
-                     "lat": want["latitude"], "mx": want["max_attempts"],
+                     "mx": want["max_attempts"],
                      "at": want["attempts"], "aw": _json(want["awaiting"]),
                      "asg": want["assignee"],
                      "jid": want["job_ids"], "lu": want["lease_until"],
@@ -717,7 +707,7 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                 "effort = :ef, closed_at = :cl, source_kind = :sk, "
                 "source_ref = :sr, spec_hash = :sh, touches = :tc, "
                 "blocked_reason = :br, acceptance = CAST(:ac AS jsonb), "
-                "claim_token = :ct, latitude = :lat, max_attempts = :mx, "
+                "claim_token = :ct, max_attempts = :mx, "
                 "attempts = :at, awaiting = CAST(:aw AS jsonb), assignee = :asg, "
                 "job_ids = :jid, lease_until = :lu, last_heartbeat = :lh, "
                 "claim_pid = :cpid, "
@@ -732,7 +722,7 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                  "br": want["blocked_reason"],
                  "ac": _json(want["acceptance"]),
                  "ct": want["claim_token"],
-                 "lat": want["latitude"], "mx": want["max_attempts"],
+                 "mx": want["max_attempts"],
                  "at": want["attempts"], "aw": _json(want["awaiting"]),
                  "asg": want["assignee"],
                  "jid": want["job_ids"], "lu": want["lease_until"],

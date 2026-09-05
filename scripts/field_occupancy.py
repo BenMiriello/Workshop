@@ -8,8 +8,11 @@ docs/platform-redesign/coherence-overhaul-2026-08-16.md.
 The premise: a field at 0% occupancy is a design that never landed, and the
 system is full of them. `ticket.parent` is 0 of 197 and has an ADR, a ratified
 depth cap, a decomposition design and a Postgres depth-guard trigger behind it.
-`ticket.latitude` is 0 of 197 and has its own module. Both read as live concepts
-in every doc and in the schema; only counting reveals otherwise.
+It reads as a live concept in every doc and in the schema; only counting reveals
+otherwise. A sibling field measured the same way -- 0 of 197, with its own
+service module, a three-level cascade, a shell entrypoint and a column of its
+own -- was deleted outright on 2026-09-05 (ticket 3b1c5432) on the strength of
+this count.
 
 The inverse is just as important and is how the ticket-store data loss was
 found: a field with real occupancy that a newer write path silently drops. So
@@ -112,7 +115,7 @@ def collect_tickets() -> tuple[dict[str, list[dict]], dict[str, str]]:
     since 2026-08-15 while the project trees are still .tasks.json, and a field
     that is populated in one and empty in the other is exactly the signal worth
     surfacing -- it is how the ticket data-loss bug in §3 of the coherence-
-    overhaul doc was found (`db/ticket_sync.py` silently dropping `latitude`,
+    overhaul doc was found (`db/ticket_sync.py` silently dropping
     `max_attempts`, `attempts`, `awaiting`, `assignee`).
     """
     from routes.tasks_all import scope_roots

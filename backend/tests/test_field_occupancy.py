@@ -100,7 +100,7 @@ class TestBuildReportTickets:
 
     def test_by_scope_and_by_store_present(self, mod, monkeypatch):
         per_scope = {
-            "development": [{"id": "1", "latitude": "standard"}],
+            "development": [{"id": "1", "effort": "standard"}],
             "project:demo": [{"id": "2"}],
         }
         kind = {"development": "relational", "project:demo": "file"}
@@ -115,21 +115,21 @@ class TestBuildReportTickets:
 
     def test_store_divergence_flags_field_in_one_store_only(self, mod, monkeypatch):
         per_scope = {
-            "development": [{"id": "1", "latitude": "standard"}],
-            "project:demo": [{"id": "2"}],  # no `latitude` key at all
+            "development": [{"id": "1", "effort": "standard"}],
+            "project:demo": [{"id": "2"}],  # no `effort` key at all
         }
         kind = {"development": "relational", "project:demo": "file"}
         self._patch(mod, monkeypatch, per_scope, kind)
 
         report = mod.build_report(owner=1)
         divergent_fields = {row["field"] for row in report["ticket"]["store_divergence"]}
-        assert "latitude" in divergent_fields
+        assert "effort" in divergent_fields
 
     def test_no_divergence_reported_when_only_one_store_has_records(self, mod, monkeypatch):
         """An empty store must not trivially "diverge" from a populated one --
         that would flag every single field on every run with only one live
         store, which is noise, not signal."""
-        per_scope = {"development": [{"id": "1", "latitude": "standard"}]}
+        per_scope = {"development": [{"id": "1", "effort": "standard"}]}
         kind = {"development": "relational"}
         self._patch(mod, monkeypatch, per_scope, kind)
 

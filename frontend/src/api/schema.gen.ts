@@ -10452,6 +10452,8 @@ export interface components {
             branch: string;
             /** Branch Slug */
             branch_slug: string;
+            /** Default Ref */
+            default_ref?: string | null;
             /** Dir */
             dir: string;
             /** Display Name */

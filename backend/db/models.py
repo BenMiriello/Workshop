@@ -46,19 +46,13 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PgUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from db.ids import uuid7
-# IMPORTED, not restated. `latitude` already has exactly one definition of its
-# vocabulary and adding a second here is how the four definitions of the
-# autonomy enum happened. `services.latitude` reaches only the stdlib and
-# `wsplatform.paths` at module scope, so this does not drag the service layer
-# into the schema.
-from services.latitude import LATITUDES
-
 # The JSON store owns the state vocabulary because it is the store that has to
-# heal a hand-edited TODO.md against it; the schema follows. Same test as
-# LATITUDES above: `services.tasks` reaches only the stdlib and
-# `services.latitude` at module scope, so importing it here does not drag the
-# service layer into the schema. This was two identical tuples until 2026-08-17;
-# `services/tasks.py` asked for exactly this pointing-one-at-the-other.
+# heal a hand-edited TODO.md against it; the schema follows. IMPORTED, not
+# restated: a second copy of a vocabulary here is how the four definitions of
+# the autonomy enum happened. `services.tasks` reaches only the stdlib at
+# module scope, so importing it here does not drag the service layer into the
+# schema. This was two identical tuples until 2026-08-17; `services/tasks.py`
+# asked for exactly this pointing-one-at-the-other.
 from services.chat_store import CHAT_MODES, THREAD_ARMED
 from services.tasks import EFFORTS, STATE_TYPES as STATE_CATEGORIES
 
@@ -529,16 +523,11 @@ class Ticket(Base, Timestamps, SoftDelete):
     # data loss: all five are reachable from `PATCH /tasks/{id}` and all five
     # were being written into a store that had nowhere to put them.
     #
-    # Occupancy at rest is the WRONG test for three of them. `awaiting` is
+    # Occupancy at rest is the WRONG test for two of them. `awaiting` is
     # raised at a block and cleared at the unblock, so zero at rest is what a
-    # healthy queue looks like; `latitude` and `max_attempts` are overrides that
-    # exist to be set on the exceptional ticket. The right test is whether a
-    # live path writes them, and for all five it does.
-
-    # NULL means INHERIT from the scope, never "standard" — coercing an unset
-    # value to the default silently undoes a project's strict setting
-    # (services/latitude.py). Hence nullable with no server_default.
-    latitude: Mapped[str | None] = mapped_column(String(16))
+    # healthy queue looks like; `max_attempts` is an override that exists to be
+    # set on the exceptional ticket. The right test is whether a live path
+    # writes them, and for all four it does.
 
     # The per-task cap on worker RUNS, distinct from ralph's inner iteration
     # cap. NULL means "use the sweep's default" (project_ralph.sh:64).
@@ -574,7 +563,7 @@ class Ticket(Base, Timestamps, SoftDelete):
     # newest row's lease/heartbeat/pid, and the array of every run's
     # `legacy_job_id`). `run` had zero readers and one writer, the one-shot
     # backfill, so the derivation could only freeze -- exactly the class of bug
-    # e9c4a71f0d38 fixed for latitude/max_attempts/attempts/awaiting/assignee.
+    # e9c4a71f0d38 fixed for max_attempts/attempts/awaiting/assignee.
     # `tasks.claim()` and `tasks.heartbeat()` write all four of these on every
     # claim of a ticket in a relational scope, through the same `PATCH
     # /tasks/{id}` -> `_persist` -> `ticket_sync.mirror` path as everything
@@ -590,8 +579,6 @@ class Ticket(Base, Timestamps, SoftDelete):
     __table_args__ = (
         CheckConstraint(f"effort IS NULL OR {_one_of('effort', EFFORTS)}",
                         name="ck_ticket_effort"),
-        CheckConstraint(f"latitude IS NULL OR {_one_of('latitude', LATITUDES)}",
-                        name="ck_ticket_latitude"),
         # A cap of zero would park a ticket before its first attempt, and a
         # negative attempt count is not a thing that happened.
         CheckConstraint("max_attempts IS NULL OR max_attempts > 0",

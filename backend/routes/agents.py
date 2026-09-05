@@ -80,7 +80,6 @@ class Agent(BaseModel):
     permission_mode: str | None = None
     mentionable: bool = False
     delegatable: bool = False
-    latitude: str | None = None
     autonomy: AutonomyMode = "reactive"
     memory: Any = None
     # Fork provenance `<template-slug>@<version>`: a label, not a link.
@@ -212,8 +211,6 @@ class RosterAgent(BaseModel):
     role: str | None = None
     mentionable: bool = False
     delegatable: bool = False
-    # null = inherit, and it must stay null over the wire.
-    latitude: str | None = None
     capabilities: list[str] = []
     memory: Any = None
     project_slug: str | None = None
@@ -539,7 +536,6 @@ class AgentCreate(BaseModel):
     persona: str = ""
     human: str = ""
     role: str | None = None          # closed enum: maker|reviewer|triager|keeper|broker
-    latitude: str | None = None      # strict | standard | open (null = inherit)
     autonomy: str | None = None      # reactive | supervised | autonomous (null = reactive)
     project_slug: str | None = None  # links this agent into a project scope
 
@@ -1456,9 +1452,6 @@ class AgentDefinitionUpdate(BaseModel):
     capabilities: list[str] | None = None
     role: str | None = None            # closed enum: maker|reviewer|triager|keeper|broker
                                        # ("" clears it; unknown -> 400)
-    latitude: str | None = None        # decision rights: strict | standard | open
-                                       # ("" or "standard" clears it to inherit;
-                                       # unknown -> 400)
     autonomy: str | None = None        # per-agent mode: reactive | supervised | autonomous
                                        # (autonomy-model 2026-07-18; "" or the
                                        # reactive default clears the emitted field)
@@ -1488,7 +1481,6 @@ async def update_agent_definition(agent_id: str, body: AgentDefinitionUpdate):
             limits=body.limits,
             capabilities=body.capabilities,
             role=body.role,
-            latitude=body.latitude,
             autonomy=body.autonomy,
             mentionable=body.mentionable,
             delegatable=body.delegatable,
@@ -1518,7 +1510,6 @@ async def create_agent(body: AgentCreate):
             name=body.name,
             memory="notes",
             role=body.role,
-            latitude=body.latitude,
             autonomy=body.autonomy,
             project_slug=body.project_slug,
             body="\n\n".join(parts),

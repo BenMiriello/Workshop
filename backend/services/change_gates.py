@@ -26,7 +26,7 @@ made, or redo work that was. So every check in the table below is recorded on
 every run, and a skip carries its REASON: which precondition was not met, or,
 when the reviewer flagged the check as ambiguous, that it had input to judge
 and no tooling to judge it with. That distinction is the reviewer's own
-(`reviewer.sh`'s LATITUDE note) and it survives into the record here.
+(`reviewer.sh`'s AMBIGUITY note) and it survives into the record here.
 
 A GATE WRITE MAY NEVER FAIL THE SWEEP. The verdict is the reviewer's and it is
 already made by the time this module is reached; recording it is bookkeeping.
@@ -314,21 +314,21 @@ def _verdict_gate(payload: dict, at: str) -> dict:
     """The reviewer's overall verdict, recorded as its own gate.
 
     `block-for-decision` is not a pass and is not a plain failure either: it is
-    the reviewer saying completeness is UNESTABLISHED under a strict latitude.
-    It records `fail` -- the change did not clear the gate -- with the
-    reviewer's verbatim `blocked_reason`, so the surface never shows it as
-    green and never loses why.
+    the reviewer saying completeness is UNESTABLISHED, because a check that
+    applied could not run. It records `fail` -- the change did not clear the
+    gate -- with the reviewer's verbatim `blocked_reason`, so the surface never
+    shows it as green and never loses why.
     """
     verdict = str(payload.get("verdict") or "").strip() or "unknown"
     reasons = [str(r) for r in (payload.get("reasons") or [])]
-    latitude = str(payload.get("latitude") or "standard")
     if verdict == "approve" and payload.get("complete"):
-        detail = f"approved at latitude {latitude}"
+        detail = "approved"
     elif verdict == "block-for-decision":
         detail = str(payload.get("blocked_reason")
-                     or "completeness unestablished under a strict latitude")
+                     or "completeness unestablished: a check that applied "
+                        "could not run")
     else:
-        detail = (f"verdict {verdict} at latitude {latitude}"
+        detail = (f"verdict {verdict}"
                   + (f": {', '.join(reasons)}" if reasons else ""))
     status = "pass" if (verdict == "approve" and payload.get("complete")) else "fail"
     return {"name": VERDICT_GATE, "status": status, "at": at,

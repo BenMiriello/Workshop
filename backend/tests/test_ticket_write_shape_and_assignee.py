@@ -57,7 +57,7 @@ def client(roots, monkeypatch):
 # The keys the detail GET promises. A single-task response missing any of them is
 # a response the ticket page renders as "this ticket has none of that".
 _DETAIL_KEYS = {"scope", "origin", "readiness", "links", "state_type", "ready",
-                "blocked_by", "effective_latitude"}
+                "blocked_by"}
 
 
 def _assert_is_a_detail_record(rec: dict, client, scope: str) -> None:
@@ -157,15 +157,18 @@ def test_create_returns_the_detail_shape(client, roots):
 
 
 def test_no_single_task_route_hand_builds_its_own_shape():
-    """The structural half of the fix: one helper, so a route added later cannot
-    quietly ship the old five-key record. `_with_latitude` is what the
-    hand-built shape ended at, and only `_detail` and the list loop may call it."""
+    """The structural half of the fix: one helper, so a route added later
+    cannot quietly ship the old five-key record. Every route that returns ONE
+    task must end at `_detail`, which is the only place the projected keys are
+    stamped; a route that builds its own dict is the regression this pins."""
     import inspect
     src = inspect.getsource(tasks_all)
-    callers = sorted(line.strip() for line in src.splitlines()
-                     if "_with_latitude(" in line and "def _with_latitude" not in line)
-    assert callers == ["out.append(_with_latitude(rec, skey, lat_cache))",
-                       "return _with_latitude(rec, scope)"], callers
+    builders = sorted(line.strip() for line in src.splitlines()
+                      if "_detail(" in line and "def _detail" not in line)
+    assert builders, "no route reaches _detail; the helper was bypassed"
+    for line in builders:
+        assert line.startswith(("return _detail(", "task = _detail(",
+                                "rec = _detail(", "out = _detail(")), line
 
 
 # ---- Fix 3: the assignee, at the store level --------------------------------

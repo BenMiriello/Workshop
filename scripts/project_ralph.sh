@@ -228,7 +228,7 @@ source "$WORKSHOP/scripts/sweep_control.sh" 2>/dev/null || { CONTROL_YIELD=0; CO
 # sweep (dead pid, Job still `running`) from one genuinely in flight (2d).
 #
 # IMPORT PATH: `PYTHONPATH=$WORKSHOP/backend` + `-m services.jobs`, the same way
-# this file already calls services.usage_ledger and services.latitude. It used to
+# this file already calls services.usage_ledger. It used to
 # be `-m backend.services.jobs`, which stopped working the moment jobs.py grew a
 # top-level `from services import paths` (now `from wsplatform import paths`,
 # ADR 0024's move of paths.py out of services/ -- same constraint, new module
@@ -1540,7 +1540,7 @@ print(len(crit))
   # `publish_or_park` records the branch (as a change, a PR, or a local merge)
   # and it is only reached from the rc=0 success legs. The park and block legs
   # below return without it, so a run that COMMITTED and then hit the touches
-  # gate, the classifier, the thrash guard or a strict-latitude ambiguity left
+  # gate, the classifier, the thrash guard or an unresolvable ambiguity left
   # its commits on a locked worktree branch that nothing in the ticket named.
   # On 2026-08-23 that had happened eleven times over: eleven `wt/development/*`
   # branches, each one commit ahead of main, none referenced from any ticket,
@@ -1754,15 +1754,16 @@ print(len(crit))
       job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"
       log "task=$TASK_ID PARKED (no progress within the run); resume from job $CHILD_JOB" ;;
     7)
-      # rc=7 (block-for-decision): a `strict` sweep whose gate could not establish
-      # completeness (reviewer.sh). Strict means ask rather than assume, so this
-      # BLOCKS for the operator instead of retrying: the ambiguity is in the
-      # environment, and another attempt re-runs the same unavailable check. Not
+      # rc=7 (block-for-decision): the gate could not establish completeness,
+      # because a check that applied could not run (reviewer.sh). Unestablished
+      # is not established, so this BLOCKS for the operator instead of retrying:
+      # the ambiguity is in the environment, and another attempt re-runs the
+      # same unavailable check. Not
       # release_or_block — the attempt cap is about a task that keeps failing, and
       # this task did not fail. The reviewer's own reason travels verbatim so the
       # block is legible without re-deriving what was ambiguous.
       BLOCK_REASON=$(jq -r '.reviewer.blocked_reason // empty' "$RECEIPT_FILE" 2>/dev/null)
-      [[ -z "$BLOCK_REASON" ]] && BLOCK_REASON="latitude:strict-and-ambiguous"
+      [[ -z "$BLOCK_REASON" ]] && BLOCK_REASON="completeness-unestablished"
       # The block also carries a STRUCTURED request so the Review tab can act on
       # it rather than just display a sentence. kind=decision: the gate could not
       # establish completeness, so what it needs is a call, not a permission. The
@@ -1773,11 +1774,11 @@ print(len(crit))
       ptasks_tx block "$DIR" "$TASK_ID" "$BLOCK_REASON" \
         --kind decision --ask "$BLOCK_REASON" \
         --unblocks-if "the operator confirms completeness, or says what to check instead" \
-        --dedupe-key "latitude-strict:${BLOCK_AMBIG:-unknown}" \
+        --dedupe-key "unestablished:${BLOCK_AMBIG:-unknown}" \
         --raised-by "reviewer" \
         --expect-claim-token "${CLAIM_TOKEN:-}" || true
       python3 "$PTASKS" note "$DIR" "$TASK_ID" "$BLOCK_REASON" --kind acceptance >/dev/null 2>>"$LOG"
-      log "task=$TASK_ID BLOCKED for decision (strict latitude): $BLOCK_REASON"
+      log "task=$TASK_ID BLOCKED for decision (completeness unestablished): $BLOCK_REASON"
       BLOCKED=$((BLOCKED+1))
       job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE" ;;
     8)

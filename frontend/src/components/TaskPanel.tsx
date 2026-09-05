@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PRIORITY_BANDS, bandOf, floorOf, priorityLabel } from "../lib/priority";
 import { shortHttpError, Button, Card, ConfirmDialog, Field, Input, Select, SectionLabel, Skeleton, StateBlock, StatusPill, Stack, Row, Textarea, Toggle } from "@workshop/ui";
-import { RefreshCw, Plus, Pencil, Trash2, Check, X, CornerDownLeft, Compass } from "lucide-react";
+import { RefreshCw, Plus, Pencil, Trash2, Check, X, CornerDownLeft } from "lucide-react";
 import type { components } from "../api/schema.gen";
 
 import {
@@ -11,12 +11,8 @@ import {
   TASK_STATUSES,
   TASK_ACCEPTANCE_KINDS,
   TASK_ACCEPTANCE_LABELS,
-  LATITUDES,
-  DEFAULT_LATITUDE,
   taskStatusKind,
   taskStatusLabel,
-  latitudeDesc,
-  latitudeSourceLabel,
   title as taskTitle,
   description as taskDescription,
   cleanTitle,
@@ -72,10 +68,6 @@ type EditDraft = {
   status: TaskStatus;
   priority: string;
   effort: string;
-  // "" = inherit from the scope (the store's null). Deliberately NOT prefilled
-  // with the effective value: prefilling would turn a glance at the ticket into
-  // a per-ticket override on the next save, silently pinning the inherited value.
-  latitude: string;
   assignee: string;
   // Advanced fields (persisted via the same PATCH). acceptanceKind "" = none;
   // acceptanceSpec only matters for the "command" kind. maxAttempts + dependsOn
@@ -94,7 +86,6 @@ function toDraft(t: Task): EditDraft {
     status: (t.status ?? "todo") as TaskStatus,
     priority: String(t.priority ?? 0),
     effort: t.effort ?? "",
-    latitude: t.latitude ?? "",
     assignee: t.assignee ?? "",
     acceptanceKind: t.acceptance?.kind ?? "",
     acceptanceSpec: t.acceptance?.spec ?? "",
@@ -295,7 +286,6 @@ export default function TaskPanel({
           status: draft.status,
           priority: Number(draft.priority) || 0,
           effort: draft.effort,
-          latitude: draft.latitude,
           assignee: draft.assignee.trim() || null,
           acceptance,
           depends_on,
@@ -467,19 +457,6 @@ export default function TaskPanel({
               <option value="l">l</option>
             </Select>
           </Field>
-          <Field
-            label="Latitude"
-            htmlFor={`tp-latitude-${t.id}`}
-            optional
-            help={draft.latitude ? latitudeDesc(draft.latitude) : "Inherit the scope's setting."}
-          >
-            <Select id={`tp-latitude-${t.id}`} value={draft.latitude} onChange={(e) => setField("latitude", e.target.value)}>
-              <option value="">inherit</option>
-              {LATITUDES.map((v) => (
-                <option key={v} value={v}>{v}</option>
-              ))}
-            </Select>
-          </Field>
           <Field label="Assignee" htmlFor={`tp-assignee-${t.id}`} help="operator, or an agent's name">
             <Input id={`tp-assignee-${t.id}`} value={draft.assignee} onChange={(e) => setField("assignee", e.target.value)} placeholder="operator" style={{ maxWidth: "12rem" }} />
           </Field>
@@ -536,18 +513,6 @@ export default function TaskPanel({
             <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>priority {priorityLabel(t.priority)}</span>
           )}
           {t.effort && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>effort {t.effort}</span>}
-          {/* The EFFECTIVE latitude a run would use, always with where it came
-              from. The source is the point: null means inherit, so a value shown
-              bare would make an inherited setting look like this ticket's own. */}
-          <span
-            className="ws-muted"
-            style={{ fontSize: "var(--fs-xs)" }}
-            title={latitudeDesc(t.effective_latitude?.value ?? DEFAULT_LATITUDE)}
-          >
-            <Compass size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
-            latitude {t.effective_latitude?.value ?? DEFAULT_LATITUDE}
-            {" "}({latitudeSourceLabel(t.effective_latitude?.source ?? "default")})
-          </span>
           {t.assignee && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{t.assignee}</span>}
           {t.depends_on && t.depends_on.length > 0 && (
             <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }} title={t.depends_on.join(", ")}>

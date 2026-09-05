@@ -10,7 +10,6 @@
 // The contract mirrored here is backend/routes/tasks_all.py `TaskPatchIn` +
 // services/tasks.py `update()`:
 //   - every field is optional; an ABSENT key leaves the stored value alone
-//   - latitude "" clears the ticket's override back to inherit (null does NOT)
 //   - effort "" clears the hint; assignee "" clears the assignment
 //   - execution "" clears the classification back to "not classified"
 //   - acceptance {kind: ""} clears the gate; a real kind is one of three
@@ -35,16 +34,10 @@ export const TICKET_EXECUTIONS = TASK_EXECUTIONS;
 // TASK_ACCEPTANCE_KINDS, both in lib/tasks. They were restated here verbatim
 // until 2026-08-17; import them from there instead of re-adding a copy.
 
-// The draft's word for "this ticket sets no latitude of its own". The store
-// spells that as null on read and as "" on write.
-export const LATITUDE_INHERIT = "inherit";
-
 export type TicketDraft = {
   title: string;
   body: string;
   status: string;
-  // LATITUDE_INHERIT, or one of the latitude values.
-  latitude: string;
   priority: string;
   // "" = no effort hint.
   effort: string;
@@ -68,7 +61,7 @@ export type TicketDraft = {
 // The draft of a ticket that has not loaded yet. Editing is not offered until
 // one has, so this is only ever the initial state of the form.
 export const EMPTY_TICKET_DRAFT: TicketDraft = {
-  title: "", body: "", status: "todo", latitude: LATITUDE_INHERIT,
+  title: "", body: "", status: "todo",
   priority: "0", effort: "", execution: "", assignee: "", acceptanceKind: "",
   acceptanceSpec: "", maxAttempts: "", labels: "", dependsOn: "", relatesTo: "",
 };
@@ -80,7 +73,6 @@ export function draftFromTask(t: Task): TicketDraft {
     title: titleOf(t),
     body: descriptionOf(t),
     status: t.status ?? "todo",
-    latitude: t.latitude ?? LATITUDE_INHERIT,
     priority: String(t.priority ?? 0),
     effort: t.effort ?? "",
     execution: t.execution ?? "",
@@ -137,12 +129,6 @@ export function ticketPatch(draft: TicketDraft, base: TicketDraft): Record<strin
   if (title !== cleanTitle(base.title)) out.title = title;
   if (draft.body !== base.body) out.body = draft.body;
   if (draft.status !== base.status) out.status = draft.status;
-
-  // "" clears the override back to inherit. Sending null here would leave the
-  // stored override in place, which is how the override used to be unclearable.
-  if (draft.latitude !== base.latitude) {
-    out.latitude = draft.latitude === LATITUDE_INHERIT ? "" : draft.latitude;
-  }
 
   const priority = parseCount(draft.priority) ?? 0;
   if (priority !== (parseCount(base.priority) ?? 0)) out.priority = priority;

@@ -36,8 +36,7 @@ from routes.api_models import (DeletedOut, Job, LabelCount, Readiness, Task,
                                TaskAcceptanceCriterion, TaskLink)
 from services import (tasks, task_scope, task_dedup, task_decision, jobs, ownership,
                       work_review, ticket_format,
-                      knowledge, standing, permissions, ticket_readiness,
-                      latitude as latitude_svc)
+                      knowledge, standing, permissions, ticket_readiness)
 from wsplatform.http import DEFAULT_PAGE, MAX_PAGE, Page, PageMeta
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -79,32 +78,6 @@ def _require_root(scope: str | None) -> Path:
     if refusal:
         raise HTTPException(403, refusal)
     raise HTTPException(400, f"unknown scope: {scope}")
-
-
-def _with_latitude(rec: dict, scope: str, cache: dict[str, str | None] | None = None) -> dict:
-    """Stamp the EFFECTIVE latitude and its source onto an outgoing task.
-
-    The stored `latitude` stays exactly as it is (null = inherit); this ADDS the
-    resolved view the UI needs. The source travels with the value because an
-    inherited value that renders as if it were set is precisely how the
-    null-means-inherit bug becomes invisible on screen."""
-    if cache is None:
-        scope_lat = latitude_svc.scope_latitude(scope)
-    else:
-        if scope not in cache:
-            cache[scope] = latitude_svc.scope_latitude(scope)
-        scope_lat = cache[scope]
-    # `resolve` reads the scope through the registry; feed it the cached value by
-    # short-circuiting the chain here so a 200-task list does one read per scope.
-    value = latitude_svc.coerce(rec.get("latitude"))
-    if value:
-        source = "task"
-    elif scope_lat:
-        value, source = scope_lat, "scope"
-    else:
-        value, source = latitude_svc.DEFAULT_LATITUDE, "default"
-    rec["effective_latitude"] = {"value": value, "source": source}
-    return rec
 
 
 def _blocked_by(task: dict, index: dict[str, tuple[dict, str]]) -> list[dict]:
@@ -371,7 +344,6 @@ async def list_all(
     want_labels = {v.strip() for v in (labels or "").split(",") if v.strip()} or None
     want_assignee = {v.strip() for v in (assignee or "").split(",") if v.strip()} or None
     out: list[dict] = []
-    lat_cache: dict[str, str | None] = {}
     needle = (q or "").strip().casefold()
     # ONE index per request, built while the scopes are being read anyway.
     # Resolving `blocked_by` per row the way the detail route does would be
@@ -421,7 +393,7 @@ async def list_all(
                     continue
             rec = dict(t)
             rec["scope"] = skey
-            out.append(_with_latitude(rec, skey, lat_cache))
+            out.append(rec)
 
     # A `scope=` query loaded one store, so a dependency living elsewhere is not
     # in the index yet. Pay for the other scopes only when a row actually points
@@ -593,8 +565,6 @@ class TaskCreateIn(BaseModel):
     # NOT eligible for unattended dispatch: the store fails it closed rather than
     # guessing (tasks.EXECUTIONS).
     execution: str | None = None
-    # strict|standard|open, or null to inherit from the scope (latitude.py).
-    latitude: str | None = None
     # HOW A REVIEWER WILL KNOW THIS IS DONE, and it is not optional. A ticket
     # filed with no command and no runnable criterion is refused; see
     # services/ticket_format for the rule and the refusal wording. Typed rather
@@ -654,14 +624,11 @@ async def create(body: TaskCreateIn) -> dict:
     task = dict(res["task"]) if res.get("task") else None
     # `effort` is a hint the create path did not carry; stamp it on a freshly
     # created task (not a merge, which would overwrite the existing one's).
-    # `latitude` rides the same post-create stamp: an override belongs to the new
-    # ticket, and a merge must not silently retune the ticket it merged into.
-    if task is not None and (body.effort or body.latitude or body.execution) and \
+    if task is not None and (body.effort or body.execution) and \
             res.get("decision") not in ("exact", "merge"):
         try:
             updated = tasks.update(root, task["id"], effort=body.effort,
-                                   execution=body.execution,
-                                   latitude=body.latitude)
+                                   execution=body.execution)
             if updated:
                 task = dict(updated)
         except ValueError as e:
@@ -701,8 +668,6 @@ class TaskPatchIn(BaseModel):
     # "" clears back to "not yet classified", which is INELIGIBLE for unattended
     # dispatch, not "code". An unrecognized value coerces to null in the store.
     execution: str | None = None
-    # "" clears the override back to inherit; an unknown value is a 400.
-    latitude: str | None = None
     # Advanced fields tasks.update() already supports; None leaves each unchanged.
     acceptance: TaskAcceptanceIn | None = None
     max_attempts: int | None = None
@@ -721,7 +686,7 @@ def _detail(task: dict, scope: str, root: Path) -> dict:
     returns this, and nothing builds its own.
 
     It exists because they used to. A mutating route hand-assembled
-    `dict(task) + scope + latitude` and stopped there, so the record a PATCH,
+    `dict(task) + scope` and stopped there, so the record a PATCH,
     /approve, /split or /duplicate-of handed back was missing `state_type`,
     `ready`, `blocked_by`, `links`, `readiness` and `origin` that the detail GET
     had put there. `TicketDetail.saveEdits` does `setTask(await r.json())`, so a
@@ -751,7 +716,7 @@ def _detail(task: dict, scope: str, root: Path) -> dict:
     rec["ready"] = tasks.is_ready(task, {x["id"]: x for x in siblings})
     rec["blocked_by"] = [d for d in rec["links"]["depends_on"]
                          if d.get("status") not in tasks.TERMINAL]
-    return _with_latitude(rec, scope)
+    return rec
 
 
 @router.get("/{scope}/{task_id}", response_model=Task, response_model_exclude_unset=True)
@@ -905,7 +870,7 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
     if all(v is None for v in (
         body.status, body.title, body.body, body.text, body.labels,
         body.priority, body.assignee, body.effort, body.execution,
-        body.latitude, body.acceptance, body.max_attempts, body.depends_on,
+        body.acceptance, body.max_attempts, body.depends_on,
         body.relates_to, body.reason,
     )):
         raise HTTPException(400, "no fields to update")
@@ -974,7 +939,6 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
             set_assignee=body.assignee,
             effort=body.effort,
             execution=body.execution,
-            latitude=body.latitude,
             acceptance=acceptance_arg,
             max_attempts=body.max_attempts,
             depends_on=body.depends_on,

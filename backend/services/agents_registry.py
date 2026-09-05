@@ -56,7 +56,6 @@ import yaml
 
 from services import triggers
 from services import build_agents as _build_agents
-from services import latitude as _latitude
 from services import tool_registry as _tool_registry
 from wsplatform import paths
 
@@ -140,12 +139,6 @@ SINGLETON_ROLES = ("triager", "keeper")
 # reader. A definition file that still carries `depth:` in its frontmatter keeps
 # working: unknown frontmatter keys are ignored, so no migration is needed.
 
-# `latitude` is decision rights, NOT effort — it is what the worker may do where
-# the ticket does not say (services/latitude.py owns the enum + the cascade).
-# The parsed record keeps None rather than defaulting, because None means
-# INHERIT: this agent scope is one level of the cascade, not the bottom of it.
-LATITUDES = _latitude.LATITUDES
-DEFAULT_LATITUDE = _latitude.DEFAULT_LATITUDE
 
 # CLOSED ENUM (autonomy-model 2026-07-18). Governs whether the dispatcher may
 # fire this agent on its declared triggers, and whether a completed run commits
@@ -201,12 +194,6 @@ def _coerce_bool(v: object) -> bool:
     if isinstance(v, str):
         return v.strip().lower() in ("true", "yes", "on", "1")
     return False
-
-
-def _coerce_latitude(v: object) -> str | None:
-    """Read-side: a canonical latitude, or None meaning inherit from the cascade.
-    Writes go through `_validate_latitude`, which raises instead of coercing."""
-    return _latitude.coerce(v)
 
 
 def _coerce_tools(v: object) -> list[str] | None:
@@ -285,12 +272,6 @@ def _coerce_permission_mode(v: object, slug: str = "") -> str | None:
                     list(model_caps.OFFERED_MODES))
         return None
     return mode
-
-
-def _validate_latitude(v: object) -> str | None:
-    """Write-side: raises ValueError on an unknown latitude so create/update
-    surface a 400 rather than writing a value no sweep will honor."""
-    return _latitude.validate(v)
 
 
 def _coerce_role(v: object) -> str | None:
@@ -440,7 +421,6 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
         "permission_mode": _coerce_permission_mode(fm.get("permission_mode"), slug),
         "mentionable": _coerce_bool(fm.get("mentionable")),
         "delegatable": _coerce_bool(fm.get("delegatable")),
-        "latitude": _coerce_latitude(fm.get("latitude")),
         "autonomy": _coerce_autonomy(fm.get("autonomy")),
         "memory": fm.get("memory"),
         # Fork provenance: `<template-slug>@<version>` when this instance came
@@ -766,7 +746,6 @@ def roster_projection(rec: dict, sessions: list[dict] | None = None,
         "role": rec.get("role"),
         "mentionable": bool(rec.get("mentionable")),
         "delegatable": bool(rec.get("delegatable")),
-        "latitude": rec.get("latitude"),
         "capabilities": rec.get("capabilities") or [],
         "memory": rec.get("memory"),
         "project_slug": rec.get("project_slug"),
@@ -820,7 +799,7 @@ def _path_for(slug: str, project_slug: str | None) -> Path:
 def _build_fm(*, name: str, purpose: str, capabilities: list,
               triggers_list: list, limits: dict, memory: Any,
               project_slug: str | None,
-              role: str | None = None, latitude: str | None = None,
+              role: str | None = None,
               autonomy: str | None = None, mentionable: bool = False,
               delegatable: bool = False,
               template: str | None = None, retired: bool = False) -> dict:
@@ -842,12 +821,6 @@ def _build_fm(*, name: str, purpose: str, capabilities: list,
         fm["mentionable"] = True
     if delegatable:
         fm["delegatable"] = True
-    # Same emit-only-when-non-default rule, and here it is correctness rather
-    # than tidiness: an emitted `latitude: standard` is indistinguishable from a
-    # deliberate choice, so it would out-rank nothing but would read as set.
-    valid_latitude = _validate_latitude(latitude)
-    if valid_latitude and valid_latitude != DEFAULT_LATITUDE:
-        fm["latitude"] = valid_latitude
     # Emit `autonomy` only when the agent has opted OUT of the reactive default.
     # An emitted `autonomy: reactive` would read as a deliberate choice but behave
     # exactly like unset, muddying the signal that the operator explicitly wants
@@ -892,7 +865,7 @@ def create(*, slug: str, name: str, purpose: str = "",
            capabilities: list | None = None, triggers_list: list | None = None,
            limits: dict | None = None, memory: Any = None,
            project_slug: str | None = None,
-           role: str | None = None, latitude: str | None = None,
+           role: str | None = None,
            autonomy: str | None = None,
            template: str | None = None, body: str = "") -> dict:
     slug = slug.strip().lower()
@@ -906,7 +879,7 @@ def create(*, slug: str, name: str, purpose: str = "",
                    capabilities=capabilities or [], triggers_list=triggers_list or [],
                    limits=limits or dict(DEFAULT_LIMITS), memory=memory,
                    project_slug=project_slug,
-                   role=role, latitude=latitude,
+                   role=role,
                    autonomy=autonomy,
                    template=template)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -918,7 +891,7 @@ def create(*, slug: str, name: str, purpose: str = "",
 def update(slug: str, *, name: str | None = None, purpose: str | None = None,
            triggers_list: list | None = None, limits: dict | None = None,
            capabilities: list | None = None, memory: Any = None,
-           role: str | None = None, latitude: str | None = None,
+           role: str | None = None,
            autonomy: str | None = None, mentionable: bool | None = None,
            delegatable: bool | None = None,
            body: str | None = None) -> dict:
@@ -926,9 +899,9 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
     yet (e.g. a maker synthesized from build_agents.json), one is created from
     the current record. Regenerates the event-subscriptions file afterward.
 
-    role/latitude follow the same convention as the other setters:
-    None leaves the field untouched (so a plain triggers edit never disturbs a
-    role), a value writes it."""
+    role follows the same convention as the other setters: None leaves the
+    field untouched (so a plain triggers edit never disturbs a role), a value
+    writes it."""
     rec = get(slug)
     if rec is None:
         raise KeyError(slug)
@@ -942,8 +915,7 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
             capabilities=rec.get("capabilities") or [], triggers_list=rec.get("triggers") or [],
             limits=rec.get("limits") or dict(DEFAULT_LIMITS), memory=rec.get("memory"),
             project_slug=rec.get("project_slug"),
-            role=rec.get("role"),
-            latitude=rec.get("latitude"), autonomy=rec.get("autonomy"),
+            role=rec.get("role"), autonomy=rec.get("autonomy"),
             mentionable=bool(rec.get("mentionable")), delegatable=bool(rec.get("delegatable")),
         )
         existing_body = rec.get("definition") or ""
@@ -972,15 +944,6 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
             fm["role"] = valid_role
         else:
             fm.pop("role", None)
-    if latitude is not None:
-        # "" clears the scope's latitude (back to inherit); `standard` is never
-        # emitted, so setting the default clears it too — a scope that stored its
-        # default would read as set while behaving exactly like unset.
-        valid_latitude = _validate_latitude(latitude)
-        if valid_latitude and valid_latitude != DEFAULT_LATITUDE:
-            fm["latitude"] = valid_latitude
-        else:
-            fm.pop("latitude", None)
     if autonomy is not None:
         # Same rule: "" or the reactive default clears the emitted field so a
         # background-off agent is unambiguously a default agent.
@@ -1113,8 +1076,8 @@ def fork_from_template(template_slug: str, target_slug: str,
     which is provenance for a human, not a pointer for a machine.
 
     `overrides` may set any of name / purpose / triggers / limits / role /
-    latitude / definition (the body). Everything it does not name comes from the
-    template verbatim.
+    definition (the body). Everything it does not name comes from the template
+    verbatim.
     """
     path = _template_path(template_slug)
     if not path.exists():
@@ -1137,7 +1100,6 @@ def fork_from_template(template_slug: str, target_slug: str,
         memory=ov.get("memory") if ov.get("memory") is not None else fm.get("memory"),
         project_slug=project_slug,
         role=ov.get("role") if ov.get("role") is not None else fm.get("role"),
-        latitude=ov.get("latitude") if ov.get("latitude") is not None else fm.get("latitude"),
         template=stamp,
         body=ov.get("definition") if ov.get("definition") is not None else body,
     )

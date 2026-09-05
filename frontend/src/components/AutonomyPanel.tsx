@@ -3,10 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { timeAbsolute, shortHttpError, Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill, Skeleton, Input, Field, ActionBar, Tag, Segmented, catFor, useEditMode, type StatusKind, type SegmentedOption } from "@workshop/ui";
 import {
   Repeat, Play, RefreshCw, X, Clock, Zap, RotateCw,
-  ChevronDown, ChevronRight, HelpCircle, SlidersHorizontal, Compass,
+  ChevronDown, ChevronRight, HelpCircle, SlidersHorizontal,
 } from "lucide-react";
 
-import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib/tasks";
 import { jobStatusKind } from "../lib/jobs";
 import { queryKeys } from "../lib/queryKeys";
 import { useEventSources } from "../lib/eventSources";
@@ -20,9 +19,7 @@ import { useEventSources } from "../lib/eventSources";
 //   scheduled   swept on a cron cadence when work is ready
 //   continuous  swept every tick while work is ready, bounded by limits
 //
-// latitude (strict/standard/open) sets what a sweep is TOLD to do WHERE THE
-// TICKET DOES NOT SAY — decision rights, not effort. It is prompt text, and
-// nothing here bounds what a run may write: `touches` is a declared intent
+// Nothing here bounds what a run may WRITE: `touches` is a declared intent
 // checked against the committed diff AFTER the fact, so a stray write is
 // flagged and the ticket blocked, not prevented. Limits bound a continuous
 // loop. All of these are a CONFIG write: edit-mode + explicit Save (never
@@ -78,9 +75,6 @@ type Job = {
 
 type Autonomy = {
   autonomy: Preset;
-  // null = this scope sets none, so work here inherits the default. Kept null
-  // (never defaulted to "standard") so the scope never claims a setting it lacks.
-  latitude: Latitude | null;
   limits: Limits;
   triggers: Trigger[];
   queue?: Queue;
@@ -92,10 +86,6 @@ type Autonomy = {
 
 type PrimaryDraft = {
   preset: Preset;
-  // The draft carries the default rather than null: the control always shows a
-  // position. Saving `standard` clears the stored value back to null, which is
-  // the same behavior — the scope stops asserting a latitude.
-  latitude: Latitude;
   cron: string;
   maxIterations: string;
   budget: string;
@@ -108,11 +98,6 @@ const PRESET_OPTIONS: SegmentedOption<Preset>[] = [
   { value: "continuous", label: "Continuous" },
 ];
 
-const LATITUDE_OPTIONS: SegmentedOption<Latitude>[] = LATITUDES.map((v) => ({
-  value: v,
-  label: v.charAt(0).toUpperCase() + v.slice(1),
-}));
-
 const PRESET_DESC: Record<Preset, string> = {
   off: "No automatic runs. Manual Run now only.",
   "on-demand": "Runs only when you press Run now.",
@@ -122,9 +107,6 @@ const PRESET_DESC: Record<Preset, string> = {
 
 function isPreset(v: unknown): v is Preset {
   return v === "off" || v === "on-demand" || v === "scheduled" || v === "continuous";
-}
-function isLatitude(v: unknown): v is Latitude {
-  return v === "strict" || v === "standard" || v === "open";
 }
 
 function cronFromTriggers(triggers?: Trigger[]): string {
@@ -194,7 +176,6 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
       // describe different sweeps.
       return {
         autonomy: isPreset(raw.autonomy) ? raw.autonomy : "off",
-        latitude: isLatitude(raw.latitude) ? raw.latitude : null,
         limits: (raw.limits && typeof raw.limits === "object") ? raw.limits : {},
         triggers: Array.isArray(raw.triggers) ? raw.triggers : [],
         queue: raw.queue,
@@ -232,7 +213,6 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
   // Primary preset config: the main control. Edit-mode + explicit Save.
   const primaryModel = useMemo<PrimaryDraft>(() => ({
     preset: cfg?.autonomy ?? "off",
-    latitude: cfg?.latitude ?? DEFAULT_LATITUDE,
     cron: cronFromTriggers(cfg?.triggers),
     maxIterations: cfg?.limits?.max_iterations != null ? String(cfg.limits.max_iterations) : "",
     budget: cfg?.limits?.budget?.max_wall_s != null ? String(cfg.limits.budget.max_wall_s) : "",
@@ -247,7 +227,6 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
     const body = {
       preset: draft.preset,
       cron: draft.preset === "scheduled" ? draft.cron : undefined,
-      latitude: draft.latitude,
       limits,
     };
     const r = await fetch(putUrl, {
@@ -394,18 +373,6 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
                   </Field>
                 )}
 
-                <Field
-                  label={<><Compass size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.35rem" }} />Latitude</>}
-                  help={latitudeDesc(pedit.draft.latitude)}
-                >
-                  <Segmented
-                    ariaLabel="Sweep latitude"
-                    options={LATITUDE_OPTIONS}
-                    value={pedit.draft.latitude}
-                    onChange={(v) => pedit.set("latitude", v)}
-                  />
-                </Field>
-
                 <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
                   <Field label="Max iterations" htmlFor="autonomy-maxiter" help="Task cap per continuous sweep.">
                     <Input
@@ -449,13 +416,6 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
                   <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{PRESET_DESC[preset]}</span>
                 </Row>
                 <Row wrap style={{ gap: "var(--space-4)" }}>
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                    <Compass size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
-                    {/* Says "(default)" when this scope sets none, so an inherited
-                        value is never mistaken for one the operator chose here. */}
-                    latitude: <strong>{cfg?.latitude ?? DEFAULT_LATITUDE}</strong>
-                    {cfg?.latitude ? "" : " (default)"}
-                  </span>
                   {preset === "scheduled" && cronFromTriggers(cfg?.triggers) && (
                     <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                       <Clock size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />

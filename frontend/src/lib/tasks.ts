@@ -167,46 +167,10 @@ export const TASK_ACCEPTANCE_LABELS: Record<TaskAcceptanceKind, string> = {
 export type TaskAcceptance =
   components["schemas"]["TaskAcceptance"] & { kind: TaskAcceptanceKind };
 
-// ---- latitude ---------------------------------------------------------------
-// What a worker is TOLD to do where the ticket does not say (backend
-// services/latitude.py). Not effort (that is depth).
-//
-// This is prompt text. The resolved value is written into the sweep's
-// instructions and the model is asked to behave accordingly; the one thing
-// downstream that reads it is the rule that a `strict` run whose completion gate
-// came back ambiguous blocks for the operator instead of retrying. Nothing
-// refuses a write because of a latitude value.
-//
-// This comment used to call `touches` and grants an enforced blast radius that
-// latitude could never widen. They are not that. `touches` is checked after the
-// run against the committed diff, so it flags a stray and blocks the ticket
-// rather than stopping the write. Both are worth having; neither is a wall, and
-// the copy below must not imply one.
-export type Latitude = "strict" | "standard" | "open";
-
-export const LATITUDES: Latitude[] = ["strict", "standard", "open"];
-export const DEFAULT_LATITUDE: Latitude = "standard";
-
-// Each line says what the worker DOES when the ticket is silent, and none of
-// them implies permission. That is the whole point of the rewording: the old
-// copy read as a privilege level ("decides freely", "blocks often"), which is
-// how a setting that only shapes whether a worker ASKS came to be described,
-// and then believed, as a limit on what it may reach.
-// `services/latitude.py` already retracted the same claim in its docstring;
-// this is the UI agreeing with it.
-const LATITUDE_DESC: Record<Latitude, string> = {
-  strict: "Asks when the ticket does not say.",
-  standard: "Decides reversible things, asks about the rest.",
-  open: "Decides and reports at the end.",
-};
-
-export const latitudeDesc = (v?: string): string =>
-  LATITUDE_DESC[(v ?? "") as Latitude] ?? "";
-
 // ---- effort: how much depth the ticket is worth -----------------------------
 // The store's effort hint (backend services/tasks.py EFFORTS), a hint to the
-// worker about depth. Not latitude (that is decision rights) and not execution
-// (that is whether a machine can do it at all).
+// worker about depth. Not execution (that is whether a machine can do it at
+// all).
 //
 // It lives here rather than in a component or in lib/ticketEdit because two
 // unrelated screens read it: the filter row and the ticket editor. It was
@@ -269,27 +233,6 @@ const TRIAGE_LABEL: Record<TriageDecision, string> = {
 export const triageLabel = (v?: string | null): string =>
   TRIAGE_LABEL[(v ?? "") as TriageDecision] ?? "reviewed";
 
-// Where an effective latitude came from. This travels WITH the value everywhere
-// it is shown: null means inherit, so a value rendered without its source is how
-// an inherited setting gets mistaken for a deliberate one.
-export type LatitudeSource = "invocation" | "task" | "scope" | "default";
-
-export type EffectiveLatitude =
-  Omit<components["schemas"]["EffectiveLatitude"], "value" | "source"> & {
-    value: Latitude;
-    source: LatitudeSource;
-  };
-
-const LATITUDE_SOURCE_LABEL: Record<LatitudeSource, string> = {
-  invocation: "set for this run",
-  task: "set on this ticket",
-  scope: "inherited from the scope",
-  default: "the default",
-};
-
-export const latitudeSourceLabel = (source?: string): string =>
-  LATITUDE_SOURCE_LABEL[(source ?? "") as LatitudeSource] ?? String(source ?? "");
-
 // What a stopped task is asking for. One shape for every reason work stops — a
 // permission, a missing resource, an ambiguous ticket — so one surface answers
 // all of them. `kind` is an open slug, not a union: the named kinds are the ones
@@ -305,12 +248,11 @@ export type BlockRequest =
 
 export type Task =
   Omit<components["schemas"]["Task"],
-       "status" | "execution" | "latitude" | "state_type" | "acceptance"
+       "status" | "execution" | "state_type" | "acceptance"
        | "triage" | "evidence" | "comments" | "awaiting" | "blocked_request"
-       | "blocked_by" | "links" | "readiness" | "effective_latitude"> & {
+       | "blocked_by" | "links" | "readiness"> & {
     status: TaskStatus;
     execution?: TaskExecution | null;
-    latitude?: Latitude | null;
     state_type?: TaskStateType;
     acceptance?: TaskAcceptance | null;
     triage?: TicketTriage | null;
@@ -325,7 +267,6 @@ export type Task =
     blocked_by?: TaskLink[];
     links?: TaskLinks;
     readiness?: TicketReadiness;
-    effective_latitude?: EffectiveLatitude;
   };
 
 // ---- source: WHERE THE TICKET CAME FROM -------------------------------------

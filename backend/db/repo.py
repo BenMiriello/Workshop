@@ -24,11 +24,11 @@ WHAT DELIBERATELY DIFFERS from the JSON record, and why:
               key and `blocked_request` is a second name for `awaiting`, both
               re-derived by `tasks._normalize` on the way back in.
 
-  RESTORED 2026-08-16 (e9c4a71f0d38). `latitude`, `max_attempts`, `attempts`,
+  RESTORED 2026-08-16 (e9c4a71f0d38). `max_attempts`, `attempts`,
               `awaiting` and `assignee` were in that dropped list on a July
               measurement. Postgres became authoritative for `development` and
               `workshop` on 2026-08-15, at which point "nothing reads them" was
-              no longer the question — `PATCH /tasks/{id}` WRITES all five, and
+              no longer the question — `PATCH /tasks/{id}` WRITES all four, and
               they were going into a store with no column for them. They now
               round-trip. `attempts` in particular was being re-derived here
               from `count(run)`, and nothing has written `run` since the
@@ -91,7 +91,6 @@ SELECT
   t.acceptance               AS acceptance,
   t.claim_token              AS claim_token,
   -- The execution fields. Columns, not derivations: see the module docstring.
-  t.latitude                 AS latitude,
   t.max_attempts             AS max_attempts,
   t.attempts                 AS attempts,
   t.awaiting                 AS awaiting,
@@ -201,10 +200,6 @@ def _row_to_legacy(row: Any) -> dict:
         "scoped_by": m["scoped_by"],
         "attempts": int(m["attempts"] or 0),
         "job_ids": list(m["job_ids"] or []),
-        # `latitude` is None when the ticket INHERITS from its scope, which is
-        # not the same as `standard`; `tasks_all._with_latitude` resolves the
-        # cascade and stamps `effective_latitude` on top.
-        "latitude": m["latitude"],
         "max_attempts": m["max_attempts"],
         # The block record, whole. `blocked_request` is the other name for it
         # and is re-projected by `tasks._normalize`, so it is not returned here.

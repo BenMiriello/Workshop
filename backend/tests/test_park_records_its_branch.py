@@ -68,7 +68,7 @@ def test_publish_or_park_is_only_reached_from_the_success_legs():
     "enforce_touches already recorded the evidence line",   # touches gate
     "classifier block",                                     # rc=3
     "no progress within the run",                           # rc=6 thrash park
-    "latitude-strict:",                                     # rc=7 strict block
+    "unestablished:",                                       # rc=7 unestablished block
     "incomplete (rc=$RC)",                                  # rc=1 / rc=2 caps
     "failed (rc=$RC)",                                      # catch-all
 ])

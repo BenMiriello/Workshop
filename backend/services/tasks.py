@@ -68,20 +68,13 @@ Canonical Task (version 2)::
       "type": str | None,              # bug|feature|task — the work
                                        # CATEGORY. None when unset; orthogonal
                                        # to `execution`. See WORK_TYPES.
-      "latitude": str | None,          # "strict"|"standard"|"open" — what the
-                                       # worker may do where THIS ticket does not
-                                       # say. None means INHERIT (not "standard"):
-                                       # the cascade is invocation > task > scope
-                                       # > DEFAULT_LATITUDE, so a stored default
-                                       # here would silently undo a strict scope.
-                                       # See services/latitude.py.
       "created": iso, "updated": iso
     }
 
 The block record (P2)
 ---------------------
 A task stops for many reasons: a permission it does not have, a missing resource,
-an ambiguous spec at ``strict`` latitude, a contradiction. All of them are the
+an ambiguous spec, a contradiction. All of them are the
 SAME primitive — ``awaiting`` — widened in place rather than given a sibling
 status or a parallel record. ``awaiting`` was ``{"question", "since"}``; a bare
 question cannot say *what would unblock me* in a form the system can check, so it
@@ -98,7 +91,7 @@ now carries::
       "why": str | None,     # why the task cannot proceed without an answer
       "unblocks_if": str | None,   # what would resolve it, in one line
       "options": [str]|None, # kind=decision: what the worker would choose between
-      "default": str | None, # what it WOULD do at a higher latitude
+      "default": str | None, # what it WOULD do if it were deciding alone
       "proposal": {"uri": str, "verb": str}|None,   # the machine-checkable ask.
                              # Present => a grant can be prefilled from the block;
                              # absent => the answer is a judgment, so a textual
@@ -137,8 +130,6 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
-from services import latitude as _latitude
 
 log = logging.getLogger(__name__)
 
@@ -208,7 +199,7 @@ SYNCABLE_FIELDS = ("title", "body", "status", "labels", "assignee", "priority")
 # adapter agree on what is private. Mirrors `exec` in the design doc; storage
 # stays flat (every existing reader indexes these directly) and `exec` is a
 # read-side projection, the same discipline `owner`/`blocked_request` follow.
-EXEC_FIELDS = ("touches", "latitude", "acceptance", "max_attempts", "attempts",
+EXEC_FIELDS = ("touches", "acceptance", "max_attempts", "attempts",
                "claim_token", "lease_until", "last_heartbeat", "claim_pid",
                "job_ids", "evidence", "awaiting", "blocked_reason", "triage")
 
@@ -643,8 +634,8 @@ def _normalize_acceptance(acc) -> dict | None:
 # `awaiting` is the general escalation primitive: whatever stopped the task — a
 # permission, a missing fixture, an ambiguous ticket, a contradiction — writes the
 # same record, so one review surface serves all of them. The producers (the gate,
-# the worker at `strict` latitude, the reviewer's block-for-decision verdict, the
-# harness) differ; the record does not.
+# the worker, the reviewer's block-for-decision verdict, the harness) differ; the
+# record does not.
 
 # A `kind` is a short slug, validated as a slug and NOT against a fixed list. A
 # closed enum would reject the first reason to stop that nobody anticipated,
@@ -900,7 +891,7 @@ def triage_due(task: dict) -> bool:
     return (task.get("triage") or {}).get("spec_hash") != spec_hash(task)
 
 
-# Which `awaiting.kind` values a latitude-permitted auto-resolve may ever expire.
+# Which `awaiting.kind` values an auto-resolve may ever expire.
 #
 # AN ALLOWLIST, NOT A DENYLIST, AND THIS IS THE LOAD-BEARING DETAIL.
 # `_normalize_awaiting` defaults `kind` to "input", and its docstring notes that
@@ -917,10 +908,9 @@ EXPIRING_AWAITING_KINDS = frozenset({"input", "decision", "missing-info"})
 def awaiting_may_expire(task: dict) -> bool:
     """Whether a block MAY be auto-resolved on timeout — the kind filter only.
 
-    The rest of the ladder (resolved latitude is standard|open, a non-null
-    `default`, the decision is reversible, the block was not raised by the
-    reviewer) is ratified in latitude-model-2026-07-18.md §158-167 and lives with
-    the caller that knows the resolved latitude. This adds no new policy."""
+    The rest of the ladder (a non-null `default`, the decision is reversible,
+    the block was not raised by the reviewer) lives with the caller that holds
+    that context. This adds no new policy."""
     rec = task.get("awaiting") or {}
     if not rec:
         return False
@@ -1065,10 +1055,6 @@ def _normalize(task: dict) -> dict:
         "type": _normalize_work_type(task.get("type")),
         # triage: EXEC. The queue triager's own mark; see spec_hash().
         "triage": _normalize_triage(task.get("triage")),
-        # Round-trips as None (inherit) when unset OR when the stored value is
-        # junk: coercing a typo to "standard" would look like a deliberate
-        # per-task default and silently undo a strict scope (latitude.py).
-        "latitude": _latitude.coerce(task.get("latitude")),
         # scoped_by: who wrote this scope (accountability). Distinct from `source`,
         # which is where the REQUEST came from: a chat-sourced ticket can be scoped
         # by the ticket-maker, and when a run fails on a bad spec that difference is
@@ -2086,7 +2072,6 @@ def add(
     effort: str | None = None,
     execution: str | None = None,
     type: str | None = None,
-    latitude: str | None = None,
     source: dict | None = None,
     provenance: str | None = None,
     scoped_by: str | None = None,
@@ -2102,9 +2087,6 @@ def add(
     text = join_text(title, body)
     if not title:
         raise ValueError("text required")
-    # Validated (not coerced) on the write path: an unknown value raises so the
-    # caller sees a 400 instead of persisting a field the cascade will ignore.
-    latitude = _latitude.validate(latitude)
     if status not in STATUSES:
         status = "todo"
     with _locked(root):
@@ -2139,7 +2121,6 @@ def add(
             "discovered_from": discovered_from, "effort": effort,
             "execution": execution,
             "type": type,
-            "latitude": latitude,
             # `unknown` when the caller did not say, which is the SAME default
             # the CLI door uses. It used to be `operator` here and `agent` there,
             # so one filing got two different provenances depending on the door.
@@ -2178,7 +2159,6 @@ def update(
     execution: str | None = None,
     type: str | None = None,
     triage: dict | None = None,
-    latitude: str | None = None,
     job_id: str | None = None,
     evidence: dict | None = None,
     awaiting: dict | None = None,
@@ -2239,9 +2219,6 @@ def update(
         title, body = split_text(text)
         if not title:
             raise ValueError("text required")
-    if latitude is not None:
-        # "" clears the override back to inherit; an unknown value raises.
-        latitude = _latitude.validate(latitude) or ""
     # The MATCH filter. `set_assignee` is deliberately absent from this line:
     # reassigning a ticket must not also narrow the search to tickets that already
     # carry the new assignee, which is the whole bug.
@@ -2267,7 +2244,7 @@ def update(
         _leaving_doing = False
         _material_edit = any(v is not None for v in (
             status, title, body, assignee, set_assignee, priority, depends_on,
-            blocked_reason, acceptance, max_attempts, effort, latitude, awaiting,
+            blocked_reason, acceptance, max_attempts, effort, awaiting,
             blocked_request))
         if status is not None:
             found["status"] = status
@@ -2381,10 +2358,6 @@ def update(
             # whole point is that recording a decision is not an edit to the
             # ticket. An empty dict clears the mark, which makes it due again.
             found["triage"] = _normalize_triage(triage)
-        if latitude is not None:
-            # Additive: an empty string clears the override back to None, which
-            # means INHERIT from the scope — not "standard" (latitude.py).
-            found["latitude"] = latitude or None
         # `awaiting` and `blocked_request` are two names for ONE record (module
         # docstring). Both write here, through the same normalizer, so a caller
         # that thinks in questions and a caller that thinks in structured requests

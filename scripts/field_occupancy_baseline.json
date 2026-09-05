@@ -89,7 +89,6 @@
     "job_ids",
     "labels",
     "last_heartbeat",
-    "latitude",
     "lease_until",
     "max_attempts",
     "owner",

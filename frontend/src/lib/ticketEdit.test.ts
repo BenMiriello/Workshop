@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "./tasks";
 import {
-  LATITUDE_INHERIT,
   draftFromTask,
   parseCount,
   parseList,
@@ -35,13 +34,11 @@ describe("draftFromTask", () => {
       labels: ["ui", "chat"],
       depends_on: ["a1", "b2"],
       relates_to: ["c3"],
-      latitude: "strict",
     }));
     expect(d).toEqual({
       title: "Fix the thing",
       body: "Because it is broken.",
       status: "todo",
-      latitude: "strict",
       priority: "3",
       effort: "deep",
       execution: "code",
@@ -55,9 +52,8 @@ describe("draftFromTask", () => {
     });
   });
 
-  it("spells an absent latitude as inherit and an absent cap as blank", () => {
+  it("spells an absent cap as blank", () => {
     const d = draftFromTask(task());
-    expect(d.latitude).toBe(LATITUDE_INHERIT);
     expect(d.maxAttempts).toBe("");
     expect(d.priority).toBe("0");
     expect(d.effort).toBe("");
@@ -127,16 +123,6 @@ describe("ticketPatch", () => {
   it("collapses a pasted multi-line title to one line", () => {
     expect(ticketPatch(change({ title: " Two\nlines " }), base))
       .toEqual({ title: "Two lines" });
-  });
-
-  it("clears a latitude override with an empty string, never null", () => {
-    const withLat = draftFromTask(task({ latitude: "strict" }));
-    const patch = ticketPatch(change({ latitude: LATITUDE_INHERIT }), withLat);
-    expect(patch).toEqual({ latitude: "" });
-  });
-
-  it("sets a latitude override by name", () => {
-    expect(ticketPatch(change({ latitude: "open" }), base)).toEqual({ latitude: "open" });
   });
 
   it("clears effort and assignee with an empty string", () => {

@@ -198,15 +198,6 @@ class Readiness(BaseModel):
     warnings: list[str] = []
 
 
-class EffectiveLatitude(BaseModel):
-    """The RESOLVED latitude plus where it came from. The source travels with
-    the value because an inherited value rendered as if it were set is how the
-    null-means-inherit bug becomes invisible on screen."""
-
-    value: str
-    source: str
-
-
 class TaskLink(BaseModel):
     """`tasks_all._link_stub`: enough to render a row and build a working href.
     `scope` rides along because a ticket is addressed by (scope, id) and a
@@ -360,7 +351,7 @@ class TaskExecFields(BaseModel):
     adapter can read what it must NOT send to a remote tracker.
 
     A PROJECTION, never stored: `tasks.py` builds it as
-    `{k: rec.get(k) for k in EXEC_FIELDS}`, so all fourteen keys are always
+    `{k: rec.get(k) for k in EXEC_FIELDS}`, so all thirteen keys are always
     present and every one of them is also declared flat on `Task` below. Read
     them flat; this exists for the sync adapters. `extra="allow"` so widening
     `EXEC_FIELDS` cannot silently drop the new one from the wire."""
@@ -368,7 +359,6 @@ class TaskExecFields(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     touches: list[str] | None = None
-    latitude: str | None = None
     acceptance: TaskAcceptance | None = None
     max_attempts: int | None = None
     attempts: int | None = None
@@ -386,11 +376,11 @@ class TaskExecFields(BaseModel):
 class Task(BaseModel):
     """The canonical Task on the wire.
 
-    The first 39 fields are `services/tasks.py::_normalize`'s output verbatim,
+    The first 38 fields are `services/tasks.py::_normalize`'s output verbatim,
     including the four it PROJECTS rather than stores (`text`, `owner`,
     `blocked_request`, `exec`). The trailing block is what the route layer
-    stamps on the way out (`tasks_all._with_latitude` / `_with_triage` /
-    `_detail`); each defaults to None because not every route computes them --
+    stamps on the way out (`tasks_all._with_triage` / `_detail`); each defaults
+    to None because not every route computes them --
     `POST /agents/build/{slug}/tasks` returns a store record with none of them.
     """
 
@@ -436,7 +426,6 @@ class Task(BaseModel):
     # None when unclassified; the store never invents a type.
     type: str | None = None
     triage: TicketTriage | None = None
-    latitude: str | None = None
     scoped_by: str
     sync: TaskSyncLink | None = None
     external_refs: list[TaskExternalRef] = []
@@ -448,7 +437,6 @@ class Task(BaseModel):
 
     # ---- stamped by the route layer, never stored ----
     scope: str | None = None
-    effective_latitude: EffectiveLatitude | None = None
     state_type: str | None = None
     ready: bool | None = None
     blocked_by: list[TaskLink] | None = None

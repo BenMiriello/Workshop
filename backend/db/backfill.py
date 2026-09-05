@@ -29,7 +29,7 @@ WHAT MAPS TO WHAT
   `depends_on` / `relates_to` -> `ticket_link` rows
   `evidence` + `source`       -> `ticket_event` rows
   `comments`                  -> `comment` rows
-  latitude/max_attempts/attempts/awaiting/assignee/job_ids/lease_until/
+  max_attempts/attempts/awaiting/assignee/job_ids/lease_until/
     last_heartbeat/claim_pid  -> `ticket` columns, direct (see `_exec_fields`)
 
 Deliberately NOT migrated here: chat threads and messages, notes, the personal
@@ -42,7 +42,7 @@ reads and zero writes ever, and `run` had 2,753 rows and zero readers once
 `ticket.attempts` stopped being derived from it (e9c4a71f0d38). The one thing
 either table's rows fed that anything still reads -- a ticket's own
 `job_ids`/claim state -- comes straight off the JSON ticket record now (see
-`_exec_fields`), the same place `latitude`/`attempts`/`awaiting`/`assignee`
+`_exec_fields`), the same place `attempts`/`awaiting`/`assignee`
 already came from below. `jobs.jsonl` itself is untouched by this script.
 """
 from __future__ import annotations
@@ -83,13 +83,12 @@ from db.legacy_map import STATES, TYPES, priority_band as _priority  # noqa: E40
 # sense of not being re-exported; `ticket_sync` is this script's sibling in
 # the same package and the two already share `legacy_map` the same way.
 from db.ticket_sync import _non_negative_int, _positive_int_or_none  # noqa: E402
-from services.latitude import coerce as _latitude_coerce  # noqa: E402
 
 _STATUS_TOKENS = {row[0] for row in STATES}
 
 
 def _exec_fields(rec: dict) -> dict:
-    """The six execution/claim fields, straight off a JSON ticket record.
+    """The eight execution/claim fields, straight off a JSON ticket record.
 
     Every one of these is a plain field on the record already -- none of them
     is derived from `jobs.jsonl` or from anything Run-shaped. `job_ids` in
@@ -100,7 +99,6 @@ def _exec_fields(rec: dict) -> dict:
     claim looks like right now is exactly what the record says.
     """
     return {
-        "latitude": _latitude_coerce(rec.get("latitude")),
         "max_attempts": _positive_int_or_none(rec.get("max_attempts")),
         "attempts": _non_negative_int(rec.get("attempts")),
         "awaiting": (rec.get("awaiting") or None)
@@ -121,12 +119,12 @@ def _exec_fields(rec: dict) -> dict:
 # preserved as ticket_event rows, which is what models.py always claimed
 # happened. Nothing is dropped without being counted in the run summary.
 #
-# `latitude`/`max_attempts` used to be here too, preserved only as an event
-# rather than a queryable field -- the same silent-drop this script's own
-# docstring now calls out for the execution/claim fields generally. Both get
-# real columns via `_exec_fields` instead, alongside `attempts`/`awaiting`/
-# `assignee`/`job_ids`/`lease_until`/`last_heartbeat`/`claim_pid`, none of
-# which were ever preserved even as an event.
+# `max_attempts` used to be here too, preserved only as an event rather than a
+# queryable field -- the same silent-drop this script's own docstring now calls
+# out for the execution/claim fields generally. It gets a real column via
+# `_exec_fields` instead, alongside `attempts`/`awaiting`/`assignee`/`job_ids`/
+# `lease_until`/`last_heartbeat`/`claim_pid`, none of which were ever preserved
+# even as an event.
 _PRESERVED = ("scoped_by", "provenance", "touches", "acceptance",
               "discovered_from", "blocked_reason")
 

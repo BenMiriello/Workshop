@@ -11,7 +11,6 @@
 #     "stub_hits":  [{file, line, marker}, ...],   // NEW stubs only
 #     "typecheck":  {"py": "ok|fail|skipped", "ts": "ok|fail|skipped"},
 #     "verdict":    "approve|reject|block-for-decision",
-#     "latitude":   "strict|standard|open",
 #     "ambiguous":  [string, ...],                 // checks that COULD NOT run
 #     "blocked_reason": string|null,
 #     "criteria":   [{criterion, cmd, expect, pass, evidence}, ...],  // executed, if any
@@ -89,18 +88,34 @@
 # Conservative: if a check can't run (no tooling), it's "skipped" — counted as pass.
 # Strict-mode (REVIEWER_STRICT=1) flips skipped to fail.
 #
-# LATITUDE (exported by ralph.sh, resolved through services/latitude.py) decides
-# what happens when this gate WOULD APPROVE but a check that APPLIED could not
-# actually run — the reviewer's honest "I don't know". Counting that as a pass is
-# the default and is right for `standard`/`open`. At `strict` it is exactly the
-# wrong answer: strict means "when it is not established, ask". So a strict sweep
-# with an applicable-but-unrun check returns verdict `block-for-decision` and a
-# `blocked_reason` naming the ambiguity; project_ralph.sh flips the task to
-# `blocked` with that reason instead of banking an unverified done.
+# AMBIGUITY BLOCKS, UNCONDITIONALLY. When this gate WOULD APPROVE but a check
+# that APPLIED could not actually run — the reviewer's honest "I don't know" —
+# the verdict is `block-for-decision` with a `blocked_reason` naming what could
+# not be verified, and project_ralph.sh flips the task to `blocked` with that
+# reason instead of banking an unverified done.
+#
+# Until 2026-09-05 that was conditional. A per-run decision-rights dial exported
+# by ralph.sh chose between blocking and guessing here, and only its strictest
+# setting blocked; every other setting counted the unrun check as a pass. The
+# dial is gone (ticket 3b1c5432, the operator's order of 2026-08-25) and the
+# BLOCKING branch is what survives, because the permissive branch was never a
+# decision anyone made: the dial was set on 0 of 207 tickets and null on every
+# scope, so it resolved to its permissive middle value on every sweep that has
+# ever run. An applicable-but-unrun check has therefore been silently counted as
+# a pass here for the whole life of the field. Making the permissive branch the
+# new unconditional one would have written that accident into the gate on
+# purpose; making the blocking branch unconditional is the only direction a gate
+# is allowed to move.
+#
+# The cost is measured, not assumed: across 2,177 logged runs in
+# .runtime/reviewer.log the ambiguous list was non-empty 6 times (0.28%) —
+# one_definition erroring or unavailable, and check_routes_answer with no
+# backend to probe. Those six are exactly the runs that should have asked.
 #
 # "Applicable but unrun" is narrower than "skipped": a skip because no .py file
 # changed is not an ambiguity, it is a non-question. Only a check with real input
-# and no tooling to judge it counts.
+# and no tooling to judge it counts. That distinction is what keeps this from
+# blocking every run, and it is why the six is six and not two thousand.
 #
 # Usage:
 #   reviewer.sh [baseline-rev]        # default baseline = HEAD
@@ -200,13 +215,8 @@ ts() { date -Iseconds; }
 cd "$ROOT" 2>/dev/null || { echo '{"complete":false,"reasons":["root_unreachable"]}'; exit 0; }
 
 # Checks that HAD input to judge but no tooling to judge it with — the reviewer's
-# "I don't know" (see the LATITUDE note above). Empty on a normal run.
+# "I don't know" (see the AMBIGUITY note above). Empty on a normal run.
 AMBIGUOUS=()
-LATITUDE_VAL=${LATITUDE:-standard}
-case "$LATITUDE_VAL" in
-  strict|standard|open) ;;
-  *) LATITUDE_VAL="standard" ;;
-esac
 
 # 1. Collect changed files vs baseline. Include staged + unstaged + untracked.
 CHANGED_TRACKED=$(git diff --name-only "$BASELINE" 2>/dev/null || true)
@@ -1275,21 +1285,21 @@ fi
 # 5. Verdict. Three outcomes, not two:
 #   reject             — a hard check failed. The worker can see what and iterate;
 #                        an ambiguity elsewhere is not the interesting fact here,
-#                        so a reject stays a reject at every latitude.
+#                        so a reject stays a reject.
 #   block-for-decision — the gate would APPROVE, but only because a check that
-#                        applied could not run, and this sweep is `strict`. Strict
-#                        means ask rather than assume: the task blocks and the
-#                        operator decides. This is a correct outcome, not a failure.
+#                        applied could not run. Unestablished is not established:
+#                        the task blocks and the operator decides. This is a
+#                        correct outcome, not a failure.
 #   approve            — everything that applied passed.
 VERDICT="approve"
 BLOCKED_REASON=""
 if [[ "$COMPLETE" != "true" ]]; then
   VERDICT="reject"
-elif [[ "$LATITUDE_VAL" == "strict" && ${#AMBIGUOUS[@]} -gt 0 ]]; then
+elif [[ ${#AMBIGUOUS[@]} -gt 0 ]]; then
   COMPLETE="false"
   VERDICT="block-for-decision"
   AMBIG_LIST=$(IFS=,; echo "${AMBIGUOUS[*]}")
-  BLOCKED_REASON="latitude:strict-and-ambiguous: the gate could not verify ${AMBIG_LIST}, so completeness is unestablished; a strict sweep asks rather than assumes"
+  BLOCKED_REASON="completeness-unestablished: the gate could not verify ${AMBIG_LIST}, so completeness is unestablished; the gate asks rather than assumes"
   REASONS+=("block_for_decision:$AMBIG_LIST")
 fi
 
@@ -1300,7 +1310,7 @@ AMBIGUOUS_JSON=$(printf '%s\n' "${AMBIGUOUS[@]:-}" | python3 -c "import json,sys
 COMPLETE_BOOL=$([[ "$COMPLETE" == "true" ]] && echo 1 || echo 0)
 TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK BACKEND_TESTS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
-export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
+export VERDICT BLOCKED_REASON AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
 export DEAD_SURFACE_CHECK
 export PLAN_LANDED_CHECK TICKET_ACCEPTANCE_CHECK FRESH_CLONE_CHECK DEV_MODE_OFF_CHECK FRONTEND_STATE_CHECK RESPONSE_TYPES_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK PROMPT_SIZE_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK
@@ -1396,7 +1406,6 @@ out = {
     # The verdict the caller acts on. `block-for-decision` carries the ambiguity
     # in `blocked_reason`, verbatim, so the block is legible without re-deriving it.
     "verdict":   os.environ["VERDICT"],
-    "latitude":  os.environ["LATITUDE_VAL"],
     "ambiguous": json.loads(os.environ["AMBIGUOUS_JSON"]),
     "blocked_reason": os.environ.get("BLOCKED_REASON") or None,
     "ts":        os.environ["TS_NOW"],
@@ -1408,7 +1417,7 @@ PYEOF
 printf '%s\n' "$RESULT_JSON"
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK backend_tests=$BACKEND_TESTS_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK ticket_acceptance=$TICKET_ACCEPTANCE_CHECK plan_landed=$PLAN_LANDED_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK dead_surface=$DEAD_SURFACE_CHECK response_types=$RESPONSE_TYPES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK dev_mode_off=$DEV_MODE_OFF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK backend_tests=$BACKEND_TESTS_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK ticket_acceptance=$TICKET_ACCEPTANCE_CHECK plan_landed=$PLAN_LANDED_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK dead_surface=$DEAD_SURFACE_CHECK response_types=$RESPONSE_TYPES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK dev_mode_off=$DEV_MODE_OFF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi

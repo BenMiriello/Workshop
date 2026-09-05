@@ -1,32 +1,38 @@
-"""`touches` and `latitude` are real mechanisms, and neither is a boundary.
+"""`touches` is a real mechanism and it is not a boundary.
 
 The operator's rule: nothing may be represented as a security boundary if it is
-not one. These two were, in module docstrings, in the sweep's own prompt, and in
+not one. `touches` was, in module docstrings, in the sweep's own prompt, and in
 the UI copy. This file pins the corrected descriptions so they cannot drift back,
 and pins the behavior that IS real so nobody "fixes" the wording by deleting the
 mechanism.
 
-What each one actually is:
+What it actually is: an AFTER-THE-FACT AUDIT. `project_ralph.sh` calls
+`tasks.enforce_touches` once the run is over, against the committed diff. The
+write already happened. What the audit does is name the stray and block the
+ticket. Its default is empty, and empty means unrestricted.
 
-  touches    An AFTER-THE-FACT AUDIT. `project_ralph.sh` calls
-             `tasks.enforce_touches` once the run is over, against the committed
-             diff. The write already happened. What the audit does is name the
-             stray and block the ticket.
-  latitude   PROMPT TEXT, with exactly one machine-visible consequence: a
-             `strict` run whose completion gate came back ambiguous blocks for
-             the operator rather than retrying.
+THE OTHER HALF OF THIS FILE IS NOW A REMOVAL TEST. A second mechanism, a
+per-ticket and per-scope decision-rights dial, used to be pinned here on the same
+grounds -- described as prompt text so it could not be mistaken for a permission.
+It was deleted on 2026-09-05 (ticket 3b1c5432, ordered
+docs/platform-redesign/work-status-contract-2026-08-24.md:159) because it was set
+on 0 of 207 tickets and null on every scope, so no run was ever governed by it.
+`TestTheDialIsGone` below replaces the wording pins with the stronger claim: a
+concept that does not exist cannot be mistaken for a security boundary. That is
+also the resolution of ticket 77b22987 [SEC-A2] for this mechanism -- documenting
+that it is not confinement and deleting it are incompatible, and deletion wins.
+
+Real confinement is SEC-A1 (ticket 4a79ffc5): bwrap plus a lower-privilege
+sub-user. Nothing in this file is a substitute for it.
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services import agent_authority as aa  # noqa: E402
-from services import latitude as lat  # noqa: E402
 from services import tasks  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
@@ -72,13 +78,6 @@ class TestTouchesIsDescribedAsAnAudit:
         assert "touches: the task's fan-out boundary" not in src
         assert "an after-the-fact audit of what a run wrote" in src
 
-
-class TestLatitudeIsDescribedAsPromptText:
-    def test_the_module_no_longer_claims_an_enforced_floor(self):
-        doc = lat.__doc__ or ""
-        assert "enforced floor" not in doc
-        assert "PROMPT TEXT" in doc
-
     def test_the_sweep_does_not_tell_the_model_that_touches_binds_it(self):
         """The model can falsify this claim by simply writing the file, and a
         prompt that asserts a falsifiable constraint teaches it to discount the
@@ -91,27 +90,49 @@ class TestLatitudeIsDescribedAsPromptText:
     def test_the_ui_copy_does_not_promise_a_floor_either(self):
         src = _text("frontend/src/lib/tasks.ts")
         assert "enforced floor" not in src
-        # Was pinned to the literal string "decides freely, reports the decisions
-        # at the end". That phrasing was itself the problem: it describes a
-        # PRIVILEGE LEVEL, which is the reading this whole file exists to stop.
-        # Latitude only shapes whether a worker ASKS when the ticket is silent.
-        # So the assertion now pins the property instead of one sentence
-        # (autonomy-implementation-2026-08-13 2.3).
-        for line in ("Asks when the ticket does not say.",
-                     "Decides reversible things, asks about the rest.",
-                     "Decides and reports at the end."):
-            assert line in src, line
 
-    def test_the_latitude_copy_says_what_the_worker_does_not_what_it_may_do(self):
-        """Each description has to be about BEHAVIOUR. A word like "allowed" or
-        "restricted" turns a prompt hint back into a permission in the reader's
-        head, which is exactly how `touches` came to be trusted as a wall."""
-        src = _text("frontend/src/lib/tasks.ts")
-        start = src.index("const LATITUDE_DESC")
-        block = src[start:src.index("};", start)]
-        for word in ("allowed", "permitted", "may not", "cannot", "forbidden",
-                     "restricted", "blocked from", "limit"):
-            assert word not in block.lower(), f"{word!r} reads as permission"
+
+class TestTheDialIsGone:
+    """The removal, pinned. See the module docstring for why deleting beats
+    documenting."""
+
+    _TERM = "latitude"
+
+    def test_no_platform_source_file_still_carries_the_concept(self):
+        """The ticket's own acceptance criterion, run as a test. Migrations are
+        excluded because the one that drops the column has to name what it
+        drops, and the generated client is excluded because it is regenerated
+        from the backend rather than edited."""
+        roots = ("backend/services", "backend/routes", "backend/db",
+                 "scripts", "frontend/src")
+        suffixes = (".py", ".sh", ".ts", ".tsx")
+        hits = []
+        for root in roots:
+            for path in sorted((REPO / root).rglob("*")):
+                if path.suffix not in suffixes or not path.is_file():
+                    continue
+                rel = path.relative_to(REPO).as_posix()
+                if "migrations" in rel or "schema.gen" in rel:
+                    continue
+                for n, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+                    if self._TERM in line.lower():
+                        hits.append(f"{rel}:{n}")
+        assert hits == [], hits
+
+    def test_the_service_module_is_gone(self):
+        assert not (REPO / "backend" / "services" / "latitude.py").exists()
+
+    def test_the_column_is_not_in_the_model(self):
+        from db import models
+        assert "latitude" not in models.Ticket.__table__.columns
+        names = {c.name for c in models.Ticket.__table__.constraints}
+        assert "ck_ticket_latitude" not in names
+
+    def test_the_store_does_not_round_trip_it(self, tmp_path):
+        """A hand-edited record carrying the old key must not come back out of
+        `_normalize` as a field, which is what would let it quietly return."""
+        t = tasks.add(tmp_path, title="A ticket", body="With a stale key.")
+        assert "latitude" not in tasks.get_task(tmp_path, t["id"])
 
 
 class TestRoleNarrowingIsDescribedWhereItApplies:
@@ -177,10 +198,3 @@ class TestLimitsAreNoLongerOffered:
         src = _text("scripts/dispatch_triggers.sh")
         assert "max_iterations" not in src
         assert "max_wall_s" not in src
-
-
-@pytest.mark.parametrize("value", list(lat.LATITUDES))
-def test_every_latitude_still_resolves(value):
-    """The cascade is untouched by the rewording."""
-    got, source = lat.resolve(invocation=value)
-    assert (got, source) == (value, "invocation")

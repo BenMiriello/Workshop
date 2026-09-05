@@ -41,7 +41,7 @@ def client(scope_root):
 
 
 def _blocked_task(root, question="Which store should the token live in?"):
-    """A ticket stopped on a question, the way a strict-latitude worker leaves it
+    """A ticket stopped on a question, the way a blocked worker leaves it
     (`project_tasks.py set-awaiting`)."""
     t = tasks.add(root, title="Bind a scope to a tracker",
                   body="Objective: one binding per scope.")

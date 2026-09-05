@@ -66,12 +66,15 @@ def test_a_quick_ticket_need_not_name_entry_points():
     assert "entry_points" not in {m["check"] for m in tr.check(t)["missing"]}
 
 
-def test_open_latitude_is_an_explicit_boundary():
+def test_a_ticket_with_no_touches_must_say_its_boundaries_in_words():
+    """There is no longer any field that excuses this. A per-ticket decision-
+    rights dial used to: `open` counted as an explicit boundary all by itself,
+    on 0 of 207 tickets. With the dial deleted (3b1c5432) the only two ways to
+    say where a ticket may write are `touches` and the Boundaries line, which is
+    what makes deleting the dial safe."""
     t = dict(WELL_SPECIFIED)
     t["touches"] = []
     assert "boundaries" in {m["check"] for m in tr.check(t)["missing"]}
-    t["latitude"] = "open"
-    assert "boundaries" not in {m["check"] for m in tr.check(t)["missing"]}
 
 
 def test_an_unresolvable_dependency_is_named_only_when_ids_are_known():

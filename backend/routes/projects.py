@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from routes.api_models import (AgentLimits, AgentTrigger, AwaitingRow, ContentOut, FileOut, Job, OkOut,
                                QueueCounts, TreeOut)
-from services import tasks, jobs, triggers, latitude as latitude_svc
+from services import tasks, jobs, triggers
 from wsplatform import paths
 from wsplatform.http import DEFAULT_PAGE, MAX_PAGE
 from services import scope_owner
@@ -766,9 +766,6 @@ class TriggersIn(BaseModel):
     # outright along with its unmounted component.
     preset: str | None = None
     cron: str | None = None
-    # Decision rights for work in this tree: strict | standard | open. Null (or
-    # "standard", which is never stored) means inherit — see services/latitude.py.
-    latitude: str | None = None
     limits: AgentLimits | None = None
     triggers: list[AgentTrigger] = Field(default_factory=list)
 
@@ -854,14 +851,9 @@ class ProjectAutonomyOut(BaseModel):
     continuous`, `services/triggers.py::PRESETS`) -- the trigger cadence for a
     project scope. It is a different axis from an AGENT's `autonomy_mode`
     (`reactive | supervised | autonomous`); see the note on
-    `routes/agents.py::RosterAgent`.
-
-    `latitude` stays null when unset: this scope is one level of the latitude
-    cascade, not the bottom of it, so a defaulted value here would read as a
-    choice nobody made."""
+    `routes/agents.py::RosterAgent`."""
 
     autonomy: str
-    latitude: str | None = None
     limits: AgentLimits | None = None
     triggers: list[AgentTrigger] = []
     # ADR 0023 clause 4 bans `updated` as an instant field name in favour of
@@ -887,9 +879,6 @@ async def get_autonomy(slug: str) -> dict:
     snap = _queue_snapshot(_project_dir(slug))
     return {
         "autonomy": preset,
-        # Stays null when unset: this scope is one level of the latitude cascade,
-        # not the bottom of it, so a defaulted value here would read as a choice.
-        "latitude": latitude_svc.coerce(autonomy.get("latitude")),
         "limits": autonomy.get("limits") or {},
         "triggers": trigs,
         "updated": autonomy.get("updated"),
@@ -906,7 +895,6 @@ class ProjectAutonomyPutOut(BaseModel):
     re-derive the queue snapshot the caller did not ask for."""
 
     autonomy: str
-    latitude: str | None = None
     limits: AgentLimits | None = None
     triggers: list[AgentTrigger] = []
     updated: str
@@ -934,20 +922,8 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
         raise HTTPException(404, f"project not found: {slug}")
     limits = body.limits if body.limits is not None else \
         ((proj.get("autonomy") or {}).get("limits") or {})
-    # Emit-only-when-non-default (latitude.py): `standard` is stored as null so a
-    # scope never claims a setting it does not have. An unknown value is a 400.
-    if body.latitude is not None:
-        try:
-            lat = latitude_svc.validate(body.latitude)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-    else:
-        lat = latitude_svc.coerce((proj.get("autonomy") or {}).get("latitude"))
-    if lat == latitude_svc.DEFAULT_LATITUDE:
-        lat = None
     proj["autonomy"] = {
         "preset": preset,
-        "latitude": lat,
         "limits": limits,
         "triggers": norm,
         "updated": _now(),
@@ -956,7 +932,6 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
     running, _ = _run_state(slug)
     return {
         "autonomy": preset,
-        "latitude": lat,
         "limits": limits,
         "triggers": norm,
         "updated": proj["autonomy"]["updated"],

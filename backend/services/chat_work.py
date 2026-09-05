@@ -394,7 +394,7 @@ def thread_work(thread_id: str) -> dict | None:
 
     chat_scope = knowledge.scope_for_context(context_key)
 
-    from routes.tasks_all import _with_latitude, _with_triage, scope_roots
+    from routes.tasks_all import _with_triage, scope_roots
 
     by_scope: dict[str, dict[str, dict]] = {}
     index: dict[str, tuple[dict, str]] = {}
@@ -426,12 +426,9 @@ def thread_work(thread_id: str) -> dict | None:
             if is_waiting(r):
                 waiting_raw.append((r, skey))
 
-    lat_cache: dict[str, str | None] = {}
-
     def project(rec: dict, skey: str) -> dict:
         out = dict(rec)
         out["scope"] = skey
-        _with_latitude(out, skey, lat_cache)
         _with_triage(out, by_scope.get(skey, {}), index)
         return out
 

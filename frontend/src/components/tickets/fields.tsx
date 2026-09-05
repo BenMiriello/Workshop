@@ -12,7 +12,7 @@
 // silently revert a field that was committed under the other rule.
 //
 // Per field, the rule holds in a smaller box, and each field says which it is:
-//   • a PICK (status, effort, execution, latitude) commits on change. Choosing
+//   • a PICK (status, effort, execution) commits on change. Choosing
 //     the value IS the explicit act, it is one deliberate interaction, and the
 //     new value is on screen immediately and reversible in one more.
 //   • TYPED text (title, description, priority, dependencies) commits on Save,

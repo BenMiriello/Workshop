@@ -449,14 +449,14 @@ def test_an_evidence_note_keeps_the_time_it_happened(scope):
     assert got.isoformat() == when
 
 
-# --- the five fields the relational write path was dropping (2026-08-16) ------
+# --- the fields the relational write path was dropping (2026-08-16) ----------
 
 def test_the_execution_fields_round_trip(scope):
     """THE §3 BUG. Postgres became authoritative for `development` and
     `workshop` on 2026-08-15, and the write path enumerated its columns without
-    `latitude`, `max_attempts`, `attempts`, `awaiting` or `assignee`. Every one
-    of them is reachable from the HTTP API (`PATCH /tasks/{id}` takes all five)
-    and every one was written into a store that dropped it on the floor.
+    `max_attempts`, `attempts`, `awaiting` or `assignee`. Every one of them is
+    reachable from the HTTP API (`PATCH /tasks/{id}` takes all four) and every
+    one was written into a store that dropped it on the floor.
 
     `awaiting` in particular is the general escalation primitive
     (`services/tasks.py`): a run that blocked on those two scopes could not
@@ -469,10 +469,9 @@ def test_the_execution_fields_round_trip(scope):
                 "proposal": {"uri": "store://x", "verb": "write"},
                 "raised_by": "agent:maker", "dedupe_key": "k1",
                 "context": {"scope": "development"}, "dismissed": False}
-    _mirror(scope, [_task("t1", latitude="strict", max_attempts=5, attempts=3,
+    _mirror(scope, [_task("t1", max_attempts=5, attempts=3,
                           awaiting=awaiting, assignee="agent:maker")])
     row = _rows(scope)["t1"]
-    assert row["latitude"] == "strict"
     assert row["max_attempts"] == 5
     assert row["attempts"] == 3
     assert row["awaiting"] == awaiting
@@ -489,30 +488,28 @@ def test_an_execution_field_changing_alone_still_writes(scope):
     assert stats["updated"] == 1
     assert _rows(scope)["t1"]["attempts"] == 2
 
-    stats = _mirror(scope, [_task("t1", attempts=2, latitude="open")])
+    stats = _mirror(scope, [_task("t1", attempts=2, max_attempts=7)])
     assert stats["updated"] == 1
-    assert _rows(scope)["t1"]["latitude"] == "open"
+    assert _rows(scope)["t1"]["max_attempts"] == 7
 
-    stats = _mirror(scope, [_task("t1", attempts=2, latitude="open",
+    stats = _mirror(scope, [_task("t1", attempts=2, max_attempts=7,
                                   awaiting={"ask": "now what?"})])
     assert stats["updated"] == 1
     assert (_rows(scope)["t1"]["awaiting"] or {}).get("ask") == "now what?"
 
     # And clearing the block clears the column, rather than leaving a question
     # the ticket is no longer asking.
-    stats = _mirror(scope, [_task("t1", attempts=2, latitude="open")])
+    stats = _mirror(scope, [_task("t1", attempts=2, max_attempts=7)])
     assert stats["updated"] == 1
     assert _rows(scope)["t1"]["awaiting"] is None
 
 
 def test_unset_execution_fields_read_as_the_canonical_empty(scope):
-    """`latitude: None` means INHERIT from the scope, not `standard`
-    (`services/latitude.py`), and an unassigned ticket is claimable by ANY
-    scope (`tasks._match_assignee`). Both distinctions are destroyed by
-    defaulting on read, which is what the hardcoded `"operator"` did."""
+    """An unassigned ticket is claimable by ANY scope
+    (`tasks._match_assignee`), a distinction destroyed by defaulting on read,
+    which is what the hardcoded `"operator"` did."""
     _mirror(scope, [_task("t1")])
     row = _rows(scope)["t1"]
-    assert row["latitude"] is None
     assert row["max_attempts"] is None
     assert row["attempts"] == 0
     assert row["awaiting"] is None

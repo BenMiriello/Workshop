@@ -29,7 +29,6 @@ import type { components } from "../api/schema.gen";
 type AgentDetailData = UnifiedAgent & {
   definition?: string;
   role?: string | null;
-  latitude?: string | null;
   autonomy_mode?: "reactive" | "supervised" | "autonomous";
   mentionable?: boolean;
   delegatable?: boolean;
@@ -715,7 +714,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
         title={agent.name}
         sub={
           <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-            {/* Role + latitude + autonomy_mode as the primary chips (C10).
+            {/* Role + autonomy_mode as the primary chips (C10).
                 catFor gives each role its stable hue. */}
             {agent.role && <Tag hue={catFor(`role:${agent.role}`)}>{agent.role}</Tag>}
             {/* A MAKER'S `autonomy_mode` IS NOT ITS SETTING, so it is not shown
@@ -730,9 +729,6 @@ function ExistingAgent({ agentId }: { agentId: string }) {
             )}
             {agent.role !== "maker" && agent.autonomy_mode === "reactive" && (
               <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>reactive</span>
-            )}
-            {agent.latitude && (
-              <Tag hue={catFor(`lat:${agent.latitude}`)}>latitude {agent.latitude}</Tag>
             )}
             <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
               <code className="ws-mono">{agent.slug}</code> ·{" "}
