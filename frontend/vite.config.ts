@@ -267,6 +267,15 @@ export default defineConfig({
       // this alias goes away. Naming it is what makes that list countable — the
       // relative imports it replaces were not.
       { find: /^@shell\//, replacement: path.resolve(__dirname, "src") + "/" },
+      // The host-services seam. In the browser an app resolves this through the
+      // import map to the shell's own module; nothing installs it, so a build of
+      // THIS package (and the vitest run, which collects the apps' tests) needs
+      // the same module by path. The import map and this alias name one file, so
+      // there is one implementation and one instance of its context.
+      {
+        find: /^@workshop\/app-host$/,
+        replacement: path.resolve(__dirname, "src/runtime/shared/workshop-app-host.tsx"),
+      },
       // Empty unless an optional dependency is missing; see above.
       ...optionalAliases(),
     ],

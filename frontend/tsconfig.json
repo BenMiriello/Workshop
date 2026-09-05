@@ -25,7 +25,15 @@
       // Mirrors the `@shell/` alias in vite.config.ts. See the comment there:
       // it is the named seam an extracted app uses to reach shell-owned modules
       // the kit does not export yet, and it is meant to shrink to nothing.
-      "@shell/*": ["./src/*"]
+      "@shell/*": ["./src/*"],
+      // `@workshop/app-host` is a SHELL module an app reaches through the import
+      // map at runtime, so it is never installed and tsc cannot resolve it as a
+      // package. This points at the TYPES the seam publishes
+      // (`@workshop/app-build/host`), deliberately rather than at the shell's
+      // implementation: a stranger's app compiles against those declarations and
+      // nothing else, so typechecking the apps in this tree against them is what
+      // proves the published types still describe the module the shell serves.
+      "@workshop/app-host": ["../packages/app-build/host.d.ts"]
     }
   },
   // packages/ui/src is included so ONE tsc run covers the kit and every call
