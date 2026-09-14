@@ -29,8 +29,8 @@ def trees(tmp_path, monkeypatch):
     proj_dir.mkdir(parents=True)
     (proj_dir / "PROJECT.md").write_text("# scaffold\n")
 
-    from wsplatform import paths
-    monkeypatch.setattr(paths, "scope_root", lambda key: tmp_path / "apps" / key.split(":", 1)[1])
+    from services import scope_tree
+    monkeypatch.setattr(scope_tree, "scope_root", lambda key: tmp_path / "apps" / key.split(":", 1)[1])
     monkeypatch.setattr(app_files, "project_root", lambda slug: tmp_path / "projects" / slug)
     from services import app_links
     monkeypatch.setattr(app_links, "linked_project_slug", lambda slug: slug)

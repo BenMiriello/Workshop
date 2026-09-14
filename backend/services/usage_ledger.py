@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timezone
@@ -42,6 +43,8 @@ from pathlib import Path
 from typing import Iterable
 from wsplatform import paths
 from services import model_prices, token_usage
+
+log = logging.getLogger("workshop.usage_ledger")
 
 WINDOW_S = 5 * 3600  # rolling 5-hour window, matching Claude's usage windows
 
@@ -1274,6 +1277,48 @@ def usage_from_envelope(obj: dict) -> dict:
     except (TypeError, ValueError):
         out["vendor_cost_usd"] = None
     return out
+
+
+def record_turn(envelope: dict, *, scope: str | None, role: str | None = None,
+                run: str | None = None, chat: str | None = None,
+                fallback_tokens: int = 0) -> None:
+    """Record ONE finished turn's spend. The only way a turn reaches the ledger.
+
+    WHY THIS IS A FUNCTION AND NOT THREE COPIES. The same eleven lines --
+    `usage_from_envelope`, then `token_usage.effective` when it reported
+    components, then `record` with the turn's identity -- were written out at
+    three call sites (the text turn, the voice turn, and a provider). They had
+    already drifted: two passed a fallback total when the envelope reported
+    nothing and the third silently recorded nothing, and only two of the three
+    attached the turn's scope. A row without a scope is billed to "unbound" and
+    no per-chat view can ever attribute it, which makes an unattributed write
+    worse for the ledger than no write at all.
+
+    So the identity is REQUIRED here, `scope` positionally first among the
+    keywords and without a default. A caller that cannot name the turn this
+    spend belongs to is not in a position to meter it, and the type checker
+    says so at the call site rather than the ledger discovering it a week later.
+
+    `fallback_tokens` is used only when the envelope reported no components at
+    all -- a build whose `modelUsage` is absent. When components ARE present the
+    total is always `token_usage.effective`, which is the rate-limit-shaped
+    figure, so every row this writes sits in one unit beside the worker rows.
+
+    Never raises: metering is not allowed to cost a turn the operator already
+    received."""
+    try:
+        parsed = usage_from_envelope(envelope or {})
+        comp = parsed["components"]
+        tokens = (token_usage.effective(token_usage.Usage(**comp)) if comp
+                  else int(fallback_tokens or 0))
+        if tokens <= 0 and not comp:
+            return
+        record(scope, tokens, role=role, run=run, chat=chat, components=comp,
+               models=parsed["models"], model=parsed["model"],
+               source=parsed["source"],
+               vendor_cost_usd=parsed["vendor_cost_usd"])
+    except Exception as e:  # pragma: no cover - best-effort by design
+        log.debug("usage record failed for run=%s chat=%s: %s", run, chat, e)
 
 
 def accumulate_usage(path: str) -> dict:

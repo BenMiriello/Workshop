@@ -155,7 +155,10 @@ class TestTheAgentAnswers:
 
         t = chat_store.create_thread("agent:quill")
         p = chat_context.get_provider("agent:quill")
-        resolved = chat_routes._resolve_model(None, t, p)
+        # One argument, not three. The resolver reads the scope off the thread
+        # and asks rung 4 (the scope's DECLARED model) itself, so the caller no
+        # longer hands it a provider it would only have re-derived.
+        resolved = chat_routes._resolve_model(t)
         assert resolved == p.default_model
 
     def test_a_maker_agent_gets_its_tree_and_the_full_toolset(self, store, registry):

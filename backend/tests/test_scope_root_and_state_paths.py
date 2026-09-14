@@ -29,24 +29,32 @@ def isolated_root(monkeypatch, tmp_path):
     ):
         monkeypatch.delenv(override, raising=False)
     from wsplatform import paths
-    return importlib.reload(paths)
+    from services import scope_tree
+    paths = importlib.reload(paths)
+    # `scope_root` lives on `scope_tree` since 2026-09-13 (it needs `parse`, and
+    # asking for that from `paths` was an upward edge into `services`). Reload
+    # it too, so it binds the freshly-reloaded `paths` rather than the old one.
+    importlib.reload(scope_tree)
+    return paths
 
 
 def test_scope_root_is_the_documented_mapping(isolated_root):
+    from services import scope_tree
     paths = isolated_root
     root = paths.workshop_root()
-    assert paths.scope_root("project:alpha") == paths.projects_root() / "alpha"
-    assert paths.scope_root("project:alpha") == root / "projects" / "alpha"
-    assert paths.scope_root("app:ledger") == root / "apps" / "ledger"
-    assert paths.scope_root("agent:triager") == paths.runtime_dir() / "agents" / "triager"
-    assert paths.scope_root("agent:triager") == root / ".runtime" / "agents" / "triager"
+    assert scope_tree.scope_root("project:alpha") == paths.projects_root() / "alpha"
+    assert scope_tree.scope_root("project:alpha") == root / "projects" / "alpha"
+    assert scope_tree.scope_root("app:ledger") == root / "apps" / "ledger"
+    assert scope_tree.scope_root("agent:triager") == paths.runtime_dir() / "agents" / "triager"
+    assert scope_tree.scope_root("agent:triager") == root / ".runtime" / "agents" / "triager"
 
 
 def test_scope_root_refuses_the_non_tree_scopes(isolated_root):
-    paths = isolated_root
+    from services import scope_tree
+    del isolated_root
     for key in ("workshop", "development", "role:reviewer"):
         with pytest.raises(ValueError):
-            paths.scope_root(key)
+            scope_tree.scope_root(key)
 
 
 def test_scope_dir_is_identical_before_and_after_for_tree_scopes(isolated_root):
@@ -54,7 +62,7 @@ def test_scope_dir_is_identical_before_and_after_for_tree_scopes(isolated_root):
     returns `scope_root(scope)/knowledge`, which is exactly the parent it spelled
     by hand before this refactor."""
     paths = isolated_root
-    from services import knowledge
+    from services import knowledge, scope_tree
 
     root = paths.workshop_root()
     expected = {
@@ -66,7 +74,7 @@ def test_scope_dir_is_identical_before_and_after_for_tree_scopes(isolated_root):
         got = knowledge.scope_dir(key)
         assert got == want, f"{key}: {got} != {want}"
         # And it is genuinely derived from the single mapping, not a coincidence.
-        assert got == paths.scope_root(key) / "knowledge"
+        assert got == scope_tree.scope_root(key) / "knowledge"
         # A plain call is a READ and must not create the scope it names
         # (test_knowledge_scope_dir_is_read_only.py is that rule in full);
         # creating is opt-in, for the paths that are about to write.

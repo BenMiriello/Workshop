@@ -2390,7 +2390,7 @@ def _tree_read(thread_id: str):
         raise HTTPException(404, "thread not found")
     provider = chat_context.get_provider(t.get("context_key"))
     fallback = (str(provider.dir) if chat_context.is_build_provider(provider)
-                else str(paths.chat_cwd()))
+                else str(ownership.chat_cwd()))
     return t, provider, chat_worktree.plan(t, provider, fallback_cwd=fallback,
                                            holder_id=thread_id)
 
@@ -2514,7 +2514,7 @@ async def thread_tree_diff(thread_id: str):
     """
     t, provider, _tree = _tree_read(thread_id)
     fallback = (str(provider.dir) if chat_context.is_build_provider(provider)
-                else str(paths.chat_cwd()))
+                else str(ownership.chat_cwd()))
     return chat_worktree.diff(t, provider, fallback_cwd=fallback)
 
 
@@ -2533,7 +2533,7 @@ async def merge_thread_tree(thread_id: str, body: ThreadTreeMergeIn):
     """
     t, provider, _tree = _tree_read(thread_id)
     fallback = (str(provider.dir) if chat_context.is_build_provider(provider)
-                else str(paths.chat_cwd()))
+                else str(ownership.chat_cwd()))
     result = chat_worktree.merge(thread_id, t, provider, fallback_cwd=fallback,
                                  message=body.message)
     if not result.get("ok"):
@@ -3261,7 +3261,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
     # The agent's workspace. A project agent works in its project tree; anything
     # else answers from the chat cwd. This is the "own little bubble" bound —
     # narrow now, and the place a per-session worktree slots in later.
-    cwd = str(task_scope.root_for_context(agent["scope"]) or paths.chat_cwd())
+    cwd = str(task_scope.root_for_context(agent["scope"]) or ownership.chat_cwd())
 
     # Strip the mention token from what the agent reads. It is addressing
     # information, not part of the question, and leaving it in reliably produces
@@ -3774,7 +3774,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
     tree = chat_worktree.enter(
         thread_id, t, provider,
         fallback_cwd=(str(provider.dir) if chat_context.is_build_provider(provider)
-                      else str(paths.chat_cwd())),
+                      else str(ownership.chat_cwd())),
         activity=f"a chat turn in {t.get('title') or thread_id}",
         preempt=True)
 
@@ -3843,7 +3843,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         mcp_servers: list[str] = []
         tools_disabled = False
     else:
-        cwd = str(paths.chat_cwd())
+        cwd = str(ownership.chat_cwd())
         if ENABLE_CHAT_TOOLS:
             mcp_servers = llm_router.select_names(list(provider.mcp_servers), mcp_selection)
             allowed_tools = llm_router.filter_allowed_tools(

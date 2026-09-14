@@ -27,7 +27,7 @@ from services import knowledge
 def scope(tmp_path, monkeypatch):
     """A scope whose root is a tmpdir that does NOT exist yet."""
     root = tmp_path / "apps" / "ghost"
-    monkeypatch.setattr(knowledge.paths, "scope_root", lambda key: root)
+    monkeypatch.setattr(knowledge.scope_tree, "scope_root", lambda key: root)
     return "app:ghost", root
 
 

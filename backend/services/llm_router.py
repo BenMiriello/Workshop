@@ -20,6 +20,8 @@ import os
 import shutil
 import subprocess
 import time
+
+from services import llm_contract
 from pathlib import Path
 from typing import Any
 
@@ -81,8 +83,12 @@ def tier(name: object, default: str = TIER_HAIKU) -> str:
 
 
 
-class CloudCallFailed(RuntimeError):
-    """`claude -p` returned non-zero or no parseable output."""
+# `claude -p` returned non-zero or no parseable output. The class itself lives in
+# `llm_contract`, because any provider must be able to raise it and importing
+# this router to do so is what put a self-contained HTTP provider inside the
+# backend's largest import cycle. An alias, so every existing raise and catch is
+# unchanged.
+CloudCallFailed = llm_contract.ProviderCallFailed
 
 # -------------------------------------------------------------------- Cloud call
 
@@ -548,7 +554,7 @@ def call_cloud(
     model: str = TIER_HAIKU,
     max_turns: int | None = None,
     timeout_s: float = 600,
-    # None = "resolve it now" (paths.chat_cwd). Not a default expression: this is
+    # None = "resolve it now" (ownership.chat_cwd). Not a default expression: this is
     # a function default, evaluated once at import, so the old
     # `os.environ.get("WORKSHOP_CHAT_CWD", str(Path.home()))` also froze the
     # answer for the life of the process — and froze it to the account's home
@@ -592,8 +598,8 @@ def call_cloud(
     the transcript (only meaningful for the stream-json paths).
     """
     if cwd is None:
-        from wsplatform import paths as _paths
-        cwd = str(_paths.chat_cwd())
+        from services import ownership
+        cwd = str(ownership.chat_cwd())
     # THE PROMPT GOES ON STDIN, NOT IN ARGV.
     #
     # `[CLAUDE_CLI, "-p", prompt]` fails with E2BIG — "[Errno 7] Argument list

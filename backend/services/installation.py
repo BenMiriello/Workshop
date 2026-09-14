@@ -145,3 +145,60 @@ def local_now():
     import datetime as _dt
 
     return _dt.datetime.now(tz=local_tzinfo())
+
+
+# --- forge account policy ------------------------------------------------
+# Which account this installation owns repos under, and which accounts it must
+# refuse outright. Both are env declarations, like everything else here.
+
+OWNER_ENV = "WORKSHOP_GITHUB_OWNER"
+BLOCKED_OWNERS_ENV = "WORKSHOP_BLOCKED_REPO_OWNERS"
+
+
+def owner() -> str:
+    """The GitHub account this installation owns its repos under.
+
+    Unset is an error rather than a guess: a repo created under the wrong
+    account is not something to notice after the fact.
+    """
+    value = (os.environ.get(OWNER_ENV) or "").strip()
+    if not value:
+        raise ValueError(
+            f"no GitHub owner configured: set {OWNER_ENV} in "
+            "~/.config/workshop/instance.env to the account this install uses")
+    return value
+
+
+def blocked_owners() -> tuple[str, ...]:
+    raw = os.environ.get(BLOCKED_OWNERS_ENV) or ""
+    return tuple(s.strip().lower() for s in raw.split(",") if s.strip())
+
+
+def reject_blocked(*strings: str | None) -> None:
+    """Raise ValueError if any argument names an account this install must not touch.
+
+    Substring match, case-insensitive, so naming an org also catches its repos
+    and their remote URLs. An empty configuration blocks nothing.
+
+    IT LIVES HERE BECAUSE IT IS AN INSTALLATION DECLARATION, not forge plumbing.
+    It reads one env var and answers a policy question; it calls no API and
+    knows nothing about git. While it sat in `services/github.py` it made a
+    genuine import cycle: `github` builds its environment from
+    `github_identity`, and `github_identity` has to ask this function whether a
+    credential names a forbidden account, so the two modules imported each
+    other and one direction had to be a function-local import to resolve at all.
+    Moving the policy DOWN to the module that already owns "what is true of this
+    installation" breaks the cycle without either side losing anything.
+    """
+    blocked = blocked_owners()
+    if not blocked:
+        return
+    for s in strings:
+        if not s:
+            continue
+        low = s.lower()
+        for name in blocked:
+            if name in low:
+                raise ValueError(
+                    f"{name!r} is out of scope for this installation "
+                    f"({BLOCKED_OWNERS_ENV}): refusing owner/name/remote containing it")

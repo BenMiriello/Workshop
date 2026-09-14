@@ -108,30 +108,49 @@ class TestNoWriterReDerivesATokenCount:
         src = (SCRIPTS / "reviewer.sh").read_text()
         assert "reviewer metered NOTHING" in src
 
-    def test_the_chat_path_records_components(self):
-        src = (BACKEND / "services" / "build_streaming.py").read_text()
-        i = src.index("usage_ledger.record(")
-        call = src[i:i + 700]
-        for field in ("components=", "models=", "model=", "source=",
-                      "vendor_cost_usd="):
-            assert field in call, f"chat writer does not pass {field}"
+    def test_every_turn_writer_goes_through_record_turn(self):
+        """The seam is a FUNCTION now, not a shape repeated at each writer.
 
-    def test_the_voice_path_records_components(self):
-        src = (BACKEND / "services" / "voice_worker.py").read_text()
-        i = src.index("usage_ledger.record(")
-        call = src[i:i + 700]
-        for field in ("components=", "models=", "model=", "source="):
-            assert field in call, f"voice writer does not pass {field}"
-        # And it is handed the WHOLE envelope, because `usage` on a result is
-        # all zeros on this build.
-        assert "envelope=ev" in src
-
-    def test_both_chat_writers_use_one_parse(self):
-        """Voice and text agreeing BY CONSTRUCTION is the property that was
-        missing when voice went unmetered for months."""
+        These three assertions used to grep each writer for `usage_ledger
+        .record(` and then check the keywords beside it, which is the weakest
+        possible form of "they agree": it proves each writer spells the same
+        words, not that they compute the same thing. They had already drifted
+        apart while passing -- two writers passed a fallback total when the
+        envelope reported no components and a third recorded nothing, and only
+        two of the three attached a scope. `record_turn` makes the agreement
+        structural, so this now asserts the thing that actually matters: no
+        writer reaches `record` directly.
+        """
         for name in ("build_streaming.py", "voice_worker.py"):
             src = (BACKEND / "services" / name).read_text()
-            assert "usage_from_envelope" in src, name
+            assert "usage_ledger.record_turn(" in src, name
+            assert "usage_ledger.record(" not in src, (
+                f"{name} writes the ledger directly; a turn goes through "
+                "record_turn so the identity and the unit cannot drift")
+
+    def test_record_turn_is_the_one_parse_and_carries_the_identity(self):
+        """Voice and text agreeing BY CONSTRUCTION is the property that was
+        missing when voice went unmetered for months. One function is what
+        makes it construction rather than coincidence."""
+        src = (BACKEND / "services" / "usage_ledger.py").read_text()
+        i = src.index("def record_turn(")
+        body = src[i:src.index("def accumulate_usage(", i)]
+        assert "usage_from_envelope(" in body
+        assert "token_usage.effective(" in body
+        for field in ("components=", "models=", "model=", "source=",
+                      "vendor_cost_usd="):
+            assert field in body, f"the seam does not pass {field}"
+        # `scope` has no default: a caller that cannot name the turn this spend
+        # belongs to is not in a position to meter it. An unattributed row is
+        # billed to "unbound" and no per-chat view can ever recover it.
+        assert "scope: str | None," in src[i:i + 400]
+
+    def test_a_provider_reports_its_usage_and_does_not_record_it(self):
+        """A provider is handed a prompt and a model id. It knows no scope, no
+        run and no chat, so anything it writes is unattributable. One did meter
+        itself; this is that rule pinned."""
+        src = (BACKEND / "services" / "local_model_provider.py").read_text()
+        assert "usage_ledger" not in src
 
 
 class TestTheUnitIsFinallyOne:

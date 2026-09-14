@@ -41,121 +41,33 @@ from services import model_providers
 
 log = logging.getLogger("workshop.llm_providers")
 
-# HOW the call is made. Two values, and the difference is not cosmetic: one is a
-# child process whose controls are argv, the other is an HTTP request whose
-# controls are JSON fields.
-TRANSPORT_CLI = "cli_subprocess"
-TRANSPORT_HTTP = "http"
-TRANSPORTS: tuple[str, ...] = (TRANSPORT_CLI, TRANSPORT_HTTP)
-
-# WHICH GRAMMAR the transport speaks. `anthropic_messages` first because this
-# platform's turn model already is that one — effort ladders, permission modes,
-# typed thinking, tool_use blocks and the streaming parser are all shaped by it.
-WIRE_ANTHROPIC = "anthropic_messages"
-WIRE_OPENAI = "openai_chat"
-WIRES: tuple[str, ...] = (WIRE_ANTHROPIC, WIRE_OPENAI)
-
-# Is the provider there right now? A cloud provider is assumed up and handles
-# its own 429/5xx; for a local one this is a REAL, DISPLAYED state, because a
-# model server that is not running is the normal case rather than an error.
-REACH_READY = "ready"
-REACH_UNREACHABLE = "unreachable"
-REACH_UNCONFIGURED = "unconfigured"
-REACH_STATES: tuple[str, ...] = (REACH_READY, REACH_UNREACHABLE, REACH_UNCONFIGURED)
-
-
-@dataclass(frozen=True)
-class Capabilities:
-    """What a model can actually do, declared rather than inferred.
-
-    `context_tokens` is 0 when nothing knows, which callers must render as
-    unknown rather than as zero — the same rule `model_prices` applies to an
-    unpriced model.
-    """
-
-    cache: bool = False
-    thinking: bool = False
-    tools: bool = False
-    vision: bool = False
-    count_tokens: bool = False
-    context_tokens: int = 0
-
-    def as_dict(self) -> dict:
-        return {
-            "cache": self.cache,
-            "thinking": self.thinking,
-            "tools": self.tools,
-            "vision": self.vision,
-            "count_tokens": self.count_tokens,
-            "context_tokens": self.context_tokens,
-        }
-
-
-@dataclass(frozen=True)
-class ModelInfo:
-    """One model, and which provider reaches it.
-
-    `efforts` is on the MODEL and not on the provider because which rungs exist
-    is a fact about the model (`model_caps`), which is also why effort resolves
-    only after the model is settled.
-    """
-
-    id: str
-    label: str
-    provider_id: str
-    wire: str
-    capabilities: Capabilities = field(default_factory=Capabilities)
-    efforts: tuple[str, ...] = ()
-
-    def as_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "label": self.label,
-            "provider_id": self.provider_id,
-            "wire": self.wire,
-            "capabilities": self.capabilities.as_dict(),
-            "efforts": list(self.efforts),
-        }
-
-
-@dataclass(frozen=True)
-class Reach:
-    """Whether this provider can be reached, as a state and a sentence."""
-
-    state: str
-    detail: str = ""
-
-    @property
-    def ok(self) -> bool:
-        return self.state == REACH_READY
-
-    def as_dict(self) -> dict:
-        return {"state": self.state, "detail": self.detail}
-
-
-@runtime_checkable
-class LlmProvider(Protocol):
-    """One way of reaching a model.
-
-    `models()` may PROBE. It is called from request paths, so an implementation
-    that talks to the network must cache and must never raise: an unreachable
-    local server returns an empty catalog and a `reach()` that says why.
-    """
-
-    id: str
-    transport: str
-    wire: str
-    base_url: str | None
-    auth_mode: str
-
-    def models(self) -> list[ModelInfo]: ...
-
-    def reach(self) -> Reach: ...
-
-    def run_turn(self, prompt: str, *, model: str, **kw) -> dict: ...
-
-
-# --------------------------------------------------------------- claude_cli
+# The vocabulary, the shapes and the protocol live in `llm_contract`, which
+# imports nothing from `services`. They are re-exported here so every existing
+# caller of `llm_providers.ModelInfo` (and the rest) keeps working.
+#
+# They were moved out on 2026-09-05 to break a real import cycle: a provider
+# implementation needs these names to BE a provider, and this module needs the
+# implementation to LIST it. With the vocabulary defined here that was mutual,
+# the registration below had to be a function-local import to resolve, and the
+# backend's largest strongly-connected component grew from 102 modules to 107.
+# A deferred import does not break a cycle, it hides one.
+from services.llm_contract import (  # noqa: F401  (re-export)
+    LlmProvider,
+    Capabilities,
+    ModelInfo,
+    Reach,
+    REACH_READY,
+    REACH_STATES,
+    REACH_UNCONFIGURED,
+    REACH_UNREACHABLE,
+    TRANSPORT_CLI,
+    TRANSPORT_HTTP,
+    TRANSPORTS,
+    WIRE_ANTHROPIC,
+    WIRE_OPENAI,
+    WIRES,
+)
+from services import local_model_provider
 
 
 def _claude_label(model_id: str) -> str:
@@ -266,14 +178,6 @@ def providers() -> list[LlmProvider]:
     answers None rather than a provider that cannot reach anything.
     """
     out: list[LlmProvider] = [ClaudeCliProvider()]
-    # Function-local to break a cycle: `local_model_provider` imports this
-    # module for `Capabilities`, `ModelInfo` and the `LlmProvider` protocol, so
-    # importing it at module scope here would not resolve. This is the one
-    # registration point, and it being missing is why the module sat unimported
-    # and `check_dead_surface` called it a new dead surface: it was written and
-    # never plugged in.
-    from services import local_model_provider
-
     local = local_model_provider.configured_provider()
     if local is not None:
         out.append(local)

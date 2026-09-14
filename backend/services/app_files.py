@@ -61,7 +61,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
-from services import build_agents
+from services import build_agents, scope_tree
 
 __all__ = [
     "AppFilePathError", "AppFileBinaryError", "AppFileReadOnlyError",
@@ -159,7 +159,7 @@ def _resolve_app(slug: str, ref: str) -> Workspace:
     is and the platform reads the declaration"). Two candidate directories
     exist for one app while the registries are still unmerged
     (app-is-the-entity-2026-08-20.md sec 9): `apps/<slug>`, which
-    `paths.scope_root` names and the knowledge store already uses, and
+    `scope_tree.scope_root` names and the knowledge store already uses, and
     `projects/<slug>`, the build tree. Which one holds the app is NOT uniform
     and cannot be guessed, measured 2026-08-23 by counting both trees:
 
@@ -226,7 +226,7 @@ def _resolve_app(slug: str, ref: str) -> Workspace:
 def _app_own_root(slug: str) -> Path:
     """`apps/<slug>`, made if it is not there yet.
 
-    The same directory `paths.scope_root` gives every other per-app subtree, so
+    The same directory `scope_tree.scope_root` gives every other per-app subtree, so
     an app's files and its memory live under one root rather than two. Creating
     it is not inventing a claim: the app exists, this is where the platform
     keeps its tree, and the alternative is a tab that is absent for reasons the
@@ -234,7 +234,7 @@ def _app_own_root(slug: str) -> Path:
     """
     from wsplatform import paths
 
-    d = paths.scope_root(f"app:{slug}")
+    d = scope_tree.scope_root(f"app:{slug}")
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -246,7 +246,7 @@ def _app_declared_root(slug: str) -> Path | None:
     from wsplatform import paths
 
     try:
-        d = paths.scope_root(f"app:{slug}")
+        d = scope_tree.scope_root(f"app:{slug}")
     except (ValueError, OSError):
         return None
     if not d.is_dir():

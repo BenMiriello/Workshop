@@ -29,7 +29,7 @@ from services import (agent_slots, attachment_carry, build_agents,
                       chat_attachments, chat_drain,
                       chat_log, chat_queue, chat_store, chat_worktree, leases,
                       llm_router, model_caps, ownership, reply_guard, turn_end,
-                      worktrees)
+                      usage_ledger, worktrees)
 
 log = logging.getLogger("workshop.build_streaming")
 
@@ -3920,32 +3920,12 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     # with the real output count) and storing the components fixes the unit,
     # because a row that keeps them can be re-expressed later and a row that
     # keeps only a total never can.
-    try:
-        from services import token_usage, usage_ledger
-        parsed = usage_ledger.usage_from_envelope(
-            {"type": "result", "modelUsage": model_usage,
-             "total_cost_usd": vendor_cost_usd})
-        comp = parsed["components"]
-        tokens = spend_tokens
-        if comp:
-            # The rate-limit-shaped figure, so this row is finally in the SAME
-            # unit as the worker rows it sits beside in one window.
-            tokens = token_usage.effective(token_usage.Usage(**comp))
-        if tokens > 0 or comp:
-            usage_ledger.record(
-                usage_scope_for_thread(turn.thread_id),
-                tokens,
-                role="chat",
-                run=turn.id,
-                chat=turn.thread_id,
-                components=comp,
-                models=parsed["models"],
-                model=parsed["model"],
-                source=parsed["source"],
-                vendor_cost_usd=parsed["vendor_cost_usd"],
-            )
-    except Exception as e:
-        log.debug("turn %s: chat usage record failed: %s", turn.id, e)
+    usage_ledger.record_turn(
+        {"type": "result", "modelUsage": model_usage,
+         "total_cost_usd": vendor_cost_usd},
+        scope=usage_scope_for_thread(turn.thread_id),
+        role="chat", run=turn.id, chat=turn.thread_id,
+        fallback_tokens=spend_tokens)
     try:
         build_agents.touch(turn.agent_slug)
         # Turn is over: drop the persisted "running" ratchet back to idle so the

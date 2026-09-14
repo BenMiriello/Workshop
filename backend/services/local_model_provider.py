@@ -55,7 +55,7 @@ import httpx
 
 from wsplatform import paths
 
-from services import llm_providers
+from services import llm_contract
 
 log = logging.getLogger("workshop.local_model_provider")
 
@@ -183,8 +183,8 @@ def set_base_url(value: str | None) -> str | None:
 class Probe:
     """One reading of what is at the base URL, and when it was taken."""
 
-    reach: llm_providers.Reach
-    models: tuple[llm_providers.ModelInfo, ...]
+    reach: llm_contract.Reach
+    models: tuple[llm_contract.ModelInfo, ...]
     at: float
 
 
@@ -201,7 +201,7 @@ def _client(timeout_s: float):
     return httpx.Client(timeout=httpx.Timeout(timeout_s, connect=CONNECT_TIMEOUT_S))
 
 
-def _capabilities(origin: str, entry: dict, client) -> llm_providers.Capabilities:
+def _capabilities(origin: str, entry: dict, client) -> llm_contract.Capabilities:
     """What this model can do, from what the SERVER said and what answered.
 
     Everything starts False. `context_tokens` is taken from whichever field the
@@ -216,7 +216,7 @@ def _capabilities(origin: str, entry: dict, client) -> llm_providers.Capabilitie
         if isinstance(value, int) and value > 0:
             window = value
             break
-    return llm_providers.Capabilities(
+    return llm_contract.Capabilities(
         cache=False,
         thinking=False,
         tools=False,
@@ -258,7 +258,7 @@ def probe(force: bool = False) -> Probe:
     """
     origin = base_url()
     if origin is None:
-        return Probe(llm_providers.Reach(llm_providers.REACH_UNCONFIGURED,
+        return Probe(llm_contract.Reach(llm_contract.REACH_UNCONFIGURED,
                                          "No local model server is configured."),
                      (), time.time())
     cached = _PROBE.get(origin)
@@ -277,17 +277,17 @@ def _read(origin: str) -> Probe:
             r = client.get(f"{origin}/v1/models")
             if r.status_code != 200:
                 return Probe(
-                    llm_providers.Reach(
-                        llm_providers.REACH_UNREACHABLE,
+                    llm_contract.Reach(
+                        llm_contract.REACH_UNREACHABLE,
                         f"{origin}/v1/models answered {r.status_code}."),
                     (), time.time())
             entries = _entries(r.json())
             models = tuple(
-                llm_providers.ModelInfo(
+                llm_contract.ModelInfo(
                     id=str(entry["id"]),
                     label=str(entry.get("display_name") or entry["id"]),
                     provider_id=PROVIDER_ID,
-                    wire=llm_providers.WIRE_ANTHROPIC,
+                    wire=llm_contract.WIRE_ANTHROPIC,
                     capabilities=_capabilities(origin, entry, client),
                     # NO EFFORT LADDER. `output_config.effort` is a first-party
                     # feature; a local server that ignores it would give the
@@ -299,15 +299,15 @@ def _read(origin: str) -> Probe:
             )
     except Exception as e:
         return Probe(
-            llm_providers.Reach(llm_providers.REACH_UNREACHABLE,
+            llm_contract.Reach(llm_contract.REACH_UNREACHABLE,
                                 f"Could not reach {origin}: {e.__class__.__name__}."),
             (), time.time())
     if not models:
         return Probe(
-            llm_providers.Reach(llm_providers.REACH_READY,
+            llm_contract.Reach(llm_contract.REACH_READY,
                                 f"{origin} answered, but has no models loaded."),
             (), time.time())
-    return Probe(llm_providers.Reach(llm_providers.REACH_READY, ""),
+    return Probe(llm_contract.Reach(llm_contract.REACH_READY, ""),
                  models, time.time())
 
 
@@ -332,17 +332,17 @@ class LocalHttpProvider:
 
     id = PROVIDER_ID
     label = PROVIDER_LABEL
-    transport = llm_providers.TRANSPORT_HTTP
-    wire = llm_providers.WIRE_ANTHROPIC
+    transport = llm_contract.TRANSPORT_HTTP
+    wire = llm_contract.WIRE_ANTHROPIC
     auth_mode = AUTH_NONE
 
     def __init__(self, origin: str) -> None:
         self.base_url = origin
 
-    def models(self) -> list[llm_providers.ModelInfo]:
+    def models(self) -> list[llm_contract.ModelInfo]:
         return list(probe().models)
 
-    def reach(self) -> llm_providers.Reach:
+    def reach(self) -> llm_contract.Reach:
         return probe().reach
 
     def run_turn(self, prompt: str, *, model: str, **kw) -> dict:
@@ -360,10 +360,8 @@ class LocalHttpProvider:
         success. `model_resolution` already keeps such a turn off this provider;
         this is the backstop for a caller that constructed one by hand.
         """
-        from services import llm_router
-
         if kw.get("allowed_tools") or kw.get("mcp_servers"):
-            raise llm_router.CloudCallFailed(
+            raise llm_contract.ProviderCallFailed(
                 f"{PROVIDER_LABEL} has no tool harness; a turn needing tools "
                 "cannot run on it")
         max_turns = kw.get("max_turns")
@@ -382,24 +380,23 @@ class LocalHttpProvider:
                 r = client.post(f"{self.base_url}/v1/messages", json=payload,
                                 headers={"anthropic-version": "2023-06-01"})
         except Exception as e:
-            raise llm_router.CloudCallFailed(
+            raise llm_contract.ProviderCallFailed(
                 f"{PROVIDER_LABEL} at {self.base_url} did not answer: "
                 f"{e.__class__.__name__}") from e
         elapsed = time.time() - start
         if r.status_code != 200:
-            raise llm_router.CloudCallFailed(
+            raise llm_contract.ProviderCallFailed(
                 f"{PROVIDER_LABEL} answered {r.status_code}: "
                 f"{_error_detail(r)}")
         try:
             body = r.json()
         except ValueError as e:
-            raise llm_router.CloudCallFailed(
+            raise llm_contract.ProviderCallFailed(
                 f"{PROVIDER_LABEL} answered 200 with a body that is not JSON"
             ) from e
         text = _text_of(body)
-        _meter(body, model, prompt)
         if not text:
-            raise llm_router.CloudCallFailed(
+            raise llm_contract.ProviderCallFailed(
                 f"{PROVIDER_LABEL} answered with no assistant text "
                 f"(stop_reason={body.get('stop_reason')})")
         return {
@@ -409,6 +406,8 @@ class LocalHttpProvider:
             "exit_code": 0,
             "stop_reason": body.get("stop_reason"),
             "recovered": False,
+            # The caller meters. See `LlmProvider.run_turn` in `llm_contract`.
+            "usage": body.get("usage"),
         }
 
 
@@ -439,32 +438,6 @@ def _text_of(body: object) -> str:
     parts = [b.get("text", "") for b in blocks
              if isinstance(b, dict) and b.get("type") == "text"]
     return "".join(parts).strip()
-
-
-def _meter(body: dict, model: str, prompt: str) -> None:
-    """Record this turn's spend through the ONE usage seam.
-
-    A local model costs no dollars and real tokens, and `model_prices` carries
-    no price for it, so `cost_usd` reads None and every view renders it as
-    unpriced rather than as $0.00 — which is the honest shape and already the
-    rule for any model the table does not carry. Never raises: metering is not
-    allowed to cost a turn.
-    """
-    from services import usage_ledger
-
-    try:
-        parsed = usage_ledger.usage_from_envelope(
-            {"type": "result", "usage": body.get("usage"), "model": model})
-        components = parsed.get("components")
-        if not components:
-            return
-        usage_ledger.record(
-            None, usage_ledger.token_usage.row_tokens({"components": components}),
-            components=components, model=model, source=parsed.get("source"),
-            calls=1)
-    except Exception as e:  # pragma: no cover - metering must not sink a turn
-        log.warning("local model turn: could not record usage (%s)", e)
-    del prompt
 
 
 def configured_provider() -> LocalHttpProvider | None:

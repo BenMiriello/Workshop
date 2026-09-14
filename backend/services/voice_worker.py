@@ -32,7 +32,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import build_streaming, chat_context, chat_store, llm_router, origin
+from services import (build_streaming, chat_context, chat_store, llm_router,
+                      origin, usage_ledger)
 from services.build_streaming import (
     session_alive, usage_scope_for_thread, _spend_tokens_from_usage,
     _summarize_tool_input,
@@ -397,32 +398,13 @@ def _record_spend(turn: VoiceTurn, usage: object,
     also what makes voice and text agree BY CONSTRUCTION rather than by two
     copies of the same arithmetic — the property that was missing when voice
     went unmetered for months."""
-    try:
-        from services import token_usage, usage_ledger
-        parsed = usage_ledger.usage_from_envelope(envelope or {})
-        comp = parsed["components"]
-        if comp:
-            tokens = token_usage.effective(token_usage.Usage(**comp))
-        else:
-            # No envelope, or one this build reported nothing usable in. Fall
-            # back to the raw usage block the caller passed.
-            tokens = _spend_tokens_from_usage(usage)
-        if tokens <= 0 and not comp:
-            return
-        usage_ledger.record(
-            usage_scope_for_thread(turn.thread_id),
-            tokens,
-            role="chat",
-            run=turn.id,
-            chat=turn.thread_id,
-            components=comp,
-            models=parsed["models"],
-            model=parsed["model"],
-            source=parsed["source"],
-            vendor_cost_usd=parsed["vendor_cost_usd"],
-        )
-    except Exception as e:  # pragma: no cover — best-effort
-        log.debug("voice turn %s: usage record failed: %s", turn.id, e)
+    # `fallback_tokens` from the raw `usage` block the caller passed, used only
+    # when the envelope reported no components at all.
+    usage_ledger.record_turn(
+        envelope or {},
+        scope=usage_scope_for_thread(turn.thread_id),
+        role="chat", run=turn.id, chat=turn.thread_id,
+        fallback_tokens=_spend_tokens_from_usage(usage))
 
 
 def _finish_turn(turn: VoiceTurn, *, error: str | None) -> None:

@@ -17,7 +17,7 @@ paths it declared.
 
 THIS MODULE NAMES NO APP, and cannot: the roster comes from
 `installed_apps.installed_app_ids()`, the directory from
-`paths.scope_root("app:<id>")`, and every field from the app's own manifest.
+`scope_tree.scope_root("app:<id>")`, and every field from the app's own manifest.
 
 ONE MANIFEST READER. `app_runner._read_manifest_file` owns the filename set and
 the jsonc comment tolerance and is already reused by `services/app_files.py`;
@@ -38,7 +38,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from services import installed_apps
+from services import installed_apps, scope_tree
 from wsplatform import paths
 
 log = logging.getLogger("workshop.app_ui")
@@ -166,7 +166,7 @@ def kit_satisfies(version: str, spec: str) -> bool:
 def app_dir(app_id: str) -> Path:
     """The app's own tree. `scope_root` is the SINGLE mapping every per-scope
     path derives from, so this is not a second place that joins `apps/`."""
-    return paths.scope_root(f"app:{app_id}")
+    return scope_tree.scope_root(f"app:{app_id}")
 
 
 def _read_ui_block(app_id: str) -> dict[str, Any] | None:

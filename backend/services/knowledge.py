@@ -25,6 +25,7 @@ import logging
 import os
 import re
 from pathlib import Path
+from services import scope_tree
 from wsplatform import paths
 
 log = logging.getLogger("workshop.knowledge")
@@ -150,11 +151,11 @@ def scope_dir(scope_key: str, *, create: bool = False) -> Path:
     else:
         # project / app / agent: each is a tree-owning scope, so its knowledge
         # directory hangs off the ONE scope root rather than this module
-        # re-spelling `projects/`, `apps/` or `agents/`. `paths.scope_root`
+        # re-spelling `projects/`, `apps/` or `agents/`. `scope_tree.scope_root`
         # reproduces the exact former parents (projects_root()/<slug>,
         # workshop_root()/apps/<name>, runtime_dir()/agents/<slug>); the path is
         # byte-for-byte what it was, now derived from the single mapping.
-        d = paths.scope_root(scope_key) / "knowledge"
+        d = scope_tree.scope_root(scope_key) / "knowledge"
     if create:
         existed = d.exists()
         d.mkdir(parents=True, exist_ok=True)

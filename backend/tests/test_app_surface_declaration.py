@@ -32,11 +32,11 @@ def install(tmp_path, monkeypatch):
 
     projects: dict = {"widgets": {"title": "Widgets", "dir": str(app_dir)}}
 
-    from wsplatform import paths
+    from services import scope_tree
     from services import app_files, app_links
     # The app declares its own root with the manifest below, so it is readable
     # whether or not the app is linked to a working tree.
-    monkeypatch.setattr(paths, "scope_root",
+    monkeypatch.setattr(scope_tree, "scope_root",
                         lambda key: tmp_path / "apps" / key.split(":", 1)[1])
     monkeypatch.setattr(app_files, "project_root", lambda slug: app_dir)
     monkeypatch.setattr(app_links, "linked_project_slug",

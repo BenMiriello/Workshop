@@ -44,7 +44,10 @@ DERIVED = [
     ("services.build_agents", "_projects_registry"),
     ("wsplatform.paths", "projects_root"),
     ("wsplatform.paths", "projects_registry"),
-    ("wsplatform.paths", "chat_cwd"),
+    # `chat_cwd` moved to `services.ownership` on 2026-09-13: every branch of
+    # it below the env var is an ownership decision, and asking for one from
+    # `paths` was the upward edge that held 25 modules in the import cycle.
+    ("services.ownership", "chat_cwd"),
     ("services.worktrees", "BRANCHES_ROOT"),
     ("services.worktrees", "PROJECTS_ROOT"),
     ("services.compose_gen", "COMPOSE_ROOT"),

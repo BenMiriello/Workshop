@@ -45,6 +45,8 @@ import contextvars
 import os
 from pathlib import Path
 
+from wsplatform import paths
+
 # Per-deployment runtime root (per-user data lives under it). Portable default:
 # this checkout's own `.runtime/` (repo root = two dirs above services/). A
 # fresh clone therefore writes under its own tree, never another operator's
@@ -191,4 +193,45 @@ def workspace_path(operator_default: Path, under: str) -> Path:
         return operator_default
     d = user_runtime_dir() / "workspace" / under
     d.parent.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def chat_cwd() -> Path:
+    """Working directory for a chat turn that has no scope of its own.
+
+    The general assistant, app assistants and any agent that is not a maker are
+    not bound to a project or a build tree, so their turns still need *a* directory
+    to run in. `WORKSHOP_CHAT_CWD` names it. What it must never be is the
+    account's home: that default (`os.path.expanduser("~")`, spelled separately
+    in three call sites) put every turn without a scope in the directory
+    holding `~/.config/clawdbot`, `~/.claude.json`, `~/.ssh` and every other
+    credential on the box — so a scope with any filesystem tool at all had the
+    whole host in reach, and nothing about the scope said so.
+
+    Unset now resolves to a real, empty, per-owner directory instead. Created
+    on demand so the spawn cannot fail on a missing cwd, and per-owner for the
+    same reason the notes vault is: two accounts running a scope-less turn
+    should not share a scratch directory either.
+
+    See the 2026-08-11 scope-separation security audit section 2.
+
+    IT LIVES HERE, NOT IN `wsplatform.paths`, AND THAT IS THE POINT. Every
+    branch below the env var is an OWNERSHIP decision -- who is running this
+    turn, and which per-owner directory is theirs -- so this module owns it and
+    `paths` never did. It sat there reaching back up through a function-local
+    `from services import ownership`, on the theory that deferring the import
+    kept `paths` a leaf. It did not: `check_module_layout.py` counts a deferred
+    import as the real runtime dependency it is, and this edge plus the one in
+    `scope_root` held 25 modules inside the backend's largest import cycle, for
+    no reason other than that they needed a filesystem path. Measured
+    2026-09-13, removing both: largest SCC 107 -> 82.
+    """
+    env = os.environ.get("WORKSHOP_CHAT_CWD")
+    if env:
+        return Path(env).expanduser()
+    owner = owner_or_none()
+    base = (user_runtime_dir(owner) if owner is not None
+            else paths.runtime_dir() / "chat")
+    d = base / "chat-cwd" if owner is not None else base
+    d.mkdir(parents=True, exist_ok=True)
     return d

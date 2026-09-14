@@ -35,7 +35,7 @@ THREE CONSUMERS, ONE CREDENTIAL:
 
 WHY ORG SCOPES ARE REFUSED. Ticket [SEC-G1] records the finding that this
 installation's boundary against an excluded organisation lived only in string
-matching in code (`services.github.reject_blocked`), never in the credential:
+matching in code (`installation.reject_blocked`), never in the credential:
 a classic PAT carrying `repo` plus `read:org` can technically read that
 organisation and push to its private repositories. The option that ticket names
 is a token that cannot, and this module makes that option the only one it will
@@ -64,6 +64,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+
+from services import installation
 
 API_BASE = "https://api.github.com"
 DEVICE_CODE_URL = "https://github.com/login/device/code"
@@ -285,15 +287,13 @@ def _reject_unusable(login: str, scopes: list[str]) -> None:
     """Refuse a credential this installation must not hold. Raises with the fix.
 
     Two refusals, and they are different in kind. A login that names a blocked
-    account is a hard installation rule (`services.github.reject_blocked`). An
+    account is a hard installation rule (`installation.reject_blocked`). An
     organisation scope is [SEC-G1]: the token could reach an organisation
     whatever the code around it does, so the boundary would still be string
     matching rather than capability.
     """
-    from services import github
-
     if login:
-        github.reject_blocked(login)
+        installation.reject_blocked(login)
     bad = offending_scopes(scopes)
     if bad:
         raise GithubAuthError(

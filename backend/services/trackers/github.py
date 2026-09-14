@@ -24,8 +24,8 @@ import logging
 import subprocess
 
 from services import github as gh_repo
-from services.trackers import (Account, Filter, RemoteIssue, find_idem,
-                               idem_marker, remote_state, strip_idem)
+from services.trackers.contract import (Account, Filter, RemoteIssue, find_idem,
+                                        idem_marker, remote_state, strip_idem)
 
 log = logging.getLogger(__name__)
 

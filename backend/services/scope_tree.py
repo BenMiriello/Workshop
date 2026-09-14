@@ -574,3 +574,49 @@ def label(scope_key: str) -> str:
     kind_label = {"project": "Project", "agent": "Agent", "app": "App",
                   "role": "Role"}.get(scope.kind, scope.kind)
     return f"{kind_label}: {scope.slug}"
+
+
+def scope_root(scope_key: str) -> Path:
+    """The canonical root directory of a tree-owning scope: the one directory
+    that is the whole world of that scope.
+
+        project:<slug> -> projects_root()/<slug>
+        app:<name>     -> workshop_root()/apps/<name>
+        agent:<slug>   -> runtime_dir()/agents/<slug>
+
+    The SINGLE mapping every other per-scope path derives from (Layer 0 of
+    docs/platform-redesign/managed-file-references-and-path-scoping-2026-08-18.md).
+    `knowledge.scope_dir` and any other per-scope subtree must spell their parent
+    as `scope_root(scope)/…` rather than joining `projects/`, `apps/` or
+    `agents/` themselves — a scope smeared across three literals is a scope you
+    cannot mount, address or confine with one path.
+
+    IT LIVES HERE, NOT IN `wsplatform.paths`, AND THAT IS THE POINT. It needs
+    `parse` to split the key, and `paths` sits BELOW `services` in ADR 0024's
+    layering, so asking for it from there is an upward edge. It was written as a
+    function-local import on the theory that deferring it "keeps this module the
+    pure os/pathlib leaf" -- which is the exact belief `check_module_layout.py`
+    exists to refute: a deferred import is still a runtime dependency, it is
+    counted as an edge, and this one put `paths` inside the backend's largest
+    import cycle. Measured 2026-09-13: with `paths` a real leaf again the
+    largest strongly-connected component falls from 107 modules to 82, because
+    25 modules were in it for no reason other than needing a filesystem path.
+
+    A function belongs to the layer that owns its INPUT. The input here is a
+    scope key, this module owns the scope model, and it may import `paths`
+    downward -- which it already does.
+
+    Raises ValueError for the non-tree scopes (`workshop`, `development`,
+    `role:<role>`): those are facets of one `shared/knowledge/` layer, not a
+    per-scope tree, so there is no single root to point at.
+    """
+    scope = parse(scope_key)
+    if scope.kind == "project":
+        return paths.projects_root() / scope.slug
+    if scope.kind == "app":
+        return paths.workshop_root() / "apps" / scope.slug
+    if scope.kind == "agent":
+        return paths.runtime_dir() / "agents" / scope.slug
+    raise ValueError(
+        f"scope_root has no tree root for {scope_key!r} (kind {scope.kind!r}); "
+        "only project/app/agent own a scope tree")
