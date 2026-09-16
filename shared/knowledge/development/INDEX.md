@@ -194,6 +194,7 @@
 - [Workshop terminology needs clear distinct roles](system/workshop-terminology-needs-clear-distinct-roles-1a0028fb28f.md)
 - [@workshop/ui is a real package at packages/ui (0.2.0)](system/workshop-ui-is-a-real-package-at-packages-ui-2-0-19feea2363f.md)
 - [Your apps are NOT committed; the tracked violation is 102 source files](system/your-apps-are-not-committed-the-tracked-violatio-1a03493734e.md)
+- [One spawn path skipped the sandbox, and the prompt handed out the host paths it hides](system/one-spawn-path-skipped-the-sandbox-and-the-prompt-1a0ac6e2f10.md)
 - [Threads, branches and pages: the settled model](threads-branches-and-pages-the-settled-model-1a04f74f171.md)
 - [Aug 28 User Note](user/aug-28-user-note-mtdq4q5f.md)
 - [Working state (auto-written at compaction)](working-state.md) - the last session's handoff for this scope: objective, decisions and why, done, not done, shortcuts owed, open questions
