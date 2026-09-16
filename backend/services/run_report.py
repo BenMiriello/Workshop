@@ -338,6 +338,17 @@ def post_for_job(job_id: str, status: str = "done") -> int:
                           "sender": f"run:{job_id}",
                           "job": job_id, "status": status,
                           "tickets": [t.get("id") for t in tickets]},
+                    # THE SECOND LINE OF DEFENCE, and the asymmetry this
+                    # function carried for its whole life: the continuation
+                    # seed below IS deduped (`dedupe_id`), the message it
+                    # accompanies was not. `chat_log.append_message_sync` is
+                    # idempotent on `client_id` and on nothing else, so a
+                    # report posted without one is appended again every time
+                    # this runs for the same job. The id names the two facts
+                    # that make a report unique -- which run, and what it ended
+                    # as -- so a re-post of the same outcome collapses while a
+                    # job that genuinely ends differently still gets its say.
+                    client_id=f"run-report:{job_id}:{status}",
                 )
                 posted += 1
                 # FIRE-AND-CONTINUE, but only for a run THIS chat launched. The

@@ -98,8 +98,8 @@ def _post_env(monkeypatch, tmp_path, job, tickets):
     posted: list[dict] = []
     monkeypatch.setattr(
         chat_store, "append_message",
-        lambda tid, role, text, meta=None: posted.append(
-            {"thread": tid, "text": text, "meta": meta}))
+        lambda tid, role, text, meta=None, client_id=None: posted.append(
+            {"thread": tid, "text": text, "meta": meta, "client_id": client_id}))
     return posted
 
 
@@ -152,3 +152,81 @@ def test_a_halt_reason_is_stated_plainly():
         _job(evidence={"halted": "no queue runner is polling"}), [_ticket("x", "todo")],
         "cancelled")
     assert "Stopped before working: no queue runner is polling." in out
+
+
+# --- A finished run reports itself ONCE (ticket 82c29de8) --------------------
+#
+# `jobs.finish` had no already-terminal guard, and `post_for_job` appended its
+# message with no `client_id` while `chat_log.append_message_sync` is idempotent
+# on `client_id` and nothing else. Three live paths finish an already-finished
+# job -- the dismiss route, the awaiting-input decision, and `reconcile_stuck`
+# racing the shell sweep's own terminal write -- so the chat that asked for the
+# work was told twice that it was over.
+
+def _real_thread_env(tmp_path, monkeypatch):
+    """A real chat store and a real jobs log under tmp_path, so the count below
+    is of MESSAGES THAT LANDED rather than of calls a stub recorded."""
+    from services import chat_store, jobs, ownership, task_scope, tasks
+
+    monkeypatch.setattr(ownership, "_RUNTIME", tmp_path)
+    ownership.set_current_owner(1)
+    monkeypatch.setattr(jobs, "JOBS_LOG", tmp_path / "jobs.jsonl")
+    monkeypatch.setattr(jobs, "_collapsed_cache", None)
+    monkeypatch.setattr(task_scope, "root_for_job", lambda j: tmp_path)
+    monkeypatch.setattr(run_report, "owner_of_thread", lambda tid: 1)
+
+    thread_id = chat_store.create_thread("general")["id"]
+    job = jobs.start(project_slug="demo", trigger="manual", chat_id=thread_id)
+    monkeypatch.setattr(tasks, "_load", lambda root: [
+        {"id": "t1", "text": "Fix the thing", "status": "done",
+         "job_ids": [job["id"]],
+         "source": {"kind": "chat", "ref": thread_id}}])
+    return thread_id, job["id"]
+
+
+def _reports_in(thread_id):
+    from services import chat_log
+
+    return [e for e in chat_log.read_events(thread_id)
+            if e.get("kind") == "message"
+            and (e.get("meta") or {}).get("kind") == "run_report"]
+
+
+def test_finishing_a_job_twice_posts_one_report(tmp_path, monkeypatch):
+    from services import jobs, ownership
+
+    thread_id, job_id = _real_thread_env(tmp_path, monkeypatch)
+    try:
+        jobs.finish(job_id, status="done")
+        jobs.finish(job_id, status="done")
+        assert len(_reports_in(thread_id)) == 1
+    finally:
+        ownership.clear_current_owner()
+
+
+def test_a_second_finish_neither_raises_nor_rewrites_the_outcome(tmp_path, monkeypatch):
+    """The watchdog racing a runner is normal, so the second call is quiet --
+    and the outcome that stands is the one that actually happened first."""
+    from services import jobs, ownership
+
+    thread_id, job_id = _real_thread_env(tmp_path, monkeypatch)
+    try:
+        jobs.finish(job_id, status="done")
+        again = jobs.finish(
+            job_id, status="failed",
+            evidence={"halted": "liveness watchdog: launching process dead"})
+        assert again["status"] == "done"
+        assert jobs.get(job_id)["status"] == "done"
+        assert len(_reports_in(thread_id)) == 1
+    finally:
+        ownership.clear_current_owner()
+
+
+def test_the_report_carries_a_client_id_so_a_repost_collapses(monkeypatch, tmp_path):
+    """The idempotent path is the second line of defence: even reached directly,
+    with the `jobs.finish` guard bypassed, `post_for_job` may not double."""
+    job = {"id": "job_dedupe", "task_id": "t1"}
+    posted = _post_env(monkeypatch, tmp_path, job, [_chat_ticket()])
+
+    run_report.post_for_job("job_dedupe", "done")
+    assert posted[0]["client_id"] == "run-report:job_dedupe:done"

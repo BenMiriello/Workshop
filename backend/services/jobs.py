@@ -152,9 +152,25 @@ def finish(
     budget: dict | None = None,
 ) -> dict:
     """Close a Job by appending a terminal line carrying the same id. Reads
-    collapse it over the opening line. Returns the appended line."""
+    collapse it over the opening line. Returns the appended line.
+
+    CLOSING AN ALREADY-CLOSED JOB IS A QUIET NO-OP, not an error. Three live
+    paths reach a job that is already terminal, and none of them is a bug:
+    `POST /jobs/{id}/dismiss` is the escape hatch the operator may press on
+    anything; the awaiting-input decision flips a job `done` once every waited
+    task is answered, and the operator can answer the last one twice; and
+    `reconcile_stuck` races the runner's own terminal write, which is what a
+    watchdog does by definition. Each of those used to append a SECOND terminal
+    line and, worse, call `run_report.post_for_job` again, so the chat that
+    asked for the work was told twice that it was over. The returned record is
+    the job as it already stands, so a caller that reads the status back sees
+    the outcome that actually happened rather than the one it just asked for.
+    """
     if status not in STATUSES:
         status = "done"
+    already = get(job_id)
+    if already is not None and already.get("status") in TERMINAL_STATUSES:
+        return already
     line = _clean(
         id=job_id,
         status=status,
