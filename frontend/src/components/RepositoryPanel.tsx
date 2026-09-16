@@ -8,7 +8,7 @@ import {
   Notice,
   Prop,
   Props,
-  SectionLabel,
+  Section,
   Segmented,
   Skeleton,
   Stack,
@@ -106,9 +106,7 @@ export default function RepositoryPanel({ slug }: { slug: string }) {
     : null;
 
   return (
-    <section>
-      <SectionLabel icon={<GitBranch aria-hidden />}>Repository</SectionLabel>
-
+    <Section label="Repository" icon={<GitBranch aria-hidden />}>
       {loadError ? (
         <StateBlock
           variant="error"
@@ -181,6 +179,6 @@ export default function RepositoryPanel({ slug }: { slug: string }) {
           </Stack>
         </Card>
       )}
-    </section>
+    </Section>
   );
 }

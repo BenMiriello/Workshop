@@ -215,6 +215,37 @@
 }
 .ws-section-label:first-child { margin-top: 0; }
 .ws-section-label svg { width: 14px; height: 14px; stroke-width: 1.8; }
+/* A label in a row shares that row's centerline. `align-items: center` centers
+   each item's MARGIN box, so the label's own 8px bottom margin pushed its text
+   ~4px above the buttons beside it, on every header that carries actions. The
+   row owns the spacing under a header, so the label does not. */
+.ws-row > .ws-section-label { margin-block: 0; }
+
+/* ---- SECTION (a header and the content under it) -------------------------- */
+/* THE GAP BETWEEN TWO SECTIONS BELONGS TO THE SECTION, not to the label inside
+   it. Before this primitive existed, the label's own asymmetric margin was the
+   only separation on offer and `:first-child` above zeroed the top half of it
+   in every wrapper that opened with one, so a header sat 0px under the card
+   above it and 8px over its own. Pages made up the difference with an inline
+   marginBottom on the <section>, which three of the five sections on an app's
+   Overview carried and two did not. Operator, 2026-09-16: "the spacing above
+   that title is less than the spacing below, which looks really weird", and
+   "that spacing below it is irregular".
+
+   One number, in one place: --space-6 under a section, --space-3 under its
+   header, and the header's label carries no margin of its own. */
+.ws-section { margin-bottom: var(--space-6); }
+.ws-section:last-child { margin-bottom: 0; }
+.ws-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+.ws-section__head > .ws-section-label { margin: 0; }
+.ws-section__actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
 
 /* ---- PAGE HEADER --------------------------------------------------------- */
 /* No divider line — the title scale + whitespace carry the separation. */
@@ -1371,6 +1402,19 @@ span.ws-filterchip__open { cursor: default; }
 
 /* ---- FIELD / INPUT / SELECT / TEXTAREA ----------------------------------- */
 .ws-field { display: flex; flex-direction: column; gap: var(--space-2); }
+/* STRETCHING IS OPT-IN. A Field is a column flex box, so `align-items: stretch`
+   made every child full width, and an Input or a Textarea wants that. A Button
+   and a Segmented do not: they are inline-flex, they have no width of their
+   own, and the only reason they filled the row was the wrapper. That is how a
+   Field carrying nothing but a `help` string turned "Create and push" into a
+   page-wide bar, and how a two-pill toggle came to span its card with dead
+   space beside the pills. The kit has always had the explicit opt-in for the
+   cases that do want it, `<Button block>`, so the default is content width and
+   `block` is how you ask for the other thing.
+   `--inline` is excluded because it is a GRID: align-self there is vertical. */
+.ws-field:not(.ws-field--inline) > .ws-btn:not(.ws-btn--block),
+.ws-field:not(.ws-field--inline) > .ws-segmented-field:not(.ws-segmented-field--block),
+.ws-field:not(.ws-field--inline) > .ws-segmented { align-self: flex-start; }
 .ws-field__label { font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--fg); }
 .ws-field__label .ws-req { color: var(--danger); margin-left: 2px; }
 .ws-field__opt { color: var(--faint); font-weight: var(--fw-normal); margin-left: var(--space-2); }
@@ -2806,7 +2850,14 @@ span.ws-filterchip__open { cursor: default; }
 .ws-segmented button.is-disabled { color: var(--muted); opacity: 0.5; cursor: default; }
 .ws-segmented button.is-disabled:hover { color: var(--muted); }
 .ws-segmented button.is-disabled:active { transform: none; }
-.ws-segmented-field { display: inline-flex; flex-direction: column; gap: var(--space-1); }
+/* The control is as wide as its options, wherever it is mounted: the wrapper
+   is a column, so without this the track stretched to the container and the
+   pills sat left-aligned in it. `--block` is the opt-in for a control that is
+   meant to fill its row (a phone-width view switcher, say). */
+.ws-segmented-field { display: inline-flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); }
+.ws-segmented-field--block { display: flex; align-items: stretch; }
+.ws-segmented-field--block .ws-segmented { flex: 1 1 auto; }
+.ws-segmented-field--block .ws-segmented button { flex: 1 1 0; justify-content: center; }
 .ws-segmented__hint { font-size: var(--fs-xs); color: var(--muted); }
 
 /* ---- PALETTE PICKER — pick one of the eight color schemes -----------------

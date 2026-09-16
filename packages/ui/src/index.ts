@@ -27,7 +27,7 @@ export {
 } from "./agency";
 
 export {
-  Stack, Row, Spacer, SectionLabel, PageHeader, DetailLayout, Props, Prop, Clamp,
+  Stack, Row, Spacer, Section, SectionLabel, PageHeader, DetailLayout, Props, Prop, Clamp,
   Toolbar, Card, CardGrid, Stat, Divider, ProgressBar, StackedBar,
 } from "./layout";
 export {

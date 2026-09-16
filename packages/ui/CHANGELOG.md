@@ -12,6 +12,50 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.7.10 - 2026-09-16 - a section owns its spacing, and stretching is opt-in
+
+**Patch, additive.** One new export (`Section`), one new optional prop
+(`Segmented block`), and two layout defaults corrected. Nothing removed or
+renamed. A consumer that wanted a full-width Button or Segmented inside a Field
+was getting it by accident and now says `block`.
+
+### Added
+
+- **`Section`** — one group under one header. `label`, `icon` and `actions`
+  render the header row every page was hand-rolling as
+  `<section style={{marginBottom}}><Row between><SectionLabel/>…`, and the
+  section owns the gap beneath it (`--space-6`) and beneath its header
+  (`--space-3`).
+
+  The spacing between two sections was previously the SectionLabel's own
+  asymmetric margin, and `.ws-section-label:first-child` zeroes the top half of
+  that in any wrapper opening with a label, which is all of them. So a header
+  sat 0px under the block above it and 8px over its own, and pages made up the
+  difference with an inline `marginBottom` that some carried and some did not.
+  Reported on an app's Overview tab, 2026-09-16: "the spacing above that title
+  is less than the spacing below, which looks really weird", "that spacing
+  below it is irregular".
+
+- **`Segmented block`** — fill the container and divide it between the options.
+  Off by default (see below).
+
+### Changed
+
+- **A label in a `Row` no longer carries its bottom margin.**
+  `.ws-row > .ws-section-label { margin-block: 0 }`. `align-items: center`
+  centres each item's MARGIN box, so a label with 8px under it sat ~4px above
+  the buttons beside it on every header that carried actions.
+
+- **A `Button` or a `Segmented` inside a `Field` takes its content width.** A
+  Field is a column flex box, so `align-items: stretch` made every child full
+  width; an Input wants that and a button does not. A Field carrying nothing
+  but a `help` string was turning a primary button into a page-wide bar, and a
+  two-pill toggle spanned its card with the pills in the corner of it.
+
+  `<Button block>` has always been the opt-in for the case that does want it,
+  and `Segmented` now has the same prop. `.ws-field--inline` is unaffected: it
+  is a grid, where `align-self` means something else.
+
 ## 0.7.9 - 2026-09-04 - the tab bar's fade is wide enough to see
 
 **Patch, fix.** CSS only: no export added, removed or altered.

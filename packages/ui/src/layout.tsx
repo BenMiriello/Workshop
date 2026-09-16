@@ -62,6 +62,43 @@ export function SectionLabel({
   );
 }
 
+// ---- Section ---------------------------------------------------------------
+// ONE GROUP UNDER ONE HEADER, and the only thing that decides what a section is
+// spaced by. A page is a stack of these; the gap between two of them is the
+// section's, not the label's, and not an inline marginBottom the next page to
+// be written may or may not remember to copy. `label` + `actions` render the
+// header row that every panel was hand-rolling as a <Row between>, so the label
+// and the buttons beside it share a centerline by construction.
+//
+// Use it wherever a SectionLabel heads a block of content. A bare SectionLabel
+// still works for a label inside a card or a row, which is not a section.
+export function Section({
+  label,
+  icon,
+  actions,
+  className,
+  children,
+  ...rest
+}: {
+  label?: ReactNode;
+  icon?: ReactNode;
+  actions?: ReactNode;
+  className?: string;
+  children?: ReactNode;
+} & React.HTMLAttributes<HTMLElement>) {
+  return (
+    <section className={cx("ws-section", className)} {...rest}>
+      {(label != null || actions != null) && (
+        <div className="ws-section__head">
+          {label != null ? <SectionLabel icon={icon}>{label}</SectionLabel> : <span />}
+          {actions != null && <div className="ws-section__actions">{actions}</div>}
+        </div>
+      )}
+      {children}
+    </section>
+  );
+}
+
 // ---- Page header -----------------------------------------------------------
 // Two kinds of page, and the title scale is the difference between them.
 //

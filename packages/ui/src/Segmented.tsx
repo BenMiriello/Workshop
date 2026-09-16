@@ -19,6 +19,7 @@ export function Segmented<T extends string>({
   className,
   ariaLabel,
   hint,
+  block,
 }: {
   options: SegmentedOption<T>[];
   value: T;
@@ -27,6 +28,10 @@ export function Segmented<T extends string>({
   ariaLabel?: string;
   // Caption rendered under the control (e.g. why an option is disabled).
   hint?: ReactNode;
+  // Fill the container and divide it between the options. Off by default: a
+  // segmented control is as wide as its labels, and a full-width track with
+  // two pills in the corner of it is the accident, not the design.
+  block?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [thumb, setThumb] = useState<{ left: number; width: number } | null>(null);
@@ -47,7 +52,7 @@ export function Segmented<T extends string>({
   }, [value, options.length]);
 
   return (
-    <div className={cx("ws-segmented-field", className)}>
+    <div className={cx("ws-segmented-field", block && "ws-segmented-field--block", className)}>
       <div ref={ref} className={cx("ws-segmented", thumb && "has-thumb")} role="group" aria-label={ariaLabel}>
         {thumb && (
           <span

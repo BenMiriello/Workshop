@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { shortHttpError, Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPill, Badge, Modal, Skeleton, type StatusKind } from "@workshop/ui";
+import { shortHttpError, Button, Card, Row, Stack, Section, StateBlock, StatusDot, StatusPill, Badge, Modal, Skeleton, type StatusKind } from "@workshop/ui";
 import { Link } from "react-router-dom";
 import { Boxes, ExternalLink, RefreshCw, Play, Square, ScrollText, RotateCw, Eye, TriangleAlert } from "lucide-react";
 
@@ -163,14 +163,11 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
   // deployable app. Show what that means instead of Start/Stop controls.
   if (manifest?.self) {
     return (
-      <section style={{ marginBottom: "var(--space-6)" }}>
-        <Row between style={{ marginBottom: "var(--space-3)" }}>
-          <SectionLabel icon={<Boxes aria-hidden />}>Run</SectionLabel>
-        </Row>
+      <Section label="Run" icon={<Boxes aria-hidden />}>
         <Card>
           <StateBlock title="This project is the running Workshop" />
         </Card>
-      </section>
+      </Section>
     );
   }
 
@@ -179,16 +176,13 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
   // Workshop (same reasoning that retired the "Integrated" deployment concept).
   if (manifest?.builtin && manifest.services.length === 0) {
     return (
-      <section style={{ marginBottom: "var(--space-6)" }}>
-        <Row between style={{ marginBottom: "var(--space-3)" }}>
-          <SectionLabel icon={<Boxes aria-hidden />}>Run</SectionLabel>
-        </Row>
+      <Section label="Run" icon={<Boxes aria-hidden />}>
         <Card>
           <StateBlock
             title="This is a built-in Workshop app"
             hint="Open it from the Apps launcher." />
         </Card>
-      </section>
+      </Section>
     );
   }
 
@@ -213,10 +207,11 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
   const anyEnabledService = (manifest?.services ?? []).some((s) => s.enabled);
 
   return (
-    <section style={{ marginBottom: "var(--space-6)" }}>
-      <Row between style={{ marginBottom: "var(--space-3)" }}>
-        <SectionLabel icon={<Boxes aria-hidden />}>Run</SectionLabel>
-        <Row wrap style={{ gap: "var(--space-2)" }}>
+    <Section
+      label="Run"
+      icon={<Boxes aria-hidden />}
+      actions={
+        <>
           {status && <StatusPill status={phaseKind}>{phaseLabel}</StatusPill>}
           <Button size="sm" variant="ghost" onClick={() => { loadManifest(); loadStatus(); }}>
             <RefreshCw aria-hidden /> Refresh
@@ -240,9 +235,9 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
               </Button>
             </>
           )}
-        </Row>
-      </Row>
-
+        </>
+      }
+    >
       <Card>
         {loading && !manifest ? (
           <Stack gap="sm"><Skeleton width="60%" /><Skeleton width="45%" /></Stack>
@@ -386,6 +381,6 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
           {logsFor && <Button size="sm" variant="ghost" onClick={() => openLogs(logsFor)}><RefreshCw aria-hidden /> Reload</Button>}
         </Row>
       </Modal>
-    </section>
+    </Section>
   );
 }

@@ -23,7 +23,7 @@
 // the duplication this whole phase is removing.
 import { useParams } from "react-router-dom";
 import { Boxes } from "lucide-react";
-import { Card, Prop, Props, SectionLabel, StateBlock, Tag, catFor } from "@workshop/ui";
+import { Card, Prop, Props, Section, StateBlock, Tag, catFor } from "@workshop/ui";
 
 import AutonomyPanel from "../../../components/AutonomyPanel";
 import RepositoryPanel from "../../../components/RepositoryPanel";
@@ -49,8 +49,7 @@ function OverviewBody({ app }: { app: AppRecord }) {
 
   return (
     <>
-      <section>
-        <SectionLabel icon={<Boxes aria-hidden />}>This app</SectionLabel>
+      <Section label="This app" icon={<Boxes aria-hidden />}>
         <Card>
           <Props>
             <Prop label="Name">{app.name}</Prop>
@@ -59,7 +58,7 @@ function OverviewBody({ app }: { app: AppRecord }) {
             </Prop>
           </Props>
         </Card>
-      </section>
+      </Section>
 
       {/* The repository connection, ticket d12a0332. `POST /projects/<slug>/
           connect-github` had been live with no caller since ProjectDetail was

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { timeAbsolute, shortHttpError, Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill, Skeleton, Input, Field, ActionBar, Tag, Segmented, catFor, useEditMode, type StatusKind, type SegmentedOption } from "@workshop/ui";
+import { timeAbsolute, shortHttpError, Button, Card, Row, Stack, Section, SectionLabel, StateBlock, StatusPill, Skeleton, Input, Field, ActionBar, Tag, Segmented, catFor, useEditMode, type StatusKind, type SegmentedOption } from "@workshop/ui";
 import {
   Repeat, Play, RefreshCw, X, Clock, Zap, RotateCw,
   ChevronDown, ChevronRight, HelpCircle, SlidersHorizontal,
@@ -306,10 +306,11 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
   const awaiting = cfg?.awaiting ?? [];
 
   return (
-    <section style={{ marginBottom: "var(--space-6)" }}>
-      <Row between style={{ marginBottom: "var(--space-3)" }}>
-        <SectionLabel icon={<Repeat aria-hidden />}>Autonomy</SectionLabel>
-        <Row wrap style={{ gap: "var(--space-2)" }}>
+    <Section
+      label="Autonomy"
+      icon={<Repeat aria-hidden />}
+      actions={
+        <>
           {cfg && (
             <StatusPill status={running ? "running" : jobStatusKind(last?.status)}>
               {running ? "running" : (last?.status ?? "never run")}
@@ -332,9 +333,9 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
           >
             <Play aria-hidden /> Run now
           </Button>
-        </Row>
-      </Row>
-
+        </>
+      }
+    >
       <Card>
         {loading && !cfg ? (
           <Stack gap="sm"><Skeleton width="55%" /><Skeleton width="40%" /><Skeleton width="30%" /></Stack>
@@ -601,6 +602,6 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
           </Stack>
         )}
       </Card>
-    </section>
+    </Section>
   );
 }

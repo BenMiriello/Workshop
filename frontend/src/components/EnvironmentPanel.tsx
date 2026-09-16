@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { KeyRound, ExternalLink, RefreshCw, Pencil, X } from "lucide-react";
-import { Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, Badge, Skeleton, Field, Input, shortHttpError } from "@workshop/ui";
+import { Button, Card, Row, Stack, Section, StateBlock, StatusDot, Badge, Skeleton, Field, Input, shortHttpError } from "@workshop/ui";
 import type { components } from "../api/schema.gen";
 
 // Environment / secrets panel for a project. The app manifest declares env
@@ -108,10 +108,11 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
   if (data?.self) return null;
 
   return (
-    <section style={{ marginBottom: "var(--space-6)" }}>
-      <Row between style={{ marginBottom: "var(--space-3)" }}>
-        <SectionLabel icon={<KeyRound aria-hidden />}>Environment</SectionLabel>
-        <Row wrap style={{ gap: "var(--space-2)" }}>
+    <Section
+      label="Environment"
+      icon={<KeyRound aria-hidden />}
+      actions={
+        <>
           {missingCount > 0 && <StatusDot status="warn">{missingCount} required missing</StatusDot>}
           <Button size="sm" variant="ghost" onClick={load}><RefreshCw aria-hidden /> Refresh</Button>
           {!editing ? (
@@ -128,9 +129,9 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
               </Button>
             </>
           )}
-        </Row>
-      </Row>
-
+        </>
+      }
+    >
       <Card>
         {loading ? (
           <Stack gap="sm"><Skeleton width="55%" /><Skeleton width="40%" /></Stack>
@@ -199,6 +200,6 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
           </Stack>
         )}
       </Card>
-    </section>
+    </Section>
   );
 }
