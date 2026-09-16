@@ -344,7 +344,7 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
     # this the repair for a mirror-write that failed or for the window between
     # this script running and the mirror going live. It used to return here, and
     # "idempotent" then meant "does nothing", which is not the same thing.
-    fields = _thread_fields(meta)
+    fields = _thread_fields(meta, s, org_id)
     seen: set[str] = set()
     existing = thread_by_external(s, external)
     if existing is not None:
@@ -372,7 +372,7 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
             #   whenever nothing is new would mean a thread that stopped
             #   getting new messages right after the very first backfill
             #   keeps its clustered, wrong created_at forever.
-            chat_repo.sync_thread_fields(s, tid, meta)
+            chat_repo.sync_thread_fields(s, tid, meta, org_id=org_id)
             for ev in events:
                 if ev.get("kind") in ("message", "boundary", "scope") and ev.get("ts"):
                     chat_repo.fix_message_created_at(s, tid, ev.get("id"), ev.get("ts"))
@@ -558,7 +558,7 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
     # Refresh every mutable field from the meta this pass read, INCLUDING on a
     # top-up: archived_at, mode and scope can all have moved
     # since the last pass, same reasoning as the early return above.
-    chat_repo.sync_thread_fields(s, tid, meta)
+    chat_repo.sync_thread_fields(s, tid, meta, org_id=org_id)
     if title:
         # LAST, so it wins over sync_thread_fields's `f["title"]`: `title`
         # here was walked off the log's own `title` events (auto-naming, a

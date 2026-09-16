@@ -104,27 +104,19 @@ def _backfill_chats(s, app_ids: dict[str, str]) -> dict:
     context whose project is linked to an app all land on the same app_id.
     That last case is the app<->project merge made concrete: a chat that
     was filed against the PROJECT view of an app is still that app's chat.
+
+    THIS IS NO LONGER THE ONLY WRITER of `chat_thread.app_id`, and the rule it
+    used to spell out here now lives in `db.app_repo.scope_owner_map` so the
+    live write path (`chat_repo._thread_fields`, on every thread creation and
+    every meta sync) resolves membership identically. What is left here is the
+    REPAIR: rows written before that path existed, and rows whose mirror write
+    failed. Re-running it is still safe and still writes the same answer.
     """
+    from db import app_repo
     from services import scope_tree
 
     org_id = _org_id(s)
-    # project_slug -> app_id, built off every app that has one. The merge is
-    # by slug equality today (app_links.linked_project_slug), but this does
-    # not assume that stays true -- it is a real reverse lookup, not a mirror
-    # of the forward one.
-    # RESOLVED SCOPE -> app_id, for every app. Keying on the resolved scope
-    # rather than branching on its prefix is what makes this uniform: an
-    # ordinary app resolves to `app:<slug>`, an app filed against its project
-    # view resolves to `project:<slug>`, and an app whose linked project IS a
-    # root scope resolves to that root scope. All three are just keys here.
-    #
-    # The prefix branching below used to handle the first two and write off
-    # every root scope as unlinkable, which left 177 threads unlinked and an
-    # app page that opened to nothing.
-    scope_to_app: dict[str, str] = {}
-    for slug, aid in app_ids.items():
-        ps = app_links.linked_project_slug(slug) or slug
-        scope_to_app[scope_tree.scope_for_context(ps)] = aid
+    scope_to_app = app_repo.scope_owner_map(app_ids)
 
     rows = s.execute(text(
         "SELECT id, context_key FROM chat_thread WHERE org_id = :org "

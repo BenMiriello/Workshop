@@ -448,10 +448,10 @@ def _sync_record(org_id, user_id, thread_ref: str, ev: dict, meta: dict) -> None
             # is the same mapping the backfill uses at creation.
             t = chat_repo.create_thread(
                 s, org_id, user_id, external_id=thread_ref,
-                **chat_repo._thread_fields(meta))
+                **chat_repo._thread_fields(meta, s, org_id))
             # `state.meta_updated_at` isn't a plain column create_thread can
             # take a kwarg for; one extra UPDATE, once per thread, at creation.
-            chat_repo.sync_thread_fields(s, t["id"], meta)
+            chat_repo.sync_thread_fields(s, t["id"], meta, org_id=org_id)
         kind = ev.get("kind")
         if kind == "boundary":
             chat_repo.append_message(s, t["id"], role="assistant",
@@ -512,7 +512,7 @@ def _sync_record_meta(org_id, thread_ref: str, meta: dict) -> None:
             # field set (_sync_record above, via chat_repo._thread_fields).
             # There is no row here to patch.
             return
-        chat_repo.sync_thread_fields(s, t["id"], meta)
+        chat_repo.sync_thread_fields(s, t["id"], meta, org_id=org_id)
 
 
 async def record_meta(thread_ref: str, meta: dict) -> None:

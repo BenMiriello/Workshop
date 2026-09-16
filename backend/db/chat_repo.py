@@ -28,6 +28,7 @@ from psycopg.types.json import Jsonb
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from db import app_repo
 from db.engine import tenant_session
 from db.ids import uuid7
 
@@ -614,6 +615,14 @@ def create_thread(s: Session, org_id: UUID | str, owner_user_id: UUID | str, *,
     never null on a live thread and no read path needs a "what if there is no
     branch yet" case. It is named "Main" because that is what it is: the line
     the conversation started on.
+
+    `app_id` IS ONE OF THE FIELDS THIS SETS. It is what `GET /apps/{id}/chats`
+    selects on, and until it was added to `allowed` below the only writer of
+    that column in the entire system was the hand-run `db/app_backfill.py` --
+    so a chat created in an app or project scope did not appear on that app's
+    Chats tab until somebody remembered to run a CLI. `_thread_fields` resolves
+    it, through the same rule the backfill uses; a scope no app owns leaves it
+    NULL, which is the correct answer and not a failure.
     """
     thread_id = uuid7()
     cols = {"id": thread_id, "org_id": str(org_id),
@@ -622,7 +631,7 @@ def create_thread(s: Session, org_id: UUID | str, owner_user_id: UUID | str, *,
     allowed = ("mode", "model", "effort", "permission_mode", "seed_title",
                "title_source", "agent_slug", "summary",
                "claude_session", "voice_session", "context_tokens",
-               "archived_at", "created_at", "updated_at")
+               "app_id", "archived_at", "created_at", "updated_at")
     for k, v in fields.items():
         if k in allowed and v is not None:
             cols[k] = v
@@ -674,13 +683,21 @@ def _iso(value):
         return None
 
 
-def _thread_fields(meta: dict) -> dict:
+def _thread_fields(meta: dict, s: Session | None = None,
+                   org_id: UUID | str | None = None) -> dict:
     """The mutable `chat_thread` columns, from a thread's raw file meta.
 
     Shared by thread CREATION (chat_backfill._load_thread, and the live
     mirror's first message -- see services.chat_branches._sync_record) and
     by `sync_thread_fields` below, so there is one mapping from file-meta key
     to column, not two that can drift.
+
+    `s`/`org_id` ARE WHAT MAKE `app_id` ANSWERABLE. Which app owns a chat is a
+    question about rows in the `app` table, so unlike every other field here it
+    cannot be read off the meta alone. Both absent means "do not resolve it",
+    and callers that have a session pass one -- which is all of them on the
+    write path. Without this the column was written by nothing but the hand-run
+    backfill.
     """
     # Imported here, not at module scope: `services.chat_store` reaches this
     # module through chat_log -> chat_branches -> chat_repo, so a top-level
@@ -691,6 +708,14 @@ def _thread_fields(meta: dict) -> dict:
     ctx = meta.get("context_key") or "general"
     return {
         "context_key": ctx,
+        # THE SAME RULE THE BACKFILL USES, and now on the same side of it: the
+        # read (`app_repo.list_chats_for_app`) selects on this column, so a
+        # chat that never gets one is a chat its own app cannot see. Resolved
+        # from the DERIVED scope, not the raw context key, so a chat filed
+        # against the project view of an app still lands on the app.
+        # None -- no session, or a scope no app owns -- is a legitimate answer.
+        "app_id": (None if s is None or org_id is None
+                   else app_repo.app_id_for_context(s, org_id, ctx)),
         # DERIVED, and derived by the one module that owns the rule. This line
         # used to be `chat_store._scope_from_context_key, in one line` -- a
         # deliberate hand re-spelling of a function that was itself wrong, and
@@ -736,14 +761,25 @@ def _thread_fields(meta: dict) -> dict:
 # re-spell.
 
 
-def sync_thread_fields(s: Session, tid: UUID | str, meta: dict) -> None:
+def sync_thread_fields(s: Session, tid: UUID | str, meta: dict, *,
+                       org_id: UUID | str) -> None:
     """UPDATE chat_thread's mutable columns from the thread's CURRENT file meta.
     Always the current value, never a delta, so this is safe to call on every
-    top-up and on every meta patch."""
-    f = _thread_fields(meta)
+    top-up and on every meta patch.
+
+    `org_id` IS REQUIRED, not optional, because `app_id` is one of the columns
+    this writes and it cannot be resolved without one. A default would let a
+    caller silently stop maintaining app membership -- the exact failure this
+    function is being changed to close -- so the signature refuses instead.
+    And `app_id` is re-derived on every sync rather than only at creation: a
+    chat can be rescoped, and a rescope that moved `context_key` and `scope`
+    while leaving `app_id` pointing at the old app would leave the chat listed
+    under an app it no longer belongs to.
+    """
+    f = _thread_fields(meta, s, org_id)
     s.execute(text(
         "UPDATE chat_thread SET "
-        "  context_key = :context_key, scope = :scope, "
+        "  context_key = :context_key, scope = :scope, app_id = :app_id, "
         "  mode = :mode, title = :title, "
         "  seed_title = :seed_title, model = :model, effort = :effort, "
         "  permission_mode = :permission_mode, summary = :summary, "

@@ -23,12 +23,20 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from db.ids import uuid7
+# Both are deliberately database-free leaves -- `app_links` says so in its own
+# docstring ("no sqlalchemy import") and `scope_tree` imports nothing below
+# `wsplatform.paths` -- so importing them HERE, at module scope, is a real edge
+# down the graph rather than a cycle waiting to be deferred. The rule they
+# jointly express (which app owns which scope) has to be reachable from the
+# write path, and a function-local import would only hide where it lives.
+from services import app_links, scope_tree
 
 __all__ = [
     "upsert_app", "get_app", "get_app_by_slug", "get_app_by_project_slug",
     "list_apps", "update_app",
     "delete_app", "list_chats_for_app", "set_thread_app_id",
-    "count_chats_for_app",
+    "count_chats_for_app", "scopes_owned_by", "scope_owner_map",
+    "app_id_for_context",
 ]
 
 
@@ -189,3 +197,110 @@ def set_thread_app_id(s: Session, org_id: UUID | str, thread_id: UUID | str,
         "UPDATE chat_thread SET app_id = :app WHERE id = :id AND org_id = :org"),
         {"app": str(app_id) if app_id else None, "id": str(thread_id),
          "org": str(org_id)})
+
+
+# --- which app owns a chat -----------------------------------------------
+#
+# THE READ SIDE AND THE WRITE SIDE USED TO DISAGREE. `list_chats_for_app`
+# above selects on the `app_id` COLUMN, and for a long time the only thing
+# that ever wrote that column was `db/app_backfill.py`, a CLI nobody runs on
+# a schedule. So a chat created in a project or app scope was invisible on
+# that app's Chats tab until someone hand-ran the backfill, and
+# `services/apps.chats_for_app` said app membership was "the DATABASE's
+# answer" when it was really "the answer as of the last manual repair".
+#
+# The rule below is where the backfill's rule now lives, lifted out of it so
+# the live write path calls the SAME one. The backfill still exists and still
+# calls this -- it is the repair tool for rows written before the live path
+# had it, or by a mirror write that failed -- but it is no longer the only
+# writer. It is not a verbatim move: `scopes_owned_by` documents the two
+# things the old spelling got wrong and why one app owns several scopes.
+
+def scopes_owned_by(slug: str) -> list[str]:
+    """Every scope key an app owns, resolved from the registries.
+
+    AN APP OWNS MORE THAN ONE SCOPE, which is the whole content of "project is
+    the build view of an app, not a second object". The same conversation is
+    the same app's whether it was opened from the app or from its project, so
+    both addresses belong to one row:
+
+      `app:<slug>`          always -- what a bare installed app id resolves to
+      `project:<link>`      when the app has a linked working tree
+      `<link>`              additionally, when the link names a ROOT scope in
+                            its own right (`scope_for_context(link) == link`),
+                            which is how a self-hosting installation's own
+                            source owns the chats filed against its root queue
+
+    Nothing here claims the workshop root by accident, and that is the point of
+    the equality test. `scope_for_context` is TOTAL -- its last line answers
+    `workshop` for anything it does not recognise -- so resolving a bare
+    project slug through it and keying on the result, which is what this
+    replaced, made every project-only app claim `workshop` and the last one in
+    roster order win. Measured on this installation's own store: 31 unbound
+    `general` chats plus everything else falling through would have been
+    attributed to a throwaway project, while the 13 threads actually keyed
+    `project:<slug>` -- the ones the defect was reported about -- matched no
+    app at all, because a bare link never resolves to a `project:` scope.
+    """
+    scopes = [f"app:{slug}"]
+    link = app_links.linked_project_slug(slug)
+    if link:
+        scopes.append(f"project:{link}")
+        resolved = scope_tree.scope_for_context(link)
+        if resolved == link:
+            scopes.append(resolved)
+    return scopes
+
+
+def scope_owner_map(app_ids: dict[str, str]) -> dict[str, str]:
+    """SCOPE -> app_id, over a slug -> app_id roster.
+
+    A thread's SCOPE decides which app owns it, not its raw `context_key`, and
+    the scope comes from the same `scope_tree.scope_for_context` every other
+    scope question in the system uses -- so a bare app id, an `app:<slug>`
+    context and a `project:<slug>` context whose project is linked to an app
+    all land on the same app_id. That last case is the app<->project merge
+    made concrete: a chat filed against the PROJECT view of an app is still
+    that app's chat.
+
+    Iteration order is the caller's roster order, and the FIRST claimant of a
+    scope keeps it, so a lookup here cannot depend on dict ordering luck.
+    """
+    out: dict[str, str] = {}
+    for slug, app_id in app_ids.items():
+        for scope in scopes_owned_by(slug):
+            out.setdefault(scope, str(app_id))
+    return out
+
+
+def app_id_for_context(s: Session, org_id: UUID | str,
+                       context_key: str | None) -> str | None:
+    """The app a chat with this `context_key` belongs to, or None.
+
+    None is an ORDINARY answer, not an error: an agent chat, an unbound
+    `general` chat and a scope no app owns all legitimately leave
+    `chat_thread.app_id` NULL.
+
+    The roster is rebuilt from the registries on every call (in
+    `all_app_slugs()` order, which is the order the backfill upserts in, so a
+    root scope claimed by two rows resolves the same way on both paths) and
+    intersected with the rows that actually exist. ARCHIVED apps are left out
+    deliberately: an app the registries have stopped naming is archived rather
+    than deleted so its existing chats keep their home, but it must not go on
+    claiming NEW ones -- and, since it is no longer in the registries,
+    `linked_project_slug` would resolve it to a scope another app owns.
+
+    `app_links.RegistryUnreadable` PROPAGATES, deliberately. A projects
+    registry that is present and will not parse means the roster is unknown,
+    and answering None would file every chat as belonging to no app -- the
+    same "indistinguishable from an instance that genuinely has none" that
+    `app_links` raises rather than returns for. The mirror write above this is
+    best-effort and logged, the file log is still the durable record, and
+    `db/chat_backfill.py` re-runs, so the cost of raising is a repair; the
+    cost of swallowing would be silently unfiling chats.
+    """
+    by_slug = {r["slug"]: str(r["id"])
+               for r in list_apps(s, org_id, archived=False)}
+    roster = {slug: by_slug[slug] for slug in app_links.all_app_slugs()
+              if slug in by_slug}
+    return scope_owner_map(roster).get(scope_tree.scope_for_context(context_key))

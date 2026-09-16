@@ -181,6 +181,78 @@ class TestChats:
         assert len(chats) == 1
         assert chats[0]["title"] == "hello"
 
+    def test_a_chat_created_in_an_apps_scope_needs_no_backfill(
+            self, client, org, user, tmp_path, monkeypatch):
+        """THE DEFECT THIS CLOSES. `GET /apps/{id}/chats` selects on the
+        `chat_thread.app_id` COLUMN, and nothing on the write path ever set it:
+        the only writer in the tree was `db/app_backfill.py`, reachable solely
+        by hand. So a chat opened in a project or app scope was missing from
+        its own app's Chats tab until somebody remembered to run a CLI.
+
+        Nothing in this test runs the backfill. The chat is created and
+        mirrored exactly as a live one is -- the file store writes it, then
+        `chat_branches._sync_record` (what `record_message` drives) turns the
+        first message into the row -- and it must be on the tab straight after.
+        """
+        from services import chat_branches, chat_log, chat_store, ownership
+
+        _write_projects_registry(tmp_path, {
+            "gizmo": {"title": "Gizmo", "dir": str(tmp_path / "gizmo")},
+        })
+        app_id = client.post(
+            "/apps", json={"slug": "gizmo", "name": "Gizmo"}).json()["id"]
+
+        monkeypatch.setattr(ownership, "_RUNTIME", tmp_path)
+        ownership.set_current_owner(1)
+        try:
+            # A PROJECT-SCOPED chat, which is the spelling the defect was
+            # reported about: `project:<slug>` is what the project view files
+            # a conversation under, and an app owns its project's scope.
+            tid = chat_store.create_thread(
+                "project:gizmo", title="opened from the project")["id"]
+            chat_branches._sync_record(
+                org, user, tid,
+                {"kind": "message", "role": "user", "content": "hi",
+                 "id": "ev-1"},
+                chat_log.read_meta(tid))
+            chats = client.get(f"/apps/{app_id}/chats").json()["chats"]
+        finally:
+            ownership.clear_current_owner()
+
+        assert [c["id"] for c in chats] == [tid]
+        assert chats[0]["title"] == "opened from the project"
+
+    def test_a_chat_in_a_scope_no_app_owns_stays_unlinked(
+            self, client, org, user, tmp_path, monkeypatch):
+        """NULL is the right answer, not a failure. An unbound `general` chat
+        belongs to no app, and the rule must not hand it to whichever app
+        happens to fall through `scope_for_context`'s catch-all."""
+        from db import app_repo
+        from db.engine import tenant_session
+        from services import chat_branches, chat_log, chat_store, ownership
+
+        _write_projects_registry(tmp_path, {
+            "gadget": {"title": "Gadget", "dir": str(tmp_path / "gadget")},
+        })
+        app_id = client.post(
+            "/apps", json={"slug": "gadget", "name": "Gadget"}).json()["id"]
+
+        monkeypatch.setattr(ownership, "_RUNTIME", tmp_path)
+        ownership.set_current_owner(1)
+        try:
+            tid = chat_store.create_thread("general", title="unbound")["id"]
+            chat_branches._sync_record(
+                org, user, tid,
+                {"kind": "message", "role": "user", "content": "hi",
+                 "id": "ev-1"},
+                chat_log.read_meta(tid))
+            assert client.get(f"/apps/{app_id}/chats").json()["chats"] == []
+        finally:
+            ownership.clear_current_owner()
+
+        with tenant_session(org) as s:
+            assert app_repo.app_id_for_context(s, org, "general") is None
+
     def test_an_app_with_no_chats_gets_an_empty_200(self, client):
         r = client.post("/apps", json={"slug": "quiet", "name": "Quiet"})
         app_id = r.json()["id"]

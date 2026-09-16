@@ -382,8 +382,17 @@ def chats_for_app(app_id: str, *, archived: bool = False) -> list[dict] | None:
     # on which page you opened it from.
     #
     # WHICH chats belong to this app is the DATABASE's answer (chat_thread.
-    # app_id, resolved by the backfill from scope), and it is broader than any
-    # scope filter: an app's chats can sit under several context keys. WHAT
+    # app_id), and it is broader than any scope filter: an app's chats can sit
+    # under several context keys.
+    #
+    # THAT SENTENCE USED TO END "resolved by the backfill from scope", which
+    # made it true only as far back as the last time somebody hand-ran a CLI.
+    # Nothing on the live write path set the column, so a chat created in a
+    # project scope was missing from its own app's tab until then. The column
+    # is now written where the row is (`chat_repo._thread_fields`, via
+    # `app_repo.app_id_for_context`) and re-derived on every meta sync, by the
+    # same rule `db/app_backfill.py` uses -- which survives as the repair tool
+    # for rows that predate this, not as the only writer. WHAT
     # each one looks like is the file fold's answer, and it is the same builder
     # `GET /api/chat/threads` uses, so the two lists cannot describe the same
     # chat differently. A row the fold does not have still comes back, thin,
