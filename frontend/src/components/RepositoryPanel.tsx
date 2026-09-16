@@ -148,9 +148,7 @@ export default function RepositoryPanel({ slug }: { slug: string }) {
               </Stack>
             ) : (
               <Stack gap="sm">
-                <StatusDot status="stopped">
-                  Not connected. This app is a normal local app; nothing here is required.
-                </StatusDot>
+                <StatusDot status="stopped">Not connected</StatusDot>
                 <Field label="How">
                   <Segmented
                     value={mode}

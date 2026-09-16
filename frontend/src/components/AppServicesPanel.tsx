@@ -168,9 +168,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
           <SectionLabel icon={<Boxes aria-hidden />}>Run</SectionLabel>
         </Row>
         <Card>
-          <StateBlock
-            title="This project is the running Workshop"
-            hint="Editing it edits the live app you're using. The frontend updates on save; backend changes need a backend restart." />
+          <StateBlock title="This project is the running Workshop" />
         </Card>
       </section>
     );
@@ -188,7 +186,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
         <Card>
           <StateBlock
             title="This is a built-in Workshop app"
-            hint="It runs as part of Workshop, so there is nothing to start here. Open it from the Apps launcher." />
+            hint="Open it from the Apps launcher." />
         </Card>
       </section>
     );
@@ -198,7 +196,6 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
   const byName = (n: string) => services.find((x) => x.name === n);
   const anyRunning = services.some((s) => s.status === "running");
   const hasServices = (manifest?.services.length ?? 0) > 0;
-  const isUp = status?.phase === "up";
   const isStarting = status?.phase === "starting" || inFlight;
   const phaseKind: StatusKind =
     status?.phase === "up" ? "ok" :
@@ -368,12 +365,6 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
                   )}
                 </Stack>
               </div>
-            )}
-
-            {isUp && (
-              <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                Up. Preview shows a service inside Workshop; the open-in-tab icon opens it on its own.
-              </p>
             )}
 
             {err && manifest && (

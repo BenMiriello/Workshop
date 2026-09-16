@@ -139,15 +139,9 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
             hint={<code>GET /api/base-apps/run/{slug}/env ({err})</code>}
             action={<Button size="sm" onClick={load}>Retry</Button>} />
         ) : (data?.requirements.length ?? 0) === 0 ? (
-          <StateBlock
-            title="No environment variables declared"
-            hint="An agent adds these when the app needs one, and they show up here to fill in." />
+          <StateBlock title="No environment variables declared" />
         ) : (
           <Stack>
-            <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-              Values are injected when the app starts and are never committed. Secrets show only as Set
-              or Missing. A required value left unset stops that service from starting.
-            </p>
             {groups.map(({ group, items }) => (
               <div key={group || "_ungrouped"}>
                 {group && <span className="ws-card__meta">{group}</span>}

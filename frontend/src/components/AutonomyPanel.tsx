@@ -505,10 +505,6 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
 
               {showAdvanced && (
                 <Stack gap="sm" style={{ marginTop: "var(--space-3)" }}>
-                  <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                    The triggers behind the preset. Editing them here sets the preset above to match.
-                  </p>
-
                   {advTriggers.length === 0 && !aedit.editing ? (
                     <StateBlock
                       title="No triggers"

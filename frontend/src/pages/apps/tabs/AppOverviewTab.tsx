@@ -40,15 +40,10 @@ function OverviewBody({ app }: { app: AppRecord }) {
   // its own error and the page would be four error regions stacked.
   if (!slug) {
     return (
-      <StateBlock
-        title="Nothing to show yet"
-        // Its own sentence rather than `unlinkedReason("overview", ...)`. That
-        // helper names the COLLECTION a tab is short of ("no branches yet",
-        // "no tickets yet"), and this tab is not a collection: it is four
-        // controls over a working tree. "This app has no settings yet" would be
-        // a true-shaped sentence about the wrong thing.
-        hint="This app has no linked working tree, so it has nothing to run, deploy or configure."
-      />
+      // The title carries the fact, and nothing under it explains what a
+      // working tree would get you. That sentence was the mechanism explained
+      // in prose, which is what check_explainer_text.py keeps off the screen.
+      <StateBlock title="No linked working tree" />
     );
   }
 
@@ -83,11 +78,7 @@ function OverviewBody({ app }: { app: AppRecord }) {
 export default function AppOverviewTab() {
   const { appSlug = "" } = useParams();
   return (
-    <AppTabPage
-      slug={appSlug}
-      title="Overview"
-      sub="What this app is, and how it runs."
-    >
+    <AppTabPage slug={appSlug} title="Overview">
       {(app) => <OverviewBody app={app} />}
     </AppTabPage>
   );
