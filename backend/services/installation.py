@@ -63,6 +63,49 @@ def git_forge() -> str:
     return os.environ.get("WORKSHOP_GIT_FORGE", "").strip()
 
 
+# --- where a browser reaches this installation ---------------------------
+# ONE list, read in preference order. It was spelled out twice, in
+# `services/operator_notify.py` and in `routes/voice_stream.py`, and a value
+# spelled twice is a value that will be spelled wrong in one of them. Both call
+# sites now read it from here.
+#
+# The order is a preference, not a fallback chain over failures: the canonical
+# origin is the address the installation calls itself, the public one is the
+# address it is reachable at from outside, and the local one is the address it
+# answers on its own network. A link, a redirect or an allowed WebSocket origin
+# is only worth anything if it resolves from wherever it is used, which is
+# usually not this machine.
+
+ORIGIN_ENVS = ("WORKSHOP_CANONICAL_ORIGIN", "WORKSHOP_PUBLIC_ORIGIN",
+               "WORKSHOP_LOCAL_ORIGIN")
+
+
+def declared_origins() -> tuple[str, ...]:
+    """Every browser-reachable origin this installation declares, best first.
+
+    Trailing slashes are stripped, so a caller may compare or concatenate
+    without normalising again. Empty when the installation declares none, which
+    is a real answer: a fresh clone has no address and anything built from a
+    guess would point at another instance.
+    """
+    out: list[str] = []
+    for var in ORIGIN_ENVS:
+        value = (os.environ.get(var) or "").strip().rstrip("/")
+        if value and value not in out:
+            out.append(value)
+    return tuple(out)
+
+
+def public_origin() -> str:
+    """The address the operator opens this installation at, or empty.
+
+    The first of `declared_origins()`. This is what a redirect URL, a deep link
+    or an OAuth callback is built from.
+    """
+    origins = declared_origins()
+    return origins[0] if origins else ""
+
+
 def operator_dm_target() -> str:
     """The account the platform sends the operator a notification at.
 

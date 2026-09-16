@@ -130,16 +130,12 @@ def _dm_channel(client, target: str) -> str:
 def origin() -> str:
     """The address the operator opens this installation at, or empty.
 
-    Preference order matters: the canonical origin first, then the public one,
-    then the local one. A link is only worth sending if it resolves from
-    wherever the notification is read, which is not this machine.
+    One line, because the preference order is an installation fact and lives
+    with the other ones (`installation.public_origin`). A link is only worth
+    sending if it resolves from wherever the notification is read, which is not
+    this machine.
     """
-    for var in ("WORKSHOP_CANONICAL_ORIGIN", "WORKSHOP_PUBLIC_ORIGIN",
-                "WORKSHOP_LOCAL_ORIGIN"):
-        value = (os.environ.get(var) or "").strip().rstrip("/")
-        if value:
-            return value
-    return ""
+    return installation.public_origin()
 
 
 def chat_link(thread_id: str, context_key: str) -> str:

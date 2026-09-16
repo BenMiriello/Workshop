@@ -15,12 +15,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from services import auth_store, chat_store, ownership
+from services import auth_store, chat_store, installation, ownership
 from services.voice import machine as m
 from services.voice import protocol
 from services.voice.runtime import TTS_SAMPLE_RATE, VoiceRuntime
@@ -60,10 +59,10 @@ def _origin_ok(ws: WebSocket) -> bool:
         return True                      # a native client sends none
     if origin in _DEV_ORIGINS:
         return True
-    for var in ("WORKSHOP_CANONICAL_ORIGIN", "WORKSHOP_PUBLIC_ORIGIN", "WORKSHOP_LOCAL_ORIGIN"):
-        configured = os.environ.get(var, "").rstrip("/")
-        if configured and origin.rstrip("/") == configured:
-            return True
+    # The declared origins, read from the one place that knows them
+    # (`installation.declared_origins`). Any of them is this installation.
+    if origin.rstrip("/") in installation.declared_origins():
+        return True
     host = ws.headers.get("x-forwarded-host") or ws.headers.get("host", "")
     return bool(host) and origin.split("//", 1)[-1] == host
 

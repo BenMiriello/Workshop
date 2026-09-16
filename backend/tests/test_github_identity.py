@@ -10,12 +10,13 @@ through, so stubbing it covers the network without a live account.
 from __future__ import annotations
 
 import base64
+import json
 import os
 import subprocess
 
 import pytest
 
-from services import github_identity, ownership
+from services import github_identity, installation, ownership
 
 
 OWNER = 4242
@@ -360,7 +361,7 @@ def test_the_device_flow_says_what_is_missing_rather_than_failing_opaquely(monke
 
 def test_pending_is_an_answer_not_an_error(monkeypatch):
     github_identity.set_client_id("Iv1.example", OWNER)
-    monkeypatch.setattr(github_identity, "_device_post",
+    monkeypatch.setattr(github_identity, "_form_post",
                         lambda url, data: {"error": "authorization_pending"})
 
     out = github_identity.poll_device("dev-code", OWNER)
@@ -370,7 +371,7 @@ def test_pending_is_an_answer_not_an_error(monkeypatch):
 
 def test_a_completed_device_sign_in_stores_the_token(monkeypatch):
     github_identity.set_client_id("Iv1.example", OWNER)
-    monkeypatch.setattr(github_identity, "_device_post",
+    monkeypatch.setattr(github_identity, "_form_post",
                         lambda url, data: {"access_token": "from-device"})
     monkeypatch.setattr(github_identity, "verify", lambda t: _ok())
     monkeypatch.setattr(github_identity, "helper_installed", lambda: False)
@@ -385,7 +386,7 @@ def test_a_completed_device_sign_in_stores_the_token(monkeypatch):
 
 def test_a_device_token_gets_the_same_refusals_as_a_pasted_one(monkeypatch):
     github_identity.set_client_id("Iv1.example", OWNER)
-    monkeypatch.setattr(github_identity, "_device_post",
+    monkeypatch.setattr(github_identity, "_form_post",
                         lambda url, data: {"access_token": "from-device"})
     monkeypatch.setattr(github_identity, "verify",
                         lambda t: _ok(scopes=["read:org"]))
@@ -397,7 +398,7 @@ def test_a_device_token_gets_the_same_refusals_as_a_pasted_one(monkeypatch):
 
 def test_device_flow_disabled_names_the_setting_to_turn_on(monkeypatch):
     github_identity.set_client_id("Iv1.example", OWNER)
-    monkeypatch.setattr(github_identity, "_device_post",
+    monkeypatch.setattr(github_identity, "_form_post",
                         lambda url, data: {"error": "device_flow_disabled"})
 
     with pytest.raises(github_identity.GithubAuthError) as e:
@@ -416,7 +417,328 @@ def test_status_is_safe_to_render(monkeypatch):
     out = github_identity.status(OWNER)
 
     assert set(out) == {"connected", "login", "source", "scopes", "connected_at",
-                        "client_id_set", "device_available", "helper_installed",
-                        "helper_path"}
+                        "client_id_set", "device_available", "app_registered",
+                        "manifest_available", "helper_installed", "helper_path",
+                        "defaults"}
     assert out["helper_installed"] is True
     assert "tok" not in repr(out)
+
+
+# ---- the manifest flow --------------------------------------------------------
+
+ORIGIN = "https://workshop.test-host.invalid"
+
+
+@pytest.fixture
+def _origin(monkeypatch):
+    """This installation declares an address a browser can reach it at."""
+    for var in installation.ORIGIN_ENVS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("WORKSHOP_CANONICAL_ORIGIN", ORIGIN)
+
+
+@pytest.fixture
+def _no_origin(monkeypatch):
+    for var in installation.ORIGIN_ENVS:
+        monkeypatch.delenv(var, raising=False)
+
+
+def _conversion_body(client_id="Iv1.app", client_secret="app-secret"):
+    return {"id": 99, "slug": "workshop-test", "client_id": client_id,
+            "client_secret": client_secret}
+
+
+def test_the_manifest_asks_for_the_permissions_the_platform_uses_and_no_org(_origin):
+    """Contents read and write, metadata read, pull requests read and write.
+
+    [SEC-G1] is the reason the last assertion is not decoration: an application
+    that could be granted an organisation permission would put the boundary back
+    into string matching, which is the thing that ticket exists to end.
+    """
+    m = github_identity.app_manifest(ORIGIN)
+
+    assert m["default_permissions"] == {"contents": "write", "metadata": "read",
+                                        "pull_requests": "write"}
+    assert not any("org" in key for key in m["default_permissions"])
+    assert m["public"] is False
+    assert m["redirect_url"] == ORIGIN + github_identity.MANIFEST_REDIRECT_PATH
+    assert m["callback_urls"] == [ORIGIN + github_identity.OAUTH_CALLBACK_PATH]
+    assert len(m["name"]) <= 34, "the forge caps an App name at 34 characters"
+
+
+def test_begin_registration_carries_a_state_the_forge_will_hand_back(_origin):
+    out = github_identity.begin_registration(OWNER)
+
+    assert out["post_url"].startswith(github_identity.APP_NEW_URL + "?state=")
+    assert json.loads(out["manifest"])["url"] == ORIGIN
+
+
+def test_an_installation_with_no_address_says_so_rather_than_failing_later(_no_origin):
+    """The forge would have nowhere to redirect back to. A screen that offered
+    the button anyway would fail for reasons nobody can see."""
+    with pytest.raises(github_identity.GithubAuthError) as e:
+        github_identity.begin_registration(OWNER)
+    assert "Paste a token instead" in str(e.value)
+    assert github_identity.status(OWNER)["manifest_available"] is False
+
+
+def test_registration_stores_the_application_and_returns_its_owner(monkeypatch, _origin):
+    monkeypatch.setattr(github_identity, "_conversion",
+                        lambda code: _conversion_body())
+    state = _state_from(github_identity.begin_registration(OWNER)["post_url"])
+
+    owner = github_identity.complete_registration("manifest-code", state)
+
+    assert owner == OWNER
+    assert github_identity.client_id(OWNER) == "Iv1.app"
+    assert github_identity.app_registered(OWNER) is True
+
+
+def _state_from(post_url: str) -> str:
+    from urllib.parse import parse_qs, urlsplit
+
+    return parse_qs(urlsplit(post_url).query)["state"][0]
+
+
+# ---- the state nonce ----------------------------------------------------------
+# It is the only thing that authenticates a callback: the session cookie is
+# SameSite=Strict, so a redirect arriving from the forge does not carry it.
+
+def test_a_state_nobody_minted_is_refused(monkeypatch, _origin):
+    called = []
+    monkeypatch.setattr(github_identity, "_conversion",
+                        lambda code: called.append(code) or _conversion_body())
+
+    with pytest.raises(github_identity.GithubAuthError) as e:
+        github_identity.complete_registration("manifest-code", "not-a-real-state")
+
+    assert "did not start here" in str(e.value)
+    assert called == [], "a refused state must not reach the forge at all"
+    assert github_identity.client_id(OWNER) is None
+
+
+def test_a_state_is_accepted_exactly_once(monkeypatch, _origin):
+    monkeypatch.setattr(github_identity, "_conversion",
+                        lambda code: _conversion_body())
+    state = _state_from(github_identity.begin_registration(OWNER)["post_url"])
+
+    github_identity.complete_registration("manifest-code", state)
+    with pytest.raises(github_identity.GithubAuthError):
+        github_identity.complete_registration("manifest-code", state)
+
+
+def test_a_registration_state_cannot_redeem_the_authorize_leg(monkeypatch, _origin):
+    """The two legs are different acts. A nonce minted for one is not a
+    credential for the other, and trying burns it."""
+    state = _state_from(github_identity.begin_registration(OWNER)["post_url"])
+
+    with pytest.raises(github_identity.GithubAuthError):
+        github_identity.complete_authorize("code", state)
+
+
+def test_an_expired_state_is_refused(monkeypatch, _origin):
+    state = _state_from(github_identity.begin_registration(OWNER)["post_url"])
+    later = github_identity.time.monotonic() + github_identity._STATE_TTL_SECONDS + 1
+
+    monkeypatch.setattr(github_identity.time, "monotonic", lambda: later)
+
+    with pytest.raises(github_identity.GithubAuthError):
+        github_identity.complete_registration("manifest-code", state)
+
+
+def test_the_owner_comes_from_the_state_and_not_from_the_request(monkeypatch, _origin):
+    """A callback has no session behind it, so there is no ambient owner to
+    trust. The one the flow started as is the one it finishes as."""
+    monkeypatch.setattr(github_identity, "_conversion",
+                        lambda code: _conversion_body())
+    state = _state_from(github_identity.begin_registration(OWNER + 7)["post_url"])
+
+    assert github_identity.complete_registration("code", state) == OWNER + 7
+    assert github_identity.client_id(OWNER + 7) == "Iv1.app"
+    assert github_identity.client_id(OWNER) is None
+
+
+# ---- the OAuth web flow -------------------------------------------------------
+
+def _register(monkeypatch):
+    monkeypatch.setattr(github_identity, "_conversion", lambda code: _conversion_body())
+    state = _state_from(github_identity.begin_registration(OWNER)["post_url"])
+    github_identity.complete_registration("manifest-code", state)
+
+
+def test_the_authorize_url_carries_pkce_and_a_fresh_state(monkeypatch, _origin):
+    _register(monkeypatch)
+
+    url = github_identity.begin_authorize(OWNER)
+
+    from urllib.parse import parse_qs, urlsplit
+    q = parse_qs(urlsplit(url).query)
+    assert url.startswith(github_identity.AUTHORIZE_URL)
+    assert q["client_id"] == ["Iv1.app"]
+    assert q["redirect_uri"] == [ORIGIN + github_identity.OAUTH_CALLBACK_PATH]
+    assert q["code_challenge_method"] == ["S256"]
+    assert q["code_challenge"] and q["state"]
+    assert "scope" not in q, "an org scope must not be reachable by asking for one"
+    # The challenge is a hash, so the verifier is not recoverable from the URL.
+    assert q["code_challenge"][0] != q["state"][0]
+
+
+def test_a_completed_web_sign_in_stores_a_user_token(monkeypatch, _origin):
+    _register(monkeypatch)
+    sent: list[dict] = []
+    monkeypatch.setattr(github_identity, "_form_post",
+                        lambda url, data: sent.append(data) or {"access_token": "from-web"})
+    monkeypatch.setattr(github_identity, "verify", lambda t: _ok())
+    monkeypatch.setattr(github_identity, "helper_installed", lambda: False)
+    state = _state_from_url(github_identity.begin_authorize(OWNER))
+
+    assert github_identity.complete_authorize("auth-code", state) == OWNER
+
+    out = github_identity.status(OWNER)
+    assert out["connected"] is True
+    assert out["source"] == "oauth"
+    assert github_identity.token(OWNER) == "from-web"
+    assert sent[0]["code_verifier"], "the verifier the challenge was built from"
+
+
+def _state_from_url(url: str) -> str:
+    from urllib.parse import parse_qs, urlsplit
+
+    return parse_qs(urlsplit(url).query)["state"][0]
+
+
+def test_a_web_token_gets_the_same_org_refusal_as_a_pasted_one(monkeypatch, _origin):
+    """connect_token is the one door. [SEC-G1] applies to every way in."""
+    _register(monkeypatch)
+    monkeypatch.setattr(github_identity, "_form_post",
+                        lambda url, data: {"access_token": "broad"})
+    monkeypatch.setattr(github_identity, "verify", lambda t: _ok(scopes=["read:org"]))
+    state = _state_from_url(github_identity.begin_authorize(OWNER))
+
+    with pytest.raises(github_identity.GithubAuthError):
+        github_identity.complete_authorize("auth-code", state)
+    assert github_identity.token(OWNER) is None
+
+
+def test_a_web_token_gets_the_same_blocked_account_refusal(monkeypatch, _origin):
+    _register(monkeypatch)
+    monkeypatch.setenv("WORKSHOP_BLOCKED_REPO_OWNERS", "offlimits")
+    monkeypatch.setattr(github_identity, "_form_post",
+                        lambda url, data: {"access_token": "blocked"})
+    monkeypatch.setattr(github_identity, "verify", lambda t: _ok(login="offlimits-bot"))
+    state = _state_from_url(github_identity.begin_authorize(OWNER))
+
+    with pytest.raises(ValueError):
+        github_identity.complete_authorize("auth-code", state)
+    assert github_identity.token(OWNER) is None
+
+
+# ---- the client secret --------------------------------------------------------
+
+SECRET = "app-secret-under-test"
+
+
+def test_the_client_secret_never_appears_in_status(monkeypatch, _origin):
+    """It is written once by the registration leg and read only by this module's
+    own token exchange. `status()` is what crosses the HTTP boundary."""
+    monkeypatch.setattr(github_identity, "_conversion",
+                        lambda code: _conversion_body(client_secret=SECRET))
+    monkeypatch.setattr(github_identity, "helper_installed", lambda: False)
+    state = _state_from(github_identity.begin_registration(OWNER)["post_url"])
+    github_identity.complete_registration("manifest-code", state)
+
+    out = github_identity.status(OWNER)
+
+    assert SECRET not in repr(out)
+    assert not any("secret" in key for key in out)
+    assert out["app_registered"] is True, "the fact of it is surfaced, the value is not"
+
+
+def test_no_route_can_return_the_client_secret():
+    """The response models are the boundary. None of them has a field for it."""
+    from routes import github_identity_routes as routes
+
+    for model in (routes.StatusOut, routes.DevicePollOut, routes.ManifestOut,
+                  routes.AuthorizeOut, routes.DefaultsOut):
+        assert not any("secret" in name for name in model.model_fields)
+
+
+def test_a_refused_state_does_not_quote_the_secret(monkeypatch, _origin):
+    monkeypatch.setattr(github_identity, "_conversion",
+                        lambda code: _conversion_body(client_secret=SECRET))
+    state = _state_from(github_identity.begin_registration(OWNER)["post_url"])
+    github_identity.complete_registration("manifest-code", state)
+
+    with pytest.raises(github_identity.GithubAuthError) as e:
+        github_identity.complete_authorize("code", "wrong-state")
+    assert SECRET not in str(e.value)
+
+
+def test_disconnecting_keeps_the_registered_application(monkeypatch, _origin):
+    """The application is not the connection. Re-registering one to sign in
+    again would be work for nothing."""
+    _register(monkeypatch)
+    monkeypatch.setattr(github_identity, "_form_post",
+                        lambda url, data: {"access_token": "from-web"})
+    monkeypatch.setattr(github_identity, "verify", lambda t: _ok())
+    monkeypatch.setattr(github_identity, "helper_installed", lambda: False)
+    monkeypatch.setattr(github_identity, "remove_credential_helper", lambda: None)
+    github_identity.complete_authorize(
+        "auth-code", _state_from_url(github_identity.begin_authorize(OWNER)))
+
+    github_identity.disconnect(OWNER)
+
+    assert github_identity.token(OWNER) is None
+    assert github_identity.app_registered(OWNER) is True
+
+
+# ---- the global defaults ------------------------------------------------------
+
+def test_the_defaults_are_the_shipped_ones_until_someone_changes_them():
+    assert github_identity.defaults(OWNER) == {
+        "auto_create_repo": True,
+        "default_visibility": "private",
+        "default_branch_name": "main",
+    }
+
+
+def test_setting_one_default_leaves_the_others_alone():
+    github_identity.set_defaults(default_branch_name="trunk", owner_id=OWNER)
+    out = github_identity.set_defaults(auto_create_repo=False, owner_id=OWNER)
+
+    assert out == {"auto_create_repo": False, "default_visibility": "private",
+                   "default_branch_name": "trunk"}
+
+
+@pytest.mark.parametrize("bad", ["", "  ", "-leading", "has space", "a..b", "trailing/"])
+def test_a_branch_name_git_would_refuse_is_refused_here(bad):
+    with pytest.raises(github_identity.GithubAuthError):
+        github_identity.set_defaults(default_branch_name=bad, owner_id=OWNER)
+    assert github_identity.defaults(OWNER)["default_branch_name"] == "main"
+
+
+def test_visibility_is_one_of_two_words():
+    with pytest.raises(github_identity.GithubAuthError):
+        github_identity.set_defaults(default_visibility="internal", owner_id=OWNER)
+    assert github_identity.set_defaults(
+        default_visibility="public", owner_id=OWNER)["default_visibility"] == "public"
+
+
+# ---- the callbacks are reachable without a session ----------------------------
+
+def test_a_callback_is_not_behind_the_operator_gate():
+    """A redirect from the forge carries no cookie (SameSite=Strict), so a gate
+    here would 401 every real completion. The state nonce is the gate instead,
+    and a bad one lands the operator back on the settings page with a sentence
+    rather than on a status code nobody sees.
+    """
+    from fastapi.testclient import TestClient
+
+    import main
+
+    r = TestClient(main.app).get("/api/github/authorized?state=nope&code=x",
+                                 follow_redirects=False)
+
+    assert r.status_code == 303, "not 401: this route cannot require a session"
+    assert github_identity.SETTINGS_PATH in r.headers["location"]
+    assert "github_error" in r.headers["location"]

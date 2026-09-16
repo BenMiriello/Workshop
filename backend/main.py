@@ -499,6 +499,14 @@ app.include_router(model_providers_routes.router, dependencies=_OPERATOR)
 # partition and never returned
 # (backend/services/github_identity.py says why it exists).
 app.include_router(github_identity_routes.router, dependencies=_OPERATOR)
+# The two addresses the forge redirects the browser back to, mounted WITHOUT the
+# operator gate because they cannot pass it: the session cookie is
+# SameSite=Strict and a redirect arriving from another site does not carry it,
+# so a gate here would 401 every real completion. They authenticate on the state
+# nonce instead, which is minted under an authenticated request, bound to one
+# owner and one leg of the flow, accepted once, and expired in fifteen minutes
+# (routes/github_identity_routes.py says this at more length).
+app.include_router(github_identity_routes.callback_router)
 
 # Platform per-user primitives — owner-scoped to the authenticated user. These
 # are the shell (chat, voice, push), NOT apps: apps build on them, so they mount
