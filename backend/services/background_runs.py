@@ -68,6 +68,12 @@ _MAX_TURNS = 40
 # uses, so a reader who knows one knows the other.
 TIMED_OUT = 124
 
+# What the runner reports for a run that was REFUSED before any model turn
+# happened: the scope did not resolve to a real tree, or the sandbox could not
+# be built. 126 is the shell's "found but could not execute", which is exactly
+# what happened — the work was never started, as opposed to started and failed.
+REFUSED = 126
+
 # Job dirs older than this are eligible for reaping on the next completed run.
 _REAP_AFTER_DAYS = 7
 
@@ -89,25 +95,71 @@ def _job_dir(job_id: str) -> Path:
     return d
 
 
-def _scope_cwd(scope: str) -> Path:
-    """Where the background agent runs. The chat's scope root when it resolves,
-    else the workshop root so it can at least read and search the tree."""
+def _scope_cwd(scope: str) -> Path | None:
+    """Where the background agent runs: the chat's scope root, or None when the
+    scope does not resolve to a real directory.
+
+    NO FALLBACK TO THE WORKSHOP ROOT. This used to return `_WORKSHOP_ROOT` --
+    the platform's own checkout -- whenever `root_for_context` answered None, on
+    the reasoning that an agent that cannot find its scope may as well "read and
+    search the tree". But this runner spawns `claude -p` with
+    `--permission-mode bypassPermissions`, so the fallback did not grant reading:
+    it handed any chat that could call `spawn_background` a writable agent inside
+    the Workshop's own source. And the fallback fired in the ordinary case, not a
+    freak one -- `root_for_context` returns None for a scope the dev-mode gate
+    refuses and for a project whose tree does not exist yet, which is every
+    newly-created project.
+
+    This is the same defect, and the same removal, as
+    `chat_context.MakerAgentContextProvider.__init__`: it defaulted an unknown
+    `build:<slug>` to `workshop_root()` and now propagates the KeyError instead.
+    An unresolvable scope is a refusal, not a cwd. See the comment there.
+
+    A root that resolves but is not a directory is unresolvable too: bwrap binds
+    the scope root, so a path that is not there cannot be confined to, and the
+    honest answer is the same refusal rather than a spawn failure deeper down."""
     try:
         from services import task_scope
         root = task_scope.root_for_context(scope)
-        if root:
-            return Path(root)
+    except Exception as e:
+        log.warning("background agent: scope %r did not resolve (%s)", scope, e)
+        return None
+    if not root:
+        return None
+    p = Path(root)
+    return p if p.is_dir() else None
+
+
+def _refusal_text(scope: str) -> str:
+    """Why an unresolvable scope refused, in words the chat can act on. Names the
+    dev-mode reason when that is the reason, so a refused scope does not read as
+    a scope nobody has heard of."""
+    reason = ""
+    try:
+        from services import task_scope
+        reason = task_scope.dev_mode_refusal(scope) or ""
     except Exception:
         pass
-    return _WORKSHOP_ROOT
+    if reason:
+        return f"Refused: {reason}"
+    return (f"Refused: the scope {scope!r} does not resolve to a working tree, so "
+            f"there is nowhere to confine this agent to. A background agent runs "
+            f"inside its own scope or it does not run.")
 
 
-def _check_tree_dirty() -> bool:
-    """True if the workshop tree has uncommitted changes after a run."""
+def _check_tree_dirty(cwd: Path) -> bool:
+    """True if the tree the agent ran in has uncommitted changes after a run.
+
+    THE RUN'S OWN TREE, not the workshop root. It asked the platform checkout
+    before, which was the only tree a background agent could reach back when
+    `_scope_cwd` fell back to it. Now the agent is confined to its scope and
+    cannot write outside it, so asking the platform tree would report another
+    session's work in progress to a chat that did not cause it, and stay silent
+    about the tree the agent actually edited."""
     try:
         r = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=str(_WORKSHOP_ROOT), capture_output=True, text=True, timeout=10,
+            cwd=str(cwd), capture_output=True, text=True, timeout=10,
         )
         return bool(r.stdout.strip())
     except Exception:
@@ -205,30 +257,55 @@ def _run_claude(prompt: str, cwd: Path, owner_id: int, scope: str) -> tuple[int,
     `--output-format json` wraps the final assistant text in `.result` and
     carries `.usage`, exactly as ralph reads it. Best-effort MCP config so the
     agent can search the workshop; a missing config means it runs without search
-    rather than not running."""
+    rather than not running.
+
+    CONFINED, like the chat turn, the ralph worker and the voice worker. Raises
+    `scoped_exec.ConfinementUnavailable` (or `TurnUserUnavailable`) rather than
+    spawning with host filesystem access -- see `run()`, which turns that into a
+    refused Job the chat can see."""
     mcp_flags: list[str] = []
     try:
         from services import app_registry, llm_router, ownership
         ownership.set_current_owner(owner_id)
         app_registry.set_current_query_scope(scope)
-        cfg = llm_router.mcp_config_json(["workshop"], owner_id=owner_id)
-        cfg_file = _job_dir("_cfg") / "mcp.json"
-        cfg_file.write_text(cfg)
-        mcp_flags = ["--mcp-config", str(cfg_file)]
+        # INLINE, not a file. The config used to be written under the workshop
+        # root's `.runtime` and passed by path, which is a path that does not
+        # exist inside the sandbox for any scope but the workshop's own -- the
+        # agent would have been handed a `--mcp-config` naming nothing. As JSON
+        # on the argv it rides through `wrap()`'s path remap with the rest of
+        # the command, which is how build_streaming passes it.
+        mcp_flags = ["--mcp-config",
+                     llm_router.mcp_config_json(["workshop"], owner_id=owner_id,
+                                                context_key=scope)]
     except Exception as e:
         log.warning("background agent: no MCP config (%s); running without search", e)
 
     # bypassPermissions: a detached process with nobody to ask was ending every
     # run by requesting approval for file writes (measured 2026-08-28, job
     # job_1787934884118_2f00). Destructive git ops are still denied by name.
+    #
+    # `--mcp-config` is variadic and keeps eating following non-flag tokens, so
+    # the JSON is placed where a FLAG follows it. See tests/test_agentic_turn_gets_search.py.
     cmd = [_claude_bin(), "-p", prompt, "--output-format", "json",
            "--max-turns", str(_MAX_TURNS),
+           *mcp_flags,
            "--permission-mode", "bypassPermissions",
-           "--disallowedTools", "Bash(git push *),Bash(git push),Bash(rm -rf *)",
-           *mcp_flags]
+           "--disallowedTools", "Bash(git push *),Bash(git push),Bash(rm -rf *)"]
+    # THE SANDBOX IS THE FLOOR, not an extra. This runner is reachable from any
+    # project chat through the `spawn_background` MCP tool, and it spawns a
+    # bypassPermissions agent; un-sandboxed, that agent's filesystem view is the
+    # whole host. `spawn_argv` confines it to `cwd` mounted at /workspace and
+    # RAISES if it cannot, which is the posture to preserve: the walls dropping
+    # is a refusal, not a degraded mode. `turn_env` rewrites the inherited
+    # WORKSHOP_* paths onto the mountpoint so what the child reads is what is
+    # actually mounted. die_with_parent stays off (the default): this runner is
+    # detached and outlives the backend, like the chat turn and unlike ralph.
+    from services import scoped_exec
+    spawn_cmd = scoped_exec.spawn_argv(cmd, str(cwd))
+    env = scoped_exec.turn_env(dict(os.environ), str(cwd))
     try:
         out = subprocess.run(
-            cmd, cwd=str(cwd), stdin=subprocess.DEVNULL,
+            spawn_cmd, cwd=str(cwd), stdin=subprocess.DEVNULL, env=env,
             capture_output=True, text=True, timeout=_timeout_s(),
         )
     except subprocess.TimeoutExpired as e:
@@ -245,9 +322,9 @@ def _run_claude(prompt: str, cwd: Path, owner_id: int, scope: str) -> tuple[int,
     raw = out.stdout or ""
     text, usage = "", {}
     try:
-        env = json.loads(raw)
-        text = (env.get("result") or "").strip()
-        usage = env.get("usage") or {}
+        envelope = json.loads(raw)
+        text = (envelope.get("result") or "").strip()
+        usage = envelope.get("usage") or {}
     except Exception:
         # A stray non-JSON line can land in stdout; keep whatever text there was.
         text = raw.strip()[:4000]
@@ -323,6 +400,29 @@ def _deliver(*, thread_id: str, owner_id: int, job_id: str, label: str,
             ownership.set_current_owner(prev)
 
 
+def _refuse(a: argparse.Namespace, reason: str) -> int:
+    """Close an already-opened Job as failed and say why, in the chat.
+
+    The refusals this serves happen BEFORE any model turn: an unresolvable scope
+    and an unbuildable sandbox. Both used to be impossible to reach (the scope
+    fell back to the platform checkout, and nothing asked for confinement), and
+    both must now land somewhere a person can see. So the refusal writes the
+    same three things a finished run writes -- a terminal status file, a message
+    in the chat, a closed Job -- rather than exiting quietly and leaving a
+    `running` Job and a chat that waits forever."""
+    from services import jobs
+    log.error("background agent refused: job=%s scope=%s: %s", a.job_id, a.scope, reason)
+    _write_status(_job_dir(a.job_id), outcome="failed", exit_code=REFUSED, tree_dirty=False)
+    try:
+        _deliver(thread_id=a.thread, owner_id=a.owner, job_id=a.job_id,
+                 label=a.label or "background agent", status="failed", text=reason,
+                 exit_code=REFUSED, tree_dirty=False)
+    except Exception as e:
+        log.warning("background agent refusal delivery failed for job %s: %s", a.job_id, e)
+    jobs.finish(a.job_id, status="failed", exit_code=REFUSED, evidence={"summary": reason})
+    return 0
+
+
 def run(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="background_runs run")
     ap.add_argument("--job-id", required=True)
@@ -356,12 +456,26 @@ def run(argv: list[str] | None = None) -> int:
                         "kind": "chat_background"})
 
     prompt = Path(a.prompt_file).read_text()
-    exit_code, text, usage = _run_claude(prompt, _scope_cwd(a.scope), a.owner, a.scope)
+
+    # A REFUSAL IS AN OUTCOME, NOT A DISAPPEARANCE. The Job is already open
+    # above, so both refusals below close it as failed and deliver the reason
+    # into the chat through the same `_deliver` seam every other outcome uses.
+    # Returning early without that would leave a Job running forever and a chat
+    # waiting for a result that is never coming.
+    cwd = _scope_cwd(a.scope)
+    if cwd is None:
+        return _refuse(a, _refusal_text(a.scope))
+
+    from services import scoped_exec
+    try:
+        exit_code, text, usage = _run_claude(prompt, cwd, a.owner, a.scope)
+    except (scoped_exec.ConfinementUnavailable, scoped_exec.TurnUserUnavailable) as e:
+        return _refuse(a, f"Refused: this background agent cannot run confined. {e}")
     status = "done" if exit_code == 0 else "failed"
 
     log.info("claude finished: exit=%d status=%s text_chars=%d", exit_code, status, len(text))
 
-    tree_dirty = _check_tree_dirty()
+    tree_dirty = _check_tree_dirty(cwd)
     if tree_dirty:
         log.warning("tree is dirty: uncommitted changes in workspace after run")
 

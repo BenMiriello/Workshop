@@ -191,7 +191,7 @@ def test_nonzero_exit_is_distinguishable_from_success(owned, monkeypatch, tmp_pa
     The two files are distinct, so a finished run can never look like a dead one."""
     import json as _json
     monkeypatch.setattr(background_runs, "_deliver", lambda **kw: None)
-    monkeypatch.setattr(background_runs, "_check_tree_dirty", lambda: False)
+    monkeypatch.setattr(background_runs, "_check_tree_dirty", lambda _cwd: False)
     monkeypatch.setattr(background_runs, "_reap_old_job_dirs", lambda: 0)
     pf = tmp_path / "p.txt"
     pf.write_text("do the thing")
@@ -217,3 +217,133 @@ def test_nonzero_exit_is_distinguishable_from_success(owned, monkeypatch, tmp_pa
         assert "tree_dirty" in st
 
     assert outcomes[0] != outcomes[1], "success and failure produced the same outcome field"
+
+
+# ---------------------------------------------------------------------------
+# Confinement. The `spawn_background` MCP tool is reachable from any build
+# provider, and this runner spawns `claude -p --permission-mode
+# bypassPermissions`. Un-sandboxed, that is a writable agent with the host's
+# filesystem view; with the old `_scope_cwd` fallback it was a writable agent
+# pointed at the platform's own checkout. Both halves are pinned here.
+# ---------------------------------------------------------------------------
+
+def test_the_spawn_goes_through_scoped_exec(owned, monkeypatch, tmp_path):
+    """The argv actually spawned is a bwrap invocation confining the agent to its
+    scope at /workspace -- not the bare `claude` argv this used to run."""
+    from services import scoped_exec
+    if not scoped_exec.functional():
+        pytest.skip("bwrap cannot namespace on this host")
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    monkeypatch.delenv("WORKSHOP_TURN_USER", raising=False)
+    scope_root = tmp_path / "scope"
+    scope_root.mkdir()
+
+    seen = {}
+
+    class Done:
+        returncode = 0
+        stdout = '{"result": "ok", "usage": {}}'
+        stderr = ""
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        seen["kw"] = kw
+        return Done()
+
+    monkeypatch.setattr(background_runs.subprocess, "run", fake_run)
+    monkeypatch.setattr(background_runs, "_claude_bin", lambda: "/bin/true")
+    background_runs._run_claude("prompt", scope_root, 6, "workshop")
+
+    cmd = seen["cmd"]
+    assert cmd[0].endswith("bwrap"), f"the agent was spawned unconfined: {cmd[:3]}"
+    # Confined TO ITS SCOPE, mounted at the fixed managed mountpoint, and the
+    # child starts there rather than wherever bwrap was invoked.
+    import os as _os
+    real = _os.path.realpath(str(scope_root))
+    assert any(cmd[k - 2] in ("--bind", "--ro-bind") and cmd[k - 1] == real
+               for k, v in enumerate(cmd) if v == scoped_exec.MOUNTPOINT and k >= 2), \
+        f"the scope root was not the thing mounted at {scoped_exec.MOUNTPOINT}"
+    assert cmd[cmd.index("--chdir") + 1] == scoped_exec.MOUNTPOINT
+    # bwrap itself starts at the real path; only the child is inside the view.
+    assert seen["kw"]["cwd"] == str(scope_root)
+    # The env went through turn_env too, so paths the child reads point at what
+    # is actually mounted.
+    assert "env" in seen["kw"]
+
+
+def test_a_run_that_cannot_be_confined_is_refused_not_run(owned, monkeypatch, tmp_path):
+    """`spawn_argv` fails CLOSED and `_run_claude` must not swallow that. The
+    walls dropping is a refusal, never a degraded mode."""
+    from services import scoped_exec
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "0")  # forced off == cannot confine
+    monkeypatch.delenv("WORKSHOP_TURN_USER", raising=False)
+
+    def unreachable(*a, **k):  # pragma: no cover - the point is it is never hit
+        raise AssertionError("an unconfinable agent was spawned")
+
+    monkeypatch.setattr(background_runs.subprocess, "run", unreachable)
+    monkeypatch.setattr(background_runs, "_claude_bin", lambda: "/bin/true")
+    with pytest.raises(scoped_exec.ConfinementUnavailable):
+        background_runs._run_claude("prompt", tmp_path, 6, "workshop")
+
+
+def test_an_unresolvable_scope_does_not_fall_back_to_the_platform_tree(monkeypatch):
+    """The defect: `_scope_cwd` returned the Workshop's own checkout whenever the
+    scope did not resolve -- which is the ordinary case for a project whose tree
+    does not exist yet, and for any scope the dev-mode gate refuses. That handed
+    a chat a bypassPermissions agent inside the platform source."""
+    from services import task_scope
+    monkeypatch.setattr(task_scope, "root_for_context", lambda _k: None)
+    assert background_runs._scope_cwd("project:not-a-thing") is None
+
+    # An exception on the way to the answer is not a fallback either.
+    def boom(_k):
+        raise RuntimeError("registry unreadable")
+
+    monkeypatch.setattr(task_scope, "root_for_context", boom)
+    assert background_runs._scope_cwd("project:not-a-thing") is None
+
+    # A root that resolves to a path that is not there is unresolvable too:
+    # there is nothing for bwrap to bind.
+    monkeypatch.setattr(task_scope, "root_for_context",
+                        lambda _k: background_runs.Path("/no/such/tree"))
+    assert background_runs._scope_cwd("project:not-a-thing") is None
+
+
+def test_an_unresolvable_scope_finishes_the_job_as_failed_in_the_chat(owned, monkeypatch, tmp_path):
+    """A refusal is an outcome, not a disappearance: the Job closes as failed and
+    the chat is told why, through the same seam every other outcome uses."""
+    from services import task_scope
+    monkeypatch.setattr(task_scope, "root_for_context", lambda _k: None)
+
+    def unreachable(*a, **k):  # pragma: no cover - the point is it is never hit
+        raise AssertionError("an agent ran for an unresolvable scope")
+
+    monkeypatch.setattr(background_runs, "_run_claude", unreachable)
+    jdir = tmp_path / "jd"
+    jdir.mkdir()
+    monkeypatch.setattr(background_runs, "_job_dir", lambda _jid, _d=jdir: _d)
+
+    tid = chat_store.create_thread("general")["id"]
+    pf = tmp_path / "p.txt"
+    pf.write_text("do the thing")
+    background_runs.run(["--job-id", "job-refused", "--thread", tid, "--owner", "6",
+                         "--scope", "project:not-a-thing", "--label", "probe",
+                         "--prompt-file", str(pf)])
+
+    j = jobs._read_all().get("job-refused")
+    assert j and j["status"] == "failed"
+    assert j["exit_code"] == background_runs.REFUSED
+
+    import json as _json
+    st = _json.loads((jdir / "status.json").read_text())
+    assert st["outcome"] == "failed" and st["exit_code"] == background_runs.REFUSED
+
+    msgs = [e for e in chat_log.read_events(tid)
+            if e.get("kind") == "message" and e.get("role") == "assistant"]
+    assert len(msgs) == 1
+    body = msgs[0]["content"]
+    assert "refused" in body.lower()
+    assert "project:not-a-thing" in body
+    # And the chat is woken to say so, rather than waiting on a job that ended.
+    assert chat_queue.read_continuation(tid) is not None
