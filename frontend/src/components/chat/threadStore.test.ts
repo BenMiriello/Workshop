@@ -677,3 +677,80 @@ describe("pendingOperation", () => {
     expect(snapshotThread(s).pendingOperation).toBe("compact");
   });
 });
+
+// THE AUTO-NAMER RENAMES A THREAD AND THE OPEN CHAT HAS TO NOTICE.
+//
+// `chat_store.rename_thread` appends `{kind: "title", title, source}` on every
+// rename, manual or automatic, and the auto-namer runs a few seconds into a
+// thread's first exchange. The event reached this reducer and fell through
+// every branch, so the toolbar went on saying "New chat" until something
+// refetched the thread list or the operator reloaded the page.
+describe("title events", () => {
+  const titleEv = (seq: number, title: string): LogEvent =>
+    ev(seq, { kind: "title", role: undefined, content: undefined, title });
+  const sync = (events: LogEvent[], over: Record<string, unknown> = {}) =>
+    ({ type: "eventsReceived", events, lastSeq: events[events.length - 1]?.seq ?? 0,
+       activeTurn: null, ...over }) as Parameters<typeof threadReducer>[1];
+
+  it("has no name of its own until the log states one", () => {
+    expect(initialThreadState("t").title).toBe(null);
+    const s = apply(initialThreadState("t"), sync([ev(1)]));
+    expect(s.title).toBe(null);
+  });
+
+  it("takes the name the event carries", () => {
+    const s = apply(initialThreadState("t"), sync([ev(1), titleEv(2, "Bird mic buzz")]));
+    expect(s.title).toBe("Bird mic buzz");
+    expect(s.titleSeq).toBe(2);
+  });
+
+  it("takes the LAST rename when a page carries several", () => {
+    const s = apply(initialThreadState("t"),
+      sync([titleEv(1, "New chat"), titleEv(2, "Bird mic buzz")]));
+    expect(s.title).toBe("Bird mic buzz");
+  });
+
+  it("does not let an older rename undo a newer one", () => {
+    // Syncs overlap and resolve out of order (see `syncedAt`), and a replayed
+    // cursor re-delivers events already applied. Either one would otherwise
+    // rename the chat back.
+    const s = apply(initialThreadState("t"),
+      sync([titleEv(5, "Bird mic buzz")]),
+      sync([titleEv(2, "New chat")]));
+    expect(s.title).toBe("Bird mic buzz");
+    expect(s.titleSeq).toBe(5);
+  });
+
+  it("ignores a rename found by paging BACKWARDS into history", () => {
+    // `olderEventsReceived` walks away from the present, so every rename it
+    // finds is older than the one in effect. Scrolling up must not rename the
+    // chat to what it was called last month.
+    const s = apply(initialThreadState("t"),
+      sync([ev(40)]),
+      { type: "olderEventsReceived", events: [titleEv(3, "New chat")], hasMore: false });
+    expect(s.title).toBe(null);
+  });
+
+  it("ignores an empty name, which is not a name", () => {
+    const s = apply(initialThreadState("t"),
+      sync([titleEv(1, "Bird mic buzz")]),
+      sync([titleEv(2, "")]));
+    expect(s.title).toBe("Bird mic buzz");
+  });
+
+  it("drops the name on a thread switch, so the next chat starts from its own log", () => {
+    const s = apply(initialThreadState("t"),
+      sync([titleEv(1, "Bird mic buzz")]),
+      { type: "reset", threadId: "t2" });
+    expect(s.title).toBe(null);
+    expect(s.titleSeq).toBe(0);
+  });
+
+  it("rides in the snapshot, so a cached open agrees with a cold one", () => {
+    const s = apply(initialThreadState("t"), sync([titleEv(1, "Bird mic buzz")]));
+    const seeded = apply(initialThreadState(null),
+      { type: "seedThread", threadId: "t", snapshot: snapshotThread(s) });
+    expect(seeded.title).toBe("Bird mic buzz");
+    expect(seeded.titleSeq).toBe(1);
+  });
+});

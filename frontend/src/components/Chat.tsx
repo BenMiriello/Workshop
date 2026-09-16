@@ -1238,12 +1238,27 @@ export default function Chat({
     : null;
 
   // ---- Chrome --------------------------------------------------------------
+  // THE LOG OUTRANKS THE LIST ON THE THREAD'S NAME.
+  //
+  // `thread.activeThreadTitle` reads the thread-list query cache, which is
+  // refetched on a schedule and after a write; `state.title` is the `title`
+  // event the server appended when the thread was actually renamed, and it
+  // arrives on the very next sync. The auto-namer renames a thread seconds into
+  // its first exchange, so the list copy is the stale one in exactly the case
+  // the operator sees most, and the chat went on saying "New chat" until
+  // something refetched the list or he reloaded.
+  //
+  // Null whenever this tab has not SEEN a rename -- the usual state, since a
+  // thread named weeks ago carries its `title` event far behind the tail page --
+  // so the list stays the source of record and this only ever corrects it
+  // forward. See `title` in threadStore.
+  const activeThreadTitle = state.title ?? thread.activeThreadTitle;
   const toolbar = (
     <ChatToolbar
       variant={variant}
       mode={effectiveMode}
       activeId={activeId}
-      activeThreadTitle={thread.activeThreadTitle}
+      activeThreadTitle={activeThreadTitle}
       branchPicker={branchPicker}
       branchPill={activeId ? <BranchPill threadId={activeId} /> : null}
       showProviderPicker={variant === "full" || effectiveMode === "data"}
@@ -1288,13 +1303,20 @@ export default function Chat({
     <ChatDialogs
       scope={scope}
       activeId={activeId}
-      activeThreadTitle={thread.activeThreadTitle}
+      activeThreadTitle={activeThreadTitle}
       ticketsOpen={ticketsOpen}
       onCloseTickets={() => setTicketsOpen(false)}
       renameOpen={thread.renameOpen}
       renameBusy={thread.renameBusy}
       onCancelRename={() => thread.setRenameOpen(false)}
-      onSaveRename={thread.saveRename}
+      // A MANUAL RENAME IS A LOG EVENT TOO, so the store has to be told. The
+      // rename patches the thread list, and `activeThreadTitle` above prefers
+      // the log's copy over the list's -- which is right for the auto-namer
+      // (the list is the stale one there) and would be exactly wrong here,
+      // leaving the toolbar on the previous name until something else synced.
+      // One sync after the write closes that window; `sync` is a cursor read
+      // and is safe to call at any time.
+      onSaveRename={async (t) => { await thread.saveRename(t); await sync(); }}
       confirmNew={thread.confirmNew}
       onCancelNew={() => thread.setConfirmNew(false)}
       onConfirmNew={() => { thread.setConfirmNew(false); thread.newChat(); }}

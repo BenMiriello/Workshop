@@ -197,6 +197,24 @@ export type ThreadState = {
   activeTurn: ActiveTurn | null;
   /** Bumped on every pending write, so `at` is strictly increasing. */
   clock: number;
+  /** THE THREAD'S NAME, AS THE LOG RECORDS IT. Null until this tab has seen a
+   *  `title` event, which is the normal state for a thread named long ago (the
+   *  event is behind the tail page). A reader must fall back to the thread list
+   *  in that case; this is the LIVE correction, not the source of record.
+   *
+   *  It exists because the correction had nowhere to land. `chat_store.
+   *  rename_thread` appends `{kind: "title", title, source}` on every rename,
+   *  the auto-namer renames a thread a few seconds into its first exchange, and
+   *  the event reached this reducer and was dropped on the floor — so the
+   *  toolbar went on painting "New chat" until something else happened to
+   *  refetch the thread list, or the operator reloaded. */
+  title: string | null;
+  /** The seq of the event `title` came from, so a later name cannot be undone
+   *  by an earlier one. Two ways that happens and both are routine: a sync
+   *  response that overlapped a newer one (see `syncedAt`), and `loadOlder`
+   *  paging back into history that contains the rename BEFORE last week's. 0
+   *  means no title event has been applied. */
+  titleSeq: number;
   /** Is there more history older than `order[0]`? Set from the server's
    *  `has_more` on a tail/before page ONLY (see `eventsReceived`'s `hasMore`);
    *  a plain cursor sync (`after>0`) never touches it, so an ordinary poll
@@ -308,8 +326,9 @@ export type ThreadAction =
   | { type: "seedThread"; threadId: string; snapshot: ThreadSnapshot };
 
 /** The subset of `ThreadState` a cache can honestly reseed: the committed log,
- *  the cursor it was read up to, the server's queue and the context cut. NOT
- *  `pending` or `clock` — see `seedThread` above.
+ *  the cursor it was read up to, the server's queue, the context cut and the
+ *  name the log last recorded. NOT `pending` or `clock` — see `seedThread`
+ *  above.
  *
  *  AND NOT `activeTurn`. `threadCache.ts` has always listed "the working
  *  indicator's truth" among the things it must not carry, and it carried it
@@ -336,6 +355,7 @@ export type ThreadSnapshot = Pick<
   ThreadState,
   "threadId" | "byId" | "order" | "idBySeq" | "cursor" | "cut"
   | "queued" | "queueHeld" | "queueError" | "hasMoreOlder" | "pendingOperation"
+  | "title" | "titleSeq"
 >;
 
 /** Lift the cacheable half of a thread's state out, by reference. Nothing here
@@ -355,6 +375,11 @@ export function snapshotThread(state: ThreadState): ThreadSnapshot {
     queueError: state.queueError,
     pendingOperation: state.pendingOperation,
     hasMoreOlder: state.hasMoreOlder,
+    // Cacheable for the same reason the events are: a `title` event is a
+    // committed fact about the past, not a claim about the present. Dropping it
+    // would make a cached open of a thread disagree with a cold one.
+    title: state.title,
+    titleSeq: state.titleSeq,
   };
 }
 
@@ -374,6 +399,8 @@ export function initialThreadState(threadId: string | null = null): ThreadState 
     syncedAt: 0,
     activeTurn: null,
     clock: 0,
+    title: null,
+    titleSeq: 0,
     hasMoreOlder: false,
   };
 }
@@ -481,6 +508,37 @@ function nextCut(
   const mode = a.cutMode === "compact" ? "compact" : "clear";
   if (prev && prev.count === a.clearedThrough && prev.mode === mode) return prev;
   return { count: a.clearedThrough, mode };
+}
+
+/** The newest name the log states, or what is already held.
+ *
+ *  THE LAST `title` EVENT BY SEQ WINS, and the seq is compared rather than
+ *  assumed, because a page of events is not guaranteed to be the newest one
+ *  this tab has seen. Two routine cases: syncs overlap and resolve out of order
+ *  (see `syncedAt`), and a replayed cursor re-delivers events already applied.
+ *
+ *  Called from `eventsReceived` only. `olderEventsReceived` deliberately does
+ *  NOT name the thread: it pages BACKWARDS, so the rename it finds is by
+ *  construction older than the one in effect, and applying it would rename a
+ *  chat to a name it had last month because the operator scrolled up. The seq
+ *  guard would catch that too, but only once a title event had already been
+ *  seen; the tail page often carries none. */
+function nextTitle(
+  prev: ThreadState["title"], prevSeq: number, events: LogEvent[],
+): { title: ThreadState["title"]; titleSeq: number } {
+  let title = prev;
+  let titleSeq = prevSeq;
+  for (const ev of events) {
+    if (!ev || ev.kind !== "title" || typeof ev.seq !== "number") continue;
+    // An empty name is not a name. The server floors it at "New chat"
+    // (chat_store.rename_thread), so this only fires on an event written
+    // before that floor existed.
+    if (!ev.title) continue;
+    if (ev.seq <= titleSeq) continue;
+    title = ev.title;
+    titleSeq = ev.seq;
+  }
+  return { title, titleSeq };
 }
 
 /** Is the server's queue the one already rendered?
@@ -600,11 +658,19 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       if (activeTurn && interrupted.includes(activeTurn.turnId)) {
         activeTurn = { ...activeTurn, segments: sealTrailingText(activeTurn.segments) };
       }
+      // THE THREAD'S NAME IS IN THE LOG, so this is where it is learned. Not
+      // guarded by `superseded`: `nextTitle` compares seqs, which is the
+      // stronger test — a late response carrying a NEWER rename than the one
+      // already applied is still telling the truth, and an older one cannot win
+      // whether it was superseded or merely out of order.
+      const named = nextTitle(state.title, state.titleSeq, action.events);
       return {
         ...state,
         byId,
         idBySeq,
         order,
+        title: named.title,
+        titleSeq: named.titleSeq,
         cursor: Math.max(state.cursor, action.lastSeq || 0),
         // THE SERVER'S QUEUE REPLACES OURS WHOLESALE. There is nothing to merge:
         // it is not this client's state, it is a fact about the thread, and a
