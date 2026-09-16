@@ -509,6 +509,10 @@ describe("a bottom-pinned bar reaches the bottom", () => {
 //
 // Both are asserted, because the defect was the GAP between them: an unbroken
 // chain from the flex container to the text, or the name overflows again.
+//
+// That chain carries the whole bar now. `flex-wrap: nowrap` is unconditional as
+// of the toolbar-wrap fix, so there is no width at which a second line absorbs
+// a long name, and shrinking is the only release valve there is.
 describe("the chat toolbar cannot be pushed sideways by a long name", () => {
   /** The body of a single rule in the app sheet, by exact selector. */
   const appRule = (selector: string): string => {
@@ -547,15 +551,36 @@ describe("the chat toolbar cannot be pushed sideways by a long name", () => {
     expect(appRule(".chat-tb__titlemenu")).not.toContain("max-width: 100%");
   });
 
-  // The two viewports differ by whether the row may take a second line, and
-  // nothing else. A shrink override scoped to one width is what hid the broken
-  // chain last time: it looked like the narrow case was handled.
-  it("carries the viewport difference in flex-wrap alone", () => {
+  // THE TOOLBAR NEVER WRAPS, AT ANY WIDTH.
+  //
+  // It used to wrap above 640px, described in the sheet as "a safety net, not
+  // the design". It was the defect instead: flex lines are collected from
+  // HYPOTHETICAL main sizes, before shrink is resolved, so a long name ended
+  // line one and the controls started line two — and the name, now alone on a
+  // line with room to spare, was never in negative free space and so never
+  // ellipsised. The operator's instruction is a deterministic bar: every
+  // control in a fixed position, nothing moving to a second row.
+  //
+  // Matched as DECLARATIONS (leading newline + the rule's indent), not as
+  // substrings: the comment that records this decision necessarily quotes the
+  // value it replaced, and a bare `toContain` would be passing or failing on
+  // the prose.
+  it("never wraps, so the name ellipsises instead of taking a line of its own", () => {
+    const bar = appRule(".chat-toolbar");
+    expect(bar).toContain("\n  flex-wrap: nowrap;");
+    expect(bar).not.toContain("\n  flex-wrap: wrap;");
+  });
+
+  // With the wrap gone the two viewports differ by vertical padding and nothing
+  // else, so neither override may come back here. A shrink override scoped to
+  // one width is what hid the broken chain in 2026-08-15: it looked like the
+  // narrow case was handled.
+  it("leaves the mobile block nothing to override but its padding", () => {
     const at = css.indexOf("@media (max-width: 640px) {\n  /* Tighter vertically");
     expect(at, "no chat toolbar mobile block").toBeGreaterThan(-1);
     const block = css.slice(at, css.indexOf("\n}", at));
-    expect(block).toContain("flex-wrap: nowrap");
-    expect(block).not.toContain("flex: 0 1 auto");
+    expect(block).not.toContain("\n    flex-wrap:");
+    expect(block).not.toContain("\n    flex: 0 1 auto");
   });
 
   // THE MOBILE BAR'S PADDING IS HALF A STEP, ON PURPOSE.

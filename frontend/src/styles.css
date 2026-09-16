@@ -278,11 +278,25 @@ input[type="range"].grad::-moz-range-thumb {
   /* Same horizontal inset as every page's content — see --page-pad-x. */
   padding: var(--space-2) var(--page-pad-x);
   border-bottom: 1px solid var(--border);
-  /* Wraps on a wide viewport if it ever has to (a safety net, not the design);
-     forced back to one row under 640px below — a second row of icons was what
-     made the mobile bar unreadable, and the title shrinking is the release
-     valve now instead. */
-  flex-wrap: wrap; row-gap: var(--space-2);
+  /* ONE ROW AT EVERY WIDTH. The bar is a fixed set of controls in a fixed
+     order, and the operator's instruction is that it stay that way: everything
+     in a known position, nothing moving to a second line because the chat got
+     a long name.
+
+     This used to be `flex-wrap: wrap` above 640px, kept as "a safety net, not
+     the design". It was not a safety net, it was the defect. Flex collects
+     items into lines using their HYPOTHETICAL main size, which is measured
+     BEFORE flex-shrink is resolved, so a long name ended line one and every
+     control after it started line two. The name was then alone on a line wide
+     enough to hold it, so there was no negative free space, so `flex-shrink`
+     never ran and `text-overflow: ellipsis` never fired. Wrapping did not
+     protect the name; it was the thing preventing the name from truncating.
+
+     With `nowrap` the row is always over-full instead, which is the state the
+     shrink chain on .chat-tb__namegroup / .chat-tb__titlemenu / .chat-tb__title
+     was built for: the name gives up the room and ellipsises, and the actions
+     keep their places. That is what the narrow viewport has always done. */
+  flex-wrap: nowrap;
 }
 
 /* Scope picker: a quiet text trigger, not a boxed select. It reads as a label
@@ -416,20 +430,29 @@ input[type="range"].grad::-moz-range-thumb {
    first and gave up the second; `max-width: 100%` was supposed to be the floor
    and is not one — it resolves against the TOOLBAR's width, so it permits a name
    that fills the entire bar and shoves every control after it out of the row.
-   With `flex-wrap: nowrap` on a phone that is straight overflow: the actions
-   leave the screen to the right. Operator, 2026-08-15: "when the chat name is
-   too long it pushes the rest of the top row off to the right."
+   The toolbar never wraps now (see .chat-toolbar), so that is straight
+   overflow at every width: the actions leave the screen to the right.
+   Operator, 2026-08-15: "when the chat name is too long it pushes the rest of
+   the top row off to the right."
+
+   DO NOT PUT A `max-width` BACK ON THE NAME. The shrink chain is the floor,
+   and it is enough on its own.
 
    FLEX ALREADY SEPARATES THE TWO CASES, so neither needs a special rule.
    Shrinking happens only once a line has overflowed; it is not what fills spare
    room, so `flex-shrink: 1` cannot clip a name while the bar has space in it.
    That was the real cause of the old clipping this note used to describe, and it
    was never about shrink: the fix was giving `.chat-tb__spacer` the room to
-   grow. On a wide viewport the toolbar wraps, and WRAPPING IS TRIED BEFORE
-   SHRINKING, so a full row still moves a control to a second line rather than
-   truncating the name. Only a name too long for a whole line of its own is
-   shrunk, and ellipsising it there is exactly what the old `max-width` was
-   reaching for.
+   grow. A short name is left whole because the row is not over-full and there
+   is nothing to shrink; a long one is ellipsised because it is, which is
+   exactly what the old `max-width` was reaching for.
+
+   This paragraph used to end "on a wide viewport the toolbar wraps, and
+   WRAPPING IS TRIED BEFORE SHRINKING, so a full row still moves a control to a
+   second line rather than truncating the name". That was an accurate reading of
+   the spec and it described the BUG: a wrapped name sits alone on a line with
+   room to spare, so nothing is ever over-full, so it never truncated. Wrapping
+   is gone; the two viewports behave the same way.
 
    `min-width: 0` is what makes it possible at all: without it a flex item cannot
    shrink below its content, which is why declaring shrink on the inner element
@@ -493,7 +516,12 @@ input[type="range"].grad::-moz-range-thumb {
    the one element that shrinks, down to nothing if it has to, ellipsis
    showing whatever survives. That's why the title stays last to shrink in
    practice — the scope name is already hidden and everything else is a
-   fixed-width icon, so it is the only thing actually competing for room. */
+   fixed-width icon, so it is the only thing actually competing for room.
+
+   THAT IS NOW THE RULE AT EVERY WIDTH, not a mobile exception: .chat-toolbar
+   is `flex-wrap: nowrap` unconditionally, so this block no longer has a
+   flex-wrap of its own to set. What is left here is vertical padding, which is
+   the only thing about this bar that a phone really does want different. */
 @media (max-width: 640px) {
   /* Tighter vertically than on a desktop: the controls are 2rem tall and set
      their own breathing room, so the bar's own padding is the only thing
@@ -508,17 +536,18 @@ input[type="range"].grad::-moz-range-thumb {
      number somebody typed. Do NOT "correct" it back onto the grid: landing
      between two steps is the whole point of it. */
   .chat-toolbar {
-    flex-wrap: nowrap;
     padding-block: calc((var(--space-1) + var(--space-2)) / 2);
   }
-  /* No shrink override here any more. It used to re-grant the name the ability
-     to shrink at this width only, on `.chat-tb__titlemenu` — inside a cluster
-     that refused to shrink at every width, so it never took effect and the row
-     overflowed instead. The name is shrinkable at all widths now (see
-     .chat-tb__namegroup), and the difference between the viewports is carried by
-     `flex-wrap` alone, which is the property that actually expresses it: wide
-     enough to wrap, so a full row takes a second line and the name is left
-     whole; too narrow to wrap, so the name gives up the room instead. */
+  /* No shrink override here, and no flex-wrap either. The shrink override used
+     to re-grant the name the ability to shrink at this width only, on
+     `.chat-tb__titlemenu` — inside a cluster that refused to shrink at every
+     width, so it never took effect and the row overflowed instead. The name is
+     shrinkable at all widths now (see .chat-tb__namegroup).
+
+     The `flex-wrap: nowrap` that used to sit above went the same way, for the
+     same reason: an override is only honest when the two viewports really do
+     differ, and they no longer do. The toolbar is one row everywhere, so the
+     declaration belongs on the rule, not on a breakpoint. */
 }
 
 /* Compaction fold marker. Compaction never drops raw messages, so this divider
