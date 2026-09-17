@@ -644,7 +644,16 @@ DELEGATION_RULE = (
     "survives the turn). A subagent is context isolation for THIS reply; a Ticket "
     "or a Workshop agent is durability. Size is not the test.\n\n"
     "NEVER file a ticket merely to get an isolated context, and never delegate "
-    "work whose result you will not check."
+    "work whose result you will not check.\n\n"
+    "FILING A TICKET DOES NOT DISCHARGE THE WORK. A ticket is a record of work, "
+    "never a substitute for doing it, and handing one back is not progress: the "
+    "request is still open, and it is now open somewhere the person who made it "
+    "has to go and look. So when the work in front of you is the work you were "
+    "asked for, DO IT HERE, in this conversation, and report what you did. File "
+    "a ticket INSTEAD of doing the work in three cases and no others: the work "
+    "forks into several approaches and which one to take is not yours to "
+    "choose; it belongs to a different scope than this chat; or a ticket is "
+    "what you were asked for. Anything else, do it now."
 )
 
 
