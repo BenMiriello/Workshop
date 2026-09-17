@@ -139,7 +139,7 @@ def main() -> int:
     print(f"install-apps: installing {len(todo)} app(s): {names}")
     # `python -m pip`, never the `pip` shim beside it. A console script carries a
     # shebang written at creation time, and this venv's says
-    # `#!/home/clawd-a/...` -- the path the SERVICE sees. From an agent sandbox,
+    # `#!/home/user/...` -- the path the SERVICE sees. From an agent sandbox,
     # where the same tree is bind-mounted elsewhere, that interpreter does not
     # resolve and the shim dies with "required file not found" before pip runs.
     # Reaching pip through the interpreter that is already known-good has no

@@ -38,7 +38,15 @@ platform text at all) still gets scanned the old way.
 HOW A REPRESENTATIVE INSTALLATION IS CHOSEN, because rendering needs one and the
 answer must not depend on where this script happens to run:
 
-  * THE INSTALL ROOT IS SYNTHETIC AND FIXED (`/home/operator/workshop`). Not the
+  * THE INSTALL ROOT IS SYNTHETIC AND FIXED (`/home/user/workshop`), and the
+    `user` in it is load-bearing rather than cosmetic. It has to LOOK like a
+    home path, because the host-path detector this script runs is what must
+    catch it if a prompt ever renders it. It also has to be a path no real
+    installation owns, because `check_no_hardcoding.sh` reads tracked source
+    for one machine's layout and `/home/user/` is its declared generic
+    placeholder. An earlier spelling used a plausible-looking operator name
+    and satisfied the first requirement while failing the second, which took
+    `check_fresh_clone.sh` red on the same day this file was written. Not the
     real one: run inside a confined agent turn the real root reads `/workspace`,
     the mountpoint, which no host-path pattern matches -- so the gate would have
     gone green again depending on who ran it. A fixed root under a home
@@ -128,7 +136,7 @@ _REEXEC_FLAG = "WORKSHOP_PROMPT_LAYERS_REEXEC"
 # root. `SLUG` is what a scope is called in the render; it is deliberately a
 # word no detector matches, so anything the render reports came from the
 # platform's own text rather than from the fixture.
-_RENDER_ROOT = "/home/operator/workshop"
+_RENDER_ROOT = "/home/user/workshop"
 _RENDER_SLUG = "example"
 
 # A rendered offense is filed under this prefix instead of a file path, so the
