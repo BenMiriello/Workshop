@@ -59,11 +59,23 @@ def _label_re(key: str) -> re.Pattern:
     Tolerant of the punctuation a model actually emits: a colon, a dash, and an
     optional markdown bold or heading wrapper, since "**Objective:**" and
     "## Objective" are both things a model writes when asked for "Objective:".
+
+    AND A LABEL ALONE ON ITS LINE, with the text in the paragraph beneath it.
+    That is the plainest heading there is and it was the one shape this did not
+    accept, because the pattern required a trailing delimiter. The cost was not
+    theoretical: measured 2026-09-16 across the open queue, 20 of the 28 tickets
+    failing the `boundaries` readiness check DID state their boundaries, under a
+    bare `Boundaries` heading. They read as complete to a person and were
+    refused by the machine, which is the same producer/checker drift this
+    module's own docstring was written about, in the same field, one shape over.
+
+    The label must still be ALONE on the line (`$` closes the alternation), so
+    prose that merely ends in one of these words is not a heading.
     """
     _canon, synonyms = FIELDS[key]
     alts = "|".join(re.escape(s) for s in sorted(synonyms, key=len, reverse=True))
     return re.compile(
-        rf"^\s{{0,3}}(?:#{{1,6}}\s*)?(?:\*\*|__)?\s*(?:{alts})\s*(?:\*\*|__)?\s*[:\-–—]",
+        rf"^\s{{0,3}}(?:#{{1,6}}\s*)?(?:\*\*|__)?\s*(?:{alts})\s*(?:\*\*|__)?\s*(?:[:\-–—]|$)",
         re.IGNORECASE | re.MULTILINE,
     )
 

@@ -215,6 +215,60 @@ def _runner_flags(mode: str) -> list[str]:
     return ["--unsupervised"] if mode == "autonomous" else []
 
 
+def worker_for(root: str | Path) -> str | None:
+    """The worker this tree's sweep runs AS, as `agent:<slug>`, or None.
+
+    THE SWEEP HAS TO NAME SOMEBODY OR IT SELECTS NOTHING.
+    `tasks.next_ready(unattended=True)` matches only tickets assigned to the
+    worker the sweep names, and treats an unnamed sweep as naming nobody:
+
+        is_worker_assignee(assignee) and t.assignee == assignee
+
+    That rule is right and is not what this function changes. What it fixes is
+    that nothing ever computed the name. `project_ralph.sh` has taken
+    `--assignee agent:<slug>` since it was written, `queue_runner.sh` had no
+    such flag until 2026-09-16, and so every resident sweep passed None and
+    refused every ticket while reporting itself healthy. Measured that day,
+    after the operator released the autonomy brake and watched nothing happen:
+    80 ready tickets, refused once per sweep, into a log file.
+
+    The name is DERIVED, not configured, because a second place to set it is a
+    second place for it to disagree with the scope it belongs to. A scope's
+    worker is its maker agent: the one non-retired agent whose role is `maker`
+    and whose `project_slug` is this scope. The per-ticket grant is unchanged
+    and is still the only control: naming the worker says who may be assigned
+    work here, assigning a ticket is what actually hands it over.
+
+    Returns None when the scope has no maker, which `ensure` treats as a refusal
+    to start rather than as a reason to start a sweep that cannot select
+    anything. A runner that is resident and permanently idle is the exact
+    failure this whole function exists to end.
+    """
+    from services import agents_registry, scope_execution
+
+    scope = scope_execution._scope_of(root)
+    if not scope:
+        return None
+    try:
+        agents = agents_registry.list_agents()
+    except Exception:
+        log.exception("work driver: could not read the agent registry")
+        return None
+    makers = [a for a in agents
+              if a.get("role") == "maker"
+              and not a.get("retired")
+              and (a.get("project_slug") or "") == scope]
+    if len(makers) != 1:
+        # Zero is an unconfigured scope. More than one is ambiguous, and
+        # guessing which of two makers owns a queue is how a ticket gets run by
+        # something the operator did not mean. Both refuse.
+        log.warning("work driver: scope %r has %d maker agent(s); "
+                    "an unattended sweep needs exactly one to run as",
+                    scope, len(makers))
+        return None
+    return f"agent:{makers[0]['slug']}"
+
+
 def ensure(root: str | Path, mode: str = "supervised") -> bool:
     """Make a runner resident for `root`. Idempotent and race-free: the watchdog
     probes the same flock the runner holds, so a blind call is safe.
@@ -231,9 +285,21 @@ def ensure(root: str | Path, mode: str = "supervised") -> bool:
     last = _failed_at.get(target)
     if last is not None and (time.monotonic() - last) < RETRY_AFTER:
         return False
+    worker = worker_for(target)
+    if worker is None:
+        # Refuse rather than start. A sweep with no worker selects nothing, so
+        # starting one here would put a resident, healthy-looking, permanently
+        # idle runner on the tree, which is precisely the state this check was
+        # added to stop being possible.
+        _failed_at[target] = time.monotonic()
+        log.warning("work driver: not starting a runner for %s: the scope has "
+                    "no single maker agent to run as, so an unattended sweep "
+                    "could select nothing", target)
+        return False
     try:
         subprocess.Popen(
-            ["bash", str(QUEUE_WATCHDOG), target, *_runner_flags(mode)],
+            ["bash", str(QUEUE_WATCHDOG), target,
+             "--assignee", worker, *_runner_flags(mode)],
             cwd=str(WORKSHOP_ROOT),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.STDOUT,

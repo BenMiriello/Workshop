@@ -59,17 +59,39 @@ PER_TASK_WALL="${PER_TASK_WALL:-1200}"
 # after reading a week of in_review results, not a default anyone inherits.
 SUPERVISED=1
 
+# WHICH WORKER THIS SWEEP RUNS AS, and without it the whole loop is a no-op.
+#
+# `tasks.next_ready(unattended=True)` selects only tickets assigned to the worker
+# the sweep NAMES: `is_worker_assignee(assignee) and t.assignee == assignee`. An
+# unattended sweep that names nobody therefore selects NOTHING, however full and
+# however ready the queue is. That rule is deliberate (assigning a ticket is the
+# grant, unassigning is the revocation) and it is not what was broken.
+#
+# What was broken is that this script never had the flag. project_ralph.sh has
+# accepted `--assignee agent:<slug>` all along and defaults it to empty, so the
+# resident loop passed assignee=None on every sweep and refused every ticket,
+# forever, while reporting itself healthy. Measured 2026-09-16, after the
+# operator turned autonomy on and nothing happened: 80 tickets passed every
+# other gate and the log read "unattended selection refused: no worker was named
+# (assignee=None)" once per sweep, every 72 seconds, into a file nobody reads.
+#
+# Empty stays the default and stays safe: it selects nothing rather than
+# everything, which is the correct direction for a missing grant.
+ASSIGNEE=""
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir)          DIR="$2"; shift 2 ;;
     --poll)         POLL="$2"; shift 2 ;;
     --max-tasks)    MAX_TASKS="$2"; shift 2 ;;
+    --assignee)     ASSIGNEE="$2"; shift 2 ;;
     --once)         ONCE=1; shift ;;
     --unsupervised) SUPERVISED=0; shift ;;
-    *) echo "usage: queue_runner.sh --dir PATH [--poll SEC] [--max-tasks N] [--once] [--unsupervised]" >&2; exit 2 ;;
+    *) echo "usage: queue_runner.sh --dir PATH [--poll SEC] [--max-tasks N] [--assignee agent:<slug>] [--once] [--unsupervised]" >&2; exit 2 ;;
   esac
 done
 SUPERVISED_FLAG=(); (( SUPERVISED == 1 )) && SUPERVISED_FLAG=(--supervised)
+ASSIGNEE_FLAG=(); [[ -n "$ASSIGNEE" ]] && ASSIGNEE_FLAG=(--assignee "$ASSIGNEE")
 
 # Developer-mode gate (ADR 0014): the target must be named, and the platform
 # repo is permitted only under WORKSHOP_DEV_MODE=1. Checked before the flock so
@@ -268,6 +290,7 @@ while :; do
       WORKSHOP_UNATTENDED_WRITES=1 \
       RALPH_MAX_WALL="$PER_TASK_WALL" \
         bash "$RALPH" --dir "$DIR" --max-tasks "$MAX_TASKS" --max-wall "$local_wall" \
+             ${ASSIGNEE_FLAG[@]+"${ASSIGNEE_FLAG[@]}"} \
              "${SUPERVISED_FLAG[@]}" >> "$LOG" 2>&1 || true
     else
       log "paused by pause_guard; idling"

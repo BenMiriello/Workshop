@@ -168,6 +168,11 @@ def test_a_start_that_does_not_take_backs_off(store, tmp_path, monkeypatch):
 
     monkeypatch.setattr(work_driver, "is_resident", lambda d: False)
     monkeypatch.setattr(work_driver.QUEUE_WATCHDOG.__class__, "exists", lambda self: True)
+    # A tmp_path tree is no scope and so has no maker agent. This test is about
+    # the BACKOFF after a spawn that did not take, so the worker lookup is
+    # stubbed to the answer a real armed scope gives; the refusal when there is
+    # no worker is its own test below.
+    monkeypatch.setattr(work_driver, "worker_for", lambda root: "agent:test-maker")
     monkeypatch.setattr(work_driver.subprocess, "Popen",
                         lambda cmd, **kw: spawns.append(cmd))
     monkeypatch.setattr(work_driver.time, "sleep", lambda s: None)
@@ -177,6 +182,57 @@ def test_a_start_that_does_not_take_backs_off(store, tmp_path, monkeypatch):
     # Second call inside the backoff window does not spawn again.
     assert work_driver.ensure(a, "supervised") is False
     assert len(spawns) == 1
+
+
+def test_the_runner_is_told_which_worker_to_run_as(store, tmp_path, monkeypatch):
+    """The sweep must NAME a worker or it selects nothing, so `ensure` passes one.
+
+    THE FAILURE THIS PINS ACTUALLY HAPPENED, 2026-09-16. `project_ralph.sh` has
+    always taken `--assignee agent:<slug>` and `queue_runner.sh` had no such
+    flag, so every resident sweep ran with assignee=None. `next_ready`'s
+    unattended rule matches only tickets assigned to the worker the sweep names
+    and treats an unnamed sweep as naming nobody, so it refused all 80 ready
+    tickets, once every 72 seconds, while the loop reported itself healthy. The
+    operator released the autonomy brake and watched nothing happen.
+    """
+    a = tmp_path / "a"; a.mkdir()
+    spawns: list[list[str]] = []
+
+    monkeypatch.setattr(work_driver, "is_resident", lambda d: False)
+    monkeypatch.setattr(work_driver.QUEUE_WATCHDOG.__class__, "exists", lambda self: True)
+    monkeypatch.setattr(work_driver, "worker_for", lambda root: "agent:demo-maker")
+    monkeypatch.setattr(work_driver.subprocess, "Popen",
+                        lambda cmd, **kw: spawns.append(cmd))
+    monkeypatch.setattr(work_driver.time, "sleep", lambda s: None)
+
+    work_driver.ensure(a, "supervised")
+    assert len(spawns) == 1
+    cmd = spawns[0]
+    assert "--assignee" in cmd, "the sweep must be told who it runs as"
+    assert cmd[cmd.index("--assignee") + 1] == "agent:demo-maker"
+
+
+def test_a_scope_with_no_worker_starts_no_runner(store, tmp_path, monkeypatch):
+    """No worker means every sweep would select nothing, so do not start one.
+
+    A resident runner that can never claim a ticket is worse than no runner: it
+    holds the tree's lock, reports itself healthy to the API, and writes its
+    refusal only into a log. That combination is what made the original bug
+    survive, so the absence of a worker has to be refused where it is visible
+    rather than absorbed into a loop.
+    """
+    a = tmp_path / "a"; a.mkdir()
+    spawns: list[list[str]] = []
+
+    monkeypatch.setattr(work_driver, "is_resident", lambda d: False)
+    monkeypatch.setattr(work_driver.QUEUE_WATCHDOG.__class__, "exists", lambda self: True)
+    monkeypatch.setattr(work_driver, "worker_for", lambda root: None)
+    monkeypatch.setattr(work_driver.subprocess, "Popen",
+                        lambda cmd, **kw: spawns.append(cmd))
+    monkeypatch.setattr(work_driver.time, "sleep", lambda s: None)
+
+    assert work_driver.ensure(a, "supervised") is False
+    assert spawns == []
 
 
 def test_lock_and_pid_keys_match_the_shell_derivation(tmp_path):
