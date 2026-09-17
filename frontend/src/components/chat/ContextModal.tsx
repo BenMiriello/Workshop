@@ -41,6 +41,31 @@ import {
 // `claude mcp list`, and a broken server appears only in the latter — it loads
 // no tools, so it costs nothing and was therefore invisible. See mcpHealth.
 //
+// IT OPENS SMALL. The dialog is reached by tapping a percentage, and what the
+// tap is asking is "how full is this, and can I do something about it" — the
+// number, the bar, and the two buttons. Everything else (the per-category rows,
+// the MCP roster, memory files, skills, subagents, the freshness footer) is the
+// follow-up question, so it is behind Details and the dialog is a `default`
+// rather than a `lg` until it is asked for.
+//
+// This was not a taste call. Expanded, on a phone, the dialog filled the screen
+// edge to edge, which is the shape of a PAGE, and a reader who has lost the
+// sense that they are on a layer has to go hunting for the way back. Operator,
+// 2026-09-16: "refactor the compact modal so that it just shows the 3 buttons
+// and there's a button to view more and THEN it shows all that rest of the info
+// but also in a smaller modal... scrollable within... though the buttons should
+// always be visible and the buttons aren't in the scrollable area."
+//
+// THE LAST CLAUSE WAS ALREADY TRUE and stays true for free: `.ws-modal__body`
+// is the flex child that scrolls and `.ws-modal__actions` is `flex: 0 0 auto`
+// beside it, so the buttons have never been inside the scroll area. What was
+// missing was a height at which scrolling begins, which is a kit-level cap
+// (components.css, the 560px block) rather than anything this file does.
+//
+// AND THE MCP PROBE FOLLOWS THE DISCLOSURE. `claude mcp list` is a subprocess
+// on the host; running it on every open to fill a roster nobody asked to see
+// was work done for a closed drawer. It runs when Details is opened, once.
+//
 // MCP IS ALSO WRITABLE, and that half is behind Edit mode (rule 7). Turning a
 // server off changes what the next turn can DO, which puts it firmly on the
 // config side of the commit table — a stray tap must not silently remove a
@@ -115,45 +140,75 @@ export default function ContextModal({
   const [openServer, setOpenServer] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [saveFailed, setSaveFailed] = useState<string | null>(null);
+  // CLOSED ON EVERY OPEN, never remembered. A dialog that reopens in whatever
+  // shape it was left in makes its own size unpredictable, and this one is
+  // opened from a meter reading for a glance far more often than for an audit.
+  const [showDetail, setShowDetail] = useState(false);
 
-  const load = useCallback(async (force = false) => {
+  // STILL TWO INDEPENDENT READINGS, and neither may hold the other up: a failing
+  // MCP probe must not blank the breakdown, and vice versa. What changed is that
+  // they are no longer issued together, because they are no longer wanted at the
+  // same moment. The breakdown is the headline and loads on open; the roster is
+  // behind Details and loads when Details is opened.
+  const loadBreakdown = useCallback(async (force = false) => {
     if (!threadId) return;
     const q = force ? "?refresh=1" : "";
     const id = encodeURIComponent(threadId);
     setLoading(true);
-    setHealthLoading(true);
     setFailed(false);
-    setHealthFailed(false);
-    // Two independent readings, run together. Neither may hold the other up:
-    // a failing MCP probe must not blank the breakdown, and vice versa.
-    const breakdown = (async () => {
-      try {
-        const r = await fetch(`/api/chat/threads/${id}/context/detail${q}`);
-        if (!r.ok) throw new Error(String(r.status));
-        setData(await r.json());
-      } catch {
-        // A failed read is not an empty context. Say which it is.
-        setFailed(true);
-      } finally {
-        setLoading(false);
-      }
-    })();
-    const mcp = (async () => {
-      try {
-        const r = await fetch(`/api/chat/threads/${id}/mcp/health${q}`);
-        if (!r.ok) throw new Error(String(r.status));
-        setHealth(await r.json());
-      } catch {
-        setHealthFailed(true);
-      } finally {
-        setHealthLoading(false);
-      }
-    })();
-    await Promise.all([breakdown, mcp]);
-    setNow(Date.now());
+    try {
+      const r = await fetch(`/api/chat/threads/${id}/context/detail${q}`);
+      if (!r.ok) throw new Error(String(r.status));
+      setData(await r.json());
+    } catch {
+      // A failed read is not an empty context. Say which it is.
+      setFailed(true);
+    } finally {
+      setLoading(false);
+      setNow(Date.now());
+    }
   }, [threadId]);
 
-  useEffect(() => { if (open) void load(); }, [open, load]);
+  const loadMcp = useCallback(async (force = false) => {
+    if (!threadId) return;
+    const q = force ? "?refresh=1" : "";
+    const id = encodeURIComponent(threadId);
+    setHealthLoading(true);
+    setHealthFailed(false);
+    try {
+      const r = await fetch(`/api/chat/threads/${id}/mcp/health${q}`);
+      if (!r.ok) throw new Error(String(r.status));
+      setHealth(await r.json());
+    } catch {
+      setHealthFailed(true);
+    } finally {
+      setHealthLoading(false);
+      setNow(Date.now());
+    }
+  }, [threadId]);
+
+  /** Refresh whatever is actually on screen. The roster is not re-probed while
+   *  it is hidden: a Refresh the reader cannot see the result of is a subprocess
+   *  spawned for nothing. */
+  const load = useCallback(async (force = false) => {
+    await Promise.all([loadBreakdown(force), showDetail ? loadMcp(force) : Promise.resolve()]);
+  }, [loadBreakdown, loadMcp, showDetail]);
+
+  useEffect(() => {
+    if (!open) return;
+    // Every open starts collapsed and re-reads the headline.
+    setShowDetail(false);
+    void loadBreakdown();
+  }, [open, loadBreakdown]);
+
+  // The roster, once, when the drawer is first opened. `health` being null is
+  // the "never fetched" state; a probe that FAILED leaves `healthFailed` set and
+  // its own Try again, so this does not retry it on every re-render.
+  useEffect(() => {
+    if (!open || !showDetail) return;
+    if (health !== null || healthLoading || healthFailed) return;
+    void loadMcp();
+  }, [open, showDetail, health, healthLoading, healthFailed, loadMcp]);
 
   // The age line has to keep counting while the panel sits open, or "Refreshed
   // just now" stays on screen for an hour.
@@ -220,9 +275,27 @@ export default function ContextModal({
       open={open}
       onClose={onClose}
       title="Context"
-      size="lg"
+      // Only the expanded shape needs the wide measure: collapsed, this is a
+      // number, a bar and three buttons.
+      size={showDetail ? "lg" : "default"}
       actions={
         <>
+          {/* THE DISCLOSURE LIVES IN THE ACTION ROW, not in the body, so it is
+              reachable at any scroll position and cannot itself scroll away.
+              `actions-lead` puts it at the far end from the two controls that
+              change the chat, because it changes only this dialog. Hidden while
+              editing: collapsing the drawer out from under an unsaved server
+              selection would strand it. */}
+          {!edit.editing && (
+            <Button
+              variant="ghost"
+              className="ws-modal__actions-lead"
+              aria-expanded={showDetail}
+              onClick={() => setShowDetail((v) => !v)}
+            >
+              {showDetail ? "Less" : "Details"}
+            </Button>
+          )}
           <Button variant="ghost" onClick={onClose}>Close</Button>
           {/* The two things that change the number above them. They live here
               because this is where the operator is when the number worries
@@ -303,6 +376,11 @@ export default function ContextModal({
             />
           )}
 
+          {/* EVERYTHING BELOW IS THE FOLLOW-UP QUESTION. The headline and the bar
+              above answer "how full is it"; these answer "with what", which is a
+              different question and a much taller one. See the note at the top of
+              this file for why it is closed by default. */}
+          {showDetail && (<>
           {data.available && (
             <>
               {/* No label over this list. It is the first thing under the bar
@@ -529,6 +607,13 @@ export default function ContextModal({
             </>
           )}
 
+          </>)}
+
+          {/* THE FOOT STAYS OUT OF THE DRAWER, deliberately. It dates the number
+              the reader is about to act on, and this file already argues that an
+              undated number which might be five minutes old is worse than a slow
+              fresh one. Hiding the date behind a disclosure would leave the
+              headline looking more certain than it is. */}
           <div className="ctx-foot">
             <button type="button" className="ctx-refresh" onClick={() => void load(true)} disabled={loading || healthLoading}>
               <RefreshCw size={13} strokeWidth={1.8} aria-hidden />

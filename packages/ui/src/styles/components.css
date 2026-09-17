@@ -1847,6 +1847,13 @@ span.ws-filterchip__open { cursor: default; }
   margin: 0 0 var(--space-5); color: var(--muted); font-size: var(--fs-base); line-height: var(--lh-base);
 }
 .ws-modal__actions { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: var(--space-2); }
+/* A control in the action row that is about the DIALOG rather than about the
+   decision: a details toggle, a "what is this" link. It sits at the opposite end
+   from the actions so the reader's eye is not asked to tell it apart from the
+   thing that commits. `margin-right: auto` rather than `justify-content:
+   space-between` on the row, because the row must keep packing its real actions
+   to the right whether or not a lead control is present. */
+.ws-modal__actions-lead { margin-right: auto; }
 .ws-modal--danger .ws-modal__title { color: var(--danger); }
 @keyframes ws-fade { from { opacity: 0; } }
 @keyframes ws-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
@@ -1877,6 +1884,17 @@ span.ws-filterchip__open { cursor: default; }
   .ws-overlay:not(.ws-overlay--bare):not(.ws-overlay--sheet) { padding: var(--space-4); }
   .ws-modal, .ws-modal--lg {
     max-width: none; padding: var(--space-4);
+    /* A DIALOG MUST NOT READ AS A PAGE. `max-height: 100%` let a content-heavy
+       dialog fill a phone edge to edge, at which point nothing on screen says
+       it is a layer over something else, and the only way back is a button the
+       reader has to go looking for. The body already scrolls and the action row
+       is already outside that scroll (see .ws-modal__body / __actions above), so
+       capping the height costs no reachability: it converts height into scroll.
+       Operator, 2026-09-16, on the context dialog: "in a smaller modal like not
+       so large scale on mobile at least, scrollable within, though the buttons
+       should always be visible and the buttons aren't in the scrollable area."
+       The min() keeps a short dialog its own natural height. */
+    max-height: min(100%, 32rem);
   }
 }
 
