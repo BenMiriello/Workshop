@@ -49,24 +49,103 @@ def operator_name() -> str:
 # /settings/instructions. See scripts/check_prompt_layers.py.
 
 
-def _task_cli() -> str:
-    """The platform's task CLI, as a command an agent can actually run.
+def _task_cli(scope_dir) -> str | None:
+    """The platform's task CLI as a command the agent can actually type, or
+    None when the CLI is not inside the agent's own view.
 
     `scripts/project_tasks.py` ships with every Workshop installation, so the
-    capability and the tool are product doctrine. What was NOT doctrine is the
-    `~/workshop` prefix two personas spelled: that is one operator's home
-    layout. Resolved from the install root instead."""
-    return f"python3 {paths.workshop_root() / 'scripts' / 'project_tasks.py'}"
+    capability and the tool are product doctrine. Two things about the previous
+    spelling were not.
+
+    THE PREFIX. It was an absolute path built from `paths.workshop_root()` --
+    one installation's layout, shipped as platform text to every installation.
+    Same rule as "no platform source file may name a specific app", applied to
+    prompt text. It replaced a literal `~/workshop`, and because an interpolated
+    path is an `ast.JoinedStr` rather than a string constant, that edit removed
+    the gate's DETECTION rather than the leak.
+
+    THE REACHABILITY, which is worse, because it made the instruction wrong and
+    not merely leaky. A build turn runs confined to its own scope, bind-mounted
+    at `scoped_exec.MOUNTPOINT`, and the platform's own root is not in that
+    mount namespace at all. A persona spelling the host path named a directory
+    the reader cannot see; measured on 2026-09-16, a project agent read it,
+    reported to the operator that it was working there, and carried on in host
+    paths that resolve to nothing inside its sandbox.
+
+    So the command is spelled RELATIVE to the scope the agent is standing in,
+    and only when the CLI is genuinely under it -- which is true of the scope
+    that IS the platform checkout and false of every other. A scope that cannot
+    reach it is given the server-side task-patch block instead; see
+    `_task_edit_rule`, which is the only caller.
+    """
+    if not scope_dir:
+        return None
+    try:
+        rel = (paths.workshop_root() / "scripts" / "project_tasks.py").resolve() \
+            .relative_to(_Path(scope_dir).resolve())
+    except (ValueError, OSError, RuntimeError):
+        return None
+    return f"python3 {rel}"
 
 
-def _tasks_export_name() -> str:
-    """The generated task export's filename, from the module that writes it.
+def _task_edit_rule(scope_dir) -> str:
+    """How THIS scope changes ticket state, stated as the surface it can
+    actually reach.
 
-    Personas warn agents not to hand-edit it. The warning is doctrine (the store
-    is authoritative everywhere); the literal filename belongs to services.tasks,
-    which owns the export, not to a string in a persona."""
-    from services import tasks as _tasks
-    return _tasks.EXPORT_NAME
+    Two surfaces exist and `services/task_scope` already knows both: the shell
+    CLI, and a fenced ``task-patch`` block the turn applies server-side and
+    strips from the reply. That module's own docstring split them by provider
+    kind ("maker chats use the shell CLI; chats with no filesystem emit a
+    block"), which was the wrong axis once turns became confined -- a maker chat
+    has a filesystem and still cannot reach the platform's scripts through it.
+    The axis is reachability, and it is decided here, once, for both personas.
+
+    THE GENERATED EXPORT IS NOT NAMED. The warning about it is doctrine (the
+    structured store is authoritative everywhere, so hand-editing the export
+    loses the edit); the filename is a `.md` path in platform prompt text, which
+    is the doc-filename rule. Taking it from `services.tasks` made the source
+    literal clean and left the rendered prompt carrying it anyway."""
+    head = ("Task state lives in the structured store, not in the generated "
+            "export file beside it, which is rewritten from the store and must "
+            "never be hand-edited. ")
+    cli = _task_cli(scope_dir)
+    if cli:
+        return head + (
+            "To mark a task done, add a follow-up, or block one, run "
+            f"`{cli} <verb> .` via Bash (verbs: set-status <id> done, "
+            "add \"text\", block <id> \"reason\", note <id> \"text\", next-ready)."
+        )
+    return head + (
+        "The task CLI lives outside this scope, so change ticket state by "
+        "emitting ONE fenced block, which this turn applies to this scope's "
+        "store and strips from your reply:\n"
+        "```task-patch\n"
+        "{\"add\": [{\"text\": \"...\", \"priority\": 0}], "
+        "\"update\": [{\"id\": \"...\", \"status\": \"done\", "
+        "\"blocked_reason\": \"...\"}], "
+        "\"note\": [{\"id\": \"...\", \"text\": \"evidence\"}]}\n"
+        "```"
+    )
+
+
+def agent_cwd(scope_dir) -> str:
+    """The directory the agent will actually be standing in, spelled the way the
+    agent's own tools will spell it.
+
+    A build turn is confined to its scope, bind-mounted at the managed
+    mountpoint, so the host path the backend knows does not exist in the turn's
+    mount namespace -- `services/scoped_exec` states that as a guarantee: "the
+    real /home/... path does not exist inside the sandbox for the scope, so it
+    cannot be echoed". The prompt echoed it anyway, from two places that each
+    resolved the question on their own, and only `runtime_briefing` got it
+    right. One function so the briefing, the capabilities block and the build
+    personas cannot disagree about where the reader is.
+
+    An unconfined turn is a real configuration (`WORKSHOP_SCOPED_EXEC=0`, or a
+    host that cannot namespace) and gets the real answer, because there the real
+    directory IS where the agent is standing."""
+    from services import scoped_exec
+    return scoped_exec.MOUNTPOINT if scoped_exec.enabled() else str(scope_dir)
 
 # The three pickable models surfaced in the composer's model selector, full ids.
 # Sourced from llm_router so they never drift from the actual call tiers.
@@ -1438,8 +1517,9 @@ def runtime_briefing(provider: "ContextProvider") -> str:
     # cwd is the mountpoint, not the host path. Report that so the briefing agrees
     # with what the agent's own tools print. Stack detection still reads the REAL
     # dir below, because the backend building this briefing is not in the sandbox.
-    from services import scoped_exec
-    display_dir = scoped_exec.MOUNTPOINT if scoped_exec.enabled() else dirp
+    # `agent_cwd` is that resolution, moved up beside the persona and capability
+    # blocks that used to answer the same question differently (and wrongly).
+    display_dir = agent_cwd(dirp)
 
     lines = ["=== RUNTIME BRIEFING (your environment; re-read every turn) ==="]
     lines.append(f"Working directory (cwd): {display_dir}. All relative paths resolve here.")
@@ -2215,17 +2295,17 @@ class ProjectContextProvider(ContextProvider):
         return (
             "You are the build agent for the operator's Workshop Project "
             f"'{self.slug}'. You have {_inst.runner_grant('tool access')} inside the "
-            f"project directory ({self.dir}). The operator is {operator_name()}. "
-            "Be direct and brief. Never use em-dashes.\n\n"
+            f"project directory ({agent_cwd(self.dir)}). The operator is "
+            f"{operator_name()}. Be direct and brief. Never use em-dashes.\n\n"
             "Read this scope's Manifest FIRST to ground your work in the current "
             "goal and plan, then act. The Manifest is a note in this scope's memory "
             "(its title is 'Manifest'); read it with the search/notes tools, and keep "
-            "it current when the goal or plan changes. Task state lives in the "
-            f"structured store, NOT in {_tasks_export_name()} (which is a generated "
-            "export, never edit it directly). To mark a task done, add a follow-up, "
-            f"or block one, run `{_task_cli()} <verb> .` via Bash "
-            "(verbs: set-status <id> done, add \"text\", block <id> \"reason\", "
-            "note <id> \"text\", next-ready). When the operator makes a non-trivial "
+            "it current when the goal or plan changes. "
+            + _task_edit_rule(self.dir)
+            # A paragraph break, not a space: the no-CLI branch ends in a fenced
+            # block, and a sentence continuing on the closing fence's line stops
+            # it being a fence.
+            + "\n\nWhen the operator makes a non-trivial "
             "decision, record it as a decision note (see LEAVING A NOTE).\n\n"
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PROPOSAL_BUILD_RULE + "\n\n"
             + LEARNING_NOTE_PROTOCOL + "\n\n" + NOTE_PROTOCOL + "\n\n"
@@ -2343,16 +2423,18 @@ class MakerAgentContextProvider(ContextProvider):
         rules = _agent_rules(self._read)
         return (
             f"You are the agent '{self.name}' inside the Workshop. You have "
-            f"{_inst.runner_grant('tool access')} inside the directory {self.dir}. The operator is "
+            f"{_inst.runner_grant('tool access')} inside the directory "
+            f"{agent_cwd(self.dir)}. The operator is "
             f"{operator_name()}. Be direct and brief. Never use em-dashes.\n\n"
             "Read this scope's Manifest FIRST to ground your work in the current goal "
             "and plan, then act. The Manifest is a note in this scope's memory (its "
             "title is 'Manifest'); read it with the search/notes tools, and keep it "
-            f"current. Task state lives in the structured store, NOT in "
-            f"{_tasks_export_name()} (a generated export, never edit it directly). "
-            f"Mark tasks done / add follow-ups / block via `{_task_cli()} <verb> .` "
-            "over Bash (set-status <id> done, add \"text\", block <id> \"reason\", "
-            "note <id> \"text\", next-ready). When the operator makes a non-trivial "
+            "current. "
+            + _task_edit_rule(self.dir)
+            # A paragraph break, not a space: the no-CLI branch ends in a fenced
+            # block, and a sentence continuing on the closing fence's line stops
+            # it being a fence.
+            + "\n\nWhen the operator makes a non-trivial "
             "decision, record it as a decision note (see LEAVING A NOTE).\n\n"
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PROPOSAL_BUILD_RULE + "\n\n"
             + LEARNING_NOTE_PROTOCOL + "\n\n" + NOTE_PROTOCOL + "\n\n"
@@ -2869,7 +2951,11 @@ def instruction_contract(provider: ContextProvider, *, enable_chat_tools: bool) 
         role_preamble(
             tools_active=tools_active,
             tool_summary=tool_summary,
-            cwd=(str(provider.dir) if is_build else None),
+            # THE MOUNTPOINT, NOT `provider.dir`. A build turn is confined to
+            # its scope and mounted there, so the host path this process knows
+            # is absent from the reader's own view; `agent_cwd` answers with
+            # whichever is true for the way this turn actually runs.
+            cwd=(agent_cwd(provider.dir) if is_build else None),
             is_build=is_build,
             # Off this chat's REAL grant, so the durable-work paragraph is
             # stated where the tool exists and absent where it does not. It
