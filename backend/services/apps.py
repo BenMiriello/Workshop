@@ -79,6 +79,16 @@ def _shape(row: dict) -> dict:
         "dev_only": bool(row.get("dev_only", False)),
         "parent_id": str(row["parent_id"]) if row.get("parent_id") else None,
         "project_slug": row.get("project_slug"),
+        # THE SCOPE KEY THIS APP OWNS, resolved server-side, because the client
+        # cannot resolve it and kept getting it wrong by guessing. `app:<slug>`
+        # is right for an installed catalog app and wrong for an app whose
+        # linked project is a root scope; the bare slug is wrong for both.
+        # Measured 2026-09-17: the app Chats tab's own New chat button passed
+        # `app.slug`, which for a project-only app resolves to the `workshop`
+        # scope, so a chat started from a project's Chats tab was filed outside
+        # that project and did not come back to the tab that made it.
+        "scope": owned_scope({"slug": row["slug"],
+                              "project_slug": row.get("project_slug")}),
         "archived_at": _iso(row.get("archived_at")),
         "created_at": _iso(row.get("created_at")),
         "updated_at": _iso(row.get("updated_at")),
@@ -266,7 +276,51 @@ def reconcile_from_registries() -> dict:
         log.info("app registry reconciled: created %s; updated %s; archived %s; "
                  "restored %s", result["created"], result["written"],
                  result["archived"], result["restored"])
-    return {"ok": True, **result}
+    # AND THE CHATS, for the same reason and in the same breath. A fresh roster
+    # that nothing joins the conversations to is half a reconcile: `app_id` is
+    # written when a thread ROW is inserted and on a list-relevant meta patch,
+    # and an ordinary turn is neither, so a thread keeps whatever answer it was
+    # given when it was created. Measured 2026-09-17: 52 of 240 live threads
+    # disagreed with the rule, including a chat the operator had just made in a
+    # new project and could not find on that project's Chats tab.
+    #
+    # Separate try, deliberately: the roster is the thing `/apps` is about and a
+    # failure to re-link chats must not cost the caller the roster it asked for.
+    chats: dict = {}
+    try:
+        chats = reconcile_chat_links(str(org_id))
+    except Exception as e:  # pragma: no cover - never fail a read over this
+        log.warning("chat app_id reconcile failed: %s", e)
+    if any(chats.get(k) for k in ("linked", "relinked", "unlinked")):
+        log.info("chat app links reconciled: linked %s; relinked %s; unlinked %s "
+                 "(of %s)", chats["linked"], chats["relinked"],
+                 chats["unlinked"], chats["checked"])
+    return {"ok": True, **result, "chats": chats}
+
+
+def reconcile_chat_links(org_id: str) -> dict:
+    """Re-derive `chat_thread.app_id` for every live thread of this org.
+
+    The roster it resolves against is built the same way `app_id_for_context`
+    builds it -- live rows intersected with `app_links.all_app_slugs()` in that
+    function's order, archived apps left out so an app the registries have
+    stopped naming keeps its existing chats but claims no new ones. Kept in one
+    expression here rather than imported from there because that function
+    answers for ONE context and this answers for all of them off one roster
+    read.
+    """
+    from db import app_repo
+    from db.engine import tenant_session
+    from services import app_links
+
+    with tenant_session(org_id) as s:
+        by_slug = {r["slug"]: str(r["id"])
+                   for r in app_repo.list_apps(s, org_id, archived=False)}
+        roster = {slug: by_slug[slug] for slug in app_links.all_app_slugs()
+                  if slug in by_slug}
+        out = app_repo.reconcile_thread_app_ids(s, org_id, roster)
+        s.commit()
+    return out
 
 
 # --- the app entity itself ---------------------------------------------------

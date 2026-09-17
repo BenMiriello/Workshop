@@ -92,8 +92,13 @@ function matches(t: ThreadSummary, needle: string): boolean {
   );
 }
 
-/** An app, when this list is one app's chats rather than every chat. */
-export type ChatsScope = { id: string; slug: string; name: string };
+/** An app, when this list is one app's chats rather than every chat.
+ *
+ *  `scope` is the app's own scope KEY, resolved server-side. It is optional
+ *  because a caller built against an older payload may not have it, and a bare
+ *  slug is a usable fallback for an installed catalog app -- but only for one.
+ *  See the New chat handler for why the distinction matters. */
+export type ChatsScope = { id: string; slug: string; name: string; scope?: string };
 
 /**
  * THE CHAT LIST. One component, two mount points, exactly like TicketsView.
@@ -189,7 +194,15 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
     if (app) void qc.invalidateQueries({ queryKey: queryKeys.apps.chats(app.id) });
   };
 
-  const newChat = () => nav(newChatHref(app ? app.slug : "general"));
+  // THE APP'S OWN SCOPE KEY, from the server, never its slug. A bare slug is not
+  // a scope key: `scope_for_context("some-project")` resolves to `workshop`, so
+  // a chat started from a project's Chats tab was filed outside that project and
+  // never came back to the tab that started it. The backend already resolves
+  // this (`services/apps.owned_scope`) and now ships it on the app payload,
+  // because the client cannot resolve it -- the right answer is `app:<slug>` for
+  // an installed app and the root scope itself for a root-scoped one, and only
+  // the server knows which this is. Falls back to the slug for an older payload.
+  const newChat = () => nav(newChatHref(app ? (app.scope || app.slug) : "general"));
 
   // THE SCOPE TAG, ONLY WHERE IT SAYS SOMETHING. Never on an app's own tab (it
   // would be the page title once per row), and on the global list only when the

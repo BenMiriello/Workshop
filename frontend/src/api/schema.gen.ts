@@ -9330,6 +9330,8 @@ export interface components {
             parent_id?: string | null;
             /** Project Slug */
             project_slug?: string | null;
+            /** Scope */
+            scope?: string | null;
             /** Slug */
             slug: string;
             /** Updated At */

@@ -273,6 +273,64 @@ def scope_owner_map(app_ids: dict[str, str]) -> dict[str, str]:
     return out
 
 
+def reconcile_thread_app_ids(s: Session, org_id: UUID | str,
+                             roster: dict[str, str]) -> dict:
+    """Re-derive `chat_thread.app_id` for every live thread and write the ones
+    that disagree. Returns `{"checked", "linked", "relinked", "unlinked"}`.
+
+    WHY A SWEEP AND NOT A HOTTER WRITE. `app_id` is resolved when a thread ROW
+    is first inserted (`_thread_fields`) and on a meta patch that touches a
+    list-relevant field. An ordinary turn is neither: `chat_branches._sync_record`
+    builds the field set only in its `if t is None` branch, and the per-turn meta
+    patches (`active_turn_id`, `live_message`, `context_tokens`) are deliberately
+    excluded from the sync gate because they fire hundreds of times a turn.
+
+    So a thread whose row predates the write path, or whose app row was created
+    after it, or which was simply never renamed again, keeps whatever `app_id` it
+    had forever. Measured 2026-09-17 on the live store: of 240 live threads, 52
+    disagreed with the current rule -- 25 with no app_id at all (one of them a
+    chat the operator had just created in a new project and gone looking for),
+    and 27 pointing at an app that does not own their scope, left behind by an
+    older backfill that attributed unbound `general` chats to a throwaway
+    project. Both directions had sat there uncorrected because nothing re-asks
+    the question for a row that already exists.
+
+    IT CLEARS AS WELL AS SETS, which `db/app_backfill._backfill_chats` does not:
+    that one writes only when an app owns the scope, so it can fix the 25 and is
+    structurally unable to fix the 27. A reconcile that cannot say "no owner" is
+    a reconcile that can only ever add.
+
+    Cheap in the steady state: one SELECT of (id, context_key, app_id) and no
+    write at all when nothing has drifted. The caller decides how often; see
+    `services.apps.reconcile_from_registries`, which is already the place a read
+    refreshes the roster this takes as its input.
+    """
+    from services import scope_tree
+
+    owner = scope_owner_map(roster)
+    rows = s.execute(text(
+        "SELECT id, context_key, app_id FROM chat_thread "
+        "WHERE org_id = :org AND deleted_at IS NULL"), {"org": str(org_id)}).all()
+
+    linked = relinked = unlinked = 0
+    for row in rows:
+        thread_id, context_key, current = row[0], row[1], row[2]
+        want = owner.get(scope_tree.scope_for_context(context_key))
+        cur = str(current) if current is not None else None
+        if want == cur:
+            continue
+        s.execute(text("UPDATE chat_thread SET app_id = :app WHERE id = :id"),
+                  {"app": want, "id": thread_id})
+        if want is None:
+            unlinked += 1
+        elif cur is None:
+            linked += 1
+        else:
+            relinked += 1
+    return {"checked": len(rows), "linked": linked,
+            "relinked": relinked, "unlinked": unlinked}
+
+
 def app_id_for_context(s: Session, org_id: UUID | str,
                        context_key: str | None) -> str | None:
     """The app a chat with this `context_key` belongs to, or None.

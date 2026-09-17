@@ -66,6 +66,14 @@ class App(BaseModel):
     # The file-registry bridge (see db.models.App). None for an
     # installed-only app with no working tree of its own.
     project_slug: str | None = None
+    # THE SCOPE KEY THIS APP OWNS, resolved server-side (services.apps.owned_scope).
+    # Declared here so the generated client carries it: a client that has to
+    # guess this gets it wrong, because `app:<slug>` is right for an installed
+    # catalog app and wrong for an app whose linked project is a root scope, and
+    # the bare slug is wrong for both. The app Chats tab's New chat button was
+    # passing the slug, which resolves to the `workshop` scope, so a chat started
+    # from a project's own tab was filed outside that project.
+    scope: str | None = None
     archived_at: str | None = None
     created_at: str | None = None
     updated_at: str | None = None

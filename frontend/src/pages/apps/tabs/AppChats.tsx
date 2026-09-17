@@ -39,7 +39,11 @@ export default function AppChats() {
         // text under a header already reading DEVELOPMENT / Chats, which rule
         // 11 rules out anyway, and /chats has never had one.
         <ChatsView
-          app={{ id: app.id, slug: app.slug, name: app.name }}
+          // `scope` as well as `slug`: a new chat started from this tab has to
+          // be filed under the key this app actually OWNS, and for a project
+          // -backed app that is not its slug. Resolved by the server
+          // (services/apps.owned_scope) and carried on the payload.
+          app={{ id: app.id, slug: app.slug, name: app.name, scope: app.scope ?? undefined }}
           eyebrow={app.name}
         />
       )}
