@@ -244,29 +244,38 @@ def worker_for(root: str | Path) -> str | None:
     anything. A runner that is resident and permanently idle is the exact
     failure this whole function exists to end.
     """
-    from services import agents_registry, scope_execution
+    from services import makers, scope_execution
 
     scope = scope_execution._scope_of(root)
     if not scope:
         return None
     try:
-        agents = agents_registry.list_agents()
+        # ASKED THROUGH `makers`, NOT RE-DERIVED HERE, and the first version of
+        # this function got that wrong in a way worth recording. It compared the
+        # agent's `project_slug` against the scope key directly. Those are two
+        # different spellings: the registry stores a BARE slug (`notes-app`)
+        # and `task_scope.key_for_root` returns a PREFIXED key
+        # (`project:notes-app`). The comparison was therefore false for every
+        # project scope and true only for `development`, whose key happens to
+        # have no prefix -- so it appeared to work on the one scope it was
+        # tested against and would have refused to start a runner on all the
+        # others. `makers.scope_for` already owns the translation, via
+        # `build_agents._project_dir` and `key_for_root`, which is exactly the
+        # pair a caller must not re-implement.
+        found = makers.makers_for_scope(scope)
     except Exception:
-        log.exception("work driver: could not read the agent registry")
+        log.exception("work driver: could not resolve this scope's maker")
         return None
-    makers = [a for a in agents
-              if a.get("role") == "maker"
-              and not a.get("retired")
-              and (a.get("project_slug") or "") == scope]
-    if len(makers) != 1:
+    live = [m for m in found if not m.get("retired")]
+    if len(live) != 1:
         # Zero is an unconfigured scope. More than one is ambiguous, and
         # guessing which of two makers owns a queue is how a ticket gets run by
         # something the operator did not mean. Both refuse.
         log.warning("work driver: scope %r has %d maker agent(s); "
                     "an unattended sweep needs exactly one to run as",
-                    scope, len(makers))
+                    scope, len(live))
         return None
-    return f"agent:{makers[0]['slug']}"
+    return f"agent:{live[0]['slug']}"
 
 
 def ensure(root: str | Path, mode: str = "supervised") -> bool:

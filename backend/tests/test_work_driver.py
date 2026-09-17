@@ -212,6 +212,51 @@ def test_the_runner_is_told_which_worker_to_run_as(store, tmp_path, monkeypatch)
     assert cmd[cmd.index("--assignee") + 1] == "agent:demo-maker"
 
 
+def test_the_worker_is_resolved_through_makers_not_re_derived(monkeypatch):
+    """A bare slug and a scope key are two spellings, and comparing them fails.
+
+    THE BUG THIS PINS WAS WRITTEN AND CAUGHT THE SAME NIGHT. The first version
+    of `worker_for` compared the agent record's `project_slug` against the scope
+    key directly. The registry stores a BARE slug (`notes-app`) and
+    `task_scope.key_for_root` returns a PREFIXED key (`project:notes-app`), so
+    the comparison was false for every project scope. It was true only for
+    `development`, whose key happens to carry no prefix, which is the one scope
+    it was tested against -- and because `ensure()` refuses to start a runner it
+    cannot name a worker for, every project scope would have quietly stopped
+    getting a runner at all.
+
+    `makers.scope_for` already owns that translation. This asserts the lookup
+    goes through it rather than re-deriving the comparison, which is the only
+    property that actually prevents the bug from coming back.
+    """
+    from services import makers, scope_execution, work_driver as wd
+
+    asked: list[str] = []
+
+    def fake_makers_for_scope(scope, **kw):
+        asked.append(scope)
+        return [{"slug": "demo-maker", "role": "maker", "retired": False}]
+
+    monkeypatch.setattr(scope_execution, "_scope_of", lambda root: "project:demo")
+    monkeypatch.setattr(makers, "makers_for_scope", fake_makers_for_scope)
+
+    assert wd.worker_for("/anywhere") == "agent:demo-maker"
+    assert asked == ["project:demo"], (
+        "worker_for must ask makers for the SCOPE KEY, not compare a bare slug")
+
+
+def test_a_retired_maker_does_not_count_as_the_scopes_worker(monkeypatch):
+    """A retired definition is not a worker, so a scope left with only retired
+    makers has none and must refuse rather than run as a retired identity."""
+    from services import makers, scope_execution, work_driver as wd
+
+    monkeypatch.setattr(scope_execution, "_scope_of", lambda root: "project:demo")
+    monkeypatch.setattr(makers, "makers_for_scope",
+                        lambda scope, **kw: [{"slug": "old", "role": "maker",
+                                              "retired": True}])
+    assert wd.worker_for("/anywhere") is None
+
+
 def test_a_scope_with_no_worker_starts_no_runner(store, tmp_path, monkeypatch):
     """No worker means every sweep would select nothing, so do not start one.
 
