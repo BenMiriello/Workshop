@@ -5,7 +5,7 @@ import {
 import { Bot, Brain, ChevronRight, Wrench } from "lucide-react";
 import { ChatMarkdown as Markdown } from "./ChatMarkdown";
 import type { ChatSegment } from "../../lib/chat";
-import { flashesOnArrivalAt } from "./arrivalFlash";
+import { flashSpent, flashesOnArrivalAt, spendFlash } from "./arrivalFlash";
 import ApprovalBlock from "./ApprovalBlock";
 import { agentBrief, agentChipLine, agentSummary } from "./segments";
 import {
@@ -75,6 +75,12 @@ function ToolChip({ seg, nowMs, arrived }: {
   const hasDetail = !!detail;
   const secs = runningSeconds(seg, nowMs);
   const took = stepDuration(seg);
+  // Same one-shot rule as a message bubble's, in an effect for the same reason:
+  // a discarded render must not be able to spend a flash that never showed.
+  const flashId = seg.id;
+  useEffect(() => {
+    if (arrived && flashId) spendFlash(flashId);
+  }, [arrived, flashId]);
   return (
     <div className={`chat-tool${open ? " is-open" : ""}${alert ? ` is-${alert}` : ""}${running ? " is-running" : ""}`}>
       <button
@@ -133,9 +139,15 @@ function useArrivedSteps(): (seg: ChatSegment) => boolean {
   // already limits this to calls that are still open, but a long-running call
   // is still open an hour later and must not flash again then.
   const now = Date.now();
-  return (seg: ChatSegment) =>
-    seg.t === "tool" && flashesOnArrivalAt(
+  return (seg: ChatSegment) => {
+    if (seg.t !== "tool") return false;
+    // A step with no tool_use id cannot be remembered, so it keeps the old
+    // time-window behaviour rather than flashing forever: the window is a weaker
+    // guarantee than the set, not a broken one.
+    if (seg.id && flashSpent(seg.id)) return false;
+    return flashesOnArrivalAt(
       typeof seg.at === "number" ? seg.at * 1000 : undefined, mountedAt.current, now);
+  };
 }
 
 // A run of adjacent tool calls, behind one count.

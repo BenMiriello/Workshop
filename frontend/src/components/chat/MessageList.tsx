@@ -1,4 +1,4 @@
-import { Fragment, memo, useRef, useState, type ReactNode } from "react";
+import { Fragment, memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { Archive, ArrowRightLeft, Bot, Clock, Eraser, FileText, Lightbulb, Radio, RotateCcw, Ticket, TriangleAlert, X, Zap } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@workshop/ui";
@@ -14,7 +14,7 @@ import { modelDisplay } from "./models";
 import { stoppedTag } from "./stopReason";
 import { hasBubble, noReplyText } from "./replyBody";
 import type { TranscriptBlock } from "./transcriptBlocks";
-import { flashesOnArrival } from "./arrivalFlash";
+import { flashesOnArrivalOnce, spendFlash } from "./arrivalFlash";
 import AttachmentViewer, { type ViewableAttachment } from "./AttachmentViewer";
 import { receiptHref, receiptItems, receiptLabel } from "./receipts";
 import { branchTargets } from "./branchable";
@@ -251,10 +251,14 @@ function senderName(meta?: { sender?: string; kind?: string }): string {
 // flash a spent one-shot instead of a permanent property of the message. See
 // arrivalFlash.ts for the transcript-wide re-animation that came of the
 // property version.
-function useArrivedAfterMount(): (ts?: string) => boolean {
+function useArrivedAfterMount(): (id: string, ts?: string) => boolean {
   const mountedAt = useRef(Date.now());
   const now = Date.now();
-  return (ts?: string) => flashesOnArrival(ts, mountedAt.current, now);
+  // TAKES THE MESSAGE ID NOW, because the window is only half the rule. The
+  // other half is "has this one already flashed", which cannot be answered from
+  // a timestamp -- see arrivalFlash's spent set, and the third report of the
+  // burst replay that made it necessary.
+  return (id: string, ts?: string) => flashesOnArrivalOnce(id, ts, mountedAt.current, now);
 }
 
 // Memoized per message. The list memo above already covers typing; this one
@@ -266,12 +270,17 @@ function useArrivedAfterMount(): (ts?: string) => boolean {
 // array, and the other four are shared and stable.
 const MessageBubble = memo(function MessageBubble({
   msg, isLatest, selectedModel, cardCtx, answerPermission, nowMs, arrived,
-  branchFor, inflight,
+  flashId, branchFor, inflight,
 }: {
   msg: ChatMsg;
   isLatest: boolean;
   /** Landed while the reader was already looking: earns the one-second flash. */
   arrived?: boolean;
+  /** Which message this is, for the spent set. The block key rather than the
+   *  message id: a still-pending send has no server id yet, and the key is what
+   *  React is already using to decide whether to rebuild the node, which is the
+   *  exact event the spent set exists to survive. */
+  flashId: string;
   /** Still in flight (status === "sending"): renders dim until the server confirms. */
   inflight?: boolean;
   selectedModel: string;
@@ -312,6 +321,15 @@ const MessageBubble = memo(function MessageBubble({
   // for directly. `meta.agent` (an @mention reply) already had a byline; a
   // platform-sent message gets the same one, from the same rule.
   const attributed = msg.role === "assistant" && !!msg.meta?.sender;
+  // SPEND THE FLASH ONCE IT HAS ACTUALLY BEEN SHOWN. In an effect, not in the
+  // render above, because a render can be thrown away (StrictMode renders
+  // twice; a concurrent render can be abandoned) and marking a flash spent for
+  // a frame that never reached the screen would delete the animation rather
+  // than stop it repeating. Adding the same id twice is a no-op, so the double
+  // invoke StrictMode performs on effects is harmless.
+  useEffect(() => {
+    if (arrived) spendFlash(flashId);
+  }, [arrived, flashId]);
   return (
     // THE ENTER ANIMATION GOES ON THE ROW FOR ASSISTANT MESSAGES ONLY. User
     // messages were already visible as a pending bubble before committing, so
@@ -619,7 +637,8 @@ function MessageList({
           {b.kind === "message" && (
             <MessageBubble
               msg={b.msg}
-              arrived={arrivedAfterMount(b.msg.ts)}
+              flashId={b.key}
+              arrived={arrivedAfterMount(b.key, b.msg.ts)}
               inflight={b.inflight}
               isLatest={b.key === latestAssistantKey}
               selectedModel={selectedModel}
