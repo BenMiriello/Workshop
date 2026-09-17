@@ -2,6 +2,7 @@
 
 - [Compaction is the provider's /compact; Workshop's fold is deleted](compaction-is-the-provider-s-compact-workshop-s-1a05016e44d.md)
 - [Compaction is the provider's own /compact, not something Workshop designs or implements](compaction-is-the-provider-s-own-compact-not-som-1a05016e44a.md)
+- [Handoff 2026-09-16: project setup, confinement, and the surfaces around a new project](handoff-2026-09-16-project-setup-and-confinement.md)
 - [Demoted memory archive](memory-archive.md) - notes demoted from the index (progressive disclosure)
 - [shoot.sh cannot screenshot a chat route](shoot-sh-cannot-screenshot-a-chat-route-1a06ad7a340.md)
 - [A backend capability is not delivered until it is a visible, manageable feature in the...](system/a-backend-capability-is-not-delivered-until-it-i-1a04c6f4e30.md)
@@ -188,7 +189,7 @@
 - [The operator's work org is a hard boundary, kept out of this install](system/work-org-is-a-hard-boundary-kept-out-of-this-ins-1a0028fb2ef.md)
 - [Work pages renamed to Tickets](system/work-pages-renamed-to-tickets-1a0028fb2b7.md)
 - [work-reviewer had invalid YAML for months](system/work-reviewer-had-invalid-yaml-for-months-1a0028fb2db.md)
-- [Handoff 2026-09-16: project setup, confinement, and the surfaces around a new project](handoff-2026-09-16-project-setup-and-confinement.md)
+- [Checkpoint 2026-09-16: new-project setup gaps, confinement, GitHub](checkpoint-2026-09-16-project-setup-gaps.md)
 - [Working state (auto-written at compaction)](system/working-state.md) - the last session's handoff for this scope: objective, decisions and why, done, not done, shortcuts owed, open questions
 - [Workshop must be deployable with nothing hardcoded](system/workshop-must-be-deployable-with-nothing-hardcod-1a0028fb2ee.md)
 - [Workshop terminology needs clear distinct roles](system/workshop-terminology-needs-clear-distinct-roles-1a0028fb28f.md)
