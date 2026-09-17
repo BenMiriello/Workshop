@@ -352,8 +352,15 @@ TASK_PROPOSAL_CARD = (
     "decoration."
 )
 
-# Build/project triage rule (sub-decision a): the model, not a code threshold,
-# decides inline-vs-delegate, with the operator's click as the tiebreaker.
+# How to WRITE a ticket, for a build/project chat. Not whether to file one: the
+# inline-vs-dispatch decision is DELEGATION_RULE's ordered rule and is stated
+# once, there. A triage sentence lived here until 2026-09-17 ("for anything
+# multi-step, multi-file, or that should survive this conversation, emit a
+# task-proposal card instead of doing it inline") and it was one of three
+# fragments answering that question differently inside a single assembled
+# prompt. It is cut rather than reconciled; a second copy of a decision is how
+# they drift apart again. The operator's click is described where it is real, on
+# TASK_PROPOSAL_CARD and in the `auto` mode arm.
 #
 # THIS IS L2 (see agent-context-and-toolkit-2026-08-20.md): platform text every
 # installation and every user gets. So it may only carry the GENERALIZED rule --
@@ -366,10 +373,6 @@ TASK_PROPOSAL_CARD = (
 # lived here and moved to CLAUDE.md on 2026-08-23 for exactly this reason: no
 # other installation has that file.
 TASK_PROPOSAL_BUILD_RULE = (
-    "TRIAGE: answer questions and make single-file trivial edits inline while the "
-    "operator is watching. For anything multi-step, multi-file, or that should "
-    "survive this conversation, emit a task-proposal card instead of doing it "
-    "inline; the operator's click (File ticket vs File and run) is the tiebreaker.\n"
     "SPECIFY IT WELL. Every ticket has a type (bug, feature, task); choose "
     "it first, since it selects which labelled lines the description needs. A BUG "
     "or a FEATURE must state the Problem (what is wrong or missing today and why it "
@@ -591,23 +594,31 @@ def strip_use_skill(text: str) -> str:
         return text
     return _USE_SKILL_RE.sub("", text).strip() or text
 
-# When to delegate to a subagent, and when a Ticket is the right shape instead.
+# When to delegate, and to what. ONE ordered rule, because there is one decision.
 #
-# The two mechanisms were being confused because nothing ever said what
-# separates them, so "this is a lot of work" pulled toward a ticket even when the
-# work was one long READ. The line is what the work needs, not how big it is:
+# Each destination buys a different thing, and nothing said so, so "this is a lot
+# of work" pulled toward a ticket even when the work was one long READ:
 #
-#   a subagent buys CONTEXT ISOLATION and nothing else — it starts clean, does a
-#   bounded piece of reading or checking, and returns a summary into this reply.
-#   The chat is still the thing doing the work, and the transcript is still the
-#   record. That costs one tool call.
+#   a TICKET buys DURABILITY: a reviewable diff, retries, a receipt, and a record
+#   that outlives the conversation. It costs a queue slot and a worker who never
+#   saw this chat.
+#   BACKGROUND work buys its own process: it survives the turn and comes back as
+#   a later turn here.
+#   a THREAD buys a standing actor: its own name, scope and permissions.
+#   a SUBAGENT buys CONTEXT ISOLATION and nothing else — it starts clean, does a
+#   bounded read or check, and returns a summary into this reply. It dies with
+#   the reply, so nothing it produces is durable.
 #
-#   a Ticket buys DURABILITY: a reviewer gate, touches enforcement, retries, a
-#   receipt, and a record that outlives the conversation. That costs a queue slot
-#   and a worker who never saw this chat.
-#
-# So: needs to survive the chat -> Ticket. Needs a clean window and comes back
-# here -> subagent. Neither -> just do it, which is still the common case.
+# THIS USED TO BE THREE FRAGMENTS THAT CONTRADICTED EACH OTHER, all three in one
+# assembled prompt for a project chat (measured 2026-09-17): this rule ended on
+# an enumerated three-case test that read as "do not dispatch"; the build triage
+# sentence in TASK_PROPOSAL_BUILD_RULE said file anything multi-file; and the
+# `auto` arm of chat_mode_block said file it and start it. The most specific of
+# the three wins, so agents did large multi-file work inline. The three cases
+# came from ticket b8d8abb2, whose intent -- filing a ticket does not discharge
+# the work -- is the LAST sentence below and must not be dropped again; what was
+# wrong was making it the whole test. Do not re-add a second copy of this
+# decision anywhere; two rules for one decision is the defect.
 DELEGATION_RULE = (
     "=== SUBAGENTS (delegating inside this chat) ===\n"
     "You can launch a subagent with the Agent tool. It runs in its own clean "
@@ -630,27 +641,30 @@ DELEGATION_RULE = (
     "subagent reports into THIS reply, not a later one, so \"I will report back "
     "when it is done\" is never true of a subagent. Launch it, carry on or wait, "
     "and answer with its result when it lands.\n\n"
-    "USE ONE WHEN the work is a bounded read or check whose intermediate output "
-    "would crowd out the conversation: searching a large tree, reading many files "
-    "to answer one question, digesting logs or a long document, running a "
-    "verification pass, or several independent lookups that can go at once. Say "
-    "in one line what you delegated and report what came back.\n\n"
-    "DO NOT USE ONE for something you can answer or do directly (a single read, "
-    "one edit, a command you already know). The round trip costs more than the "
-    "work. Two different things must OUTLIVE this chat, and neither is a "
-    "subagent: durable, reviewable, multi-file change work is a Ticket (it has a "
-    "reviewer gate, retry, and a receipt); work that should run on its own and "
-    "report back later is a Workshop agent / a Run (it has a name, a role, and "
-    "survives the turn). A subagent is context isolation for THIS reply; a Ticket "
-    "or a Workshop agent is durability. Size is not the test.\n\n"
-    "NEVER file a ticket merely to get an isolated context, and never delegate "
-    "work whose result you will not check.\n\n"
-    "FILING A TICKET IS NOT DOING THE WORK. It records work; it does not "
-    "discharge it, and handing one back leaves the request open somewhere the "
-    "asker has to go and find it. When the work in front of you is the work you "
-    "were asked for, DO IT HERE and report what you did. File instead in three "
-    "cases only: the work forks and the choice is not yours; it belongs to "
-    "another scope; or a ticket is what you were asked for."
+    "=== WHERE WORK GOES: FOUR DESTINATIONS. Ask in order, stop at the first "
+    "yes ===\n"
+    "- Does the result need a reviewable diff, a retry if it fails, and a record "
+    "once this conversation is gone? -> a TICKET. That covers multi-file changes "
+    "and migrations. File it, say the id, and say which worker it is for: a "
+    "ticket assigned to nobody is never picked up.\n"
+    "- Is it one job that will outlast this reply, whose answer belongs here? -> "
+    "BACKGROUND work: its own process, which reports back as a LATER turn in "
+    "this chat.\n"
+    "- Does it need its own standing scope, permissions, or ongoing "
+    "conversation? -> its own THREAD. Say which one; it is a separate actor with "
+    "a name.\n"
+    "- Is it one bounded read, search or check whose intermediate output would "
+    "crowd this window? -> a SUBAGENT: searching a large tree, reading many "
+    "files to answer one question, digesting logs, a verification pass, several "
+    "independent lookups at once. It dies with this reply, so nothing it "
+    "produces is durable. Never use one for a change that needs review, never "
+    "delegate work whose result you will not check, and say in one line what you "
+    "delegated and what came back.\n"
+    "- Otherwise DO IT HERE, and most requests are this one.\n"
+    "SIZE IS NOT THE AXIS, but it is a reliable proxy: a change touching several "
+    "files or needing more than one commit has already answered the first "
+    "question yes. And filing a ticket does not discharge the work -- if the "
+    "ticket is yours to run, run it."
 )
 
 
@@ -1275,7 +1289,11 @@ def chat_mode_block(mode: str | None) -> str:
               transcript IS the record.
       auto    work leaves as Tickets, run by Workshop agents under the
               governance model, reported back. The Ticket is the record, and it
-              is filed and started without asking first.
+              is filed without asking first. STARTED is not the same word: as
+              of 2026-09-17 no tool files a ticket and none starts a run (the
+              chat emits a block, and the run begins on a click), so the arm
+              says what the chat can actually do rather than promising a verb
+              that has no tool behind it.
 
     There were three. `orchestrated` was "file it, but wait to be let out" and
     `auto` was the same thing minus that wait -- two answers to a question the
@@ -1314,13 +1332,14 @@ def chat_mode_block(mode: str | None) -> str:
         "=== CHAT MODE: AUTO ===\n"
         "Work that outlives this conversation leaves as a Ticket, is run by "
         "Workshop agents under the governance model, and is reported back here. "
-        "The Ticket is the record; this chat links to it. File it and start it "
-        "WITHOUT asking first: the operator has already approved that by "
-        "choosing this mode, so a confirmation question about whether to file "
-        "or whether to run is one they have answered. Come back only for a "
-        "question you cannot answer from this conversation and the work itself, "
-        "and when you do, ask it through the ticket so the answer reaches the "
-        "next attempt."
+        "The Ticket is the record; this chat links to it. File it WITHOUT "
+        "asking first: choosing this mode is that approval, so a confirmation "
+        "question about whether to file is one already answered. Filing is a "
+        "block you emit, not a tool call, and nothing you can call STARTS a "
+        "run -- that is a click. So file it, name it, and say it is waiting to "
+        "start; do not claim it is running. Come back only for a question you "
+        "cannot answer from this conversation and the work itself, and when you "
+        "do, ask it through the ticket so the answer reaches the next attempt."
     )
 
 

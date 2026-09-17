@@ -299,12 +299,39 @@ class TestSubagentsAreReal:
         from services import build_streaming
         assert chat_context.SUBAGENT_TOOL in build_streaming.SUBAGENT_TOOLS
 
-    def test_the_rule_separates_a_subagent_from_a_ticket(self):
+    def test_the_rule_is_one_ordered_decision_over_four_destinations(self):
         """The operator's actual question: what needs a ticket and what does not.
-        Isolation vs durability, not size."""
+        Answered ONCE, in order, because it used to be answered three times in
+        one assembled prompt and the three disagreed (2026-09-17). All four
+        destinations have to be named or the rule silently forbids one."""
         rule = chat_context.DELEGATION_RULE
-        assert "context isolation" in rule and "durability" in rule
-        assert "Size is not the test" in rule
+        assert "stop at the first yes" in rule
+        for destination in ("a TICKET", "BACKGROUND work", "its own THREAD",
+                            "a SUBAGENT", "DO IT HERE"):
+            assert destination in rule, destination
+        assert "SIZE IS NOT THE AXIS" in rule
+
+    def test_the_rule_keeps_filing_from_discharging_the_work(self):
+        """Ticket b8d8abb2: a chat filed a ticket, handed the work back, and
+        believed it had delivered. That sentence survives; what was cut was the
+        three-case test around it, which read as "do not dispatch"."""
+        rule = chat_context.DELEGATION_RULE
+        assert "filing a ticket does not discharge the work" in rule
+        assert "if the ticket is yours to run, run it" in rule
+
+    def test_the_decision_is_not_stated_a_second_time(self):
+        """Two rules for one decision IS the defect. The build-chat rule says how
+        to WRITE a ticket and must not say when to file one."""
+        assert "TRIAGE" not in chat_context.TASK_PROPOSAL_BUILD_RULE
+        assert "instead of doing it inline" not in chat_context.TASK_PROPOSAL_BUILD_RULE
+
+    def test_the_auto_arm_does_not_promise_a_verb_it_has_no_tool_for(self):
+        """No tool files a ticket and none starts a run: filing is a block the
+        chat emits, and the run begins on a click. The arm said "File it and
+        start it", which named a capability that does not exist."""
+        out = chat_context.chat_mode_block("auto")
+        assert "nothing you can call STARTS a run" in out
+        assert "File it and start it" not in out
 
     def test_the_rule_ships_with_the_capabilities_the_model_is_given(self):
         out = chat_context.role_preamble(tools_active=True)

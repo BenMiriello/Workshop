@@ -89,6 +89,20 @@ def manifest_text(scope_key: str | None = None, *, background: bool = True,
         "something very different over a dozen documents than over thousands.\n"
         "- What is going on now (open tickets, running and recent runs, the note "
         "titles in scope): `query`.\n"
+        # DISPATCH, the one kind of thing this map never had a line for. Every
+        # other line answers "where do I find X"; none answered "where does work
+        # GO", so a chat had a route to every object in the system and none to
+        # the two places work outlives a conversation. Added 2026-09-17, when
+        # three prompt blocks were found answering that question differently and
+        # the ordered rule that replaced them (chat_context.DELEGATION_RULE) had
+        # no counterpart here. Deliberately names no tool: filing and opening
+        # are not tool calls today, and naming one would be the told-but-absent
+        # error this file exists to prevent.
+        "- Where work GOES when it does not belong in this reply: a standing "
+        "actor of its own means opening a THREAD (its own name, scope and "
+        "permissions); a reviewable diff and a retry if it fails means filing a "
+        "TICKET and assigning it, since one assigned to nobody is never picked "
+        "up. Neither is a tool call.\n"
         "- When you cite a doc, note or ticket, write it as a managed link "
         "(`workshop:doc/<path>`, `workshop:note/<scope>/<id>`, "
         "`workshop:ticket/<id>`) so it renders as a chip, not raw text.\n"
