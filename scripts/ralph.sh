@@ -1012,7 +1012,28 @@ while (( iter < MAX_ITER )); do
     break
   fi
   REMAINING=$(( MAX_WALL - ELAPSED ))
-  PER_ITER_TIMEOUT=$(( REMAINING < 1500 ? REMAINING : 1500 ))
+  # ONE ITERATION MAY NOT SPEND THE WHOLE TASK BUDGET, which is what
+  # `min(REMAINING, 1500)` did whenever MAX_WALL was 1500 or less. The resident
+  # loop passes 1200, so iteration 1 was handed 1198 of 1200 seconds; when it hit
+  # that timeout the very next check found ELAPSED >= MAX_WALL and logged
+  # "wall-time cap hit at iter=2". `--max-iter 10` was unreachable by
+  # construction, and every log line naming it was describing a loop that could
+  # only ever run once. Measured 2026-09-16/17: five consecutive tasks, each one
+  # iteration, each ending in `exit=124`.
+  #
+  # That is worse than a small budget, because a timeout kill discards the
+  # iteration's output. Spending the entire budget on an iteration that is then
+  # thrown away leaves the task with nothing AND no time to try again, so the
+  # single most expensive outcome was also the one the arithmetic guaranteed.
+  #
+  # So an iteration gets at most two thirds of the task budget, with a floor so a
+  # deliberately short budget still gets one usable pass. The remaining third is
+  # what makes a retry possible at all: this is a re-fire loop, and a loop whose
+  # first iteration can consume the fuel is not one.
+  ITER_CAP=$(( MAX_WALL * 2 / 3 ))
+  (( ITER_CAP < 900 )) && ITER_CAP=900
+  (( ITER_CAP > 1500 )) && ITER_CAP=1500
+  PER_ITER_TIMEOUT=$(( REMAINING < ITER_CAP ? REMAINING : ITER_CAP ))
 
   # ---- BUDGET-CAP PAUSE (ticket 70860d58) ------------------------------------
   # STOP AT THE LINE RATHER THAN DISCOVERING IT AFTER CROSSING. Admission is a

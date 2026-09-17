@@ -45,11 +45,29 @@ POLL=60
 MAX_TASKS=3
 ONCE=0
 
-# Per-task wall budget in SECONDS (20 min). We EXPORT this to project_ralph.sh as
+# Per-task wall budget in SECONDS. We EXPORT this to project_ralph.sh as
 # RALPH_MAX_WALL and also size the sweep budget from it, so the two can never
 # drift apart — the failure mode being fixed here is exactly a mismatch between
 # them. One number, both sides.
-PER_TASK_WALL="${PER_TASK_WALL:-1200}"
+#
+# IT WAS 1200 (20 min) AND THAT KILLED EVERY WORKER THIS LOOP EVER STARTED.
+# Measured 2026-09-16/17 over the first five runs after the loop was finally
+# armed: five tasks selected, five `claude exit=124, output bytes=0, tokens=0,
+# dur=119Xs`. Exit 124 is `timeout(1)`, so every one of them was killed rather
+# than finishing, and every one was then recorded as having produced nothing.
+#
+# It did not produce nothing. Two of the killed attempts on f8c7d271 had
+# COMMITTED 366 and 358 insertions to their worktree branches, tests included,
+# by the time the kill landed. So the budget was not measuring how long the work
+# takes; it was cutting the work off mid-sentence and then reading the severed
+# end as failure. Three attempts were spent that way on one ticket and one of
+# the branches was reaped.
+#
+# 2700 (45 min) is sized from that evidence rather than from taste: the observed
+# work was still going at 20 minutes and had real output on disk. The sweep
+# budget below scales with it automatically, which is the whole point of there
+# being one number.
+PER_TASK_WALL="${PER_TASK_WALL:-2700}"
 
 # SUPERVISED BY DEFAULT, and deliberately so. This loop is the unattended path:
 # nobody is watching the run, so the last step is the operator's. A passing task

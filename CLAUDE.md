@@ -38,16 +38,50 @@ query time and the import preflight cannot see it, which is how `15883681`
 nearly took chat down on 2026-09-01. So the sequence is: run the migration, then
 run apply.sh. Both are yours to run.
 
-**One genuine exception, and it is reachability rather than permission.** An
-agent in a sandbox may not share the backend's network namespace, in which case
-the DSN in the config resolves to a DIFFERENT database. Measured 2026-09-01: a
-session reached an empty scratch Postgres on the same host:port while the real
-one served 129 chat threads a socket away, and every downstream report inherited
-that wrong number. `scripts/migration_state.py` now asks the RUNNING BACKEND for
-its revision first (`/healthz` reports it) and falls back to connecting itself,
-naming the source in its message. **"per the running backend"** is measured, so
-run the migration. **"per a direct connection"** is unverified, and migrating on
-it would change the wrong database: say that plainly and leave it.
+**A ZERO FROM THE DATABASE IS ALMOST CERTAINLY ROW-LEVEL SECURITY, NOT THE WRONG
+DATABASE.** This paragraph used to say the opposite and it sent at least two
+sessions down the wrong path, most recently on 2026-09-17, so read it before you
+act on a count you did not expect.
+
+`chat_thread`, `app`, `ticket` and the rest of the tenant tables carry `FORCE ROW
+LEVEL SECURITY`, and the policy is
+`org_id = NULLIF(current_setting('app.current_org', true), '')::uuid`.
+`db.engine.SessionLocal()` sets no tenant, so `current_setting` is NULL, the
+comparison is `org_id = NULL`, and **every table reads as empty**. That is
+deliberate and pinned: `backend/tests/test_db_tenancy.py` has
+`test_a_session_with_no_tenant_sees_nothing`, whose docstring says `admin_session`
+"is not a back door".
+
+So a raw `SessionLocal()` probe answering 0 is the policy working, not a
+misconfiguration. Measured 2026-09-17 while the catalog held ~296 chat threads,
+~491 tickets and 11 apps. **Pin an owner and go through the service layer:**
+
+    import sys; sys.path.insert(0, "/workspace/backend")
+    from services import ownership
+    ownership.pin_operator()
+
+For raw SQL use `tenancy.tenant_session(org_id)`, never a bare `SessionLocal()`.
+The service layer already fails LOUDLY without an owner (`ownership.OwnerUnset`,
+`tenancy.TenantUnresolved`), which is why no committed script or gate is affected
+by this: `root_task_counts.sh`, `field_occupancy.py`, `migration_state.py` and
+`check_fresh_clone.sh` were all re-run from a sandbox on 2026-09-17 and all
+answered correctly. The exposure is entirely to ad-hoc one-off probes, which is
+to say to agents, which is to say to you.
+
+**And the topology is fine, so do not go looking for a second Postgres.**
+`infra/postgres/docker-compose.yml` publishes `127.0.0.1:5440 -> 5432`, so a
+server that reports its own port as 5432 while you connected on 5440 is the
+EXPECTED reading and not evidence of a scratch instance. Confirmed the same day
+by finding the backend's own pooled connections in `pg_stat_activity` from a
+sandbox session, with a `backend_start` matching `/healthz` to the second.
+`scoped_exec` does not rewrite the DSN and `db/engine.py` returns
+`WORKSHOP_DATABASE_URL` verbatim.
+
+What remains true from the old paragraph: `scripts/migration_state.py` asks the
+RUNNING BACKEND for its revision first (`/healthz` reports it) and falls back to
+connecting itself. Its drift messages name the source; **its `ok` line does not**,
+so "ok" tells you nothing about which side answered. If that matters to you, ask
+`/healthz` yourself.
 
 Mechanics, costs and troubleshooting: [`docs/applying-changes.md`](docs/applying-changes.md).
 That file is the ONLY current source for how to apply a change. Restart and
