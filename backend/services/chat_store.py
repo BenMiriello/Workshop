@@ -1672,7 +1672,8 @@ def mark_turn_started(thread_id: str, turn_id: str) -> None:
 
 
 def begin_turn(thread_id: str, turn_id: str, model: str | None = None,
-               agent: str | None = None, announce: bool = True) -> None:
+               agent: str | None = None, announce: bool = True,
+               command: str | None = None) -> None:
     """Open a turn on this thread: a `turn: started` marker and `active_turn_id`.
 
     `announce=False` takes the claim and leaves the marker to `mark_turn_started`,
@@ -1685,7 +1686,15 @@ def begin_turn(thread_id: str, turn_id: str, model: str | None = None,
 
     `agent` names the agent answering when the turn came from an @mention, and
     rides on the live view so the reply is attributed while it streams, not only
-    once it lands."""
+    once it lands.
+
+    `command` is the slash command this turn IS, when it is one ("/compact").
+    It rides alongside `model` and `agent` for the same reason they do: it is an
+    immutable fact about the run, fixed at claim time, and the client cannot
+    otherwise tell a compaction from ordinary work. `accepts_input` already says
+    "this turn is A command"; it does not say WHICH, so every command turn
+    looked identical to a reply and the working indicator said "Working" through
+    a compaction. Absent for an ordinary message turn, which is most of them."""
     if chat_log.read_meta(thread_id) is None:
         raise KeyError(thread_id)
     # Any draft still on disk belongs to a turn that never committed (a backend
@@ -1698,6 +1707,8 @@ def begin_turn(thread_id: str, turn_id: str, model: str | None = None,
         meta["model"] = model
     if agent:
         meta["agent"] = agent
+    if command:
+        meta["command"] = command
     started = chat_log.append_sync(
         thread_id, {"kind": "turn", "turn_id": turn_id, "state": "started"}) if announce else None
     chat_log.patch_meta_sync(

@@ -36,6 +36,11 @@ export type ActiveTurn = {
   // False when the run takes no input at all (a slash command, a voice turn).
   // The send path reads this to queue rather than inject; see sendPlan.
   acceptsInput?: boolean;
+  // WHICH slash command it is, when it is one. `acceptsInput: false` says a turn
+  // is A command; this says which, and the working indicator needs that to say
+  // "Compacting" instead of "Working". Server-supplied, so every tab and a
+  // reload agree rather than only the tab that pressed the button.
+  command?: string;
   // Messages that arrived before this run emitted ANYTHING, by cut token. The
   // one recorded cut position with no segment to sit on. See docs/decisions/0018.
   cutHead?: string[];
@@ -481,6 +486,7 @@ function adoptTurn(
       startedMs: Number.isFinite(startedMs) ? startedMs : prev.startedMs,
       model: live.meta?.model ?? prev.model,
       agent: live.meta?.agent ?? prev.agent,
+      command: live.meta?.command ?? prev.command,
       acceptsInput: payload.accepts_input ?? prev.acceptsInput,
     };
   }
@@ -492,6 +498,7 @@ function adoptTurn(
     startedMs: Number.isFinite(startedMs) ? startedMs : Date.now(),
     model: live.meta?.model,
     agent: live.meta?.agent,
+    command: live.meta?.command,
     // The wire says `boolean | null`; absent and null both mean "not stated",
     // which this store spells `undefined`.
     acceptsInput: payload.accepts_input ?? undefined,

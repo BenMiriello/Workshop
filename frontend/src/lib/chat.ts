@@ -428,6 +428,12 @@ export type LiveMessage = {
     // exactly when it matters and is exactly when there are no segments to
     // carry it.
     cut_head?: string[];
+    // THE SLASH COMMAND THIS TURN IS, when it is one ("/compact"). Written once
+    // at claim time beside `model` and `agent`, because it is the same kind of
+    // fact: fixed for the life of the run. `accepts_input: false` already says
+    // the turn IS a command; it does not say WHICH, and without that the working
+    // indicator has nothing to distinguish a compaction from ordinary work.
+    command?: string;
   };
 };
 

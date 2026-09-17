@@ -39,6 +39,10 @@ export type TurnLifecycle =
       watching: WatchState;
       segments: ChatSegment[];
       startedMs: number | null;
+      /** The slash command this run IS, when it is one. Drives the wording and
+       *  nothing else: a command turn is running in exactly the way any other
+       *  turn is. */
+      command?: string;
       /** The transcript is showing a live block for this run. False when the
        *  committed log ALREADY holds this turn's reply — `transcriptBlocks`'
        *  `liveShown` correction, which exists because the server does not write
@@ -60,7 +64,10 @@ export type TurnLifecycle =
  *  a message would start a second turn against a run the server still considers
  *  live. This is not an oversight and it is not half-finished work. */
 export function deriveTurnLifecycle(input: {
-  activeTurn: { turnId: string; segments: ChatSegment[]; startedMs: number | null } | null;
+  activeTurn: {
+    turnId: string; segments: ChatSegment[]; startedMs: number | null;
+    command?: string;
+  } | null;
   liveShown: boolean;
   /** Client-local: the POST is out and the server has not answered. */
   starting: boolean;
@@ -96,6 +103,7 @@ export function deriveTurnLifecycle(input: {
       watching: input.reconnecting ? "reconnecting" : input.detached ? "detached" : "attached",
       segments: run.segments,
       startedMs: run.startedMs,
+      command: run.command,
       shown: input.liveShown,
     };
   }
@@ -144,6 +152,19 @@ export function indicatorLabel(lc: TurnLifecycle): string {
   }
   if (lc.kind === "running") {
     if (lc.watching === "reconnecting") return "Reconnecting";
+    // COMPACTING IS A STATE OF THE CHAT, not a description of work, which is the
+    // same reason "Waiting" survived the deletion of the per-tool verb table in
+    // turnStatus.ts. The context is being replaced underneath the reader; that
+    // is worth a word, and it outranks the connection wording below because it
+    // is true whether or not this tab is the one watching.
+    //
+    // THE WORD CAME BACK RATHER THAN BEING INVENTED. turnStatus.ts's header
+    // records it being deleted as unreachable when /compact stopped being a turn
+    // and became a server-side fold. /compact became a turn AGAIN on 2026-08-27
+    // and nothing restored the label, so a compaction has read "Working" ever
+    // since. Reported 2026-09-16: "why does it say working while you're
+    // compacting? That's a new odd issue." It is not new; it is that regression.
+    if (isCompacting(lc)) return "Compacting";
     // Running, but this tab is not the one reading its output. Says the true
     // thing ("it has not stopped") without implying a stream that is not open.
     // NEVER said for a run this tab has not attached to YET — that window is
@@ -153,6 +174,21 @@ export function indicatorLabel(lc: TurnLifecycle): string {
     return currentActivity(lc.segments);
   }
   return "Working";
+}
+
+/** The command that names a compaction. The server sends this exact string to
+ *  the CLI (`chat.py _COMPACT_COMMAND`), so the two spellings have to agree; a
+ *  mismatch degrades to "Working", which is the old behaviour rather than a
+ *  wrong one. */
+const COMPACT_COMMAND = "/compact";
+
+/** Is the run in flight this chat's own compaction?
+ *
+ *  Exported because more than the label wants to know: a compaction is the one
+ *  turn whose whole purpose is to change what the NEXT turn is handed, so
+ *  anything that reports the context window has a reason to ask. */
+export function isCompacting(lc: TurnLifecycle): boolean {
+  return lc.kind === "running" && lc.command === COMPACT_COMMAND;
 }
 
 /** The run this lifecycle is about, or null. `stopping` still names its run:

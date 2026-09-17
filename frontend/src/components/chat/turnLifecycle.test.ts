@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ChatSegment } from "../../lib/chat";
 import {
-  deriveTurnLifecycle, indicatorLabel, isBusy, runningTurnId, showIndicator,
-  type TurnLifecycle,
+  deriveTurnLifecycle, indicatorLabel, isBusy, isCompacting, runningTurnId,
+  showIndicator, type TurnLifecycle,
 } from "./turnLifecycle";
 
 // The rule the chat's turn state is made of, executed rather than watched.
@@ -19,7 +19,9 @@ const quiet = {
   detached: false,
 };
 
-const run = (over: Partial<{ turnId: string; segments: ChatSegment[]; startedMs: number | null }> = {}) => ({
+const run = (over: Partial<{
+  turnId: string; segments: ChatSegment[]; startedMs: number | null; command: string;
+}> = {}) => ({
   turnId: "t1", segments: [] as ChatSegment[], startedMs: 1_000_000, ...over,
 });
 
@@ -239,5 +241,54 @@ describe("selectors", () => {
   it("carries no turn id when nothing is running", () => {
     expect(runningTurnId(deriveTurnLifecycle(quiet))).toBeNull();
     expect(runningTurnId(deriveTurnLifecycle({ ...quiet, starting: true }))).toBeNull();
+  });
+});
+
+
+// A COMPACTION SAYS SO. `/compact` stopped being a turn, the "Compacting" label
+// was deleted as unreachable, and then `/compact` became a turn again and the
+// label did not come back -- so a compaction has said "Working" since
+// 2026-08-27. Reported 2026-09-16.
+describe("the label for a compaction", () => {
+  it("says Compacting while the chat's own /compact runs", () => {
+    const lc = deriveTurnLifecycle({ ...quiet, activeTurn: run({ command: "/compact" }), liveShown: true });
+    expect(indicatorLabel(lc)).toBe("Compacting");
+    expect(isCompacting(lc)).toBe(true);
+  });
+
+  it("still says Working for an ordinary turn", () => {
+    const lc = deriveTurnLifecycle({ ...quiet, activeTurn: run(), liveShown: true });
+    expect(indicatorLabel(lc)).toBe("Working");
+    expect(isCompacting(lc)).toBe(false);
+  });
+
+  it("does not claim a compaction for some other slash command", () => {
+    const lc = deriveTurnLifecycle({ ...quiet, activeTurn: run({ command: "/model" }), liveShown: true });
+    expect(indicatorLabel(lc)).toBe("Working");
+    expect(isCompacting(lc)).toBe(false);
+  });
+
+  it("is outranked by stopping, which is what the operator just asked for", () => {
+    const lc = deriveTurnLifecycle({
+      ...quiet, activeTurn: run({ command: "/compact" }), liveShown: true, stopping: true,
+    });
+    expect(indicatorLabel(lc)).toBe("Stopping");
+  });
+
+  it("outranks the connection wording, because it is true in every tab", () => {
+    // "Still running" describes THIS tab's socket. What the turn is doing is a
+    // fact about the run, so a compaction watched from a detached tab is still a
+    // compaction.
+    const lc = deriveTurnLifecycle({
+      ...quiet, activeTurn: run({ command: "/compact" }), liveShown: true, detached: true,
+    });
+    expect(indicatorLabel(lc)).toBe("Compacting");
+  });
+
+  it("says Reconnecting over it, because a dropped socket is the more urgent fact", () => {
+    const lc = deriveTurnLifecycle({
+      ...quiet, activeTurn: run({ command: "/compact" }), liveShown: true, reconnecting: true,
+    });
+    expect(indicatorLabel(lc)).toBe("Reconnecting");
   });
 });

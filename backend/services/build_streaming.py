@@ -535,7 +535,8 @@ def turn_is_ending(turn_id: str | None) -> bool:
 
 async def claim_turn(thread_id: str, turn_id: str, *, model: str | None = None,
                      agent: str | None = None, force: bool = False,
-                     accepts_input: bool = True, announce: bool = True) -> str | None:
+                     accepts_input: bool = True, announce: bool = True,
+                     command: str | None = None) -> str | None:
     """Take this thread for `turn_id`. Returns the turn that already owns it (join
     that one), or None when the claim succeeded.
 
@@ -560,7 +561,7 @@ async def claim_turn(thread_id: str, turn_id: str, *, model: str | None = None,
             if active not in TURNS:
                 chat_store.lose_turn(thread_id, active)
         chat_store.begin_turn(thread_id, turn_id, model=model, agent=agent,
-                              announce=announce)
+                              announce=announce, command=command)
         # Register the turn BEFORE returning. Prompt assembly awaits, and until
         # the turn is in TURNS a message arriving during that window would see an
         # `active_turn_id` naming a turn nothing is driving and take the thread

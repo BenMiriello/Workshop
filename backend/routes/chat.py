@@ -3650,6 +3650,13 @@ async def _turn_for_message(thread_id: str, t: dict, content: str,
     joined = await build_streaming.claim_turn(
         thread_id, turn_id, model=model, agent=speaker, force=bool(take_over),
         accepts_input=not _is_raw_command(content),
+        # WHICH command, not just THAT it is one. `accepts_input` above already
+        # carries the second; the client needs the first to tell a compaction
+        # from ordinary work, and without it the working indicator said
+        # "Working" through every /compact (reported 2026-09-16). Stored on the
+        # claim beside the model and the agent, so a reload and a second tab
+        # read the same answer as the tab that pressed the button.
+        command=content.strip() if _is_raw_command(content) else None,
         # The claim is taken now; the LOG MARKER waits until the message that
         # caused this turn is recorded, just below. Otherwise the log says a turn
         # began before the message that began it. See chat_store.mark_turn_started.
