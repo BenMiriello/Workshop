@@ -419,3 +419,56 @@ def test_the_git_binds_come_after_the_mountpoint_bind(tmp_path):
     assert binds
     for src, _ in binds:
         assert argv.index(src) > mount_at
+
+
+# ---- what a confined turn can SEE, without binding anything ----------------
+# `host_path_visible` is the read-only complement of wrap(): it answers "would
+# this host path still exist, at this spelling, inside a turn scoped here?".
+# Written because the workshop MCP server is launched from the BACKEND's own
+# interpreter and script, so a turn scoped to a project cannot exec it and the
+# CLI drops it silently -- see services/chat_context._grants_workshop_tool.
+
+
+def test_a_path_under_the_scope_root_is_visible(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    root = tmp_path / "scope"
+    (root / "sub").mkdir(parents=True)
+    assert scoped_exec.host_path_visible(str(root / "sub"), str(root))
+    assert scoped_exec.host_path_visible(str(root), str(root))
+
+
+def test_a_path_outside_the_scope_root_is_not(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    root = tmp_path / "scope"
+    root.mkdir()
+    sibling = tmp_path / "elsewhere"
+    sibling.mkdir()
+    assert not scoped_exec.host_path_visible(str(sibling), str(root))
+    # The near miss that a prefix compare gets wrong: a sibling whose name
+    # STARTS with the root's.
+    twin = tmp_path / "scope-2"
+    twin.mkdir()
+    assert not scoped_exec.host_path_visible(str(twin), str(root))
+
+
+def test_the_system_binds_are_visible_because_wrap_binds_them(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    root = tmp_path / "scope"
+    root.mkdir()
+    assert scoped_exec.host_path_visible("/usr/bin/env", str(root))
+
+
+def test_no_scope_root_means_nothing_is_visible(monkeypatch):
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    assert not scoped_exec.host_path_visible("/usr/bin/env", None)
+    assert not scoped_exec.host_path_visible("", "/tmp")
+
+
+def test_off_means_the_real_filesystem(monkeypatch, tmp_path):
+    # An unconfined turn genuinely sees the host, so the answer is just "does
+    # it exist" -- and a missing path is still missing.
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "0")
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    assert scoped_exec.host_path_visible(str(outside), str(tmp_path / "scope"))
+    assert not scoped_exec.host_path_visible(str(tmp_path / "nope"), str(tmp_path))

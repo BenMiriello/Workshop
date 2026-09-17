@@ -270,6 +270,39 @@ def set_default_permission_mode(mode: str | None) -> str | None:
     return value
 
 
+def get_timezone() -> str | None:
+    """The user's own IANA timezone, or None for "not set".
+
+    Not set is a real answer and the common one: `services/clock` then falls
+    back to what the installation declares, and finally to UTC labelled as UTC.
+    An unspellable stored value reads as not set rather than raising, for the
+    same reason `get_default_effort` does -- a hand-edited prefs file must not be
+    able to fail a turn, and this value is read on the way into every prompt.
+    """
+    v = _read_prefs().get("timezone")
+    if not isinstance(v, str):
+        return None
+    return v.strip() or None
+
+
+def set_timezone(name: str | None) -> str | None:
+    """Persist the user's timezone. Empty/None clears it. Returns what was stored.
+
+    Raises ValueError on a name this host's tz database does not know, because
+    unlike a read this is somebody looking at the control: a zone that cannot be
+    loaded would silently read back as "not set" and the screen would show UTC
+    next to the name they just picked.
+    """
+    from zoneinfo import available_timezones
+
+    value = (name or "").strip() or None
+    if value is not None and value not in available_timezones():
+        raise ValueError(
+            f"unknown timezone {name!r}; use an IANA name such as Etc/UTC")
+    _write_pref("timezone", value)
+    return value
+
+
 def _loop_running() -> bool:
     """Is there an event loop to hand background work to? See append_message."""
     try:

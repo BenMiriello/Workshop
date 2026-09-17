@@ -10810,6 +10810,8 @@ export interface components {
             default_mode?: string | null;
             /** Default Permission Mode */
             default_permission_mode?: string | null;
+            /** Timezone */
+            timezone?: string | null;
         };
         /**
          * ChatPrefsOut
@@ -10834,6 +10836,12 @@ export interface components {
             permission_modes: string[];
             /** Platform Permission Mode */
             platform_permission_mode: string;
+            /** Resolved Timezone */
+            resolved_timezone?: string | null;
+            /** Timezone */
+            timezone?: string | null;
+            /** Timezone Source */
+            timezone_source?: string | null;
         };
         /**
          * ChatTimeseries

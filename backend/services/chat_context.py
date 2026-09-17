@@ -887,13 +887,49 @@ def _grants_workshop_tool(provider: "ContextProvider", tool_id: str) -> bool:
     absent from exactly the chats that most obviously had the tool: measured
     2026-09-01, `_grants_background` answered False for BOTH a narrow chat and a
     build chat, so the sentence it gates was reaching nobody at all.
+
+    BUT "the server is attached" IS NOT "the server starts". Full inheritance
+    puts the workshop server in the turn's `--mcp-config`; a CONFINED turn then
+    has to be able to exec it, and the spec is the backend's own interpreter,
+    script and PYTHONPATH (`app_registry._platform_mcp_servers`). Those are
+    inside a `development` scope, whose root IS the platform checkout, and
+    nowhere inside a `project:<slug>` scope. The CLI drops a server it cannot
+    launch without saying so, so this answered True for a project chat while the
+    chat had ZERO `mcp__workshop__*` tools -- L1 naming every one of them, which
+    is precisely the told-but-absent error `services/orientation` exists to
+    prevent. Measured 2026-09-17. Serving the server over loopback instead is
+    ticket `1e2b7f87`; until then the grant answers what is true, so the map
+    goes honestly silent rather than confidently wrong.
     """
     try:
         if is_build_provider(provider):
-            return True
+            return _mcp_server_reachable(tool_id, getattr(provider, "dir", None))
         return tool_id in effective_allowed_tools(provider)
     except Exception:
         return False
+
+
+def _mcp_server_of(tool_id: str) -> str | None:
+    """The MCP server a tool id names, or None for a built-in tool that needs no
+    server. `mcp__<server>__<tool>` is the CLI's own spelling and the thing an
+    allowlist matches, which is why the id carries the server at all
+    (`tool_registry._mcp_id`)."""
+    if not tool_id.startswith("mcp__"):
+        return None
+    server, sep, _rest = tool_id[len("mcp__"):].partition("__")
+    return server if sep and server else None
+
+
+def _mcp_server_reachable(tool_id: str, scope_dir) -> bool:
+    """Can the turn standing in `scope_dir` actually launch the server this tool
+    lives on? A built-in tool has no server and is always reachable."""
+    server = _mcp_server_of(tool_id)
+    if server is None:
+        return True
+    from services import app_registry
+
+    return app_registry.mcp_server_reachable(
+        server, str(scope_dir) if scope_dir else None)
 
 
 def _grants_background(provider: "ContextProvider") -> bool:
@@ -1225,6 +1261,7 @@ def _detect_stack(dir_path) -> tuple[list[str], bool]:
 # here is how the default came to be stated in two places, and a default stated
 # twice is a default that can disagree with itself.
 from services.chat_store import CHAT_MODES, DEFAULT_CHAT_MODE  # noqa: E402,F401
+from services import clock as _clock  # noqa: E402
 
 
 def chat_mode_block(mode: str | None) -> str:
@@ -1361,26 +1398,53 @@ def clock_line() -> str:
     trusts, which is worse than no clock. This block is re-sent every turn by
     both prompt paths, so the reading is always this turn's.
 
-    The zone is the installation's, declared or taken from the host
-    (services/installation): a wake-up asked for at "16:30" means the operator's
-    afternoon, so the clock the assistant reads has to be the same clock the
-    alarm is set against.
-    """
-    from services import installation as _inst
+    TWO READINGS, NOT ONE, and UTC is named first because it is the canonical
+    one: every timestamp this system stores is UTC, so an event's stored stamp
+    and the clock in this block are directly comparable only in that zone. With
+    a local reading alone, a turn correlating a row, a log line and a calendar
+    entry had nothing to convert through and would shell out for `date` to get
+    what the prompt could simply have said.
 
-    now = _inst.local_now()
-    zone = _inst.timezone_name()
-    offset = now.strftime("%z")
-    offset = f"UTC{offset[:3]}:{offset[3:]}" if offset else "an unknown offset"
-    where = f" in {zone}" if zone else ""
+    The local reading is the same instant in whatever zone `services/clock`
+    resolves -- the user's own setting, else what the installation declares,
+    else UTC. It is stated because a bare "16:30" from a person means their
+    afternoon, so the clock an assistant reads has to be the clock an alarm is
+    set against; and the rung is named because "the user said so" and "the host
+    happens to be set this way" are different degrees of confidence, and only
+    the first is worth acting on without asking.
+
+    Nothing here hardcodes a zone. The name and offset are interpolated from
+    configuration at render time, which is what keeps this block platform text
+    (scripts/check_prompt_layers.py).
+    """
+    utc = _clock.utc_now()
+    zone, rung, tz = _clock.resolve()
+    utc_reading = f"UTC: {utc.strftime('%A %-d %B %Y, %H:%M')}."
+    head = "=== THE TIME NOW ===\n"
+    if rung == "utc":
+        return (
+            head + utc_reading + " UTC is the canonical clock here and no local "
+            "zone is set, so this is the only reading there is. Label every time "
+            "you report as UTC rather than implying a local hour, and if local "
+            "time matters, ask -- it is a setting the user can fill in. Read at "
+            "the start of this turn; a long turn drifts from it, so read it "
+            "again if an hour matters."
+        )
+    local = utc.astimezone(tz)
+    whose = ("the zone the user set" if rung == "user"
+             else "the zone this installation is configured for")
     return (
-        "=== THE TIME NOW ===\n"
-        f"{now.strftime('%A %-d %B %Y, %H:%M')}{where} ({offset}). "
-        "That is local time on this installation, read at the start of this "
-        "turn, and every scheduled thing here is expressed against it. Use it "
-        "rather than guessing the date or working from when the conversation "
-        "started; a long turn drifts from it, so read it again if an hour "
-        "matters."
+        head + utc_reading + "\n"
+        f"Local: {local.strftime('%A %-d %B %Y, %H:%M')} in {zone} "
+        f"({_clock.offset_label(local)}), {whose}.\n"
+        "Those are one instant. UTC is what is stored and what to compute in; "
+        "the local reading is what to say out loud. So convert an event's stored "
+        "stamp into local before quoting an hour, label a time when the zone is "
+        "not obvious, and read a bare clock time from the user as local. Every "
+        "scheduled thing here is expressed against the local clock. Both "
+        "readings were taken at the start of this turn rather than when the "
+        "conversation began; a long turn drifts from them, so read again if an "
+        "hour matters."
     )
 
 

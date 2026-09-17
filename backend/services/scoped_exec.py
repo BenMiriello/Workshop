@@ -327,6 +327,56 @@ def _remap(arg: str, root: str) -> str:
     return arg
 
 
+def _under(path: str, base: str) -> bool:
+    return path == base or path.startswith(base.rstrip("/") + "/")
+
+
+def host_path_visible(path: str | None, root: str | None) -> bool:
+    """Would this HOST path still exist, at this spelling, inside a turn confined
+    to `root`? The read-only complement of `wrap()`: it answers from the same
+    three sources `wrap()` binds and `_remap()` rewrites, and it binds nothing.
+
+    This exists so a caller can tell the truth about a capability that depends on
+    a host path. The workshop MCP server is the case it was written for: its
+    launch spec carries the BACKEND's own interpreter, script and PYTHONPATH
+    (`app_registry._platform_mcp_servers`), and the CLI silently drops a server
+    whose command it cannot exec. A turn scoped to a project never has the
+    platform checkout in its mount namespace, so that server is simply absent
+    there, and anything that promised its tools was promising nothing.
+
+    An UNCONFINED turn (`WORKSHOP_SCOPED_EXEC=0`, or a host that cannot
+    namespace) sees the real filesystem, so every existing path is visible.
+
+    Confined, a path is visible when it is:
+      - under the scope root, which `_remap` rewrites onto MOUNTPOINT;
+      - under `_RO_SYSTEM`, bound read-only at its real location;
+      - under the CLI's own install root (`_cli_root`), same;
+      - under a grant whose `dest` equals its `src`, so it is still reachable by
+        the name the caller knows. A grant that lands somewhere ELSE (the uid
+        layer's two `~/.claude` policy files) is NOT visible at this spelling,
+        and argv is not rewritten for it.
+
+    Anything else is absent, including the host's own `/tmp`, which `wrap()`
+    replaces with a fresh tmpfs.
+    """
+    if not path:
+        return False
+    if not enabled():
+        return os.path.exists(path)
+    if not root:
+        return False
+    p = os.path.realpath(path)
+    r = os.path.realpath(root)
+    if _under(p, r):
+        return True
+    if any(_under(p, base) for base in _RO_SYSTEM):
+        return True
+    cli_root = _cli_root()
+    if cli_root and _under(p, cli_root):
+        return True
+    return any(src == dest and _under(p, src) for _mode, src, dest in _grants(r))
+
+
 def _git_worktree_binds(root: str) -> list[tuple[str, str]]:
     """Extra read-write binds a LINKED GIT WORKTREE needs to be a git repo at all.
 

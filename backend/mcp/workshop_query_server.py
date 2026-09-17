@@ -314,8 +314,9 @@ WAKE_TOOL_SCHEMA = {
             "description": (
                 "Wake at a specific time. A 24-hour clock time like '16:30' "
                 "means the next time the clock reads that; a full date and time "
-                "like '2026-01-31T09:15' means that instant. Read in this "
-                "installation's own timezone unless the value states an offset. "
+                "like '2026-01-31T09:15' means that instant. Read in the "
+                "local timezone in force (see THE TIME NOW) unless the value "
+                "states an offset. "
                 "Use this OR `in_minutes`."
             ),
         },
@@ -1178,7 +1179,7 @@ def _run_wake(args: dict) -> str:
     if not thread:
         return "Cannot arm a wake-up: this tool is not bound to a chat."
     _pin_owner()
-    from services import installation, wakeups
+    from services import clock, wakeups
 
     try:
         when = wakeups.resolve_when(in_minutes=args.get("in_minutes"),
@@ -1189,7 +1190,7 @@ def _run_wake(args: dict) -> str:
         # this tool is that the alarm goes off when it was meant to, so a time
         # that could not be read is worth one sentence saying so.
         return f"No wake-up was armed: {e}."
-    local = when.astimezone(installation.local_tzinfo())
+    local = when.astimezone(clock.tzinfo())
     return (
         f"Wake-up armed (id {record['id']}) for "
         f"{local.strftime('%Y-%m-%d %H:%M %Z').strip()}. A new turn will start "

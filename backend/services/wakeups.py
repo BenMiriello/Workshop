@@ -119,8 +119,9 @@ def arm(thread_id: str, *, reason: str, due_at: datetime) -> dict:
     """Arm one wake-up and return its record.
 
     `due_at` is stored in UTC whatever it arrives in, so a comparison never
-    depends on the reader's zone, and rendered back in the installation's zone
-    where a person or a model reads it.
+    depends on the reader's zone, and rendered back in the local zone
+    `services/clock` resolves -- the user's own setting where they made one,
+    else the installation's -- wherever a person or a model reads it.
     """
     reason = (reason or "").strip()
     if not reason:
@@ -191,16 +192,18 @@ def resolve_when(*, in_minutes: float | int | None = None, at: str | None = None
     """Turn what a caller asked for into an absolute instant.
 
     Exactly one of the two forms. `in_minutes` is relative and needs no zone at
-    all. `at` is absolute and is read in the INSTALLATION's zone unless it says
-    otherwise, because a bare "16:30" from an assistant means the operator's
-    afternoon, never UTC's.
+    all. `at` is absolute and is read in the LOCAL zone in force unless it says
+    otherwise, because a bare "16:30" from an assistant means the user's
+    afternoon, never UTC's. That zone is whatever `services/clock` resolves, so
+    a user who set their own timezone gets alarms on their clock rather than on
+    whichever one the host happens to be set to.
 
     Raises ValueError with a sentence the model can act on. A wake-up that
     silently lands at the wrong hour is worse than one that is refused.
     """
-    from services import installation
+    from services import clock
 
-    tz = installation.local_tzinfo()
+    tz = clock.tzinfo()
     now = (now or _now()).astimezone(tz)
     has_rel = in_minutes is not None
     has_abs = bool((at or "").strip())
@@ -242,11 +245,11 @@ def resolve_when(*, in_minutes: float | int | None = None, at: str | None = None
 
 def render(record: dict) -> str:
     """One armed wake-up, as a line for whoever asked what is armed."""
-    from services import installation
+    from services import clock
 
     try:
         when = datetime.fromisoformat(str(record.get("due_at"))).astimezone(
-            installation.local_tzinfo())
+            clock.tzinfo())
         stamp = when.strftime("%Y-%m-%d %H:%M %Z").strip()
     except ValueError:  # pragma: no cover - defensive
         stamp = str(record.get("due_at"))

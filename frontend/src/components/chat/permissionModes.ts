@@ -19,17 +19,21 @@ import { FastForward, Map, Pause, ShieldOff, Zap } from "lucide-react";
 export type PermissionModeDef = {
   id: string;
   label: string;
-  // One line, shown in the menu row. It says what runs WITHOUT asking, because
-  // that is the actual difference between these modes.
+  // One line, shown in the menu row. It says what runs without asking AND what
+  // still stops to ask, because the difference between these modes is where
+  // that line falls, not whether there is one.
   hint: string;
   Icon: typeof Map;
   // Renders in the danger tone: nothing is checked in this mode.
   danger?: boolean;
 };
 
-// The hints are one clause each, saying only what runs without asking. They were
-// two sentences of explanation; the operator asked for plain compact facts, not
-// a description of each mode's character.
+// The hints are short clauses of plain fact. They were two sentences of
+// explanation; the operator asked for plain compact facts, not a description of
+// each mode's character. What a hint may never do is promise the absence of a
+// prompt this deployment will still show: `bypassPermissions` is the only mode
+// launched without an approval channel, so it is the only one that may claim to
+// never ask.
 const DEFS: Record<string, PermissionModeDef> = {
   default: {
     id: "default",
@@ -58,7 +62,14 @@ const DEFS: Record<string, PermissionModeDef> = {
   auto: {
     id: "auto",
     label: "Auto",
-    hint: "Acts without asking. Background safety checks.",
+    // NOT "acts without asking", which is what this said until 2026-09-17 and
+    // is false here: `model_caps.NEEDS_APPROVAL_CHANNEL` covers every mode but
+    // bypass, so an auto turn is launched WITH an approval channel and does
+    // stop when the safety check gates a call. The operator reported exactly
+    // that promise being broken ("it should not be asking me for permissions
+    // when it is in auto mode"), and the honest fix for a hint is to describe
+    // the mode that exists rather than to offer the one that never asks.
+    hint: "Acts on its own. Stops for a call the safety check gates.",
     Icon: Zap,
   },
   bypassPermissions: {
@@ -69,6 +80,11 @@ const DEFS: Record<string, PermissionModeDef> = {
     danger: true,
   },
 };
+
+// Every mode this table can say, for tests and for anything that has to walk
+// the set. NOT what the picker offers: that is `Provider.modes.options`, a
+// runtime fact from the backend (see the note at the top of this file).
+export const PERMISSION_MODE_IDS: readonly string[] = Object.keys(DEFS);
 
 // An unknown id renders under its own name rather than vanishing, so a mode the
 // backend adds is usable before this table knows it.

@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Pencil,
   Library,
+  Clock,
 } from "lucide-react";
 import { ActionBar, Button, ConfirmDialog, PageHeader, ReadOnly, Segmented, Select, StatusDot, useEditMode, useTheme, usePalette, useResolvedMode, PalettePicker, StatusPill, Input, Skeleton, StateBlock, Notice, type SegmentedOption, type ThemeMode, SettingsSection as Section, SettingsRow as Row, timeAgo, native, startDeviceTracking, stopDeviceTracking, useNative, useTrackingStatus } from "@workshop/ui";
 import { chatApi, type ChatPrefs } from "../lib/chat";
@@ -89,6 +90,11 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
       {tab === "account" && (
         <>
           <AccountSection />
+          {/* WHICH CLOCK this account's times are read in. It sits under
+              Account rather than Appearance because it is not a presentation
+              preference: it is a fact about the person, and every agent turn is
+              told it so an event can be reported in their hours. */}
+          <TimezoneSection />
           {/* Native-shell only; renders nothing in a browser. It belongs to
               this signed-in session's device, so it sits under Account. */}
           <DeviceSection />
@@ -896,6 +902,172 @@ function ChatSection() {
       {saveErr && (
         <Notice tone="error" detail={saveErr} where="POST /api/chat/prefs">
           Couldn't save chat settings.
+        </Notice>
+      )}
+    </Section>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Timezone — which clock this account's times are read in
+// ----------------------------------------------------------------------------
+// UTC IS CANONICAL AND THIS SETTING DOES NOT CHANGE THAT. Everything is stored
+// in UTC; this says which zone a time is PRESENTED in, and it is what every
+// agent turn is told alongside the UTC reading (backend `services/clock.py`,
+// `chat_context.clock_line`) so an event can be reported in the user's hours.
+//
+// THE BROWSER IS A SUGGESTION, NEVER A WRITER. `Intl` knows this browser's zone
+// and the row offers it as a button the user presses. It is not adopted on load
+// and it is not adopted on a mismatch: a user with a work browser, a phone and a
+// laptop that travelled would have the zone rewritten by whichever one connected
+// last, and every armed wake-up would move with it. A clock that follows the
+// most recent device is worse than one that is merely wrong, because there is
+// nothing stable in it to correct.
+//
+// It shares `/api/chat/prefs` with the chat defaults because that is the one
+// per-owner prefs store this screen already writes. A second settings store for
+// one field is how two answers to the same question start.
+
+/** Every zone this browser's ICU data knows, or [] on a runtime without the
+ *  ES2022 accessor — in which case the row still renders and still shows what is
+ *  in force, it just cannot offer the full list. */
+function browserZones(): string[] {
+  try {
+    return Intl.supportedValuesOf("timeZone");
+  } catch {
+    return [];
+  }
+}
+
+/** This browser's own guess at where it is. "UTC" on a machine that has none. */
+function browserZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+/** The clock reading in `zone` right now, for the caption that confirms a
+ *  choice. Empty when the browser cannot format that zone, rather than throwing
+ *  inside a render. */
+function readingIn(zone: string): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone: zone, hour: "numeric", minute: "2-digit", weekday: "short",
+    }).format(new Date());
+  } catch {
+    return "";
+  }
+}
+
+function TimezoneSection() {
+  const [prefs, setPrefs] = useState<ChatPrefs | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    void chatApi.getChatPrefs()
+      .then((p) => { if (live) setPrefs(p); })
+      .catch((e) => { if (live) setErr(String(e)); });
+    return () => { live = false; };
+  }, []);
+
+  const save = useCallback(async (zone: string) => {
+    setSaveErr(null);
+    setSaving(true);
+    try {
+      setPrefs(await chatApi.setChatPrefs({ timezone: zone }));
+    } catch (e) {
+      setSaveErr(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  if (err) {
+    return (
+      <Section icon={Clock}>
+        <StateBlock
+          variant="error"
+          title="Couldn't load your timezone"
+          hint={`GET /api/chat/prefs failed: ${err}`}
+        />
+      </Section>
+    );
+  }
+  if (!prefs) {
+    return (
+      <Section icon={Clock}>
+        <Row label="timezone"><Skeleton width="16rem" style={{ height: "var(--control-h)" }} /></Row>
+      </Section>
+    );
+  }
+
+  const set = prefs.timezone ?? NO_PREFERENCE;
+  const inForce = prefs.resolved_timezone || "UTC";
+  const source = prefs.timezone_source || "utc";
+  const zones = browserZones();
+  const here = browserZone();
+  const reading = readingIn(inForce);
+
+  // What "not set" is honest about depends on what answers instead: the zone
+  // this installation is configured for, or UTC.
+  const unsetLabel = source === "installation"
+    ? `Not set: using this installation's zone (${inForce})`
+    : "Not set: times are UTC";
+
+  // The list comes from the browser, so a stored zone this browser's ICU data
+  // has never heard of would have no option to select and the control would
+  // render blank. Carry it rather than dropping it.
+  const options = set && !zones.includes(set) ? [set, ...zones] : zones;
+
+  return (
+    <Section icon={Clock}>
+      <Row
+        label="timezone"
+        hint={
+          <>
+            Optional. Times are stored in UTC and shown to you in this zone, and
+            every chat is told both readings so it can report an event in your
+            hours.{reading ? ` It is ${reading} in ${inForce} now.` : ""}
+          </>
+        }
+      >
+        <Select
+          value={set}
+          onChange={(e) => { void save(e.target.value); }}
+          disabled={saving}
+          aria-label="Your timezone"
+        >
+          <option value={NO_PREFERENCE}>{unsetLabel}</option>
+          {options.map((z) => <option key={z} value={z}>{z}</option>)}
+        </Select>
+      </Row>
+
+      {/* THE PREFILL, and the only thing the browser is allowed to do here. It
+          appears when this browser disagrees with what is set, and it writes
+          only when pressed. */}
+      {here !== set && (
+        <Row
+          label="this browser"
+          hint="Detected from this browser. Nothing is saved until you use it, and switching browsers never changes your setting on its own."
+        >
+          <span style={{ display: "inline-flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
+            <ReadOnly value={here} />
+            <Button size="sm" variant="ghost" loading={saving} disabled={saving}
+                    onClick={() => { void save(here); }}>
+              Use this
+            </Button>
+          </span>
+        </Row>
+      )}
+
+      {saveErr && (
+        <Notice tone="error" detail={saveErr} where="POST /api/chat/prefs">
+          Couldn't save your timezone.
         </Notice>
       )}
     </Section>

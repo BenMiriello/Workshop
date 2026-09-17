@@ -466,6 +466,15 @@ class ChatPrefsOut(BaseModel):
     default_permission_mode: str | None = None
     permission_modes: list[str]
     platform_permission_mode: str
+    # `timezone` is what the user SET (null = not set); `resolved_timezone` is
+    # the zone the platform is keeping time in either way, and
+    # `timezone_source` names the rung of services/clock that answered
+    # ("user", "installation" or "utc"). The screen needs all three: an unset
+    # setting still has times rendered beside it, and those times are in some
+    # zone the user is entitled to see named.
+    timezone: str | None = None
+    resolved_timezone: str | None = None
+    timezone_source: str | None = None
 
 
 # --------------------------------------------------------------------- events

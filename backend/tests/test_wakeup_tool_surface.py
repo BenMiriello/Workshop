@@ -16,6 +16,9 @@ make.
 from __future__ import annotations
 
 
+import datetime as _dt
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from mcp import workshop_query_server as wqs
@@ -133,6 +136,64 @@ def test_the_grant_is_computed_not_assumed_for_both_kinds_of_chat():
         assert cc._grants_background(build) is True
 
 
+# ---- and a grant is not a grant unless the server can START ---------------
+# Full agentic inheritance ATTACHES the workshop server; a confined turn still
+# has to exec it, and its launch spec is the backend's own interpreter, script
+# and PYTHONPATH. Those are inside the `development` scope, whose root IS the
+# platform checkout, and nowhere inside a `project:<slug>` scope. The CLI drops
+# a server it cannot launch without saying so, which is how a project chat came
+# to be handed an L1 manifest naming every `mcp__workshop__*` tool while holding
+# none of them. Measured 2026-09-17; the real fix (serve it over loopback) is
+# ticket `1e2b7f87`, and this half only stops the prompt lying in the meantime.
+
+
+def test_a_development_chat_keeps_the_tools_its_scope_can_actually_launch(monkeypatch):
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    dev = cc.DevelopmentContextProvider()
+    assert cc.is_build_provider(dev)
+    assert cc._grants_wakeup(dev) is True
+    assert cc._grants_background(dev) is True
+    manifest = cc.orientation_manifest(dev)
+    assert "wake_me" in manifest and "spawn_background" in manifest
+
+
+def test_a_project_chat_is_not_told_about_a_server_it_cannot_reach(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    proj = cc.ProjectContextProvider("no-such-project")
+    # A real project directory: outside the platform checkout, which is the
+    # whole point. `tmp_path` makes that true on any host.
+    proj.dir = tmp_path
+    assert cc.is_build_provider(proj)
+    assert cc._grants_wakeup(proj) is False
+    assert cc._grants_background(proj) is False
+    assert cc._grants_notify(proj) is False
+
+
+def test_the_map_goes_SILENT_rather_than_hedging_about_what_it_cannot_reach(
+        monkeypatch, tmp_path):
+    """Honest silence, not "wake_me may be available". The manifest's own rule."""
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    proj = cc.ProjectContextProvider("no-such-project")
+    proj.dir = tmp_path
+    manifest = cc.orientation_manifest(proj)
+    assert manifest, "the scope line is still worth sending"
+    for absent in ("wake_me", "list_wakeups", "cancel_wakeup", "spawn_background"):
+        assert absent not in manifest, f"the map names {absent}, which cannot start here"
+    lowered = manifest.lower()
+    for hedge in ("if it is available", "if available", "may be available"):
+        assert hedge not in lowered
+
+
+def test_an_unconfined_turn_is_unaffected(monkeypatch, tmp_path):
+    """`WORKSHOP_SCOPED_EXEC=0` is a real configuration: the turn sees the host
+    filesystem, so the server it is handed does start and the grant stands."""
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "0")
+    proj = cc.ProjectContextProvider("no-such-project")
+    proj.dir = tmp_path
+    assert cc._grants_wakeup(proj) is True
+    assert cc._grants_background(proj) is True
+
+
 def test_the_chat_that_has_it_is_told_it_has_it():
     block = cc.delegation_block(True, is_build=True, background=True, wakeup=True)
     assert "wake_me" in block
@@ -194,15 +255,69 @@ def test_the_clock_moves(monkeypatch):
     """It goes on the per-turn contract rather than the once-only prefix, which
     is the whole reason it is here and not in the orientation manifest: a clock
     sent at session spawn and never again is a stale number the model trusts."""
-    from services import installation
+    from services import clock
 
     monkeypatch.setenv("WORKSHOP_TIMEZONE", "UTC")
     first = cc.clock_line()
-    real = installation.local_now
-    monkeypatch.setattr(installation, "local_now",
-                        lambda: real().replace(year=2027))
+    real = clock.utc_now
+    monkeypatch.setattr(clock, "utc_now", lambda: real().replace(year=2027))
     assert cc.clock_line() != first
     assert "2027" in cc.clock_line()
+
+
+def test_the_clock_states_utc_alongside_the_local_reading(monkeypatch):
+    """UTC is canonical -- it is what every stored stamp is in -- so a turn
+    correlating a row with a log line has to be given it rather than having to
+    shell out for `date` to convert the one local reading it was handed."""
+    monkeypatch.setattr("services.chat_store.get_timezone", lambda: None)
+    monkeypatch.setenv("WORKSHOP_TIMEZONE", "Asia/Tokyo")
+    line = cc.clock_line()
+    assert "UTC:" in line
+    assert "Local:" in line
+    assert "Asia/Tokyo" in line
+    utc = _dt.datetime.now(_dt.timezone.utc)
+    assert utc.strftime("%H:%M") in line
+    assert utc.astimezone(ZoneInfo("Asia/Tokyo")).strftime("%H:%M") in line
+
+
+def test_the_users_own_zone_outranks_the_installations(monkeypatch):
+    """The rung that had no way to exist before: a host in a data centre, a
+    laptop that travelled and a container built at UTC all report a clock the
+    user does not live in."""
+    monkeypatch.setenv("WORKSHOP_TIMEZONE", "Asia/Tokyo")
+    monkeypatch.setattr("services.chat_store.get_timezone",
+                        lambda: "Europe/Berlin")
+    line = cc.clock_line()
+    assert "Europe/Berlin" in line
+    assert "Asia/Tokyo" not in line
+    # And the block says WHOSE zone it is, because "the user said so" and "the
+    # host happens to be set this way" are different degrees of confidence.
+    assert "the zone the user set" in line
+
+
+def test_with_no_zone_anywhere_the_block_says_utc_and_asks(monkeypatch):
+    """The fallback is UTC LABELLED as UTC. A guessed local zone would be
+    indistinguishable from a correct one in every reading it produced."""
+    monkeypatch.setattr("services.chat_store.get_timezone", lambda: None)
+    monkeypatch.setenv("WORKSHOP_TIMEZONE", "")
+    monkeypatch.setenv("TZ", "")
+    monkeypatch.setattr("services.installation._host_zone_name", lambda: "")
+    line = cc.clock_line()
+    assert "UTC is the canonical clock here and no local zone is set" in line
+    assert "Local:" not in line
+
+
+def test_a_zone_this_host_cannot_load_is_skipped_not_quoted(monkeypatch):
+    """A name that will not load cannot be converted through, so it must not be
+    quoted at a model as though it had been."""
+    from services import clock
+
+    monkeypatch.setattr("services.chat_store.get_timezone",
+                        lambda: "Mars/Olympus_Mons")
+    monkeypatch.setenv("WORKSHOP_TIMEZONE", "Asia/Tokyo")
+    name, rung, _ = clock.resolve()
+    assert (name, rung) == ("Asia/Tokyo", "installation")
+    assert "Mars/Olympus_Mons" not in cc.clock_line()
 
 
 def test_the_clock_survives_an_installation_that_declares_no_zone(monkeypatch):

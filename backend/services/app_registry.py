@@ -444,6 +444,50 @@ def _platform_mcp_servers() -> dict[str, dict]:
     }
 
 
+def _stdio_host_paths(spec: dict) -> list[str]:
+    """The absolute HOST paths a stdio launch spec must be able to see to start:
+    its interpreter, any absolute argv entry, and any absolute PYTHONPATH entry.
+    Relative entries and bare flags are skipped, since they are not paths this
+    process can resolve on the child's behalf."""
+    out: list[str] = []
+    command = spec.get("command")
+    if isinstance(command, str) and os.path.isabs(command):
+        out.append(command)
+    for arg in spec.get("args") or []:
+        if isinstance(arg, str) and os.path.isabs(arg):
+            out.append(arg)
+    pythonpath = (spec.get("env") or {}).get("PYTHONPATH") or ""
+    out += [e for e in pythonpath.split(os.pathsep) if e and os.path.isabs(e)]
+    return out
+
+
+def mcp_server_reachable(name: str, scope_root: str | None) -> bool:
+    """Can a turn CONFINED TO `scope_root` actually launch this MCP server?
+
+    A stdio server is a command on this host, and a confined turn only sees its
+    own scope plus a fixed grant set (`services/scoped_exec`). The CLI does not
+    report a server whose command it cannot exec -- it drops it -- so a caller
+    that assumes the server is there will describe tools the turn does not have.
+    This is the question to ask before making that claim.
+
+    The platform's own server is the live case: it is launched from the
+    BACKEND's interpreter, script and PYTHONPATH, none of which are inside a
+    `project:<slug>` scope, so it is absent from a project turn and present in a
+    development turn, whose scope root IS the platform checkout.
+
+    A server declared over a URL rather than a command has no host path to be
+    missing and is reachable wherever the network is. An unknown name is not
+    reachable: a server this instance does not offer cannot be launched."""
+    from services import scoped_exec
+
+    spec = installed_mcp_servers().get(name)
+    if not spec:
+        return False
+    if (spec.get("type") or "stdio") != "stdio":
+        return True
+    return all(scoped_exec.host_path_visible(p, scope_root)
+               for p in _stdio_host_paths(spec))
+
 
 def installed_service_probes() -> list[tuple[str, str, str, str, tuple[int, ...]]]:
     """Every installed app's expected processes, for the service probe route."""

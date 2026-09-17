@@ -41,6 +41,7 @@ from services import tenancy
 from services import chat_queue
 from services import wakeups
 from services import chat_store, chat_context, chat_log
+from services import clock
 from services import tasks
 from services import thread_ops
 from services import task_scope
@@ -395,6 +396,10 @@ class ChatPrefs(BaseModel):
     default_mode: str | None = None
     default_effort: str | None = None
     default_permission_mode: str | None = None
+    # The user's own IANA zone. "" clears it back to "not set", which resolves
+    # to what the installation declares and finally to UTC. The browser may
+    # SUGGEST a value here; it never writes one on its own.
+    timezone: str | None = None
 
 
 def _prefs_payload() -> dict:
@@ -402,6 +407,7 @@ def _prefs_payload() -> dict:
     assumed by the client: which permission modes a chat may pick is this
     system's decision (bypass is not among them) and the effort ladder is the
     vendor's."""
+    resolved_zone, zone_source, _ = clock.resolve()
     return {
         "default_mode": chat_store.get_default_mode(),
         "modes": list(chat_context.CHAT_MODES),
@@ -413,6 +419,16 @@ def _prefs_payload() -> dict:
         "default_permission_mode": chat_store.get_default_permission_mode(),
         "permission_modes": list(model_caps.OFFERED_MODES),
         "platform_permission_mode": model_caps.DEFAULT_PERMISSION_MODE,
+        # THREE FIELDS, because "what did I set" and "what is in force" are
+        # different questions and the screen has to show both: `timezone` is the
+        # user's own setting and is null when they have not made one,
+        # `resolved_timezone` is the zone the platform is actually keeping time
+        # in, and `timezone_source` says which rung of services/clock answered.
+        # Without the last two, an unset setting renders as a blank next to
+        # times that are plainly in some zone, and the screen cannot say which.
+        "timezone": chat_store.get_timezone(),
+        "resolved_timezone": resolved_zone,
+        "timezone_source": zone_source,
     }
 
 
@@ -437,6 +453,11 @@ async def set_chat_prefs(body: ChatPrefs):
     if body.default_permission_mode is not None:
         try:
             chat_store.set_default_permission_mode(body.default_permission_mode)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    if body.timezone is not None:
+        try:
+            chat_store.set_timezone(body.timezone)
         except ValueError as e:
             raise HTTPException(400, str(e))
     return _prefs_payload()

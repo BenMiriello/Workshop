@@ -127,3 +127,58 @@ class TestCreateWithMode:
     def test_a_bad_mode_is_refused(self, client):
         assert client.post("/chat/threads",
                            json={"context_key": "general", "mode": "sideways"}).status_code == 400
+
+
+class TestTimezone:
+    """The user's own zone, which nothing could express before: the clock came
+    from WORKSHOP_TIMEZONE or from whatever the host was set to, and a host's
+    zone is not a person's zone.
+
+    UTC stays canonical either way -- this setting changes what times are
+    PRESENTED as, never what is stored -- so an unset value is a real answer and
+    resolves to UTC labelled as UTC rather than to a guess.
+    """
+
+    def test_unset_is_reported_as_null_with_the_zone_in_force_beside_it(self, client, monkeypatch):
+        """Two fields, because "what did I set" and "what is in force" are
+        different questions. Without the second, an unset setting renders as a
+        blank next to times that are plainly in some zone."""
+        monkeypatch.setenv("WORKSHOP_TIMEZONE", "Asia/Tokyo")
+        p = client.get("/chat/prefs").json()
+        assert p["timezone"] is None
+        assert p["resolved_timezone"] == "Asia/Tokyo"
+        assert p["timezone_source"] == "installation"
+
+    def test_setting_it_sticks_and_outranks_the_installation(self, client, monkeypatch):
+        monkeypatch.setenv("WORKSHOP_TIMEZONE", "Asia/Tokyo")
+        assert client.post("/chat/prefs",
+                           json={"timezone": "Europe/Berlin"}).status_code == 200
+        p = client.get("/chat/prefs").json()
+        assert p["timezone"] == "Europe/Berlin"
+        assert p["resolved_timezone"] == "Europe/Berlin"
+        assert p["timezone_source"] == "user"
+
+    def test_an_empty_string_clears_it(self, client, monkeypatch):
+        """Clearing has to be expressible: the setting is OPTIONAL, so a user
+        who set it by accident needs a way back to "not set"."""
+        monkeypatch.setenv("WORKSHOP_TIMEZONE", "Asia/Tokyo")
+        client.post("/chat/prefs", json={"timezone": "Europe/Berlin"})
+        client.post("/chat/prefs", json={"timezone": ""})
+        p = client.get("/chat/prefs").json()
+        assert p["timezone"] is None
+        assert p["resolved_timezone"] == "Asia/Tokyo"
+
+    def test_with_nothing_declared_anywhere_it_resolves_to_utc(self, client, monkeypatch):
+        monkeypatch.setenv("WORKSHOP_TIMEZONE", "")
+        monkeypatch.setenv("TZ", "")
+        monkeypatch.setattr("services.installation._host_zone_name", lambda: "")
+        p = client.get("/chat/prefs").json()
+        assert p["resolved_timezone"] == "UTC"
+        assert p["timezone_source"] == "utc"
+
+    def test_a_zone_that_is_not_a_zone_is_refused_rather_than_stored(self, client):
+        """A stored name this host cannot load would read back as "not set" and
+        the screen would show UTC beside the name just picked."""
+        assert client.post("/chat/prefs",
+                           json={"timezone": "Mars/Olympus_Mons"}).status_code == 400
+        assert client.get("/chat/prefs").json()["timezone"] is None
