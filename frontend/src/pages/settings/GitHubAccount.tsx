@@ -134,6 +134,36 @@ export default function GitHubAccount() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
+  // RE-READ WHEN THIS PAGE COMES BACK INTO VIEW, because the sign-in finishes
+  // somewhere this component cannot see.
+  //
+  // Three paths all end here and none of them re-mounts anything:
+  //   * the operator goes to github.com, authorizes, and the browser restores
+  //     this page from the back/forward cache, where `busy` is whatever it was
+  //     when the navigation started -- a Connect button still spinning for a
+  //     flow that is over;
+  //   * they press Back from github.com without authorizing, same restore,
+  //     same stuck control, and nothing else would ever clear it;
+  //   * the native shell hands github.com to the SYSTEM browser
+  //     (mobile/app/index.tsx sends any non-app origin to `Linking.openURL`),
+  //     so the sign-in completes in Safari against a different cookie jar and
+  //     the WebView is never navigated at all. It keeps saying "Not connected"
+  //     for a connection that succeeded.
+  //
+  // `pageshow` covers the bfcache restore specifically (a plain `load` event
+  // does not fire on one); `visibilitychange` covers coming back to the tab or
+  // the app. Both are cheap: one GET that returns no secret.
+  useEffect(() => {
+    const refresh = () => { setBusy(null); void load(); };
+    const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
+    window.addEventListener("pageshow", refresh);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("pageshow", refresh);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [load]);
+
   // A callback that could not finish lands back here with its sentence in the
   // query string, because the browser followed a redirect from the forge and
   // there is no response body it would ever have shown.

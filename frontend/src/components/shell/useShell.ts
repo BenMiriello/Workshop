@@ -31,6 +31,7 @@ import {
   MessagesSquare,
   Palette,
   PlayCircle,
+  Plug,
   Rocket,
   Settings as SettingsIcon,
   Tags,
@@ -90,6 +91,8 @@ const ICONS = {
   account: CircleUser,
   appearance: Palette,
   instructions: FileText,
+  // A connector is a plug: an account or service this installation is wired to.
+  connectors: Plug,
   trackers: Tags,
   models: Cpu,
   mcp: Blocks,

@@ -50,6 +50,7 @@ export type SettingsTab =
   | "appearance"
   | "chat"
   | "memory"
+  | "connectors"
   | "apps"
   | "agents";
 
@@ -58,6 +59,7 @@ const TAB_TITLE: Record<SettingsTab, string> = {
   appearance: "Appearance",
   chat: "Chat",
   memory: "Memory",
+  connectors: "Connectors",
   apps: "Apps",
   agents: "Agents",
 };
@@ -113,18 +115,28 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
           which is the question this page already answers; it had a row of its
           own because it arrived on its own, not because it is a different
           kind of thing. */}
-      {/* GITHUB FOLDS IN HERE for the same reason trackers did. The account
-          this installation pushes and opens pull requests as is a thing it is
-          connected to, and it belongs beside the tracker that spends the same
-          kind of credential. It goes ABOVE the tracker because a tracker
+      {/* CONNECTORS: the accounts and services this installation is signed in
+          to, as opposed to the apps installed in it.
+
+          GitHub and Trackers used to live under Apps, each folded in with its
+          own reasoning: the tracker because "an issue tracker is a thing this
+          installation is connected to", the GitHub account because it "belongs
+          beside the tracker that spends the same kind of credential". Both
+          arguments were right about what those two ARE and wrong about the tab
+          they were on, because the answer they kept reaching for -- a place for
+          things this installation is connected to -- did not exist yet. It does
+          now, and Apps goes back to being the installed-app catalog and nothing
+          else.
+
+          GitHub stays ABOVE the tracker, for the reason it was given: a tracker
           connection is one use of a GitHub account and this is the account. */}
-      {tab === "apps" && (
+      {tab === "connectors" && (
         <>
-          <InstalledApps />
           <GitHubAccount />
           <Trackers embedded />
         </>
       )}
+      {tab === "apps" && <InstalledApps />}
       {tab === "agents" && (
         <>
           {/* How the agent fleet runs: concurrency limits, the autonomy brake,

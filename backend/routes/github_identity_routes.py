@@ -303,6 +303,17 @@ async def authorized(code: str = "", state: str = "",
     """
     if error:
         return _back(error_description.strip() or f"GitHub refused the sign-in ({error}).")
+    # PRESSING BACK IS NOT A FAILED SIGN-IN. `location.assign` pushes the app's
+    # own entry, so after a successful connect the history holds the forge's
+    # authorize URL one step behind the settings page. Going back re-requests it
+    # with the same state; for an app already authorized the forge does not
+    # re-prompt, it mints a fresh code and redirects straight back here. Before
+    # this branch, `complete_authorize` popped a nonce that was no longer there
+    # and the operator got "That sign-in did not start here, or it took too
+    # long" on a page that was connected. Nothing is exchanged here; the
+    # connection already happened and the operator is simply put back on it.
+    if github_identity.was_spent(state):
+        return _back()
     try:
         await run_in_threadpool(github_identity.complete_authorize, code, state)
     except github_identity.GithubAuthError as e:

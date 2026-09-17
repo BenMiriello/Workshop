@@ -248,7 +248,7 @@ export default function App() {
           <Route path="/projects/:slug" element={<ProjectSlugRedirect />} />
           <Route path="/projects/:slug/run" element={<AppPreview />} />
           <Route path="/settings/grants" element={<Grants />} />
-          <Route path="/settings/trackers" element={<Navigate to="/settings/apps" replace />} />
+          <Route path="/settings/trackers" element={<Navigate to="/settings/connectors" replace />} />
           {/* Tools and MCP are one page now (places.ts). The routes stay as
               redirects: a bookmark to either is still a bookmark. */}
           <Route path="/settings/mcp" element={<Navigate to="/settings/tools" replace />} />
@@ -296,6 +296,9 @@ export default function App() {
           <Route path="/settings/appearance" element={<Settings tab="appearance" />} />
           <Route path="/settings/chat" element={<Settings tab="chat" />} />
           <Route path="/settings/memory" element={<Settings tab="memory" />} />
+          <Route path="/settings/connectors" element={<Settings tab="connectors" />} />
+          {/* NOT a redirect. /settings/apps still exists and still renders the
+              installed-app catalog; only the two connection panels moved off it. */}
           <Route path="/settings/apps" element={<Settings tab="apps" />} />
           <Route path="/settings/agents" element={<Settings tab="agents" />} />
           {/* Retired standalone routes. The "This host" tab became "Agents" on

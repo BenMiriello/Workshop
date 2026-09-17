@@ -124,7 +124,7 @@ APP_NEW_URL = "https://github.com/settings/apps/new"
 MANIFEST_REDIRECT_PATH = "/api/github/registered"
 OAUTH_CALLBACK_PATH = "/api/github/authorized"
 # Where a finished or failed flow puts the operator back.
-SETTINGS_PATH = "/settings/apps"
+SETTINGS_PATH = "/settings/connectors"
 
 # Read from the environment as a fallback so an installation that already knows
 # its registered application does not have to re-enter it. The value is a public
@@ -614,6 +614,33 @@ _STATE_REJECTED = ("That sign-in did not start here, or it took too long. "
 _states: dict[str, dict[str, Any]] = {}
 _states_lock = threading.Lock()
 
+# NONCES THAT WERE ALREADY SPENT SUCCESSFULLY, so pressing Back does not report a
+# failure for a connection that worked.
+#
+# The browser's history after a successful connect is roughly
+#     A: /settings/connectors   B: github.com/login/oauth/authorize?...state=S
+#     C: /settings/connectors
+# because `location.assign` pushes and the 303s replace. Back from C lands on B,
+# still carrying S. For an app the operator has already authorized, GitHub does
+# not re-prompt: it issues a fresh code and redirects straight back here, and
+# `_take_state` then pops nothing and raises. So the ordinary act of pressing
+# Back after a successful sign-in produced "That sign-in did not start here, or
+# it took too long. Start again from Settings." on a page that was, in fact,
+# connected.
+#
+# Nothing is weakened by remembering them. The replayed code is never exchanged:
+# the branch that reads this returns the operator to the settings page and stops.
+# A nonce is still redeemable exactly once for the purpose of COMPLETING a flow,
+# which is the property that matters. This only distinguishes "never valid here"
+# from "already done" -- and telling those apart is the whole complaint.
+#
+# Note the client cannot fix this. `location.replace()` would leave the stack as
+# [B, C], so Back still reaches B with the spent nonce AND the operator loses the
+# page they came from. The github.com entry is cross-origin and cannot be removed
+# from the client at all.
+_spent_states: dict[str, float] = {}
+_SPENT_TTL_SECONDS = 900
+
 
 def _new_state(owner_id: int, kind: str, verifier: str = "") -> str:
     """Mint a nonce for one leg of one owner's flow, and remember it."""
@@ -641,6 +668,31 @@ def _take_state(nonce: str, kind: str) -> dict[str, Any]:
     if rec is None or rec["kind"] != kind or rec["expires"] <= time.monotonic():
         raise GithubAuthError(_STATE_REJECTED)
     return rec
+
+
+def _mark_spent(nonce: str) -> None:
+    """Remember a nonce that completed its leg. See `_spent_states`."""
+    now = time.monotonic()
+    with _states_lock:
+        for key, expires in list(_spent_states.items()):
+            if expires <= now:
+                _spent_states.pop(key, None)
+        _spent_states[(nonce or "").strip()] = now + _SPENT_TTL_SECONDS
+
+
+def was_spent(nonce: str) -> bool:
+    """Did this nonce already complete a leg successfully?
+
+    True means the browser is replaying a finished flow, which is what Back does.
+    The caller sends the operator back to the settings page WITHOUT exchanging
+    the code and without an error, because nothing went wrong.
+    """
+    key = (nonce or "").strip()
+    if not key:
+        return False
+    with _states_lock:
+        expires = _spent_states.get(key)
+    return expires is not None and expires > time.monotonic()
 
 
 # ---- registering an application from a manifest -------------------------------
@@ -837,6 +889,9 @@ def complete_authorize(code: str, state: str) -> int:
     if not tok:
         raise GithubAuthError("GitHub returned no token for a completed sign-in.")
     connect_token(tok, owner, source="oauth")
+    # Remember it BEFORE returning, so pressing Back and replaying this exact
+    # nonce is recognised as a finished flow rather than reported as a failure.
+    _mark_spent(state)
     return owner
 
 

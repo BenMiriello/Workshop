@@ -64,6 +64,8 @@ const NODES: Record<string, RouteNode> = {
   "/settings": { label: "Settings" },
   "/settings/base-apps": { label: "Base Apps", parent: "/settings" },
   "/settings/grants": { label: "Grants", parent: "/settings" },
+  "/settings/connectors": { label: "Connectors", parent: "/settings" },
+  // Kept: it is a redirect source into Connectors, not a dead path.
   "/settings/trackers": { label: "Trackers", parent: "/settings" },
   "/settings/mcp": { label: "MCP servers", parent: "/settings" },
   "/settings/instructions": { label: "Instructions", parent: "/settings" },

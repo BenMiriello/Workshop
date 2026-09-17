@@ -266,9 +266,13 @@ export function buildPlaces(
       // resolves, as a redirect: this repo's agent rules name that path as the
       // home of the L3 prompt layer, so the path stays true.
       { id: "memory", label: "Memory", to: "/settings/memory", Icon: icons.memory },
+      // CONNECTORS: the accounts this installation is signed in to (the GitHub
+      // account it pushes as, the issue tracker it files to). Trackers used to
+      // fold into Apps "because a tracker is a thing an app is connected to",
+      // and the GitHub account followed it there. Both belonged to a row that
+      // did not exist yet. Apps is the installed-app catalog again.
+      { id: "connectors", label: "Connectors", to: "/settings/connectors", Icon: icons.connectors },
       { id: "apps", label: "Apps", to: "/settings/apps", Icon: icons.apps },
-      // Trackers folds into Apps, same section, same reason: a tracker is a
-      // thing an app is connected to, not a place of its own.
       // PROVIDERS, not Models. The page behind it is a credentials screen: a
       // subscription row and the API keys this installation holds. There is no
       // model list on it and no default to set, because which model a chat uses
