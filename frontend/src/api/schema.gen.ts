@@ -7071,9 +7071,11 @@ export interface paths {
         head?: never;
         /**
          * Patch Project
-         * @description Read-modify-write a small set of editable project fields. Currently only
-         *     the `concurrent_worktrees` opt-in (Phase G3); the setter exists so the UI can
-         *     toggle it. Absent fields are left unchanged.
+         * @description Read-modify-write a small set of editable project fields: the
+         *     `concurrent_worktrees` opt-in (Phase G3), and the repo binding (`set_repo`
+         *     above) -- the same write the MCP `set_repo` tool calls, so a project chat
+         *     and the UI's Repository panel go through one validated path. Absent fields
+         *     are left unchanged.
          */
         patch: operations["patch_project_projects__slug__patch"];
         trace?: never;
@@ -14367,6 +14369,10 @@ export interface components {
         ProjectPatchIn: {
             /** Concurrent Worktrees */
             concurrent_worktrees?: boolean | null;
+            /** Default Branch */
+            default_branch?: string | null;
+            /** Remote Url */
+            remote_url?: string | null;
         };
         /**
          * ProjectRepo

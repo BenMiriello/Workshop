@@ -330,6 +330,20 @@ PLATFORM_TOOLS: tuple[Tool, ...] = (
         scopes=("chat",),
         ceiling=(_mcp_id(_wqs.NOTIFY_TOOL_NAME),),
     ),
+    # Project-bound rather than chat-bound: the server offers it whenever this
+    # chat's own scope names a project (`project:<slug>`), which is a fact
+    # about the SCOPE, not about whether a thread is behind it -- see
+    # `_wqs._project_slug`. The only write tool scoped this way.
+    Tool(
+        id=_mcp_id(_wqs.SET_REPO_TOOL_NAME),
+        title="Set this project's repo",
+        description=_wqs.SET_REPO_TOOL_DESC,
+        kind="mcp",
+        provenance="platform",
+        spec={"server": _WORKSHOP_SERVER, "tool": _wqs.SET_REPO_TOOL_NAME},
+        scopes=("project",),
+        ceiling=(_mcp_id(_wqs.SET_REPO_TOOL_NAME),),
+    ),
     # ---- CLI builtins -------------------------------------------------------
     # These add description and eligibility to tools the harness already has.
     # Names are the CLI's own allowlist vocabulary (verified against the four

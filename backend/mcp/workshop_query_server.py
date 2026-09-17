@@ -385,6 +385,54 @@ NOTIFY_TOOL_SCHEMA = {
 }
 
 
+# The fifth WRITE tool, and the first that is PROJECT-bound rather than
+# chat-bound: it acts on the registry record for the project this chat's own
+# scope names, not on the chat itself. `routes.projects.connect-github` (the
+# UI's Repository panel) was the only way to set it; a project agent had Bash
+# and `git remote add/set-url`, which rewrites `.git/config` and never touches
+# the registry record worktrees and publish actually read -- exactly the
+# divergence `agent_authority.IRREVERSIBLE_PATTERNS` now blocks. This is the
+# supported door: it rides the SAME validated write (`routes.projects.set_repo`
+# -> `services.github.bind_repo` + `_repo_field`), so owner policy and
+# `reject_blocked` apply here exactly as they do in the UI.
+SET_REPO_TOOL_NAME = "set_repo"
+SET_REPO_TOOL_DESC = (
+    "Set THIS project's forge remote, through the same validated write the "
+    "Repository panel's Bind flow uses: binds `origin` to remote_url, fetches "
+    "it, and records owner/name/remote_url/default_branch in the project "
+    "registry -- the record worktrees and publish actually read. Refused for "
+    "an owner this installation has blocked, exactly like the UI. Prefer this "
+    "over `git remote add`/`set-url` in Bash (which is denied on an unattended "
+    "run anyway): that only rewrites this project's own .git/config, leaving "
+    "the registry record stale -- or still empty -- for everything else that "
+    "reads it. default_branch is optional and overrides what the remote's own "
+    "HEAD resolves to; leave it out to accept the detected branch. Only "
+    "offered inside a project's own chat."
+)
+SET_REPO_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "remote_url": {
+            "type": "string",
+            "description": (
+                "The remote to bind as `origin`, its full clone URL, e.g. "
+                "https://<host>/<owner>/<repo>.git."
+            ),
+        },
+        "default_branch": {
+            "type": "string",
+            "description": (
+                "Optional. Override the branch recorded as this project's "
+                "default. Leave out to accept the branch the remote's own "
+                "HEAD resolves to."
+            ),
+        },
+    },
+    "required": ["remote_url"],
+    "additionalProperties": False,
+}
+
+
 def _pin_owner() -> None:
     """Pin the data owner so owner-scoped stores (jobs, knowledge) resolve.
 
@@ -907,6 +955,49 @@ def _bound_thread() -> str | None:
     return t or None
 
 
+def _project_slug() -> str | None:
+    """The project this chat is bound to, or None when it is not a project
+    chat. WORKSHOP_QUERY_SCOPE carries the chat's own context_key verbatim
+    (app_registry._platform_mcp_servers), and a project chat's context_key is
+    always literally "project:<slug>" (chat_context.py), so reading the raw
+    env var needs no translation through scope_tree the way search's scope
+    filter does."""
+    raw = (os.environ.get("WORKSHOP_QUERY_SCOPE") or "").strip()
+    if raw.startswith("project:"):
+        return raw.split(":", 1)[1] or None
+    return None
+
+
+def _run_set_repo(args: dict) -> str:
+    """Bind this project's GitHub remote via the same write the UI's Bind flow
+    uses (routes.projects.set_repo). See SET_REPO_TOOL_DESC for why this is the
+    supported door and `git remote add/set-url` in Bash is not."""
+    slug = _project_slug()
+    if not slug:
+        return "Cannot set a repo: this chat is not bound to a project."
+    remote_url = (args.get("remote_url") or "").strip()
+    if not remote_url:
+        return "error: remote_url is required."
+    default_branch = (args.get("default_branch") or "").strip() or None
+    _pin_owner()
+    from routes import projects as projects_routes
+    try:
+        raw = projects_routes.set_repo(slug, remote_url, default_branch)
+    except projects_routes.ProjectNotFound:
+        return f"error: no project is registered as {slug!r}."
+    except projects_routes._GITHUB_ERRORS as e:
+        # Includes a plain ValueError: blocked owner, wrong owner, a remote
+        # bind_repo could not parse, or the blank-check above racing a caller
+        # that skipped it.
+        return f"error: {e}"
+    repo = raw.get("repo") or {}
+    return (
+        f"Bound {slug}'s repo to {repo.get('remote_url')} "
+        f"(default branch: {repo.get('default_branch')}). The project "
+        "registry now records this, so worktrees and publish see it too."
+    )
+
+
 def _bound_turn() -> str | None:
     """The TURN this server instance was spawned for, if any. Pinned at the same
     turn-start seam as the scope, owner and thread (WORKSHOP_QUERY_TURN).
@@ -944,7 +1035,7 @@ _BUILTIN_TOOL_NAMES = (
     TOOL_NAME, SEARCH_TOOL_NAME, OPEN_REF_TOOL_NAME, SPAWN_TOOL_NAME,
     WHERE_IS_TOOL_NAME, LIST_ATTACHMENTS_TOOL_NAME, GET_FILE_TOOL_NAME,
     WAKE_TOOL_NAME, LIST_WAKEUPS_TOOL_NAME, CANCEL_WAKEUP_TOOL_NAME,
-    NOTIFY_TOOL_NAME,
+    NOTIFY_TOOL_NAME, SET_REPO_TOOL_NAME,
 )
 
 # The tools that only mean anything with a chat behind them, listed once so
@@ -1013,6 +1104,11 @@ def _tool_list() -> list:
         {"name": GET_FILE_TOOL_NAME, "description": GET_FILE_TOOL_DESC,
          "inputSchema": GET_FILE_TOOL_SCHEMA},
     ]
+    # Project-bound, not chat-bound: offered whenever this chat's own scope
+    # names a project, whether or not a thread is behind it.
+    if _project_slug():
+        tools.append({"name": SET_REPO_TOOL_NAME, "description": SET_REPO_TOOL_DESC,
+                      "inputSchema": SET_REPO_TOOL_SCHEMA})
     # Only a real chat can spawn a background agent for itself, or arm an alarm
     # on itself. With no thread bound there is nothing to post back to and
     # nothing to wake.
@@ -1224,6 +1320,8 @@ def _handle(msg: dict) -> dict | None:
                 text = _run_notify(params.get("arguments") or {})
             elif name == CANCEL_WAKEUP_TOOL_NAME:
                 text = _run_cancel_wakeup(params.get("arguments") or {})
+            elif name == SET_REPO_TOOL_NAME:
+                text = _run_set_repo(params.get("arguments") or {})
             else:
                 text = _build_digest()
         except Exception as e:  # noqa: BLE001

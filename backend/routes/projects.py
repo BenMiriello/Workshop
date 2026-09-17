@@ -235,6 +235,12 @@ class ProjectPatchIn(BaseModel):
     # Minimal setter for the opt-in worktree-per-task flag (Phase G3). Additive:
     # extend with more editable fields here as needed. None = leave unchanged.
     concurrent_worktrees: bool | None = None
+    # The repo write (see `set_repo` below): binding or rebinding `origin`.
+    # `default_branch` alone (no `remote_url`) is refused rather than silently
+    # ignored -- there is no repo yet to attach it to and rebinding is cheap and
+    # idempotent, so asking for both together is never a real burden.
+    remote_url: str | None = None
+    default_branch: str | None = None
 
 
 class ImportProjectIn(BaseModel):
@@ -367,20 +373,82 @@ async def get_project(slug: str) -> Project:
     return Project(slug=slug, **raw)
 
 
+class ProjectNotFound(ValueError):
+    """No registered project has this slug. Its own type (rather than a bare
+    HTTPException) because `set_repo` below has a second, non-HTTP caller --
+    the MCP tool -- that needs to tell "not found" apart from "the write
+    itself failed" without importing FastAPI."""
+
+
+def set_repo(slug: str, remote_url: str, default_branch: str | None = None) -> dict:
+    """Bind (or rebind) a project's GitHub remote through the SAME validated
+    write `connect-github`'s `bind` mode uses (`github.bind_repo` +
+    `_repo_field`), so owner policy and `reject_blocked` apply here exactly as
+    they do there, and the registry record -- what worktrees and publish
+    actually read -- never diverges from what a raw `git remote add/set-url`
+    would leave behind. `default_branch`, when given, overrides what the
+    remote's own HEAD resolves to (e.g. the operator wants a branch other than
+    the detected default).
+
+    Raises `ProjectNotFound`, `ValueError` (blank `remote_url`, missing
+    directory) or one of `_GITHUB_ERRORS` (a `gh`/`git` failure) -- never
+    `HTTPException`, so a non-HTTP caller (the MCP tool) can call this
+    directly and render its own errors.
+    """
+    remote_url = (remote_url or "").strip()
+    if not remote_url:
+        raise ValueError("remote_url is required")
+    data = _load_registry()
+    raw = (data.get("projects") or {}).get(slug)
+    if not raw:
+        raise ProjectNotFound(slug)
+    proj_dir = Path(raw["dir"])
+    if not proj_dir.exists():
+        raise ValueError(f"project directory missing: {proj_dir}")
+
+    from services import github
+    github.reject_blocked(remote_url)
+    info = github.bind_repo(str(proj_dir), remote_url)
+    raw["repo"] = _repo_field(info)
+    branch = (default_branch or "").strip()
+    if branch:
+        raw["repo"]["default_branch"] = branch
+    raw["last_touched"] = _now()
+    data.setdefault("projects", {})[slug] = raw
+    _save_registry(data)
+    _assert_project_ignored(slug)
+    return raw
+
+
 @router.patch("/{slug}", response_model=Project)
 async def patch_project(slug: str, body: ProjectPatchIn) -> Project:
-    """Read-modify-write a small set of editable project fields. Currently only
-    the `concurrent_worktrees` opt-in (Phase G3); the setter exists so the UI can
-    toggle it. Absent fields are left unchanged."""
+    """Read-modify-write a small set of editable project fields: the
+    `concurrent_worktrees` opt-in (Phase G3), and the repo binding (`set_repo`
+    above) -- the same write the MCP `set_repo` tool calls, so a project chat
+    and the UI's Repository panel go through one validated path. Absent fields
+    are left unchanged."""
     data = _load_registry()
     raw = (data.get("projects") or {}).get(slug)
     if not raw:
         raise HTTPException(404, f"project not found: {slug}")
     if body.concurrent_worktrees is not None:
         raw["concurrent_worktrees"] = body.concurrent_worktrees
-    raw["last_touched"] = _now()
-    data.setdefault("projects", {})[slug] = raw
-    _save_registry(data)
+        raw["last_touched"] = _now()
+        data.setdefault("projects", {})[slug] = raw
+        _save_registry(data)
+    if body.remote_url is not None:
+        try:
+            raw = set_repo(slug, body.remote_url, body.default_branch)
+        except ProjectNotFound:
+            raise HTTPException(404, f"project not found: {slug}")
+        except _GITHUB_ERRORS as e:
+            # Covers a plain ValueError too (blank remote_url, missing
+            # directory, blocked owner, a remote bind_repo could not parse):
+            # _GITHUB_ERRORS includes ValueError, and _github_http_error's own
+            # fallback for anything it does not special-case is `400, str(e)`.
+            raise _github_http_error(e)
+    elif body.default_branch is not None:
+        raise HTTPException(400, "default_branch requires remote_url")
     return Project(slug=slug, **raw)
 
 

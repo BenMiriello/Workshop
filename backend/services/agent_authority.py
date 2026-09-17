@@ -211,6 +211,13 @@ IRREVERSIBLE_PATTERNS: tuple[str, ...] = (
     "Bash(sudo:*)",
     "Bash(shutdown:*)",
     "Bash(reboot:*)",
+    # `git remote add`/`set-url` rewrites .git/config directly, unsupervised
+    # and outside the registry `routes.projects.set_repo` writes -- the record
+    # worktrees and publish actually read. Denied here rather than left to
+    # look reversible: the registry never learns about it, so a later
+    # `set_repo` (or the UI's Repository panel) is the only way back to a
+    # consistent state, and nothing prompts for that on its own.
+    "Bash(git remote:*)",
 )
 
 
