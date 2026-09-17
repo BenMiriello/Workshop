@@ -98,7 +98,7 @@ RALPH_INNER_MAX_ITER=10  # FIXED inner ralph loop cap (iterations per attempt),
 RALPH_ITER_QUICK="${RALPH_ITER_QUICK:-3}"
 RALPH_ITER_DEEP="${RALPH_ITER_DEEP:-12}"
 RALPH_MODEL_QUICK="${RALPH_MODEL_QUICK:-claude-haiku-4-5}"
-RALPH_MODEL_DEEP="${RALPH_MODEL_DEEP:-claude-opus-4-8}"
+RALPH_MODEL_DEEP="${RALPH_MODEL_DEEP:-claude-opus-5}"
 DEFAULT_MAX_ATTEMPTS=3   # per-task attempt cap (sweep runs) when the task sets no max_attempts
 CONCURRENT_WORKTREES_MAX=${CONCURRENT_WORKTREES_MAX:-2}  # bound on task-worktrees in flight
                          # (worktree mode only). Sequential today (see the G3 block);
