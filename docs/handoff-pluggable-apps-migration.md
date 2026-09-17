@@ -1,6 +1,20 @@
 # Handoff: migrate hardcoded apps/projects to the pluggable installed-app model
 
-**Status: DONE on `main` (2026-07-12).** Implemented as a built-in app *catalog*
+> **SUPERSEDED, and this banner replaces a status line that read "Status: DONE
+> on `main` (2026-07-12)."** That sentence was refuted by its own "Remaining"
+> paragraph twenty-one lines below it, which deferred the entire in-shell
+> frontend and the git-history scrub. It was identified as a root cause of the
+> recurring "separation was reported done and was not" failure on 2026-08-20 and
+> again on 2026-08-24 (`app-separation-why-it-recurs-2026-08-24.md` §3 M2:
+> "Anyone reading the top line concludes separation shipped. Every later agent
+> read the top line."). Neither session edited it. It stood for nine weeks.
+>
+> **Current status is `bash scripts/check_fresh_clone.sh`'s exit code and
+> nothing else**, plus the four categories that command is structurally blind to,
+> which are listed in `CLAUDE.md`. The deferred history scrub is ticket
+> `43dec530` and is still open. Read this file as history.
+
+Originally marked DONE 2026-07-12. Implemented as a built-in app *catalog*
 (`backend/services/app_registry.py`) driven by a per-instance *install list*
 (`.runtime/installed-apps.json`, `services/installed_apps.py`), keeping all seven
 apps working on the service user while making a fresh clone boot blank. Design +
