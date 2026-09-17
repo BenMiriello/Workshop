@@ -1,5 +1,6 @@
 # Knowledge index
 
+- [Checkpoint 2026-09-16: new-project setup gaps, confinement, GitHub](checkpoint-2026-09-16-project-setup-gaps.md)
 - [Compaction is the provider's /compact; Workshop's fold is deleted](compaction-is-the-provider-s-compact-workshop-s-1a05016e44d.md)
 - [Compaction is the provider's own /compact, not something Workshop designs or implements](compaction-is-the-provider-s-own-compact-not-som-1a05016e44a.md)
 - [Handoff 2026-09-16: project setup, confinement, and the surfaces around a new project](handoff-2026-09-16-project-setup-and-confinement.md)
@@ -54,7 +55,6 @@
 - [Chat width: 1200px intermediate, full-width toolbar](system/chat-width-1200px-intermediate-full-width-toolba-1a0028fb2d1.md)
 - [Chats have user-changeable scope](system/chats-have-user-changeable-scope-1a0028fb294.md)
 - [Checking whether a previous turn's work actually landed](system/checking-whether-a-previous-turn-s-work-actually-1a049569155.md)
-- [Claude Code permission modes need --permission-prompt-tool stdio or they silently deny](system/claude-code-permission-modes-need-permission-pro-19fe9598408.md)
 - [Clearing a build-blocking WIP file: check mtime before you commit it](system/clearing-a-build-blocking-wip-file-check-mtime-b-1a0459f90fe.md)
 - [Comprehensive handoff documentation is wanted](system/comprehensive-handoff-documentation-is-wanted-1a0028fb2ac.md)
 - [Comprehensive system analysis required before features](system/comprehensive-system-analysis-required-before-fe-1a0028fb2c3.md)
@@ -129,7 +129,6 @@
 - [Paths and machine identity must derive from config](system/paths-and-machine-identity-must-derive-from-conf-1a0028fb2f2.md)
 - [Personal data files should be gitignored](system/personal-data-files-should-be-gitignored-1a0028fb2f4.md)
 - [Prefer rework and integration over feature layering](system/prefer-rework-and-integration-over-feature-layer-1a0028fb2bd.md)
-- [Prior art survey: build/run/use in one system, and what it says about the app-vs-project split](system/prior-art-survey-build-run-use-in-one-system-and-19fd048d601.md)
 - [Proactive cleanup and ownership over feature-stacking](system/proactive-cleanup-and-ownership-over-feature-sta-1a0028fb2c5.md)
 - [Proposed: record vs file test, and tree-as-homes-plus-filter (nav redesign)](system/proposed-record-vs-file-test-and-tree-as-homes-p-1a0179df5e3.md)
 - [Provisioning a worktree: hardlinked node_modules writes THROUGH to the canonical tree](system/provisioning-a-worktree-hardlinked-node-modules-1a03ca99506.md)
@@ -189,7 +188,6 @@
 - [The operator's work org is a hard boundary, kept out of this install](system/work-org-is-a-hard-boundary-kept-out-of-this-ins-1a0028fb2ef.md)
 - [Work pages renamed to Tickets](system/work-pages-renamed-to-tickets-1a0028fb2b7.md)
 - [work-reviewer had invalid YAML for months](system/work-reviewer-had-invalid-yaml-for-months-1a0028fb2db.md)
-- [Checkpoint 2026-09-16: new-project setup gaps, confinement, GitHub](checkpoint-2026-09-16-project-setup-gaps.md)
 - [Working state (auto-written at compaction)](system/working-state.md) - the last session's handoff for this scope: objective, decisions and why, done, not done, shortcuts owed, open questions
 - [Workshop must be deployable with nothing hardcoded](system/workshop-must-be-deployable-with-nothing-hardcod-1a0028fb2ee.md)
 - [Workshop terminology needs clear distinct roles](system/workshop-terminology-needs-clear-distinct-roles-1a0028fb28f.md)
