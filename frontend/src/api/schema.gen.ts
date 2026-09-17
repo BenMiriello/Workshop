@@ -16938,6 +16938,74 @@ export interface components {
             updated_at?: string | null;
         };
         /**
+         * ThreadTreeDiff
+         * @description This chat's worktree against the tree it would merge into.
+         *
+         *     ONE SHAPE FOR EVERY CHAT, including one that holds no worktree at all: an
+         *     unpinned chat comes back `pinned: false` with `reason` saying why, so the
+         *     caller renders one thing instead of branching on whether this chat happens
+         *     to have a branch. That contract is `services/chat_worktree.diff`'s own and
+         *     is restated here only as types.
+         *
+         *     `summary` and the entries of `files` stay loose because they are git's
+         *     numbers passed through (`worktrees.diff_branch`), not a shape this layer
+         *     decides. Typing them here would be this module guessing at another one's
+         *     output, which is how a declared type ends up describing something the route
+         *     does not return.
+         */
+        ThreadTreeDiff: {
+            /**
+             * Ahead
+             * @default 0
+             */
+            ahead: number;
+            /**
+             * Base Ref
+             * @default
+             */
+            base_ref: string;
+            /**
+             * Behind
+             * @default 0
+             */
+            behind: number;
+            /** Branch */
+            branch?: string | null;
+            /** Branch Slug */
+            branch_slug?: string | null;
+            /** Cwd */
+            cwd?: string | null;
+            /**
+             * Files
+             * @default []
+             */
+            files: Record<string, never>[];
+            /**
+             * Mergeable
+             * @default false
+             */
+            mergeable: boolean;
+            /** Pinned */
+            pinned: boolean;
+            /** Project Slug */
+            project_slug?: string | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Summary
+             * @default {}
+             */
+            summary: Record<string, never>;
+            /**
+             * Uncommitted
+             * @default []
+             */
+            uncommitted: string[];
+        };
+        /**
          * ThreadTreeIn
          * @description Move this chat to another tree.
          *
@@ -16955,6 +17023,35 @@ export interface components {
             action: string;
             /** Branch */
             branch?: string | null;
+        };
+        /**
+         * ThreadTreeMerge
+         * @description The result of merging this chat's worktree back.
+         *
+         *     Only the SUCCESS shape is declared, because a refusal never reaches here:
+         *     the route raises 409 with the reason as the body, on the grounds that every
+         *     refusal this can hit is a fact about the trees rather than a failure. So
+         *     `ok` is true whenever this model is what was serialised, and `reason` is
+         *     kept for the merge's own commentary on a success.
+         */
+        ThreadTreeMerge: {
+            /**
+             * Commit
+             * @default
+             */
+            commit: string;
+            /**
+             * Committed
+             * @default []
+             */
+            committed: string[];
+            /** Ok */
+            ok: boolean;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
         };
         /** ThreadTreeMergeIn */
         ThreadTreeMergeIn: {
@@ -25434,7 +25531,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ThreadTreeDiff"];
                 };
             };
             /** @description Validation Error */
@@ -25469,7 +25566,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ThreadTreeMerge"];
                 };
             };
             /** @description Validation Error */

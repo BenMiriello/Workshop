@@ -110,6 +110,30 @@ def tree(tmp_path):
     return str(d)
 
 
+@pytest.fixture
+def one_maker(monkeypatch):
+    """This scope resolves to exactly one live maker agent.
+
+    Stubbed at `makers.makers_for_scope`, which is the seam `work_driver.worker_for`
+    delegates to. It delegates deliberately: the first version of `worker_for`
+    re-derived the answer itself by comparing `agents_registry`'s bare
+    `project_slug` against a PREFIXED scope key, so it matched exactly one scope
+    (`development`, whose key has no prefix) and refused every project. A test
+    that stubbed the registry instead of this function would have passed over
+    that bug, which is why the assertion in the sibling test is about the
+    argv."""
+    from services import makers, scope_execution
+
+    # Both seams, so the whole of `worker_for` runs. A tmp_path tree resolves to
+    # no scope at all, which is the EARLIER of the two refusals, and stubbing
+    # only the maker lookup would leave the test failing for a different reason
+    # than it appears to test.
+    monkeypatch.setattr(scope_execution, "_scope_of", lambda root: "project:some-project")
+    monkeypatch.setattr(
+        makers, "makers_for_scope",
+        lambda scope, **kw: [{"slug": "some-maker", "role": "maker"}])
+
+
 class TestStartDoesNotMoveTheBrake:
     def test_start_leaves_an_engaged_brake_engaged(self, client, spawned, tree):
         """The regression. Starting a runner is not a statement about policy."""
@@ -124,15 +148,38 @@ class TestStartDoesNotMoveTheBrake:
         assert client.post("/api/queue/runner/start", json={"dir": tree}).status_code == 200
         assert ao.is_engaged() is False
 
-    def test_start_passes_the_tree_to_the_watchdog(self, client, spawned, tree):
+    def test_start_passes_the_tree_to_the_watchdog(self, client, spawned, tree, one_maker):
         """The other half of the old bug: the watchdog was spawned bare, so it
-        exited 2 on `assert_run_target ""` every single time."""
+        exited 2 on `assert_run_target ""` every single time.
+
+        `one_maker` is required now, and that is not test scaffolding for its own
+        sake: since dbdd324c the sweep is spawned with `--assignee`, because
+        `tasks.next_ready(unattended=True)` selects only tickets assigned to the
+        worker the sweep NAMES, so a sweep that names nobody selects nothing
+        however full the queue is. `work_driver.ensure` therefore refuses to
+        start a runner for a scope it cannot resolve a single live maker for.
+        This test predates that and asserted the spawn happened regardless; it
+        has been failing since, which is how a stale test reads as a broken
+        feature. See the refusal test below."""
         assert client.post("/api/queue/runner/start", json={"dir": tree}).status_code == 200
         assert len(spawned) == 1
         argv = spawned[0]
         assert argv[0] == "bash"
         assert argv[1].endswith("queue_runner_watchdog.sh")
         assert argv[2] == tree
+        # The assignee rides on the argv, because the flag being absent is what
+        # made the whole loop a no-op: every sweep logged "unattended selection
+        # refused: no worker was named".
+        assert "--assignee" in argv
+        assert argv[argv.index("--assignee") + 1] == "agent:some-maker"
+
+    def test_start_refuses_a_scope_with_no_single_maker(self, client, spawned, tree):
+        """A sweep that names no worker selects nothing, so starting one is a
+        runner that reports itself healthy and does no work. That was the state
+        the operator found on 2026-09-16 after releasing the brake, and the
+        refusal is what replaced it. No maker, no runner."""
+        assert client.post("/api/queue/runner/start", json={"dir": tree}).status_code == 200
+        assert spawned == []
 
     def test_stop_leaves_a_clear_brake_clear(self, client, spawned, tree):
         """Stop kills the resident runner. It no longer engages the brake, so a

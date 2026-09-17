@@ -232,9 +232,32 @@ def reconcile(org_id: str) -> dict:
                 app_repo.update_app(s, org_id, row["id"], archived_at=now)
                 archived.append(slug)
 
+        # AND THE CHATS, in the same session and off the roster just settled.
+        #
+        # A fresh roster that nothing joins the conversations to is half a
+        # reconcile. `chat_thread.app_id` is written when a thread ROW is
+        # inserted and on a list-relevant meta patch, and an ordinary turn is
+        # neither, so a thread keeps whatever answer it was given when it was
+        # created. Measured 2026-09-17: 52 of 240 live threads disagreed with
+        # the rule -- 25 with no app at all, and 27 pointing at an app that does
+        # not own their scope, left by an older backfill that could only ever
+        # add.
+        #
+        # RE-READ rather than reusing `by_slug`: the loops above have just
+        # archived and restored rows, and the roster has to be the settled one.
+        # Archived apps are excluded for the same reason `app_id_for_context`
+        # excludes them -- an app the registries have stopped naming keeps the
+        # chats it has and claims no new ones.
+        live = {r["slug"]: str(r["id"])
+                for r in app_repo.list_apps(s, org_id, archived=False)}
+        roster = {slug: live[slug] for slug in app_links.all_app_slugs()
+                  if slug in live}
+        chats = app_repo.reconcile_thread_app_ids(s, org_id, roster)
+
     return {"apps": sorted(desired), "count": len(desired),
             "created": sorted(created), "written": sorted(written),
-            "archived": sorted(archived), "restored": sorted(restored)}
+            "archived": sorted(archived), "restored": sorted(restored),
+            "chats": chats}
 
 
 def reconcile_from_registries() -> dict:
@@ -276,51 +299,12 @@ def reconcile_from_registries() -> dict:
         log.info("app registry reconciled: created %s; updated %s; archived %s; "
                  "restored %s", result["created"], result["written"],
                  result["archived"], result["restored"])
-    # AND THE CHATS, for the same reason and in the same breath. A fresh roster
-    # that nothing joins the conversations to is half a reconcile: `app_id` is
-    # written when a thread ROW is inserted and on a list-relevant meta patch,
-    # and an ordinary turn is neither, so a thread keeps whatever answer it was
-    # given when it was created. Measured 2026-09-17: 52 of 240 live threads
-    # disagreed with the rule, including a chat the operator had just made in a
-    # new project and could not find on that project's Chats tab.
-    #
-    # Separate try, deliberately: the roster is the thing `/apps` is about and a
-    # failure to re-link chats must not cost the caller the roster it asked for.
-    chats: dict = {}
-    try:
-        chats = reconcile_chat_links(str(org_id))
-    except Exception as e:  # pragma: no cover - never fail a read over this
-        log.warning("chat app_id reconcile failed: %s", e)
+    chats = result.get("chats") or {}
     if any(chats.get(k) for k in ("linked", "relinked", "unlinked")):
         log.info("chat app links reconciled: linked %s; relinked %s; unlinked %s "
                  "(of %s)", chats["linked"], chats["relinked"],
                  chats["unlinked"], chats["checked"])
-    return {"ok": True, **result, "chats": chats}
-
-
-def reconcile_chat_links(org_id: str) -> dict:
-    """Re-derive `chat_thread.app_id` for every live thread of this org.
-
-    The roster it resolves against is built the same way `app_id_for_context`
-    builds it -- live rows intersected with `app_links.all_app_slugs()` in that
-    function's order, archived apps left out so an app the registries have
-    stopped naming keeps its existing chats but claims no new ones. Kept in one
-    expression here rather than imported from there because that function
-    answers for ONE context and this answers for all of them off one roster
-    read.
-    """
-    from db import app_repo
-    from db.engine import tenant_session
-    from services import app_links
-
-    with tenant_session(org_id) as s:
-        by_slug = {r["slug"]: str(r["id"])
-                   for r in app_repo.list_apps(s, org_id, archived=False)}
-        roster = {slug: by_slug[slug] for slug in app_links.all_app_slugs()
-                  if slug in by_slug}
-        out = app_repo.reconcile_thread_app_ids(s, org_id, roster)
-        s.commit()
-    return out
+    return {"ok": True, **result}
 
 
 # --- the app entity itself ---------------------------------------------------

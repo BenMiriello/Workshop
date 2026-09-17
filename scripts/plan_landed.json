@@ -124,16 +124,41 @@
     },
     {
       "id": "5-settings-nine-rows",
-      "title": "Settings is nine rows, not twelve",
+      "title": "The four pointer rows are gone from Settings",
       "source": "section 6, 'Settings: 12 rows to 9'",
       "_note": "Account, Appearance, Chat, Memory, Roles, Access, Models, Tools-and-MCP-as-one-page, Apps. Trackers folds into Apps.",
+      "_amended": "2026-09-17. This step asserted 'at most nine rows', and the count was a PROXY: what section 6 actually did was delete four rows that were each ~15 lines of Card chrome wrapping a single link to a page that already existed (Mcp, BaseApps, Trackers, Platform). The proxy stopped measuring that claim the moment a real section was added. The operator asked for a Connectors tab by name on 2026-09-17 ('Probably want a connectors tab in settings and put that thing there'), which took the count to ten while deleting nothing and folding GitHub and Trackers off the Apps tab where they had been mis-filed. Counting rows would have read that as undoing section 6, which it is the opposite of. So the assertions now name the four rows that had to go, which is the claim, and the ceiling is raised to ten and kept only as a brake on unbounded growth. Raising a ceiling is a loosening and is recorded here deliberately rather than done quietly; reverse it by deleting the Connectors row if that is the call.",
       "assertions": [
         {
+          "kind": "regex_absent",
+          "says": "the MCP pointer row is gone (it folded into Tools)",
+          "path": "frontend/src/components/shell/places.ts",
+          "regex": "to: \"/settings/mcp\""
+        },
+        {
+          "kind": "regex_absent",
+          "says": "the base-apps pointer row is gone",
+          "path": "frontend/src/components/shell/places.ts",
+          "regex": "to: \"/settings/base-apps\""
+        },
+        {
+          "kind": "regex_absent",
+          "says": "the trackers pointer row is gone (it folded into Connectors)",
+          "path": "frontend/src/components/shell/places.ts",
+          "regex": "to: \"/settings/trackers\""
+        },
+        {
+          "kind": "regex_absent",
+          "says": "the platform pointer row is gone",
+          "path": "frontend/src/components/shell/places.ts",
+          "regex": "to: \"/settings/(platform|host)\""
+        },
+        {
           "kind": "count_at_most",
-          "says": "the settings place draws at most nine rows",
+          "says": "the settings place draws at most ten rows",
           "path": "frontend/src/components/shell/places.ts",
           "regex": "to: \"/settings",
-          "max": 9
+          "max": 10
         }
       ]
     }

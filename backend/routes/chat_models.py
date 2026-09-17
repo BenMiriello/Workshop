@@ -825,3 +825,52 @@ class TurnStopped(BaseModel):
     stopped: bool
     committed: bool | None = None
     reason: str
+
+
+class ThreadTreeDiff(BaseModel):
+    """This chat's worktree against the tree it would merge into.
+
+    ONE SHAPE FOR EVERY CHAT, including one that holds no worktree at all: an
+    unpinned chat comes back `pinned: false` with `reason` saying why, so the
+    caller renders one thing instead of branching on whether this chat happens
+    to have a branch. That contract is `services/chat_worktree.diff`'s own and
+    is restated here only as types.
+
+    `summary` and the entries of `files` stay loose because they are git's
+    numbers passed through (`worktrees.diff_branch`), not a shape this layer
+    decides. Typing them here would be this module guessing at another one's
+    output, which is how a declared type ends up describing something the route
+    does not return.
+    """
+
+    pinned: bool
+    project_slug: str | None = None
+    branch_slug: str | None = None
+    branch: str | None = None
+    cwd: str | None = None
+    uncommitted: list[str] = []
+    files: list[dict[str, Any]] = []
+    summary: dict[str, Any] = {}
+    ahead: int = 0
+    behind: int = 0
+    base_ref: str = ""
+    # False for every early return: not pinned, branch unreadable, branch gone,
+    # diff unreadable, or level with the base. `reason` carries which.
+    mergeable: bool = False
+    reason: str = ""
+
+
+class ThreadTreeMerge(BaseModel):
+    """The result of merging this chat's worktree back.
+
+    Only the SUCCESS shape is declared, because a refusal never reaches here:
+    the route raises 409 with the reason as the body, on the grounds that every
+    refusal this can hit is a fact about the trees rather than a failure. So
+    `ok` is true whenever this model is what was serialised, and `reason` is
+    kept for the merge's own commentary on a success.
+    """
+
+    ok: bool
+    reason: str = ""
+    commit: str = ""
+    committed: list[str] = []

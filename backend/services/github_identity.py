@@ -638,8 +638,10 @@ _states_lock = threading.Lock()
 # [B, C], so Back still reaches B with the spent nonce AND the operator loses the
 # page they came from. The github.com entry is cross-origin and cannot be removed
 # from the client at all.
-_spent_states: dict[str, float] = {}
-_SPENT_TTL_SECONDS = 900
+# It lives in `_states` under the same nonce, marked spent, rather than in a
+# second dict beside it: one owner for one fact, and the expiry sweep in
+# `_new_state` already reaps it on the same clock.
+_SPENT = "spent"
 
 
 def _new_state(owner_id: int, kind: str, verifier: str = "") -> str:
@@ -671,13 +673,19 @@ def _take_state(nonce: str, kind: str) -> dict[str, Any]:
 
 
 def _mark_spent(nonce: str) -> None:
-    """Remember a nonce that completed its leg. See `_spent_states`."""
-    now = time.monotonic()
+    """Remember a nonce that completed its leg. See the `_SPENT` note above.
+
+    Written back into `_states` under its own key, which `_take_state` has
+    already popped, so this cannot resurrect a redeemable nonce: the record it
+    puts back carries no owner and no verifier and is recognised only by
+    `was_spent`.
+    """
+    key = (nonce or "").strip()
+    if not key:
+        return
     with _states_lock:
-        for key, expires in list(_spent_states.items()):
-            if expires <= now:
-                _spent_states.pop(key, None)
-        _spent_states[(nonce or "").strip()] = now + _SPENT_TTL_SECONDS
+        _states[key] = {"kind": _SPENT, "owner": 0, "verifier": "",
+                        "expires": time.monotonic() + _STATE_TTL_SECONDS}
 
 
 def was_spent(nonce: str) -> bool:
@@ -691,8 +699,9 @@ def was_spent(nonce: str) -> bool:
     if not key:
         return False
     with _states_lock:
-        expires = _spent_states.get(key)
-    return expires is not None and expires > time.monotonic()
+        rec = _states.get(key)
+    return (rec is not None and rec.get("kind") == _SPENT
+            and rec["expires"] > time.monotonic())
 
 
 # ---- registering an application from a manifest -------------------------------

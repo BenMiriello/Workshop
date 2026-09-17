@@ -305,8 +305,6 @@ def reconcile_thread_app_ids(s: Session, org_id: UUID | str,
     `services.apps.reconcile_from_registries`, which is already the place a read
     refreshes the roster this takes as its input.
     """
-    from services import scope_tree
-
     owner = scope_owner_map(roster)
     rows = s.execute(text(
         "SELECT id, context_key, app_id FROM chat_thread "

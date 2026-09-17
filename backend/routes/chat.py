@@ -2504,7 +2504,7 @@ async def set_thread_tree(thread_id: str, body: ThreadTreeIn):
 # git's own, matching `/worktrees/{project}/{branch}/diff` and `/merge`.
 
 
-@router.get("/threads/{thread_id}/tree/diff")
+@router.get("/threads/{thread_id}/tree/diff", response_model=cm.ThreadTreeDiff)
 async def thread_tree_diff(thread_id: str):
     """This chat's worktree against the tree it would merge into.
 
@@ -2522,7 +2522,7 @@ class ThreadTreeMergeIn(BaseModel):
     message: str = ""
 
 
-@router.post("/threads/{thread_id}/tree/merge")
+@router.post("/threads/{thread_id}/tree/merge", response_model=cm.ThreadTreeMerge)
 async def merge_thread_tree(thread_id: str, body: ThreadTreeMergeIn):
     """Merge this chat's worktree back into the shared tree, and unpin the chat.
 
