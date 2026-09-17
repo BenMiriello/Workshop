@@ -32,6 +32,12 @@ from services import tasks, jobs, triggers
 from wsplatform import paths
 from wsplatform.http import DEFAULT_PAGE, MAX_PAGE
 from services import scope_owner
+# MODULE SCOPE, not four function-local copies. `services.github` imports
+# nothing from `routes` or `mcp`, so this is a real edge down the graph and
+# not a cycle being deferred -- and a deferred import hides a cycle rather
+# than breaking one. The file had three local copies and 799a7866 added a
+# fourth, which is how this drifts one line at a time.
+from services import github
 
 log = logging.getLogger("workshop.projects")
 
@@ -406,7 +412,6 @@ def set_repo(slug: str, remote_url: str, default_branch: str | None = None) -> d
     if not proj_dir.exists():
         raise ValueError(f"project directory missing: {proj_dir}")
 
-    from services import github
     github.reject_blocked(remote_url)
     info = github.bind_repo(str(proj_dir), remote_url)
     raw["repo"] = _repo_field(info)
@@ -636,8 +641,7 @@ async def create_project(body: CreateProjectIn) -> Project:
     scratch = _is_scratch_template(body.template)
     want_repo = body.create_repo if body.create_repo is not None else (not scratch)
     if want_repo:
-        from services import github
-        # An install with no GitHub owner configured, or no `gh` login, used to
+            # An install with no GitHub owner configured, or no `gh` login, used to
         # take the whole scaffold down with a 500 AFTER the directory had been
         # written. The local project is real either way, so a repo failure is
         # reported as a failure to connect one — not as a failure to create the
@@ -688,7 +692,6 @@ _GITHUB_ERRORS = (ValueError, subprocess.SubprocessError, OSError)
 
 @router.post("/{slug}/connect-github", response_model=Project)
 async def connect_github(slug: str, body: ConnectGithubIn) -> Project:
-    from services import github
 
     raw = _ensure_project(slug)
     proj_dir = Path(raw["dir"])

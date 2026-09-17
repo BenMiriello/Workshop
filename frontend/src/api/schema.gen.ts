@@ -16947,11 +16947,13 @@ export interface components {
          *     to have a branch. That contract is `services/chat_worktree.diff`'s own and
          *     is restated here only as types.
          *
-         *     `summary` and the entries of `files` stay loose because they are git's
-         *     numbers passed through (`worktrees.diff_branch`), not a shape this layer
-         *     decides. Typing them here would be this module guessing at another one's
-         *     output, which is how a declared type ends up describing something the route
-         *     does not return.
+         *     DECLARING IT FOUND A REAL INCONSISTENCY, which is the argument for declaring
+         *     it. `summary` is git's `--shortstat` line, a STRING
+         *     (`git_service.diff_stat`), but `chat_worktree.diff` initialised it to `{}`
+         *     and only replaced it on the path that reads the diff -- so the field was an
+         *     empty object on five early returns and a string on one. Nothing in the
+         *     client reads it yet, so the honest shape could still be chosen rather than
+         *     preserved; the default is now `""`.
          */
         ThreadTreeDiff: {
             /**
@@ -16979,7 +16981,7 @@ export interface components {
              * Files
              * @default []
              */
-            files: Record<string, never>[];
+            files: components["schemas"]["ThreadTreeDiffFile"][];
             /**
              * Mergeable
              * @default false
@@ -16996,14 +16998,33 @@ export interface components {
             reason: string;
             /**
              * Summary
-             * @default {}
+             * @default
              */
-            summary: Record<string, never>;
+            summary: string;
             /**
              * Uncommitted
              * @default []
              */
             uncommitted: string[];
+        };
+        /**
+         * ThreadTreeDiffFile
+         * @description One changed path in a worktree diff, as `worktrees.diff_branch` builds it.
+         *
+         *     `status` is git's own letter (A/M/D/R100/...), passed through rather than
+         *     mapped, so the client is reading git and not this layer's paraphrase of it.
+         *     `diff` is the unified diff for that one path.
+         */
+        ThreadTreeDiffFile: {
+            /**
+             * Diff
+             * @default
+             */
+            diff: string;
+            /** Path */
+            path: string;
+            /** Status */
+            status: string;
         };
         /**
          * ThreadTreeIn

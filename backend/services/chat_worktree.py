@@ -643,7 +643,12 @@ def diff(thread: dict | None, provider: Any, *, fallback_cwd: str) -> dict:
         "cwd": tree.cwd,
         "uncommitted": [],
         "files": [],
-        "summary": {},
+        # git's `--shortstat` LINE, which is a string. This was `{}`, so the
+        # field came back as an empty object on every early return below and as
+        # a string on the one path that reads the diff. Found by declaring the
+        # response model (routes/chat_models.ThreadTreeDiff); nothing reads it
+        # yet, so the shape could be made consistent rather than preserved.
+        "summary": "",
         "ahead": 0,
         "behind": 0,
         "base_ref": "",
@@ -670,7 +675,7 @@ def diff(thread: dict | None, provider: Any, *, fallback_cwd: str) -> dict:
     try:
         diff = worktrees.diff_branch(tree.project_slug, tree.branch_slug or "")
         out["files"] = diff.get("files") or []
-        out["summary"] = diff.get("summary") or {}
+        out["summary"] = diff.get("summary") or ""
     except Exception as exc:
         out["reason"] = f"The diff could not be read ({exc})."
         return out

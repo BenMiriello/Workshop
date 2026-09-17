@@ -160,7 +160,14 @@ def test_a_blocked_owner_is_refused_before_any_bind_runs(seeded, monkeypatch):
     registry, proj_dir = seeded
     from services import github, installation
 
-    monkeypatch.setenv(installation.BLOCKED_OWNERS_ENV, "veritusagent")
+    # A FIXTURE NAME, NOT A REAL ORGANISATION. This test asserts the blocked-owner
+    # MECHANISM, which reads the env var, so any value exercises it equally. It
+    # originally named the operator's real work organisation, which put that name
+    # into tracked source and tripped check_no_hardcoding. The standing rule is
+    # that this repository and that organisation are never mixed, and a test
+    # fixture is not an exception to it.
+    blocked = "blocked-org-fixture"
+    monkeypatch.setenv(installation.BLOCKED_OWNERS_ENV, blocked)
 
     def _must_not_run(dir, remote_url):
         pytest.fail("bind_repo ran for a blocked owner")
@@ -168,9 +175,9 @@ def test_a_blocked_owner_is_refused_before_any_bind_runs(seeded, monkeypatch):
     monkeypatch.setattr(github, "bind_repo", _must_not_run)
     monkeypatch.setenv("WORKSHOP_QUERY_SCOPE", "project:widgets")
 
-    out = _call("set_repo", {"remote_url": "https://github.com/veritusagent/secret.git"})
+    out = _call("set_repo", {"remote_url": f"https://forge.invalid/{blocked}/secret.git"})
     assert "error" in out.lower()
-    assert "veritusagent" in out
+    assert blocked in out
     assert _registry_repo(registry) == {}
 
 

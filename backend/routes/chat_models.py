@@ -827,6 +827,19 @@ class TurnStopped(BaseModel):
     reason: str
 
 
+class ThreadTreeDiffFile(BaseModel):
+    """One changed path in a worktree diff, as `worktrees.diff_branch` builds it.
+
+    `status` is git's own letter (A/M/D/R100/...), passed through rather than
+    mapped, so the client is reading git and not this layer's paraphrase of it.
+    `diff` is the unified diff for that one path.
+    """
+
+    path: str
+    status: str
+    diff: str = ""
+
+
 class ThreadTreeDiff(BaseModel):
     """This chat's worktree against the tree it would merge into.
 
@@ -836,11 +849,13 @@ class ThreadTreeDiff(BaseModel):
     to have a branch. That contract is `services/chat_worktree.diff`'s own and
     is restated here only as types.
 
-    `summary` and the entries of `files` stay loose because they are git's
-    numbers passed through (`worktrees.diff_branch`), not a shape this layer
-    decides. Typing them here would be this module guessing at another one's
-    output, which is how a declared type ends up describing something the route
-    does not return.
+    DECLARING IT FOUND A REAL INCONSISTENCY, which is the argument for declaring
+    it. `summary` is git's `--shortstat` line, a STRING
+    (`git_service.diff_stat`), but `chat_worktree.diff` initialised it to `{}`
+    and only replaced it on the path that reads the diff -- so the field was an
+    empty object on five early returns and a string on one. Nothing in the
+    client reads it yet, so the honest shape could still be chosen rather than
+    preserved; the default is now `""`.
     """
 
     pinned: bool
@@ -849,8 +864,9 @@ class ThreadTreeDiff(BaseModel):
     branch: str | None = None
     cwd: str | None = None
     uncommitted: list[str] = []
-    files: list[dict[str, Any]] = []
-    summary: dict[str, Any] = {}
+    files: list[ThreadTreeDiffFile] = []
+    # git's own `--shortstat` line, or "" before the diff has been read.
+    summary: str = ""
     ahead: int = 0
     behind: int = 0
     base_ref: str = ""
