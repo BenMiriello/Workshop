@@ -602,6 +602,17 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       if (state.threadId === null && action.threadId !== null) {
         return { ...fresh, pending: state.pending, clock: state.clock };
       }
+      // AND A RESET ONTO THE SAME THREAD IS NOT A THREAD SWITCH EITHER. The
+      // branch re-read (`useThreadLog`'s branch effect) resets with the thread
+      // id it already had, which is a re-read of this conversation, not a move
+      // to someone else's. Dropping `pending` there threw away sends belonging
+      // to the very thread being re-read, and the outbox mirror then wrote the
+      // loss through to storage. The rule the comment above states -- a pending
+      // send belongs to the thread it was typed into -- is satisfied by keeping
+      // it here, not by discarding it.
+      if (state.threadId !== null && state.threadId === action.threadId) {
+        return { ...fresh, pending: state.pending, clock: state.clock };
+      }
       return fresh;
     }
 

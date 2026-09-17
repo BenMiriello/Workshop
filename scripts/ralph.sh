@@ -1390,7 +1390,30 @@ print(sid)
   fi
 
   # If reviewer said complete but no sentinel, the worker forgot the contract — log learning.
-  if (( COMPLETE == 1 && SAW_SENTINEL == 0 )); then
+  #
+  # A KILLED TURN IS NOT A WORKER THAT FORGOT THE CONTRACT, and this branch could
+  # not tell the difference. `timeout` kills the CLI, the result envelope is never
+  # written, so the sentinel is missing for the same reason the OUTPUT is missing:
+  # the process was cut off mid-sentence. The reviewer then runs on the surviving
+  # tree, finds the repo healthy (which it was before the work started), and this
+  # branch reads "complete, sentinel missing" as the benign case and PASSES.
+  #
+  # Measured on b3750ad7, 2026-09-16:
+  #     iter 1: claude exit=124, output bytes=0, tokens=0, dur=1199s
+  #     iter 1 reviewer.complete=1 verdict=approve
+  #     PASS (reviewer ok, sentinel missed — treating as PASS)
+  # It reached `in_review` carrying "3/3 acceptance criteria passed" for a diff of
+  # one line in mobile/app.json, against a ticket asking for the platform to be
+  # generalized. It also wrote a learning note blaming the worker for forgetting a
+  # sentinel it never got the chance to emit, which is a false lesson recorded as
+  # a durable one.
+  #
+  # So a run that produced NO RESULT ENVELOPE may never take this branch. That is
+  # not a judgement about the work; it is the observation that there is nothing
+  # here to judge. The wall-clock and attempt bookkeeping is unchanged.
+  if (( COMPLETE == 1 && SAW_SENTINEL == 0 && (CLAUDE_EXIT == 124 || ITER_TOKENS == 0) )); then
+    log "NOT a pass: the turn produced no result (exit=$CLAUDE_EXIT tokens=$ITER_TOKENS) — a missing sentinel here means the run was cut off, not that the worker forgot it"
+  elif (( COMPLETE == 1 && SAW_SENTINEL == 0 )); then
     "$WORKSHOP/scripts/log_learning.sh" \
       "Ralph: worker finished cleanly but forgot to emit <promise>COMPLETE</promise> sentinel — always end the final iteration with that exact string on its own line" \
       "ralph" 2>/dev/null || true

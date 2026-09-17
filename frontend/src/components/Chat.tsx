@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { usePoll, Notice } from "@workshop/ui";
+import { usePoll, Button, Notice } from "@workshop/ui";
 import { useNavigate } from "react-router-dom";
 import { WifiOff, ArrowDown, Paperclip, Unplug } from "lucide-react";
 import WorkPanel from "./chat/work/WorkPanel";
@@ -16,6 +16,8 @@ import ChatLog from "./chat/ChatLog";
 import BranchAction from "./chat/BranchAction";
 import BranchPicker from "./chat/BranchPicker";
 import ChatProblemBlock from "./chat/ChatProblemBlock";
+import { firstUnsent, unsentLabel } from "./chat/unsentMessages";
+import { pendingSends } from "./chat/threadStore";
 import ChatDialogs from "./chat/ChatDialogs";
 import ContextModal from "./chat/ContextModal";
 import { useCompaction, type FoldMode } from "./chat/useCompaction";
@@ -1498,6 +1500,31 @@ export default function Chat({
     />
   );
 
+  // WHAT THIS BROWSER STILL OWES. Derived, not stored: `state.pending` already
+  // is the answer, and a second copy of "is anything unsent" is exactly the
+  // two-owners shape every historical double-bubble in this chat came from.
+  const pendingList = useMemo(() => pendingSends(state), [state]);
+  const unsentText = unsentLabel(pendingList);
+  const unsentNotice = unsentText ? (
+    <Notice
+      tone="warn"
+      action={
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            const next = firstUnsent(pendingList);
+            if (next) retryRef.current(next.clientId);
+          }}
+        >
+          Retry
+        </Button>
+      }
+    >
+      {unsentText} It is still here and nothing has been lost.
+    </Notice>
+  ) : null;
+
   const composer = (
     <ChatComposer
       composerRef={composerRef}
@@ -1675,6 +1702,16 @@ export default function Chat({
           It names the poll that stopped landing and offers the retry, because
           the one thing the operator can usefully do here is ask again. */}
       {staleProblem && <ChatProblemBlock problem={staleProblem} icon={<Unplug aria-hidden />} />}
+      {/* TEXT THIS BROWSER STILL OWES THE CONVERSATION. A failed send is
+          anchored where it was typed, which is right for order and means it
+          scrolls into history the moment anything commits after it -- so the
+          bubble alone cannot tell the operator they have unsent text. This can,
+          because it sits in a fixed place above the composer for as long as the
+          message is outstanding, and it is the only thing on screen that says
+          the message did not go. Without it the send is eventually dropped by
+          the outbox's 24h expiry with nothing having said anything at all.
+          See chat/unsentMessages.ts. */}
+      {unsentNotice}
       {composer}
       </>
       )}

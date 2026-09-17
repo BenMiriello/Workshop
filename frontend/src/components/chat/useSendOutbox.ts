@@ -84,7 +84,23 @@ export function useSendOutbox({
   const bind = useCallback((key: string) => {
     keyRef.current = key;
     const stored = readOutbox(key);
-    seenRef.current = new Set(stored.map((s) => s.clientId));
+    // SEEDING `seen` WITH WHAT WAS JUST RESTORED IS HOW THE RESTORE ERASED
+    // ITSELF. `seen` means "this tab has held this id", and `mergeOutbox` uses
+    // it to tell another tab's new entry from one THIS tab deliberately took
+    // out. Seeding it here asserts the second about an entry the reducer has
+    // not applied yet -- and the reducer very often never gets to, because
+    // `useThreadLog`'s own `[threadId]` effect dispatches `reset` (or
+    // `seedThread`, which spreads over a fresh state) straight after, and
+    // `reset` preserves `pending` only on the blank-chat-becomes-a-thread
+    // transition. So `pending` emptied, the mirror ran with `mine = []`, every
+    // stored id was in `seen`, and `mergeOutbox` concluded the operator had
+    // retracted them all and wrote an empty outbox. A send that failed while
+    // the network was down was destroyed by the act of reopening its thread.
+    //
+    // Starting empty costs nothing: the ids re-enter `seen` from the mirror's
+    // own `for (const s of mine)` loop on the very next commit, which is the
+    // only moment at which this tab has genuinely held them.
+    seenRef.current = new Set();
     restoringRef.current = true;
     if (stored.length) dispatch({ type: "pendingRestored", sends: stored });
   }, [dispatch]);
