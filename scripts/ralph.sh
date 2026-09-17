@@ -796,16 +796,69 @@ esac
 MCP_JSON=$( (cd "$WORKSHOP/backend" && .venv/bin/python -m services.llm_router \
   mcp-config --server workshop --stdout 2>>"$LOG") || true)
 MCP_FLAGS=()
+MCP_STATUS="not applied: llm_router emitted no inline mcp-config"
 if [[ -n "$MCP_JSON" && "${MCP_JSON:0:1}" == "{" ]]; then
-  # Placed so the next token in the spawn is always a flag (--max-turns or the
-  # redirect): `--mcp-config` is variadic and would otherwise eat a following
-  # non-flag token. Additive, never --strict-mcp-config (see comment above).
-  MCP_FLAGS=(--mcp-config "$MCP_JSON")
-  log "workshop search tool: enabled (inline mcp-config)"
-  # Told to the model only when the tool is actually there. A prompt that
-  # describes a tool the CLI was never given is worse than silence: the model
-  # spends a turn calling it and reads the failure as its own mistake.
-  RALPH_INSTRUCTIONS="$RALPH_INSTRUCTIONS
+  # ROOT THE SPEC AT $DIR, THE TREE THE WORKER ACTUALLY RUNS IN. The emitter
+  # above runs in $WORKSHOP/backend, so the document it prints names THAT
+  # checkout's interpreter, server script and PYTHONPATH -- correct only when the
+  # worker's scope root IS the platform checkout. On a worktree run (wt=1, scope
+  # root under branches/development/) all three paths lie OUTSIDE the scope root,
+  # so `scoped_exec._remap` leaves them untouched, nothing binds the platform
+  # checkout into the bwrap view, and the CLI silently DROPS a server whose
+  # command it cannot exec. The worker then runs with no search/query tools at
+  # all -- and nothing says so, because the spec was syntactically fine.
+  #
+  # MEASURED 2026-09-17 from .runtime/ralph.log, an accidental controlled
+  # experiment: SIX consecutive wt=1 attempts died identically, `iter 1: claude
+  # exit=124, output bytes=0, tokens=0, dur=900s` -- killed by the wall having
+  # produced nothing. The next attempt ran wt=0 in the shared checkout, where the
+  # scope root IS the platform checkout and the remap therefore works, and it
+  # succeeded on the first iteration: `exit=0, output bytes=3282, tokens=336356,
+  # dur=434s`. The only variable was whether the spec's paths were inside the
+  # scope root. Three weeks of empty sweeps are this line.
+  #
+  # A worktree carries its own backend/.venv/bin/python and
+  # backend/mcp/workshop_query_server.py (provisioning hardlinks the deps), and a
+  # JSON-RPC `initialize` against the worktree copy answers normally, so
+  # rewriting the prefix is the whole fix.
+  #
+  # WHY REWRITE RATHER THAN RE-RUN THE EMITTER INSIDE $DIR: only the platform
+  # tree can resolve the OWNER. `auth_store.operator_id()` answers the operator
+  # there and None from a worktree, and an absent WORKSHOP_QUERY_OWNER means an
+  # EMPTY index that still reports success (see the owner note above) -- the exact
+  # silent failure this block already warns about. So the owner comes from
+  # $WORKSHOP and only the paths come from $DIR.
+  #
+  # The prefix is read back OUT of the emitted document rather than assumed, and
+  # the rewrite is skipped when the two trees are the same path, so the
+  # shared-checkout case -- the one that works today -- is byte-for-byte unchanged.
+  SPEC_BACKEND="$(printf '%s' "$MCP_JSON" | sed -n 's/.*"PYTHONPATH": *"\([^"]*\)".*/\1/p' | head -1)"
+  if [[ -n "$SPEC_BACKEND" && -n "$DIR" ]] \
+     && [[ "$(readlink -f "$SPEC_BACKEND" || printf '%s' "$SPEC_BACKEND")" \
+        != "$(readlink -f "$DIR/backend" || printf '%s' "$DIR/backend")" ]]; then
+    MCP_JSON="${MCP_JSON//"$SPEC_BACKEND"/$DIR/backend}"
+  fi
+  # AND SAY WHETHER IT CAN ACTUALLY START. This line used to read `enabled
+  # (inline mcp-config)` on the strength of a non-empty document alone: it
+  # reported that a FLAG WAS PASSED, not that the server works, which is why the
+  # six dead runs above went unread for three weeks. Check the two paths the CLI
+  # will exec, and emit no mcp-config at all when either is missing.
+  SPEC_CMD="$(printf '%s' "$MCP_JSON" | sed -n 's/.*"command": *"\([^"]*\)".*/\1/p' | head -1)"
+  SPEC_SRV="$(printf '%s' "$MCP_JSON" | sed -n 's|.*"\(/[^"]*workshop_query_server\.py\)".*|\1|p' | head -1)"
+  if [[ -z "$SPEC_CMD" || ! -x "$SPEC_CMD" ]]; then
+    MCP_STATUS="not applied: interpreter ${SPEC_CMD:-<none>} is not executable under ${DIR:-$WORKSHOP}"
+  elif [[ -z "$SPEC_SRV" || ! -f "$SPEC_SRV" ]]; then
+    MCP_STATUS="not applied: server script ${SPEC_SRV:-<none>} does not exist under ${DIR:-$WORKSHOP}"
+  else
+    # Placed so the next token in the spawn is always a flag (--max-turns or the
+    # redirect): `--mcp-config` is variadic and would otherwise eat a following
+    # non-flag token. Additive, never --strict-mcp-config (see comment above).
+    MCP_FLAGS=(--mcp-config "$MCP_JSON")
+    MCP_STATUS="enabled (inline mcp-config; server $SPEC_SRV)"
+    # Told to the model only when the tool is actually there. A prompt that
+    # describes a tool the CLI was never given is worse than silence: the model
+    # spends a turn calling it and reads the failure as its own mistake.
+    RALPH_INSTRUCTIONS="$RALPH_INSTRUCTIONS
 
 ## The workshop's own memory
 You have \`mcp__workshop__search\`: semantic search over this workshop's own
@@ -818,9 +871,9 @@ do not have: 'have we decided this before', 'why is this built this way', 'what
 did we say about X'. An empty result is a real answer, not a malfunction: it
 means there is no prior art here and you should proceed on the ticket alone.
 Do not re-run the same query hoping for a different result."
-else
-  log "workshop search tool: NOT APPLIED (llm_router emitted no inline mcp-config)"
+  fi
 fi
+log "workshop search tool: $MCP_STATUS"
 
 # THE STANDING RULE for the residue every ticket leaves unspecified. This was a
 # per-run decision-rights dial with three settings, resolved through a cascade at

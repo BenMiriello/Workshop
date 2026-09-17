@@ -191,7 +191,10 @@ class TestRalphPassesIt:
 
     def test_a_failed_emit_leaves_the_run_unflagged_rather_than_broken(self):
         assert "MCP_FLAGS=()" in self.SRC
-        assert "NOT APPLIED" in self.SRC
+        # Specifically the search tool's own status, not the neighbouring
+        # irreversible-action gate's "NOT APPLIED" line, which used to satisfy
+        # this assertion on its own.
+        assert 'MCP_STATUS="not applied: ' in self.SRC
 
     def test_the_config_is_passed_INLINE_and_not_as_a_temp_file(self):
         """UPDATED 2026-08-22 to the mechanism the tree actually uses.
@@ -217,9 +220,55 @@ class TestRalphPassesIt:
 
     def test_the_prompt_only_describes_the_tool_when_it_is_there(self):
         """A prompt describing a tool the CLI was never given costs a turn and
-        teaches the model to distrust the rest of the prompt."""
-        enabled = self.SRC.index('log "workshop search tool: enabled')
-        disabled = self.SRC.index('log "workshop search tool: NOT APPLIED')
+        teaches the model to distrust the rest of the prompt.
+
+        UPDATED 2026-09-17 to the shape the script now uses: it sets MCP_STATUS
+        in each branch and logs ONCE at the end. The old `log "... enabled"` line
+        fired off a non-empty document alone, i.e. it reported that a FLAG had
+        been passed and not that the server could start, which is how six
+        consecutive worktree sweeps produced nothing while the log said enabled.
+        The property pinned here has not changed: the paragraph that describes
+        mcp__workshop__search is reachable only where MCP_FLAGS was set."""
+        flagged = self.SRC.index('MCP_FLAGS=(--mcp-config "$MCP_JSON")')
+        enabled = self.SRC.index('MCP_STATUS="enabled (inline mcp-config')
         described = self.SRC.index("mcp__workshop__search", enabled)
-        assert enabled < described < disabled
-        assert "The workshop's own memory" in self.SRC[enabled:disabled]
+        logged = self.SRC.index('log "workshop search tool: $MCP_STATUS"')
+        assert flagged < enabled < described < logged
+        assert "The workshop's own memory" in self.SRC[enabled:logged]
+        # Every not-applied status names a reason, so the line distinguishes
+        # "the flag was passed" from "the server is there".
+        reasons = re.findall(r'MCP_STATUS="not applied: ([^"]+)"', self.SRC)
+        assert len(reasons) >= 3, reasons
+        assert all(r.strip() for r in reasons), reasons
+
+    def test_the_spec_is_rooted_at_the_tree_the_worker_runs_in(self):
+        """The launch spec's interpreter, script and PYTHONPATH must live under
+        $DIR (the worker's own tree), not $WORKSHOP (the platform checkout).
+
+        MEASURED 2026-09-17 in .runtime/ralph.log: six consecutive `wt=1`
+        attempts, each in a worktree under branches/development/, all died
+        `iter 1: claude exit=124, output bytes=0, tokens=0, dur=900s`; the next
+        attempt ran `wt=0` in the shared checkout and succeeded first try
+        (`exit=0, bytes=3282, tokens=336356, dur=434s`). The only variable is
+        whether the scope root equals the repo root, which is exactly when
+        `scoped_exec._remap` rewrites the spec's paths into the sandbox. Rooted
+        at $WORKSHOP on a worktree run they are outside the scope root, are not
+        remapped, do not exist in the bwrap view, and the CLI drops the server
+        silently."""
+        assert 'MCP_JSON="${MCP_JSON//"$SPEC_BACKEND"/$DIR/backend}"' in self.SRC
+        assert '"$(readlink -f "$DIR/backend"' in self.SRC
+        # The prefix is read back out of the emitted document rather than
+        # assumed, so the rewrite cannot miss a spelling the emitter chose.
+        assert '"PYTHONPATH": *"' in self.SRC
+        # And it refuses rather than passing a spec whose paths are not there.
+        assert '! -x "$SPEC_CMD"' in self.SRC
+        assert '! -f "$SPEC_SRV"' in self.SRC
+
+    def test_the_owner_still_comes_from_the_platform_tree(self):
+        """Only the PATHS are re-rooted. The emitter itself still runs in
+        $WORKSHOP/backend, because `auth_store.operator_id()` answers there and
+        answers None from a worktree, and a spec with no WORKSHOP_QUERY_OWNER
+        reaches an EMPTY index while every run still reports success."""
+        emit = self.SRC.index("mcp-config --server workshop --stdout")
+        head = self.SRC[self.SRC.rindex("MCP_JSON=$(", 0, emit):emit]
+        assert 'cd "$WORKSHOP/backend"' in head
