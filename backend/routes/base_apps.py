@@ -72,9 +72,16 @@ class LauncherCard(BaseModel):
 
 class LauncherCards(BaseModel):
     """Empty on a fresh instance with nothing installed, which is the correct
-    blank-container state rather than an error."""
+    blank-container state rather than an error.
+
+    `incomplete` is absent on the ordinary answer and present when the list is
+    SHORT rather than empty -- some source of apps did not answer. The two must
+    not render alike: an app missing because its store is down is an outage the
+    operator can wait out, and an app missing because nothing is installed is a
+    blank container. Without this field the wire shape for both is a list."""
 
     apps: list[LauncherCard]
+    incomplete: str | None = None
 
 
 class AppManifest(BaseModel):
@@ -475,8 +482,17 @@ async def get_launcher():
     Drives frontend/src/pages/Apps.tsx: the launcher, its breadcrumbs, and the
     switcher all derive from this data, so an installed app appears and a removed
     one disappears with no frontend edit. A fresh instance (nothing installed)
-    returns an empty list — the correct blank-container state."""
-    return {"apps": app_registry.launcher_cards()}
+    returns an empty list — the correct blank-container state.
+
+    A PARTIAL answer carries `incomplete` and still serves what it has: the
+    catalog half of this list is file-backed and keeps working when the app
+    store does not, so a store outage should cost the operator the apps it
+    holds and a plain explanation, not the whole shell."""
+    launcher = app_registry.launcher_cards()
+    out: dict[str, Any] = {"apps": launcher.cards}
+    if launcher.incomplete:
+        out["incomplete"] = launcher.incomplete
+    return out
 
 
 @router.get("/manifests", response_model=AppManifests, response_model_exclude_unset=True)

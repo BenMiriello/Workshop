@@ -31,7 +31,7 @@ import importlib
 import logging
 import os
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 from services import installed_apps
 # THE CONTRACT, re-exported. Apps import these from `services.app_spec`; every
@@ -576,7 +576,29 @@ def mcp_provider_export(server: str) -> str:
     return stores.export(store_uri)
 
 
-def launcher_cards() -> list[dict[str, Any]]:
+class Launcher(NamedTuple):
+    """The launcher list plus whether it is the WHOLE list.
+
+    `incomplete` is None when every source answered, and otherwise a sentence
+    naming what could not be read. It exists because this list is assembled
+    from two sources with different failure modes -- a file-backed catalog and
+    the `app` table -- and a caller handed only `cards` cannot tell a short list
+    from a complete one.
+
+    THE COST OF NOT HAVING IT, measured 2026-09-16: the app table was
+    unreachable for eight hours, the database half of the loop below raised, and
+    the bare `except` around it returned the seven catalog apps on their own.
+    The operator's own apps and every project silently were not there, with no
+    error on the page, so an OUTAGE presented as DELETED DATA. That is the same
+    distinction `services/apps.AppsUnavailable` was written to preserve one
+    layer down, defeated here by catching it.
+    """
+
+    cards: list[dict[str, Any]]
+    incomplete: str | None = None
+
+
+def launcher_cards() -> Launcher:
     """Launcher card descriptors for installed apps that have a card, in order.
 
     Each card carries display fields (title/tagline/icon/route|href) plus the
@@ -586,10 +608,13 @@ def launcher_cards() -> list[dict[str, Any]]:
     It also carries the app's resolved SURFACE (`services/app_surface.py`):
     where the app opens and which per-app tabs it has. Both the launcher grid
     and the shell's dock read this list, so resolving it once here is what
-    stops the two from sending the operator to different places."""
+    stops the two from sending the operator to different places.
+
+    Returns a `Launcher`, not a bare list, so a partial answer says so."""
     from services import manifests
 
     cards: list[dict[str, Any]] = []
+    incomplete: str | None = None
     for spec in installed_specs():
         if not spec.card:
             continue
@@ -639,10 +664,16 @@ def launcher_cards() -> list[dict[str, Any]]:
                 # and until 2026-09-01 this line spelled `/chats` for every one
                 # of them, which is the landing nobody chose.
             })
-    except Exception:  # pragma: no cover - the launcher must not die on this
+    except Exception:
+        # THE LAUNCHER MUST NOT DIE ON THIS, and it must not lie either. The
+        # catalog apps above were resolved from a file and are genuinely
+        # installed, so serving them is better than a blank shell; what was
+        # wrong before was serving them as if they were all of it.
         log.warning("could not read app rows for the launcher", exc_info=True)
+        incomplete = ("Some apps could not be read: the app store did not "
+                      "answer. The list below is incomplete.")
 
-    return _self_first(_attach_surfaces(cards))
+    return Launcher(_self_first(_attach_surfaces(cards)), incomplete)
 
 
 def _attach_surfaces(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:

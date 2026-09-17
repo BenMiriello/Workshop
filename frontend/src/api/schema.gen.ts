@@ -959,6 +959,11 @@ export interface paths {
          *     switcher all derive from this data, so an installed app appears and a removed
          *     one disappears with no frontend edit. A fresh instance (nothing installed)
          *     returns an empty list — the correct blank-container state.
+         *
+         *     A PARTIAL answer carries `incomplete` and still serves what it has: the
+         *     catalog half of this list is file-backed and keeps working when the app
+         *     store does not, so a store outage should cost the operator the apps it
+         *     holds and a plain explanation, not the whole shell.
          */
         get: operations["get_launcher_base_apps_launcher_get"];
         put?: never;
@@ -12868,10 +12873,18 @@ export interface components {
          * LauncherCards
          * @description Empty on a fresh instance with nothing installed, which is the correct
          *     blank-container state rather than an error.
+         *
+         *     `incomplete` is absent on the ordinary answer and present when the list is
+         *     SHORT rather than empty -- some source of apps did not answer. The two must
+         *     not render alike: an app missing because its store is down is an outage the
+         *     operator can wait out, and an app missing because nothing is installed is a
+         *     blank container. Without this field the wire shape for both is a list.
          */
         LauncherCards: {
             /** Apps */
             apps: components["schemas"]["LauncherCard"][];
+            /** Incomplete */
+            incomplete?: string | null;
         };
         /**
          * LeaseList

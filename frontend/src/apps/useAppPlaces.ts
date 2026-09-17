@@ -44,15 +44,22 @@ export type AppPlace = {
 
 /** `GET /api/base-apps/launcher`. Exported so every reader of this list uses
  *  one fetcher against one key: the dock reads it here and the Apps page reads
- *  it too, and they were two requests for one answer. */
-export async function fetchLauncher(): Promise<LauncherCard[]> {
+ *  it too, and they were two requests for one answer.
+ *
+ *  RETURNS THE ENVELOPE, not the bare array it used to. `incomplete` is set
+ *  when the platform could read only SOME of its app sources, and a caller
+ *  handed just the array cannot tell that from a complete list -- which is
+ *  exactly what happened on 2026-09-16, when the app store was unreachable for
+ *  eight hours and the operator's own apps were simply absent from a page that
+ *  reported no error. */
+export async function fetchLauncher(): Promise<components["schemas"]["LauncherCards"]> {
   const r = await fetch("/api/base-apps/launcher");
   if (!r.ok) throw new Error(`launcher ${r.status}`);
   // LauncherCards, named rather than re-described. This list decides which
   // apps exist in the shell at all, so an envelope rename here would empty the
   // whole app switcher and read as "no apps installed".
   const j = (await r.json()) as components["schemas"]["LauncherCards"];
-  return j.apps ?? [];
+  return { apps: j.apps ?? [], incomplete: j.incomplete ?? null };
 }
 
 function place(app: LauncherCard, known: AppPlace | undefined): AppPlace {
@@ -104,7 +111,10 @@ export function useAppPlacesState(): { apps: AppPlace[]; ready: boolean } {
 
   const byId = new Map(bundled.map((a) => [a.id, a]));
   const out: AppPlace[] = [];
-  for (const app of q.data) {
+  // A PARTIAL list is still the best list the dock has. The notice about it
+  // belongs on the Apps page, which is where the operator goes to ask "where
+  // did my app go"; a banner over the dock on every screen would be noise.
+  for (const app of q.data.apps) {
     // An external app (href, no route) is a link out, not a place in the shell.
     if (!app.route && app.href) continue;
     out.push(place(app, byId.get(app.id)));

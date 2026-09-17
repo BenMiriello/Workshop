@@ -86,7 +86,11 @@ const iconFor = (app: { id: string; icon?: string | null }): string | undefined 
 
 type LauncherState =
   | { kind: "loading" }
-  | { kind: "loaded"; apps: LauncherApp[] }
+  // `incomplete` is the third state this page needs and used not to have: the
+  // read SUCCEEDED and the answer is short, because the platform could reach
+  // only some of its app sources. Loaded-and-partial is not an error (the apps
+  // shown are real and openable) and it is not the ordinary answer either.
+  | { kind: "loaded"; apps: LauncherApp[]; incomplete: string | null }
   | { kind: "error"; message: string };
 
 // View | Manage. View = the plain launcher grid (cards are launch links).
@@ -406,7 +410,7 @@ export default function Apps() {
   });
   const launcher: LauncherState =
     launcherQuery.data
-      ? { kind: "loaded", apps: launcherQuery.data }
+      ? { kind: "loaded", apps: launcherQuery.data.apps, incomplete: launcherQuery.data.incomplete ?? null }
       : launcherQuery.isError
         ? { kind: "error", message: String(launcherQuery.error) }
         : { kind: "loading" };
@@ -556,6 +560,19 @@ export default function Apps() {
           />
         }
       />
+      {launcher.kind === "loaded" && launcher.incomplete ? (
+        <Notice
+          tone="warn"
+          where={<code>GET /api/base-apps/launcher</code>}
+          action={
+            <Button variant="ghost" size="sm" onClick={() => { void launcherQuery.refetch(); }}>
+              Retry
+            </Button>
+          }
+        >
+          {launcher.incomplete}
+        </Notice>
+      ) : null}
       {launcher.kind === "loading" ? (
         <CardGrid>
           {[0, 1, 2, 3].map((i) => (

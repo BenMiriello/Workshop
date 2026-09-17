@@ -18,11 +18,15 @@ to the file store rather than fail a request.
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
+import time
 from uuid import UUID
 
 from services import ownership
+
+log = logging.getLogger(__name__)
 
 __all__ = ["TenantUnresolved", "available", "configured", "org_and_user",
            "current_org", "org_for_owner", "reset_cache"]
@@ -40,6 +44,24 @@ class TenantUnresolved(RuntimeError):
 _lock = threading.Lock()
 _cache: dict[int, tuple[UUID, UUID]] = {}
 _db_ok: bool | None = None
+
+# How long a FAILED probe stays cached before the database is asked again, and
+# the two bounds that window moves between. It doubles on each consecutive
+# failure, so a database that is genuinely gone costs about one connect attempt
+# a minute rather than one per request, and a database that comes back is
+# noticed within a minute rather than never.
+#
+# THE "NEVER" IS NOT HYPOTHETICAL. Until 2026-09-16 the first answer was cached
+# for the whole process lifetime, and on that day the probe at startup failed
+# once while the database was fine seconds later. Every relational read in the
+# process -- apps, chat branches, tasks, leases, changes, worktree records,
+# ticket sync -- degraded for eight hours and was fixed by a restart that
+# changed no code. A cache with no expiry turns a blip into an outage that ends
+# only when someone notices.
+_RETRY_FLOOR_S = 1.0
+_RETRY_CEIL_S = 60.0
+_db_failed_at: float | None = None
+_db_retry_after_s: float = _RETRY_FLOOR_S
 
 # The file store this process started against. A deployment sets
 # WORKSHOP_RUNTIME before import, so for a real one this never changes; only a
@@ -70,10 +92,12 @@ def _file_store_redirected() -> bool:
 
 
 def reset_cache() -> None:
-    global _db_ok
+    global _db_ok, _db_failed_at, _db_retry_after_s
     with _lock:
         _cache.clear()
         _db_ok = None
+        _db_failed_at = None
+        _db_retry_after_s = _RETRY_FLOOR_S
 
 
 def configured() -> bool:
@@ -101,25 +125,50 @@ def configured() -> bool:
     return bool(os.environ.get("WORKSHOP_DATABASE_URL"))
 
 
+def _failure_is_fresh() -> bool:
+    """Is the cached failure recent enough to answer from without re-probing?"""
+    if _db_ok is not False or _db_failed_at is None:
+        return False
+    return (time.monotonic() - _db_failed_at) < _db_retry_after_s
+
+
 def available() -> bool:
     """Whether the relational store can be reached at all.
 
-    Cached after the first answer. The chat read path asks this before trying a
-    branch-aware read, so a machine with no Postgres (every checkout that is not
-    this one) keeps working on the files. A process whose file store has been
-    redirected answers False too: see `_file_store_redirected`.
+    The chat read path asks this before trying a branch-aware read, so a machine
+    with no Postgres (every checkout that is not this one) keeps working on the
+    files. A process whose file store has been redirected answers False too: see
+    `_file_store_redirected`.
+
+    TWO ANSWERS THAT LOOK THE SAME AND CACHE DIFFERENTLY, which is the whole
+    shape of this function. "There is no database on this box" comes from
+    `configured()`, is read off the environment, cannot change under a running
+    process, and so is answered without ever connecting. "There is a database
+    and it did not answer" is an OUTAGE, it is expected to end, and caching it
+    forever is what made one failed probe outlast the failure by eight hours.
+    Only the second kind expires, on the doubling window above.
+
+    Success is still cached permanently. A reachable database that dies is
+    noticed by the query that fails, not by this; re-probing before every read
+    would double the round trips to answer a question that is almost always yes.
     """
-    global _db_ok
+    global _db_ok, _db_failed_at, _db_retry_after_s
     if _file_store_redirected():
         return False
-    if _db_ok is not None:
-        return _db_ok
+    if _db_ok is True:
+        return True
+    if not configured():
+        return False
+    if _failure_is_fresh():
+        return False
     with _lock:
-        if _db_ok is not None:
-            return _db_ok
-        if not configured():
-            _db_ok = False
-            return _db_ok
+        # Re-checked under the lock: concurrent readers arriving during an
+        # outage must cost one connect attempt between them, not one each.
+        if _db_ok is True:
+            return True
+        if _failure_is_fresh():
+            return False
+        was_down = _db_ok is False
         try:
             from sqlalchemy import text
 
@@ -130,9 +179,24 @@ def available() -> bool:
             finally:
                 s.close()
             _db_ok = True
+            _db_failed_at = None
+            _db_retry_after_s = _RETRY_FLOOR_S
+            if was_down:
+                log.warning("the relational store answered again; "
+                            "relational reads are live")
         except Exception:
             _db_ok = False
-    return _db_ok
+            _db_failed_at = time.monotonic()
+            # Logged once per failure EPISODE rather than per probe: the point
+            # of the message is that reads started degrading, and repeating it
+            # every minute for a box that has no database running buries that.
+            if not was_down:
+                log.warning(
+                    "the relational store is configured but did not answer; "
+                    "relational reads will degrade until it does",
+                    exc_info=True)
+            _db_retry_after_s = min(_db_retry_after_s * 2, _RETRY_CEIL_S)
+    return bool(_db_ok)
 
 
 def org_for_owner(owner_id: int) -> tuple[UUID, UUID]:
