@@ -42,6 +42,7 @@ from services import chat_queue
 from services import wakeups
 from services import chat_store, chat_context, chat_log
 from services import clock
+from services import user_prefs
 from services import tasks
 from services import thread_ops
 from services import task_scope
@@ -426,7 +427,7 @@ def _prefs_payload() -> dict:
         # in, and `timezone_source` says which rung of services/clock answered.
         # Without the last two, an unset setting renders as a blank next to
         # times that are plainly in some zone, and the screen cannot say which.
-        "timezone": chat_store.get_timezone(),
+        "timezone": user_prefs.get_timezone(),
         "resolved_timezone": resolved_zone,
         "timezone_source": zone_source,
     }
@@ -457,7 +458,7 @@ async def set_chat_prefs(body: ChatPrefs):
             raise HTTPException(400, str(e))
     if body.timezone is not None:
         try:
-            chat_store.set_timezone(body.timezone)
+            user_prefs.set_timezone(body.timezone)
         except ValueError as e:
             raise HTTPException(400, str(e))
     return _prefs_payload()

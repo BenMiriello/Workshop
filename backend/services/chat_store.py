@@ -33,7 +33,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import chat_log, context_window, ownership, scope_tree  # noqa: F401  (ownership re-exported for tests)
+from . import chat_log, context_window, ownership, scope_tree, user_prefs  # noqa: F401  (ownership re-exported for tests)
 
 log = logging.getLogger("workshop.chat_store")
 
@@ -119,41 +119,14 @@ def _clamp_mode(mode: str | None) -> str:
 # Lives beside the threads it applies to, one small file per owner. A chat stores
 # its mode at creation, so changing this never rewrites a conversation that
 # already exists — "default" means the mode a new chat starts in, and nothing more.
-_PREFS_FILE = "prefs.json"
-
-
-def _prefs_path() -> Path:
-    return _chat_dir() / _PREFS_FILE
-
-
-def _read_prefs() -> dict:
-    # OwnerUnset is caught alongside the io errors on purpose. Reading a
-    # preference is a SOFT layer in every resolution chain that consults it
-    # (routes.chat._resolve_effort / _resolve_permission_mode), so "nobody is
-    # pinned" has to mean "no preference", not an exception thrown out of the
-    # middle of a turn. Writes still fail closed: `_prefs_path()` is called
-    # outside this guard in every setter below.
-    try:
-        data = json.loads(_prefs_path().read_text())
-        return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError, ownership.OwnerUnset):
-        return {}
-
-
-def _write_pref(key: str, value: object) -> None:
-    """Set (or, on None, clear) one key in prefs.json. Read-modify-write of a
-    handful of scalars written only from the settings screen; there is no
-    concurrent writer to lose an update to."""
-    prefs = _read_prefs()
-    if value is None:
-        prefs.pop(key, None)
-    else:
-        prefs[key] = value
-    p = _prefs_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(prefs, indent=2))
-    tmp.replace(p)
+# THE FILE ITSELF IS `services/user_prefs`, which is BELOW this module. It moved
+# down when the first account-level key (the user's timezone) moved in: that key
+# is read by `services/clock`, the prompt layer and the wake-up scheduler sit on
+# top of clock, and this module is inside the backend's large import cycle, so a
+# resolver reaching in here for one string would have joined the cycle. These
+# two names stay as the spelling every setter below already uses.
+_read_prefs = user_prefs.read
+_write_pref = user_prefs.write
 
 
 def get_default_mode() -> str:
@@ -267,39 +240,6 @@ def set_default_permission_mode(mode: str | None) -> str | None:
             f"{value!r} is not offered as a chat default; "
             f"pick one of {list(model_caps.OFFERED_MODES)}")
     _write_pref("default_permission_mode", value)
-    return value
-
-
-def get_timezone() -> str | None:
-    """The user's own IANA timezone, or None for "not set".
-
-    Not set is a real answer and the common one: `services/clock` then falls
-    back to what the installation declares, and finally to UTC labelled as UTC.
-    An unspellable stored value reads as not set rather than raising, for the
-    same reason `get_default_effort` does -- a hand-edited prefs file must not be
-    able to fail a turn, and this value is read on the way into every prompt.
-    """
-    v = _read_prefs().get("timezone")
-    if not isinstance(v, str):
-        return None
-    return v.strip() or None
-
-
-def set_timezone(name: str | None) -> str | None:
-    """Persist the user's timezone. Empty/None clears it. Returns what was stored.
-
-    Raises ValueError on a name this host's tz database does not know, because
-    unlike a read this is somebody looking at the control: a zone that cannot be
-    loaded would silently read back as "not set" and the screen would show UTC
-    next to the name they just picked.
-    """
-    from zoneinfo import available_timezones
-
-    value = (name or "").strip() or None
-    if value is not None and value not in available_timezones():
-        raise ValueError(
-            f"unknown timezone {name!r}; use an IANA name such as Etc/UTC")
-    _write_pref("timezone", value)
     return value
 
 

@@ -8,7 +8,7 @@ and nothing in here changes what is written.
 
 WHERE THE LOCAL ZONE COMES FROM, highest rung first:
 
-1. THE USER'S OWN SETTING (`chat_store.get_timezone`), one field in the
+1. THE USER'S OWN SETTING (`user_prefs.get_timezone`), one field in the
    per-owner prefs file the settings screen already writes. This rung exists
    because a machine's zone is not a person's zone: a host in a data centre, a
    laptop that travelled, and a container built at UTC all report a clock its
@@ -38,8 +38,9 @@ nothing stable in it to correct.
 from __future__ import annotations
 
 import datetime as _dt
+from zoneinfo import ZoneInfo
 
-from services import chat_store, installation
+from services import installation, user_prefs
 
 UTC = _dt.timezone.utc
 
@@ -54,8 +55,6 @@ def _loadable(name: str):
     if not name:
         return None
     try:
-        from zoneinfo import ZoneInfo
-
         return ZoneInfo(name)
     except Exception:  # noqa: BLE001 - any failure to load means "skip this rung"
         return None
@@ -63,7 +62,7 @@ def _loadable(name: str):
 
 def user_zone() -> str | None:
     """The user's own setting, or None when they have not made one."""
-    return chat_store.get_timezone()
+    return user_prefs.get_timezone()
 
 
 def resolve() -> tuple[str, str, _dt.tzinfo]:

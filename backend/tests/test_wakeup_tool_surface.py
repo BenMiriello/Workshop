@@ -269,7 +269,7 @@ def test_the_clock_states_utc_alongside_the_local_reading(monkeypatch):
     """UTC is canonical -- it is what every stored stamp is in -- so a turn
     correlating a row with a log line has to be given it rather than having to
     shell out for `date` to convert the one local reading it was handed."""
-    monkeypatch.setattr("services.chat_store.get_timezone", lambda: None)
+    monkeypatch.setattr("services.user_prefs.get_timezone", lambda: None)
     monkeypatch.setenv("WORKSHOP_TIMEZONE", "Asia/Tokyo")
     line = cc.clock_line()
     assert "UTC:" in line
@@ -285,7 +285,7 @@ def test_the_users_own_zone_outranks_the_installations(monkeypatch):
     laptop that travelled and a container built at UTC all report a clock the
     user does not live in."""
     monkeypatch.setenv("WORKSHOP_TIMEZONE", "Asia/Tokyo")
-    monkeypatch.setattr("services.chat_store.get_timezone",
+    monkeypatch.setattr("services.user_prefs.get_timezone",
                         lambda: "Europe/Berlin")
     line = cc.clock_line()
     assert "Europe/Berlin" in line
@@ -298,7 +298,7 @@ def test_the_users_own_zone_outranks_the_installations(monkeypatch):
 def test_with_no_zone_anywhere_the_block_says_utc_and_asks(monkeypatch):
     """The fallback is UTC LABELLED as UTC. A guessed local zone would be
     indistinguishable from a correct one in every reading it produced."""
-    monkeypatch.setattr("services.chat_store.get_timezone", lambda: None)
+    monkeypatch.setattr("services.user_prefs.get_timezone", lambda: None)
     monkeypatch.setenv("WORKSHOP_TIMEZONE", "")
     monkeypatch.setenv("TZ", "")
     monkeypatch.setattr("services.installation._host_zone_name", lambda: "")
@@ -312,7 +312,7 @@ def test_a_zone_this_host_cannot_load_is_skipped_not_quoted(monkeypatch):
     quoted at a model as though it had been."""
     from services import clock
 
-    monkeypatch.setattr("services.chat_store.get_timezone",
+    monkeypatch.setattr("services.user_prefs.get_timezone",
                         lambda: "Mars/Olympus_Mons")
     monkeypatch.setenv("WORKSHOP_TIMEZONE", "Asia/Tokyo")
     name, rung, _ = clock.resolve()
