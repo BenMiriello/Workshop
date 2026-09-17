@@ -1859,12 +1859,60 @@ print(len(crit))
       log "task=$TASK_ID DISPLACED: claim lost mid-run, run stopped; ticket left exactly as the operator/reclaimer set it (no status written, no attempt refunded and none newly consumed here)"
       ;;
     1|2)
-      # rc=1 (iteration cap) / rc=2 (wall cap): the run did NOT converge. Finish
-      # the child FAILED and count it in tasks_failed so a pure-timeout thrash loop
-      # is visible to the circuit breaker, which keys on tasks_failed. (review F14)
-      note_unmerged_branch
-      if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "incomplete (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
-      job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE" ;;
+      # rc=1 (iteration cap) / rc=2 (wall cap): the run did NOT converge.
+      #
+      # COMMITTED, computed above from `git rev-list BASELINE..HEAD`, decides
+      # what that means — it did NOT used to be consulted here, so a run that
+      # committed 366 real insertions and a run that committed nothing took the
+      # identical path: attempt burned, and on the third one the ticket BLOCKED
+      # with "incomplete after 3 attempts", which was false (f8c7d271, measured
+      # 2026-09-16/17). A `timeout`-killed iteration (ralph.sh exit 124) is the
+      # clearest case — the worker had real work in flight when the wall cut it
+      # off — but this leg cannot and does not tell a kill apart from ordinary
+      # non-convergence; it goes purely off whether anything landed.
+      #
+      # COMMITTED == 0: an unchanged failure path, byte-identical to before.
+      # Nothing to route to review, so count it in tasks_failed (visible to the
+      # circuit breaker, which keys on that) and burn or block the attempt.
+      #
+      # COMMITTED == 1: NOT a failure. Same shape as the rc=8 budget-cap pause
+      # (70860d58) reused per this ticket's brief — park, restore the attempt,
+      # never touch tasks_failed — plus a Change (open_change_for_task, the
+      # same call publish_or_park's supervised/local-only branch makes on a
+      # PASS), because this run is not expected to resume into the same
+      # session the way a pause is: the work stands on its own and goes to
+      # review rather than staying invisible on an unreferenced branch.
+      if (( COMMITTED == 1 )); then
+        CHANGE_ID=""
+        if (( WT_MODE == 1 )) && [[ -n "$WT_BRANCH_SLUG" ]]; then
+          CHANGE_ID=$(open_change_for_task "$WT_BRANCH_SLUG" "$TASK_ID" "$PR_TITLE")
+        fi
+        if [[ -n "$CHANGE_ID" ]]; then
+          record_change_gates "$CHANGE_ID"
+          record_claim_check "$CHANGE_ID"
+          AUG=$(printf '%s' "$EVIDENCE" | jq -c \
+            --arg branch "wt/$WT_SLUG/$WT_BRANCH_SLUG" --arg change "$CHANGE_ID" \
+            '. + {branch: $branch, change: $change}' 2>/dev/null)
+          [[ -n "$AUG" ]] && EVIDENCE="$AUG"
+          python3 "$PTASKS" note "$DIR" "$TASK_ID" \
+            "run did not converge (rc=$RC) but committed real work; change $CHANGE_ID opened on branch wt/$WT_SLUG/$WT_BRANCH_SLUG for review. No attempt was consumed. Run: $CHILD_JOB" \
+            --kind acceptance >/dev/null 2>>"$LOG"
+          log "task=$TASK_ID incomplete (rc=$RC) but COMMITTED — change=$CHANGE_ID opened on wt/$WT_SLUG/$WT_BRANCH_SLUG, parked with attempt restored"
+        else
+          note_unmerged_branch
+          python3 "$PTASKS" note "$DIR" "$TASK_ID" \
+            "run did not converge (rc=$RC) but committed real work; its commits are on the task branch, unmerged (no change opened — not in worktree mode, or opening one failed). No attempt was consumed. Run: $CHILD_JOB" \
+            --kind acceptance >/dev/null 2>>"$LOG"
+          log "task=$TASK_ID incomplete (rc=$RC) but COMMITTED — no change opened, parked with attempt restored"
+        fi
+        ptasks_tx set-status "$DIR" "$TASK_ID" parked --restore-attempt --expect-claim-token "${CLAIM_TOKEN:-}" || true
+        PARKED=$((PARKED+1))
+        job_finish_child "$CHILD_JOB" cancelled "$RC" "$EVIDENCE"
+      else
+        note_unmerged_branch
+        if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "incomplete (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
+        job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"
+      fi ;;
     *)
       note_unmerged_branch
       if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "failed (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi

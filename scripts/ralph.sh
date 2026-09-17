@@ -20,8 +20,14 @@
 #
 # Exit codes:
 #   0  — reviewer approved (COMPLETE)
-#   1  — iteration cap hit without approval
-#   2  — wall-time cap hit
+#   1  — iteration cap hit without approval. A `timeout`-killed iteration (exit
+#        124) never reaches the reviewer — see "SEVERED RUN" below — so this
+#        code also covers a run that spent every iteration getting killed. The
+#        caller (project_ralph.sh's `1|2` leg) checks COMMITTED before deciding
+#        what that means: no commits past baseline is a real failure, but real
+#        commits are routed to review and parked with the attempt restored,
+#        never burned as a failed attempt.
+#   2  — wall-time cap hit. Same COMMITTED check as code 1.
 #   3  — classifier block hit
 #   4  — startup failure
 #   5  — environment failure on iter 1 (API outage/auth): release, do NOT burn an attempt
@@ -1097,6 +1103,20 @@ $RALPH_INSTRUCTIONS
 
 $TASK"
       log "resuming paused session $RESUME_SESSION (paused after iteration ${RESUME_ITER:-?})"
+    else
+      # MINT THE SESSION ID BEFORE THE FIRST SPAWN, not after. The previous
+      # design left RESUME_FLAG empty on a fresh iteration 1 and learned
+      # SESSION_ID only by reading it back out of the result envelope below
+      # (~iter 1250) — which a `timeout` kill never writes. So a killed run had
+      # no id to resume from, iteration 2 fell back to `--continue` (the cwd's
+      # most-recently-touched session, right only by chance), and the receipt's
+      # `session_id` for a killed run was permanently empty. `--session-id`
+      # reserves the uuid the CLI will use for THIS turn; passing it up front
+      # means the id is known even if the process is cut off before it ever
+      # writes a line, so a severed run is resumable and its billed usage is
+      # traceable to the run that spent it.
+      SESSION_ID=$(python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || echo "")
+      [[ -n "$SESSION_ID" ]] && RESUME_FLAG=(--session-id "$SESSION_ID")
     fi
   else
     REASONS=$(echo "$last_reviewer_json" | python3 -c "import json,sys; print(', '.join(json.load(sys.stdin).get('reasons',[])))" 2>/dev/null || echo "unknown")
@@ -1315,6 +1335,35 @@ print(sid)
   if (( CLAUDE_EXIT == 124 && ITER_TOKENS == 0 && ITER_DUR > 60 )); then
     RUN_TOKENS=$((RUN_TOKENS + NOMINAL_TOKENS))
     log "iter $iter: timeout kill, no usage JSON after ${ITER_DUR}s, billing nominal $NOMINAL_TOKENS tokens (F8b)"
+  fi
+
+  # SEVERED RUN: `timeout` killed the worker mid-turn, so there is no result
+  # envelope. Everything below this point — classifier detection, the sentinel
+  # check and above all the REVIEWER — has nothing to judge: the reviewer reads
+  # the committed tree, not the missing output, and a tree that was healthy
+  # before the kill reads as a tree the (absent) worker left healthy. Measured
+  # on b3750ad7, 2026-09-16: "iter 1: claude exit=124 ... reviewer.complete=1
+  # verdict=approve / PASS (sentinel missed — treating as PASS)" for a one-line
+  # diff against a ticket asking for the platform to be generalized — fixed for
+  # the false-PASS shape in 179cea78, but that fix still let the reviewer RUN on
+  # the severed tree and grade it, which is the thing that produced the wrong
+  # verdict in the first place.
+  #
+  # So a killed iteration never reaches the reviewer at all. Commit whatever
+  # landed inside the task's lane — same shape as the budget-cap pause
+  # (70860d58): a kill mid-turn is an uninvited pause, not a fault, and
+  # `commit_lane` is exactly the function that pause reuses for this — then go
+  # straight to the next iteration. The wall-time and iteration caps above
+  # still bound the retries; when they run out the caller (project_ralph.sh)
+  # reads COMMITTED off the git log, not off a verdict this run never earned.
+  if (( CLAUDE_EXIT == 124 )); then
+    if commit_lane "ralph: timeout kill at iter $iter — $(echo "$TASK" | head -c 60 | tr '\n' ' ')"; then
+      log "iter $iter: timeout kill — committed the working tree inside the task's lane; skipping the reviewer on a severed run"
+    else
+      log "iter $iter: timeout kill — nothing to commit inside the task's lane; skipping the reviewer on a severed run"
+    fi
+    accum_worker_commits
+    continue
   fi
 
   # Detect classifier block in output — the operator's hard rule says these
