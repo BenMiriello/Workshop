@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { bucketFor, groupByDate, spansScopes, armedOf, chatTags, isArmed, newestFirst, visibleThreads } from "./chatList";
+import {
+  PAGE_SIZE, bucketFor, chatTags, groupByDate, newestFirst, pageOf, spansScopes, visibleThreads,
+} from "./chatList";
 
 // A row, cut down to the fields these rules actually read. The list route sends
 // more; nothing here depends on the rest.
@@ -42,28 +44,6 @@ describe("newestFirst", () => {
   });
 });
 
-describe("armedOf", () => {
-  it("defaults to off when the field is absent, which is what the wire sends today", () => {
-    expect(armedOf({})).toBe("off");
-    expect(armedOf({ armed: null })).toBe("off");
-    expect(isArmed({})).toBe(false);
-  });
-
-  it("reads the three arming values", () => {
-    expect(armedOf({ armed: "on-message" })).toBe("on-message");
-    expect(armedOf({ armed: "schedule" })).toBe("schedule");
-    expect(armedOf({ armed: "on-ready-ticket" })).toBe("on-ready-ticket");
-    expect(isArmed({ armed: "schedule" })).toBe(true);
-  });
-
-  it("treats a value outside the closed set as off", () => {
-    // Fail closed: an unknown value must not make the list claim a thread
-    // works unasked.
-    expect(armedOf({ armed: "sometimes" })).toBe("off");
-    expect(isArmed({ armed: "sometimes" })).toBe(false);
-  });
-});
-
 describe("visibleThreads", () => {
   const list = [
     row("plain", { updated_at: "2026-09-01T10:00:00Z" }),
@@ -72,18 +52,70 @@ describe("visibleThreads", () => {
     row("disarmed", { updated_at: "2026-09-01T12:00:00Z", armed: "off" }),
   ];
 
-  it("All keeps every thread, still newest first", () => {
-    expect(visibleThreads(list, "all").map((t) => t.id))
+  it("keeps every thread, newest first", () => {
+    expect(visibleThreads(list).map((t) => t.id))
       .toEqual(["disarmed", "reactive", "plain", "scheduled"]);
   });
 
-  it("Armed keeps only the threads that advance without a person", () => {
-    expect(visibleThreads(list, "armed").map((t) => t.id)).toEqual(["reactive", "scheduled"]);
+  it("does not narrow by `armed`, because the list has no filter", () => {
+    // The Segmented that read this field is gone: nothing in the catalog is
+    // armed, so its second position could only ever empty the list, and the
+    // word was the database's rather than the operator's. A row carrying the
+    // field must still appear. This is the assertion that fails if somebody
+    // adds the filter back without a reason to.
+    expect(visibleThreads(list)).toHaveLength(4);
+    expect(visibleThreads([row("armed-one", { armed: "schedule" })]).map((t) => t.id))
+      .toEqual(["armed-one"]);
   });
 
   it("survives a list that has not loaded", () => {
-    expect(visibleThreads(null, "all")).toEqual([]);
-    expect(visibleThreads(undefined, "armed")).toEqual([]);
+    expect(visibleThreads(null)).toEqual([]);
+    expect(visibleThreads(undefined)).toEqual([]);
+  });
+});
+
+describe("pageOf", () => {
+  const many = Array.from({ length: 55 }, (_, i) => row(`r${i}`));
+
+  it("mounts a bounded page and says there is more", () => {
+    const p = pageOf(many, PAGE_SIZE);
+    expect(p.visible).toHaveLength(PAGE_SIZE);
+    expect(p.total).toBe(55);
+    expect(p.more).toBe(true);
+    expect(p.next).toBe(PAGE_SIZE * 2);
+  });
+
+  it("stops when the list runs out, rather than at a round number", () => {
+    // The last press must not leave `shown` past the end, or the count would
+    // read "showing 60 of 55".
+    const p = pageOf(many, 40);
+    expect(p.next).toBe(55);
+    const end = pageOf(many, 55);
+    expect(end.visible).toHaveLength(55);
+    expect(end.more).toBe(false);
+    expect(end.next).toBe(55);
+  });
+
+  it("never claims to be showing rows that are not there", () => {
+    // A poll can return FEWER rows than the reader had already asked for: a
+    // chat was archived, or deleted in another tab. `shown` is stale then, and
+    // an unclamped slice would report a count larger than the list.
+    const p = pageOf(many.slice(0, 3), 40);
+    expect(p.visible).toHaveLength(3);
+    expect(p.total).toBe(3);
+    expect(p.more).toBe(false);
+  });
+
+  it("is empty and finished for an empty list", () => {
+    const p = pageOf([], PAGE_SIZE);
+    expect(p.visible).toEqual([]);
+    expect(p.more).toBe(false);
+    expect(p.next).toBe(0);
+  });
+
+  it("mounts nothing for a nonsense count rather than throwing", () => {
+    expect(pageOf(many, -5).visible).toEqual([]);
+    expect(pageOf(many, Number.NaN).visible).toEqual([]);
   });
 });
 

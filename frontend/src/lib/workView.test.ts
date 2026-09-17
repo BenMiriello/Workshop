@@ -384,8 +384,13 @@ describe("what this view does not claim", () => {
     // A row must not grow a switch that writes nowhere: `chat_thread` has no
     // `armed` column yet. The note names the setting AND where it actually
     // lives, so the absence is an answer rather than a gap.
-    expect(THREAD_ARMED_NOTE).toContain("armed");
+    expect(THREAD_ARMED_NOTE).toContain("run on its own");
     expect(THREAD_ARMED_NOTE).toContain("per scope");
+    // AND NOT IN THE DATABASE'S WORDS. `armed` is the column; the operator
+    // rejected the word on screen on 2026-09-17 ("that's not a normal way to
+    // say it"). Every user-visible string in the app says what the setting
+    // DOES instead.
+    expect(THREAD_ARMED_NOTE.toLowerCase()).not.toContain("armed");
   });
 });
 

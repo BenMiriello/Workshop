@@ -16,6 +16,7 @@ import { Dock } from "./Dock";
 import { MobileBars } from "./MobileBars";
 import { PageColumn } from "./PageColumn";
 import { ShellTrail } from "./ShellTrail";
+import { isOpenChat } from "./places";
 import { TakeoverProvider } from "./takeover";
 import { useShell } from "./useShell";
 
@@ -34,7 +35,13 @@ function ShellFrame({ children }: { children: ReactNode }) {
   const shell = useShell();
   const { pathname } = useLocation();
 
-  const chatFull = pathname.startsWith("/chat/");
+  // AN OPEN CONVERSATION IS AN OPEN CONVERSATION WHEREVER IT IS ADDRESSED FROM.
+  // The rule is `isOpenChat` in places.ts, which matches the global focused
+  // chat AND an app's own chat route: one conversation filling the viewport,
+  // with the shell pinned to the visual viewport. It is checked FIRST, so an
+  // app's chat takes the chat layout rather than the app one even though its
+  // path is under /apps.
+  const chatFull = isOpenChat(pathname);
   const appFull =
     !chatFull && (/^\/apps\/[^/]/.test(pathname) || /^\/projects\/[^/]+\/run/.test(pathname));
   const widthClass = chatFull ? " ws-app--chatfull" : appFull ? " ws-app--appfull" : "";

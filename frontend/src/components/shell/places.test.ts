@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Bot } from "lucide-react";
-import { buildPlaces, landingFor, pageFor, placeFor, type ShellPlace } from "./places";
+import {
+  appChatPath, buildPlaces, isOpenChat, landingFor, pageFor, placeFor, type ShellPlace,
+} from "./places";
 import { APP_TABS } from "../../pages/apps/tabs/appTabState";
 
 // One glyph stands in for all of them: this module decides ROUTES, and which
@@ -55,6 +57,49 @@ describe("placeFor", () => {
     // outcome: a bare startsWith would make "/chats" a hit for "/chat", which
     // would be wrong the moment the two are ever separate places.
     expect(placeFor(places, "/chats").id).toBe("chats");
+  });
+});
+
+describe("an app's own chat route", () => {
+  // THE DEFECT THIS EXISTS FOR. A chat row on an app's Chats tab navigated to
+  // `/chat/<context-key>`, which belongs to the All chats place, so opening a
+  // chat from inside an app left the app: the dock switched, the app's tabs
+  // went, and Back returned to the global list. The operator, 2026-09-17: "if I
+  // go to a project and I go to its chats page and then I open a particular
+  // chat thread, it goes to all chats, which is not correct."
+  const path = appChatPath("gizmo", "t-1");
+
+  it("addresses the conversation under the app, not under All chats", () => {
+    expect(path).toBe("/apps/gizmo/chats/t-1");
+    expect(placeFor(places, path).id).toBe("app:gizmo");
+    expect(placeFor(places, path).id).not.toBe("chats");
+  });
+
+  it("keeps the app's Chats tab highlighted", () => {
+    // `gizmo` ships its own screens, so its first row is the app itself and the
+    // tab rows follow. The conversation is a record BELOW the Chats row, and a
+    // page matches as a prefix, so no new mechanism is needed for the tab to
+    // stay lit.
+    expect(pageFor(widgets, "/apps/widgets/chats")?.id).toBe("chats");
+    expect(pageFor(widgets, appChatPath("widgets", "t-1"))?.id).toBe("chats");
+  });
+
+  it("escapes both segments, because a scope key and an id are data", () => {
+    expect(appChatPath("a b", "x/y")).toBe("/apps/a%20b/chats/x%2Fy");
+  });
+
+  it("is an open conversation, and so is the global focused chat", () => {
+    expect(isOpenChat("/chat/general")).toBe(true);
+    expect(isOpenChat(path)).toBe(true);
+  });
+
+  it("does not make the TAB an open conversation", () => {
+    // One segment after `chats` and no more. The tab is a list; giving it the
+    // viewport-tall chat layout would hide its own scrolling.
+    expect(isOpenChat("/apps/gizmo/chats")).toBe(false);
+    expect(isOpenChat("/apps/gizmo/chats/t-1/extra")).toBe(false);
+    expect(isOpenChat("/chats")).toBe(false);
+    expect(isOpenChat("/apps/gizmo/tickets/t-1")).toBe(false);
   });
 });
 

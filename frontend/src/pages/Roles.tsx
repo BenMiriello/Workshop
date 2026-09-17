@@ -119,9 +119,18 @@ function ThreadRow({
         </p>
         <Row wrap style={{ gap: "var(--space-3)" }}>
           <label style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)" }}>
-            <span className="ws-muted">Armed</span>
+            {/* NOT "Armed". That is the COLUMN's name, and printing a
+                database field at the operator is how it reached him: "armed is
+                not like a normal way to say it. That's I didn't approve that
+                phrasing... that's not a normal term" (2026-09-17). The control
+                sets what advances a thread with nobody watching, so it says
+                that, in the words this page already uses for it ("Threads that
+                run unasked", "Nothing runs unasked"). The four option labels
+                were already plain and are unchanged: Off, On message, On a
+                schedule, On a ready ticket. */}
+            <span className="ws-muted">Runs on its own</span>
             <Select
-              aria-label={`Arming for ${thread.title || thread.id}`}
+              aria-label={`What makes ${thread.title || thread.id} run on its own`}
               value={armed || "off"}
               disabled={busy}
               onChange={(e) => void apply({ armed: e.target.value as Armed })}
@@ -230,9 +239,9 @@ export default function Roles() {
         Threads that run unasked
       </SectionLabel>
       <p className="ws-muted" style={{ marginBottom: "var(--space-4)" }}>
-        Armed says what advances a thread without you. A role says which
-        definition it answers as. They are independent: a thread can be armed
-        with no role, or carry a role and never be armed.
+        One setting says what advances a thread without you. A role says which
+        definition it answers as. They are independent: a thread can run on its
+        own with no role, or carry a role and never run on its own.
       </p>
 
       {threadsQuery.isError ? (
@@ -327,11 +336,11 @@ export default function Roles() {
                     <Badge>
                       {usage.threads} {usage.threads === 1 ? "thread" : "threads"}
                     </Badge>
-                    {/* Only when there is something to say. Zero armed on a
-                        role nothing points at is not news; zero armed on a role
-                        five threads carry is. */}
+                    {/* Only when there is something to say. Zero on a role
+                        nothing points at is not news; zero on a role five
+                        threads carry is. */}
                     {usage.threads > 0 && (
-                      <Badge>{usage.armed} armed</Badge>
+                      <Badge>{usage.armed} run unasked</Badge>
                     )}
                   </Row>
                 </Card>

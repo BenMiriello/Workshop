@@ -27,7 +27,6 @@
 // The headings are unconditional, so there is nothing to control.
 import { branchName } from "../components/chat/chatBranch";
 import { scopeName } from "../components/chat/chatScope";
-import type { ThreadArmed } from "../lib/chat";
 
 /** The list's one order: most recently active first.
  *
@@ -36,20 +35,6 @@ import type { ThreadArmed } from "../lib/chat";
  *  on it always agree. */
 export function newestFirst<T extends { updated_at?: string | null }>(threads: readonly T[]): T[] {
   return [...threads].sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
-}
-
-/** The four values of `armed`, section 1's closed set. */
-export const ARMED_VALUES: readonly ThreadArmed[] = ["off", "on-message", "schedule", "on-ready-ticket"];
-
-/** A thread's arming, defaulting to `off`.
- *
- *  Missing reads as `off` and so does anything outside the closed set: the
- *  field is not on the wire yet (see `ThreadSummary` in lib/chat), and "this
- *  thread does not move without a person" is both the default section 1 gives
- *  and the only honest answer when nobody has said otherwise. */
-export function armedOf(t: { armed?: string | null }): ThreadArmed {
-  const v = (t.armed || "").trim();
-  return (ARMED_VALUES as readonly string[]).includes(v) ? (v as ThreadArmed) : "off";
 }
 
 /** The date headings, oldest bucket last. Exported so a caller cannot invent
@@ -121,23 +106,87 @@ export function groupByField<T>(
   return BUCKET_ORDER.filter((k) => byKey.has(k)).map((k) => byKey.get(k)!);
 }
 
-/** "A thread that is armed is what used to be called an agent" (section 1). */
-export function isArmed(t: { armed?: string | null }): boolean {
-  return armedOf(t) !== "off";
+// THERE IS NO FILTER ON THIS LIST ANY MORE, so there is no rule here for one.
+//
+// It was a two-value Segmented, All or "Armed", narrowing to the threads that
+// advance without a person. Two things were wrong with it and only one was the
+// word. Measured 2026-09-17 against this installation's catalog: of 240 live
+// threads, 240 are `off` and none is armed, so the control's second position
+// could only ever empty the list and show a state block explaining that it had.
+// A filter whose every answer is "nothing" is not a filter.
+//
+// The word went with it. "Armed" was never the operator's phrasing: it arrived
+// as the DATABASE's column name (`threads-branches-and-pages-2026-08-29.md` §1
+// made it both the column and the label) and got printed at him. His words,
+// 2026-09-17: "armed is not like a normal way to say it. That's I didn't
+// approve that phrasing... that's not the distinction we should be making."
+//
+// The COLUMN keeps its name. It is a real field with a real closed set and
+// renaming it is a migration nobody asked for; `lib/roles.ts` still narrows it
+// at the read boundary and the Roles page still sets it, in ordinary words
+// ("Off", "On a schedule", "On a ready ticket"). Nothing user-facing says
+// "armed". Do not reintroduce a filter here on the strength of the field
+// existing: what would justify one is threads that actually use it.
+
+/** The rows the page renders, in the one order. */
+export function visibleThreads<T extends { updated_at?: string | null }>(
+  threads: readonly T[] | null | undefined,
+): T[] {
+  return newestFirst(threads ?? []);
 }
 
-/** What the list is narrowed to. A view preference, so it commits on change. */
-export type ArmedFilter = "all" | "armed";
+// ---- The bound on the list -------------------------------------------------
 
-/** The rows the page renders: narrowed, then ordered. One function, because the
- *  two together are what "the list" means and doing them in the other order
- *  would sort rows that are about to be dropped. */
-export function visibleThreads<T extends { armed?: string | null; updated_at?: string | null }>(
-  threads: readonly T[] | null | undefined,
-  filter: ArmedFilter,
-): T[] {
-  const list = threads ?? [];
-  return newestFirst(filter === "armed" ? list.filter(isArmed) : list);
+/**
+ * HOW MANY ROWS ARE MOUNTED AT ONCE, and the only way to get more is to ask.
+ *
+ * The list used to mount one page and then grow itself whenever a sentinel at
+ * its foot came within 400px of the viewport. Two defects with one cause. It
+ * was UNBOUNDED: scrolling far enough mounted every thread in the catalog, 240
+ * of them here. And it could not be scrolled to the end, because reaching the
+ * end is what made it longer, so the scrollbar shrank under the reader's thumb
+ * and the foot kept moving away. The operator, 2026-09-17: "I'll scroll to the
+ * bottom and it immediately loads more, so I'm never at the bottom... this
+ * happens perpetually until I get to the actual bottom."
+ *
+ * What replaces it was already decided, twice over. The design law's rule 9
+ * names the fourth state every list ships as "overflow (paginate /
+ * TableScroll)", and `CollectionBody` (pages/apps/tabs/AppTabShell.tsx) spells
+ * out the reading this repo settled on when the app tabs had the same argument:
+ * "a long list is not an error, and the four-states rule (frontend/CLAUDE.md
+ * rule 9) says overflow is paginated or scrolled, never withheld." So: bounded,
+ * it says how much of itself is showing, and the next page is a control the
+ * reader presses. Nothing on this surface grows on scroll.
+ */
+export const PAGE_SIZE = 20;
+
+export type ListPage<T> = {
+  /** The rows to mount. */
+  visible: T[];
+  /** How many there are altogether, for the count beside the control. */
+  total: number;
+  /** Whether pressing again would get more. */
+  more: boolean;
+  /** What `shown` becomes on the next press, clamped to the total so the count
+   *  can never read "showing 260 of 240". */
+  next: number;
+};
+
+/** The mounted page of a list, and whether there is another one.
+ *
+ *  `shown` is clamped from BOTH ends: a negative or absent count cannot mount a
+ *  negative slice, and a count left over from a longer list (the poll returned
+ *  fewer rows, a chat was archived) cannot claim to be showing rows that are
+ *  not there. */
+export function pageOf<T>(rows: readonly T[], shown: number): ListPage<T> {
+  const total = rows.length;
+  const bound = Math.max(0, Math.min(Number.isFinite(shown) ? shown : 0, total));
+  return {
+    visible: rows.slice(0, bound),
+    total,
+    more: bound < total,
+    next: Math.min(bound + PAGE_SIZE, total),
+  };
 }
 
 // ---- The row's tags --------------------------------------------------------

@@ -352,8 +352,8 @@ export function sortThreads(
  * otherwise on a per-thread control would be a switch with nothing behind it.
  */
 export const THREAD_ARMED_NOTE =
-  "No thread carries an armed setting yet. What runs here unasked is still set "
-  + "per scope, in the app's settings.";
+  "No thread can be set to run on its own yet. What runs here unasked is still "
+  + "set per scope, in the app's settings.";
 
 // --- the state of the change -------------------------------------------------
 

@@ -312,11 +312,17 @@ export type ThreadArmed = "off" | "on-message" | "schedule" | "on-ready-ticket";
 // default of `off`) and `role?: string | null`.
 //
 // `armed` arrives as a bare string rather than the closed set, because the
-// backend types the column and not an enum. That is what `armedOf`
-// (pages/chatList) is for: it narrows to ThreadArmed at the read boundary and
-// answers `off` for anything outside the set. Do not re-narrow the field here;
+// backend types the column and not an enum. That is what `asArmed`
+// (lib/roles) is for: it narrows to the closed set at the read boundary and
+// answers `off` for anything outside it. Do not re-narrow the field here;
 // a hand-written type that claims more than the wire promises is the divergence
 // the note at the top of this file is about.
+//
+// `pages/chatList` used to hold a SECOND copy of that narrowing, plus the
+// filter it fed on the Chats list. Both are gone (2026-09-17): the filter
+// because no thread in the catalog uses the field and because the word it was
+// labelled with is not the operator's, and the duplicate narrowing because
+// lib/roles already had it and one field wants one read boundary.
 
 /**
  * The agent this chat is with, or null.

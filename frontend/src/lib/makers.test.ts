@@ -112,7 +112,7 @@ describe("makerPrimary", () => {
 
   it("names the missing worker when armed and absent", () => {
     expect(makerPrimary({ ...base, activity: "absent", runner_resident: false }).text)
-      .toBe("Armed, but no worker is on this tree.");
+      .toBe("This tree runs work on its own, but no worker is on it.");
   });
 
   it("names the brake as the reason when it is engaged", () => {
@@ -120,7 +120,7 @@ describe("makerPrimary", () => {
       .toBe("A worker is here, but the global brake is on.");
     expect(makerPrimary({
       ...base, global_override_engaged: true, activity: "absent", runner_resident: false,
-    }).text).toBe("Armed, but the global brake is on.");
+    }).text).toBe("This tree runs work on its own, but the global brake is on.");
   });
 
   it("says where the tickets go when the maker is off", () => {

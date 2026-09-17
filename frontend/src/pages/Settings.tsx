@@ -1126,7 +1126,7 @@ function AgentsSection() {
     <Section icon={Bot} title="Agents">
       <Row label="what runs unasked">
         <span>
-          A thread that is armed. Its arming and its role are set on{" "}
+          A thread set to run on its own. That setting and its role are on{" "}
           <Link to="/roles">Roles</Link>, and on the thread itself.
         </span>
       </Row>

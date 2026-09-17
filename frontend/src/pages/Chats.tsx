@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { ChevronLeft, Plus } from "lucide-react";
@@ -10,7 +10,6 @@ import {
   Notice,
   PageHeader,
   SectionLabel,
-  Segmented,
   Skeleton,
   StateBlock,
 } from "@workshop/ui";
@@ -19,7 +18,8 @@ import ChatRow from "../components/chat/ChatRow";
 import { queryKeys } from "../lib/queryKeys";
 import { newChatHref } from "../lib/chatSelection";
 import { scopeLabel } from "../components/chat/chatScope";
-import { groupByDate, groupByField, spansScopes, visibleThreads, type ArmedFilter } from "./chatList";
+import { appChatPath } from "../components/shell/places";
+import { PAGE_SIZE, groupByDate, groupByField, pageOf, spansScopes, visibleThreads } from "./chatList";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
 // its own object with an optional context binding (general / project / app /
@@ -42,14 +42,18 @@ import { groupByDate, groupByField, spansScopes, visibleThreads, type ArmedFilte
 // and off, so both are deleted together. The order and the filter now live in
 // `./chatList`, where they can be executed by a test.
 //
-// The one control left is the armed filter, which is not an ordering: §1 makes
-// `armed` the field that decides whether a thread advances without a person,
-// and §6 retires the Agents roster in favour of "an armed filter on Chats".
+// AND NO FILTER EITHER, as of 2026-09-17. The one control left is New chat.
+// There was a two-value Segmented, All or "Armed"; both halves of it were
+// wrong. Nothing in the catalog is armed (240 of 240 live threads read `off`),
+// so the second position could only empty the list, and "armed" is the
+// database's column name rather than a word the operator uses. The reasoning
+// and his words are in ./chatList, next to the rule that replaced it.
 
-// One page of rows. The list renders a page at a time and loads the next when
-// the foot scrolls into view (see the observer below), so a long history never
-// mounts unbounded and the reader never meets a wall of rows.
-const PAGE = 20;
+// THE LIST IS BOUNDED, AND NOTHING GROWS ON SCROLL. `PAGE_SIZE` rows are
+// mounted, the foot says how much of the list that is, and the next page is a
+// control the reader presses. The rule and the two defects it replaces (an
+// unbounded list, and a foot that ran away from the thumb that reached it) are
+// `pageOf` in ./chatList.
 
 // THE LIVE LIST'S CACHE KEY IS NOT SPELLED HERE. It used to be, as
 // `["chat", "threads"]`, while the dashboard's thread cards and the chat
@@ -92,6 +96,48 @@ function matches(t: ThreadSummary, needle: string): boolean {
   );
 }
 
+/**
+ * THE OVERFLOW STATE, as a line at the foot of a bounded list.
+ *
+ * The fourth of the four states every list ships (frontend/CLAUDE.md rule 9,
+ * "overflow (paginate / TableScroll)"). Both chats lists mount it, so they
+ * cannot end up with two answers to "how do I see more", which is what the
+ * whole of this file's history is about.
+ *
+ * It says the count as well as offering the page, because the count is what the
+ * scroll bar used to say badly: on an auto-loading list the bar shrank every
+ * time the reader reached the end, so its length was a claim about the list
+ * that was false the moment it was read. A number does not move.
+ *
+ * NOT a `StateBlock`: the content is on screen (see "A region or a line"). Not
+ * a `Notice` either, which states an outcome and carries a tone; nothing has
+ * gone wrong here. A muted line and a control, at the foot, where the list runs
+ * out.
+ */
+function ListFoot({ shown, total, more, onMore }: {
+  shown: number;
+  total: number;
+  more: boolean;
+  onMore: () => void;
+}) {
+  // Nothing to say at the end of the list. The rows stop, which is visible.
+  if (!more) return null;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "var(--space-3)",
+        marginTop: "var(--space-4)",
+      }}
+    >
+      <Button size="sm" variant="ghost" onClick={onMore}>Show more</Button>
+      <span className="ws-card__meta">Showing {shown} of {total}</span>
+    </div>
+  );
+}
+
 /** An app, when this list is one app's chats rather than every chat.
  *
  *  `scope` is the app's own scope KEY, resolved server-side. It is optional
@@ -104,10 +150,10 @@ export type ChatsScope = { id: string; slug: string; name: string; scope?: strin
  * THE CHAT LIST. One component, two mount points, exactly like TicketsView.
  *
  * `/chats` is a thin wrapper over it, and an app's Chats tab mounts it with
- * `app` set. The tab used to draw its OWN list: no armed filter, no archive, no
- * delete, no infinite scroll, a duplicate "CHATS" heading under a page already
- * titled Chats, and a scope tag reading the app's own name on every single row.
- * A worse copy of this list, over the same rows.
+ * `app` set. The tab used to draw its OWN list: no filter, no archive, no
+ * delete, no paging, a duplicate "CHATS" heading under a page already titled
+ * Chats, and a scope tag reading the app's own name on every single row. A
+ * worse copy of this list, over the same rows.
  *
  * Reported by the operator on 2026-08-29, 2026-08-31 and twice on 2026-09-01,
  * the last time as "I have completely lost count of how many times I've told
@@ -132,17 +178,14 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
 } = {}) {
   const nav = useNavigate();
   const qc = useQueryClient();
-  // All threads, or only the ones that advance on their own. A view preference,
-  // so it commits on change and is not persisted.
-  const [armed, setArmed] = useState<ArmedFilter>("all");
   // A delete waiting on its confirm dialog, and a one-off action failure that
   // leaves the list on screen (a Notice, not a whole-page error block).
   const [pending, setPending] = useState<{ id: string; title: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<{ text: string; endpoint: string } | null>(null);
-  // How many rows are mounted. Grows a page at a time as the foot scrolls into
-  // view; reset when the filter changes so a re-narrowed list starts at the top.
-  const [shown, setShown] = useState(PAGE);
+  // How many rows are mounted. Grows a page per press of Show more, and NEVER
+  // on its own.
+  const [shown, setShown] = useState(PAGE_SIZE);
 
   // The list live-updates by polling the shared TanStack client the rest of the
   // app uses. Short interval because liveness (the running dot, a new turn, a new
@@ -209,36 +252,23 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
   // rows in hand actually differ. See `spansScopes`.
   const showScope = useMemo(() => !app && spansScopes(threads ?? []), [app, threads]);
 
-  // The list: narrowed by the filter, then newest first. Both rules live in
-  // ./chatList so this page holds no ordering logic of its own.
-  const rows = useMemo(() => visibleThreads(threads, armed), [threads, armed]);
+  // The list, newest first. The rule lives in ./chatList so this page holds no
+  // ordering logic of its own.
+  const rows = useMemo(() => visibleThreads(threads), [threads]);
 
-  // Reset only when the filter changes, NOT on every poll: a refetch returns a
-  // new array each tick, and resetting on that would snap the list back to the
-  // first page.
-  useEffect(() => { setShown(PAGE); }, [armed]);
+  // Reset only when the LIST CHANGES IDENTITY -- moving between apps, or
+  // between an app and the global list -- and never on a poll: a refetch
+  // returns a new array each tick, and resetting on that would snap the reader
+  // back to the first page every four seconds.
+  const listId = app?.id ?? null;
+  useEffect(() => { setShown(PAGE_SIZE); }, [listId]);
 
-  const visible = rows.slice(0, shown);
-  const more = shown < rows.length;
+  const { visible, total, more, next } = pageOf(rows, shown);
   // The mounted page, cut into its date headings. Grouping happens AFTER the
   // slice so a heading always matches the rows actually on screen: bucketing
   // the whole list first would print "Earlier this month 84" over the four of
   // those eighty-four that have loaded.
   const groups = useMemo(() => groupByDate(visible), [visible]);
-
-  // Load the next page when the foot of the list nears the viewport. rootMargin
-  // starts the next page early so the scroll never actually stops at the seam.
-  const sentinel = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const el = sentinel.current;
-    if (!el || !more) return;
-    const io = new IntersectionObserver(
-      (entries) => { if (entries[0]?.isIntersecting) setShown((n) => n + PAGE); },
-      { rootMargin: "400px" },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [more, rows.length]);
 
   // Each running dot's position among the running dots, top to bottom. It feeds
   // the 1/6 pulse offset, and is read only at the instant a dot goes live (see
@@ -250,14 +280,32 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
     return m;
   }, [visible]);
 
-  // THE APP'S SLUG STANDS IN FOR A MISSING SCOPE KEY, and only on the app
-  // mount, where there is a right answer. `/api/apps/{id}/chats` selects rows
-  // by `chat_thread.app_id`, which is broader than any scope key, so a row can
-  // come back with `context_key` null; without this the row opened
-  // `/chat/null`. The bespoke list this mount replaced carried the same
-  // fallback, so dropping it would have been a regression hidden inside a fix.
+  // A CHAT OPENED FROM AN APP STAYS IN THE APP. `/chat/<key>` is the All chats
+  // place (shell/places.ts, `prefixes: ["/chats", "/chat"]`), so from an app's
+  // Chats tab it switched the dock off the app, dropped the app's tabs, and
+  // sent Back to the global list. Reported 2026-09-17: "if I go to a project
+  // and I go to its chats page and then I open a particular chat thread, it
+  // goes to all chats, which is not correct."
+  //
+  // The app mount addresses the conversation under the app's own prefix
+  // instead (`appChatPath`), which is all the shell needs: the app place
+  // matches by prefix and so does its Chats page row. The global list is
+  // unchanged, because on the global list `/chat/<key>` is the right place.
+  //
+  // AND THE APP PATH NEEDS NO SCOPE KEY, which retires a fallback this handler
+  // used to carry. `/api/apps/{id}/chats` selects rows by `chat_thread.app_id`,
+  // which is broader than any scope key, so a row can come back with
+  // `context_key` null and the old target opened `/chat/null`; the app's slug
+  // stood in for it here. The thread id alone addresses the new route, and the
+  // scope is resolved from the thread itself once (AppChatThread), which is
+  // both correct for a row whose scope is not the app's and the only way the
+  // URL survives being pasted into a fresh tab.
   const open = (t: ThreadSummary) => {
-    const key = (t.context_key || (app ? app.slug : "")).trim();
+    if (app) {
+      nav(appChatPath(app.slug, t.id));
+      return;
+    }
+    const key = (t.context_key || "").trim();
     if (!key) return;
     nav(`/chat/${encodeURIComponent(key)}?thread=${encodeURIComponent(t.id)}`);
   };
@@ -297,20 +345,6 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
 
   const controls = (
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-            {/* The armed filter, and the only control on the list. §6 retires
-                the Agents roster into it: a thread that is armed is what used
-                to be called an agent, so "Armed" is that page's list without a
-                second entity behind it. A view preference, so it commits on
-                change. */}
-            <Segmented
-              ariaLabel="Filter chats"
-              value={armed}
-              onChange={setArmed}
-              options={[
-                { value: "all", label: "All" },
-                { value: "armed", label: "Armed" },
-              ]}
-            />
             <Button variant="primary" onClick={newChat}>
               <Plus aria-hidden /> New chat
             </Button>
@@ -373,12 +407,6 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
             </Button>
           }
         />
-      ) : rows.length === 0 ? (
-        <StateBlock
-          title="No armed chats"
-          hint="An armed chat advances without you: on a new message, on a schedule, or when a ticket is ready. None of these chats is armed."
-          action={<Button size="sm" onClick={() => setArmed("all")}>Show all chats</Button>}
-        />
       ) : (
         <>
           {/* NEWEST FIRST, UNDER DATE HEADINGS. The order is the one order and
@@ -403,7 +431,12 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
               ))}
             </div>
           ))}
-          {more && <div ref={sentinel} aria-hidden style={{ height: 1 }} />}
+          <ListFoot
+            shown={visible.length}
+            total={total}
+            more={more}
+            onMore={() => setShown(next)}
+          />
         </>
       )}
 
@@ -448,10 +481,10 @@ export function ChatsArchived() {
   // list) because the list is still good: one row's action failed, and the row
   // is still there to try again.
   const [actionErr, setActionErr] = useState<{ text: string; endpoint: string } | null>(null);
-  // How many rows are mounted. Grows a page at a time as the foot scrolls into
-  // view, the same infinite-scroll the live list uses; reset when the search
-  // narrows so a new query starts at the top.
-  const [shown, setShown] = useState(PAGE);
+  // How many rows are mounted. A page per press of Show more, the same bound
+  // the live list uses; reset when the search narrows so a new query starts at
+  // the top.
+  const [shown, setShown] = useState(PAGE_SIZE);
 
   // THE SAME QUERY LAYER THE LIVE LIST USES. This was a `useState` + a
   // `useEffect` + a hand-rolled `load()`, which is how one page came to hold two
@@ -525,29 +558,14 @@ export function ChatsArchived() {
 
   // Reset the page only when the search changes, not when the list reloads:
   // a re-narrow starts at the top, a restore/delete drop does not.
-  useEffect(() => { setShown(PAGE); }, [q]);
+  useEffect(() => { setShown(PAGE_SIZE); }, [q]);
 
-  const visible = filtered.slice(0, shown);
-  const more = shown < filtered.length;
+  const { visible, total, more, next } = pageOf(filtered, shown);
   const archivedGroups = useMemo(
     () => groupByField(visible, (t) => t.archived_at),
     [visible],
   );
   const archiveSpansScopes = useMemo(() => spansScopes(visible), [visible]);
-
-  // Load the next page when the foot nears the viewport (same observer the live
-  // list uses). rootMargin starts it early so the scroll never stops at the seam.
-  const sentinel = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const el = sentinel.current;
-    if (!el || !more) return;
-    const io = new IntersectionObserver(
-      (entries) => { if (entries[0]?.isIntersecting) setShown((n) => n + PAGE); },
-      { rootMargin: "400px" },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [more, filtered.length]);
 
   return (
     <div>
@@ -652,7 +670,12 @@ export function ChatsArchived() {
               ))}
             </div>
           ))}
-          {more && <div ref={sentinel} aria-hidden style={{ height: 1 }} />}
+          <ListFoot
+            shown={visible.length}
+            total={total}
+            more={more}
+            onMore={() => setShown(next)}
+          />
         </>
       )}
 

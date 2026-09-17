@@ -118,6 +118,54 @@ function matchesPrefix(pathname: string, prefix: string): boolean {
 }
 
 /**
+ * WHERE AN APP'S CHATS TAB OPENS A CONVERSATION.
+ *
+ * One spelling, exported, because three readers have to agree on it: the row
+ * that navigates (pages/Chats), the route table (App.tsx), and `isOpenChat`
+ * below.
+ *
+ * A chat opened from an app's Chats tab used to go to `/chat/<context-key>`,
+ * which belongs to the ALL CHATS place (`prefixes: ["/chats", "/chat"]`), so
+ * the dock switched off the app, the page column lost the app's tabs, and Back
+ * went to the global list. The operator, 2026-09-17: "if I go to a project and
+ * I go to its chats page and then I open a particular chat thread, it goes to
+ * all chats, which is not correct."
+ *
+ * Under the app's OWN prefix that fixes itself with no new mechanism:
+ * `placeFor` resolves the app place (longest matching prefix), and `pageFor`
+ * still resolves its Chats row, because a page is matched as a prefix too. So
+ * the app stays selected and its Chats tab stays highlighted.
+ */
+export function appChatPath(appSlug: string, threadId: string): string {
+  return `/apps/${encodeURIComponent(appSlug)}/chats/${encodeURIComponent(threadId)}`;
+}
+
+/** The shape `appChatPath` builds, as a matcher. Exactly one segment after
+ *  `chats`, so the tab itself (`/apps/<slug>/chats`) is not a chat. */
+const APP_CHAT_PATH = /^\/apps\/[^/]+\/chats\/[^/]+$/;
+
+/**
+ * Is this path ONE OPEN CONVERSATION, filling the viewport?
+ *
+ * Two routes are, and they are the same screen: the global focused chat and an
+ * app's own chat. Both want the `--chatfull` layout, where the shell is pinned
+ * to the visual viewport, only the log scrolls, and the composer sits on the
+ * bottom edge above the mobile keyboard.
+ *
+ * ONE predicate rather than a startsWith at each reader, because the readers
+ * cannot be allowed to disagree: `Shell.tsx` sets the width modifier off it and
+ * a route that took the modifier without the pinning (or the other way round)
+ * is the blank-chin bug in `lib/useVisualViewport`.
+ *
+ * NOT the same question as `Shell.fullScreen`, which is about whether the place
+ * has pages to switch between. The global chat has none. An app's chat sits
+ * inside an app that does, and keeps its tabs.
+ */
+export function isOpenChat(pathname: string): boolean {
+  return pathname.startsWith("/chat/") || APP_CHAT_PATH.test(pathname);
+}
+
+/**
  * Which place a path belongs to. Home is the fallback and never matches by
  * prefix, so a route nobody claimed lands on Home rather than nowhere.
  */

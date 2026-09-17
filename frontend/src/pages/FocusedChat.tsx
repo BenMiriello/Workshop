@@ -56,15 +56,46 @@ export default function FocusedChat() {
     return () => { cancelled = true; };
   }, [contextKey, initialThreadId, nav]);
 
-  // Pin the full-screen shell to the visual viewport (mobile keyboard handling).
-  // One shared implementation — see lib/useVisualViewport.
-  useVisualViewport();
+  return (
+    <OpenConversation
+      contextKey={contextKey}
+      threadId={initialThreadId}
+      navKey={navKey}
+      startNew={startNew}
+    />
+  );
+}
 
+/**
+ * ONE OPEN CONVERSATION, filling the viewport. The screen itself, with no
+ * opinion about how the route addressed it.
+ *
+ * Exported because there are two routes onto it now: this one, and an app's own
+ * `/apps/<slug>/chats/<thread>` (pages/apps/tabs/AppChatThread), which exists
+ * so that opening a chat from an app's Chats tab does not leave the app. The
+ * chat COMPONENT is not duplicated for it and must not be: the two routes
+ * differ only in how they learn the context key and what breadcrumb they
+ * announce, and everything below that line is this.
+ *
+ * `useVisualViewport` belongs here rather than at either route, because it is
+ * paired with the `--chatfull` shell class (`isOpenChat` in shell/places.ts)
+ * and a surface that takes one without the other is exactly where the "blank
+ * chin above the keyboard" symptom comes from. See lib/useVisualViewport.
+ */
+export function OpenConversation({ contextKey, threadId, navKey, startNew = false }: {
+  contextKey: string;
+  threadId?: string;
+  /** `useLocation().key`, so picking a conversation is an EVENT rather than a
+   *  value comparison. See chat/threadIntent. */
+  navKey?: string;
+  startNew?: boolean;
+}) {
+  useVisualViewport();
   return (
     <Chat
       contextKey={contextKey}
       variant="full"
-      initialThreadId={initialThreadId}
+      initialThreadId={threadId}
       navKey={navKey}
       startNew={startNew}
     />

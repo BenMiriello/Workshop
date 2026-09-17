@@ -72,6 +72,11 @@ const Settings = lazyPage(() => import("./pages/Settings"));
 // contributes below, so they live here rather than in apps/registry.tsx.
 const NotFound = lazyPage(() => import("./pages/NotFound"));
 const AppChats = lazyPage(() => import("./pages/apps/tabs/AppChats"));
+// One conversation, opened from that tab and STILL INSIDE THE APP. See the
+// header of that file: this route exists because a row on an app's Chats tab
+// used to navigate to `/chat/...`, which is the All chats place, so opening a
+// chat left the app.
+const AppChatThread = lazyPage(() => import("./pages/apps/tabs/AppChatThread"));
 const AppMemoryTab = lazyPage(() => import("./pages/apps/tabs/AppMemoryTab"));
 const AppFilesTab = lazyPage(() => import("./pages/apps/tabs/AppFilesTab"));
 // The app-level Work view: branches, and what is on them. It is the app's
@@ -200,7 +205,13 @@ export default function App() {
               the one entity; "agent" is a description of a thread whose `armed`
               is not `off`, so there is no roster of a second kind of object to
               list. /agents keeps resolving, to the surface that answers what it
-              used to be opened for. */}
+              used to be opened for.
+
+              HALF OF THAT SENTENCE IS NO LONGER TRUE OF THE TREE. The filter on
+              Chats is gone (2026-09-17): no thread in the catalog uses the
+              field, so it could only empty the list, and the operator rejected
+              the label. Roles is the whole of what replaced the roster, and it
+              is where the setting is read and written. See pages/chatList. */}
           <Route path="/roles" element={<Roles />} />
           <Route path="/agents" element={<Navigate to="/roles" replace />} />
           <Route path="/tickets" element={<Tickets />} />
@@ -272,6 +283,12 @@ export default function App() {
           <Route path="/apps/:appSlug/work" element={<AppWorkTab />} />
           <Route path="/apps/:appSlug/overview" element={<AppOverviewTab />} />
           <Route path="/apps/:appSlug/chats" element={<AppChats />} />
+          {/* The app's own chat detail. Deeper than the tab, so react-router
+              ranks it ahead of the row above without either needing to know
+              the other exists, and the path is built in ONE place
+              (`appChatPath`, shell/places.ts) so the row, this route and the
+              shell's chat-layout rule cannot drift. */}
+          <Route path="/apps/:appSlug/chats/:threadId" element={<AppChatThread />} />
           <Route path="/apps/:appSlug/memory" element={<AppMemoryTab />} />
           <Route path="/apps/:appSlug/files" element={<AppFilesTab />} />
           <Route path="/apps/:appSlug/tickets" element={<AppTicketsTab />} />

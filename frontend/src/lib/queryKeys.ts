@@ -61,6 +61,17 @@ export const queryKeys = {
     threadsArchived: () => ["chat", "threads", "archived"] as const,
     /** The prefix over BOTH lists and every scope, for invalidating after a write. */
     threadsAll: () => ["chat", "threads"] as const,
+    /**
+     * `GET /api/chat/threads/{id}` -- ONE thread's settings: its title and the
+     * scope it lives in. NOT its transcript, which has exactly one reader (the
+     * event log; see the note on `getThread` in lib/chat).
+     *
+     * Singular `"thread"`, so it sits OUTSIDE the `["chat", "threads"]` prefix
+     * the two lists share. That is deliberate: archiving a chat invalidates
+     * every list, and it must not also throw away the settings of whichever
+     * conversation happens to be open.
+     */
+    thread: (threadId: string) => ["chat", "thread", threadId] as const,
     context: (threadId: string | null) => ["chat", "context", threadId] as const,
     work: (threadId: string | null) => ["chat", "work", threadId] as const,
     branches: (threadId: string | null) => ["chat", "branches", threadId] as const,

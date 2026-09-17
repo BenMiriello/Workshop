@@ -182,6 +182,15 @@ export function useShell(): Shell {
   // ONE OPEN CONVERSATION OWNS THE SCREEN. It is not a page of All chats, it is
   // a record below it, and it has its own toolbar. The dock stays (it is the
   // way out); the column and the mobile tab bar go.
+  //
+  // `/chat/` ONLY, and deliberately NOT `isOpenChat` (places.ts), which also
+  // matches an app's own chat route. The two questions are different. That one
+  // asks "does one conversation fill the viewport", which decides the layout
+  // and is true of both. This one asks "does this place have pages to switch
+  // between", and it is the reason the column goes: All chats has two rows and
+  // an open conversation is neither of them. An app's chat sits inside an app
+  // that has a whole tab list, and losing it is the defect the app-scoped
+  // route exists to fix -- so its tabs stay, on both viewports.
   const fullScreen = pathname.startsWith("/chat/");
 
   // MOTION IS NOT NAVIGATION STATE, which is why it is separate.

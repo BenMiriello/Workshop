@@ -98,7 +98,7 @@ export function makerPrimary(m: MakerSummary): MakerPrimary {
     return {
       text: m.activity === "present"
         ? "A worker is here, but the global brake is on."
-        : "Armed, but the global brake is on.",
+        : "This tree runs work on its own, but the global brake is on.",
       ...none,
     };
   }
@@ -107,7 +107,7 @@ export function makerPrimary(m: MakerSummary): MakerPrimary {
     // states only what it can see: somebody is here, holding no ticket.
     return { text: "A worker is here with no ticket claimed.", ...none };
   }
-  return { text: "Armed, but no worker is on this tree.", ...none };
+  return { text: "This tree runs work on its own, but no worker is on it.", ...none };
 }
 
 // The arm level, named the way the rest of the app names it (the chat's Work
