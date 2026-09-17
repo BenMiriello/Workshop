@@ -152,17 +152,45 @@ makes the absolute run green. **No document, status line or agent summary may
 claim app separation is done.** The claim is that command's exit code and
 nothing else.
 
-**As of 2026-09-04 that command exits 0**, all five assertions PASS, and
-`expected_failures` is empty, so nothing is excused. Re-run it rather than
-trusting this paragraph: the sentence it replaces said "it fails today", which
-was true when written and became the exact stale blocker this file warns about
-two sections down. What remains is NOT separation but residue —
-`python3 scripts/check_no_app_names.py` still counts 23 platform lines naming an
-app (`content`, `imports` and `homepath` are all 0). That check going green means
-NO WORSE, never done; the target for every count is 0 and the removal is
-`app-is-the-entity-2026-08-20.md` §9. Note also that the end state DELETES
-`check_no_app_names.py` — see the "stopgap" section below — so driving 23 to 0 is
-worth less than making the mistake impossible.
+**As of 2026-09-16 that command exits 0**, all five assertions PASS, and
+`expected_failures` is empty. RE-RUN IT RATHER THAN TRUSTING THIS PARAGRAPH, and
+note that this is now the THIRD version of this sentence. The first said "it
+fails today" and went stale. The second said "as of 2026-09-04 it exits 0" and
+was false for eleven days — the command went red on 2026-09-05 and again on
+2026-09-16, nobody ran it, and a paragraph that exists to warn about stale claims
+was one. Nothing runs it on a schedule; that is ticket `0f2f3fa6`.
+
+**AND KNOW WHAT THAT EXIT CODE DOES NOT COVER, because "the claim is that
+command's exit code and nothing else" cuts both ways.** It clones HEAD and
+inspects the resulting TREE, so it is structurally blind to four things measured
+on 2026-09-16, all of which are real and none of which it can ever see:
+
+- **Git history.** The operator's own `commute/*.json` (home and work addresses)
+  and the Plaid MCP server are reachable from `origin/main` and five other
+  remote branches. Deferred once on 2026-07-12 and unmentioned for nine weeks.
+  Ticket `43dec530`, which also adds the history assertion.
+- **Configuration.** 16 app-specific variables sit in the platform's own env
+  files; all four `apps/*/app.env` are inert because the platform copy wins.
+  Ticket `ed66df46`.
+- **Prose.** ~350 lines of comments and docstrings in platform source name an
+  app, plus `chat_context.py` shipping app names in L2 prompt text to every
+  installation. No gate reads prose, and prose is what an agent reads when asked
+  for an example.
+- **The generated client.** `frontend/src/api/schema.gen.ts` carries ~124
+  app-route lines, and `scripts/gen_openapi.py` deliberately forces the full
+  catalog to mount, so it REGENERATES. A ratchet protects it from being fixed.
+
+So the honest status is: a stranger's clone is clean, and the repository is not.
+
+`python3 scripts/check_no_app_names.py` counts 23 platform lines naming an app
+(`content`, `imports` and `homepath` are all 0). **All 23 are false positives** —
+`budget` is a token budget, `health` is a readiness-probe field, `location` is an
+iOS background mode, `notes` is a redirect — so 23 is this gate's FLOOR, not its
+remaining work, and driving it to 0 means renaming platform fields. Meanwhile 483
+lines across 131 tracked platform files name an app in a form the gate cannot
+match. The number is not a status. The end state DELETES this script — see the
+"stopgap" section below — so making the mistake impossible is worth more than any
+count.
 
 ## Platform design (current: 2026-08-20)
 
