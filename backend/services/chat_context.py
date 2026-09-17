@@ -2078,8 +2078,14 @@ class ContextProvider:
             "is a real answer, meaning there is no prior art rather than that the search failed. "
             "When the operator states that one thing matters more than another, set or "
             "adjust ticket priority through the task-patch block below.\n\n"
-            "Below each turn you may be given live snapshots from the operator's installed apps "
-            "(accounts, budget, location, commute, etc.). Read what's given to you before "
+            # NAMES NO APP, and this line used to name four of them. This is L2
+            # PLATFORM text: every installation receives it, so an example drawn
+            # from ONE operator's roster is both wrong for everyone else and the
+            # mechanism behind a complaint this installation's operator made on
+            # 2026-08-20 -- that every agent asked for an example reaches for his
+            # specific apps. They were reaching for this sentence.
+            "Below each turn you may be given live snapshots from the installed apps "
+            "this installation actually has. Read what's given to you before "
             "answering, and DON'T make up numbers when real ones are right there.\n\n"
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PATCH_PROTOCOL
             + "\n\n" + LEARNING_NOTE_PROTOCOL
