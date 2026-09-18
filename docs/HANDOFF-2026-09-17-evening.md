@@ -58,8 +58,13 @@ Filed: [A killed worker can leave the shared database at a revision no commit co
 - `bash scripts/apply.sh --check`: UI bundle current (`6c5753ba8074`), backend
   current (`6d57782cbbaa`), all eight app bundles current, vite env and public
   edge ok. **The only drift is the orphan schema above.**
-- `bash scripts/done.sh --shot /chats`: **PASS**. Screenshots at 390 and 1440 were
-  taken and read.
+- `bash scripts/done.sh --shot /chats`: **PASS**, measured at `c88dbc80` with
+  screenshots at 390 and 1440 taken and read. The commits after it are shell
+  scripts, docs and one docstring, none of which the gate weighs differently, but
+  the PASS is that commit's and a re-run is cheap if you want it at HEAD. Note
+  the gate declines to run the full `reviewer.sh` when the working tree holds
+  another agent's files, and says so; it checked `scoped (tsc, check_design.sh
+  --added)` instead.
 - `npm run typecheck`: clean. `cd frontend && npm test -- --run`: 101 files, 1811
   tests pass. `bash scripts/check_design.sh`: `design: clean`.
 - `python3 scripts/check_backend_tests.py`: exit 0, 4626 passed, 9 known failures.
