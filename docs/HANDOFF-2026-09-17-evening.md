@@ -576,4 +576,30 @@ findings, including the writable tmpfs and the worktree blast radius),
 [b4a1dc33](workshop:ticket/b4a1dc33) (the restored-`sending` gap),
 [32837886](workshop:ticket/32837886) (the two meanings of "Auto").
 
-Queue: 244 open. 201 todo, 15 in review, 14 blocked, 13 parked, 1 draft.
+Queue: 244 open at 20:20. 201 todo, 15 in review, 14 blocked, 13 parked, 1 draft.
+
+**Five tickets look done and should be adjudicated closed. This is the cheapest
+half hour available and it removes false prerequisites from the thread-unification
+graph:**
+
+- [f9145fc7](workshop:ticket/f9145fc7) a chat in a project scope never appears on
+  its project's Chats tab. Verified working today through the route, not just the
+  column. Sitting in review with zero attempts.
+- [2f1b6a66](workshop:ticket/2f1b6a66) armed on-ready-ticket takes a turn. Built:
+  `chat_drain.py` has the reader and the seed and a passing test. Only the
+  `cron_agent.sh` deletion remains, and its acceptance names a test file that
+  does not exist.
+- [1d779456](workshop:ticket/1d779456) a branch's display name survives the wire.
+  Its own latest evidence says all three criteria pass; its `blocked_reason` is
+  stale text contradicting that evidence.
+- [65cb8c6f](workshop:ticket/65cb8c6f) the chats page is a list of chats again.
+  Done; its acceptance greps the wrong file, and its own note recommends closing
+  with the link clause struck.
+- [9623d1de](workshop:ticket/9623d1de) the project registry path is wrong for
+  sandboxed agents. Fixed by a namespace-deriving resolver, which is what the
+  ticket asked for rather than the repointing it forbade.
+
+Each of these is a ticket whose acceptance criterion, not whose work, is what
+fails. That pattern is worth noticing on its own: a criterion written against the
+wrong file or a stale blocker keeps finished work looking unfinished, and three
+sessions have now re-measured these.
