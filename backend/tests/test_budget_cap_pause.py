@@ -354,11 +354,21 @@ class TestTheResumedRunContinues:
         eleven-unfindable-branches failure of 2026-08-23."""
         src = SWEEP.read_text()
         i = src.index('if [[ "$WT_ENABLED" == "1" ]]; then')
-        block = src[i:i + 2000]
-        assert "RESUME_BRANCH" in block
-        assert "branch_dir_for" in block
-        # Allocation is the FALLBACK, not the default, when resuming.
-        assert '[[ -z "$ALLOC" ]] && ALLOC=$(alloc_task_worktree' in block
+        alloc = src.index('[[ -z "$ALLOC" ]] && ALLOC=$(alloc_task_worktree', i)
+        # THE ORDER IS THE PROPERTY, not a byte offset. This read a fixed
+        # 2000-character window and asserted the allocation line was inside it,
+        # which broke on 2026-09-18 when a SECOND reattach path (the ordinary
+        # retry, off the ticket's own worktree evidence) was added ahead of it
+        # and pushed the line to offset 2386. The behaviour was not merely
+        # intact, it was stronger -- so the test failed for growing in the
+        # direction it exists to encourage. Widening the window would just
+        # reset that trap for the next reattach path.
+        reattach = src[i:alloc]
+        assert "RESUME_BRANCH" in reattach
+        assert "branch_dir_for" in reattach
+        # Allocation is the FALLBACK: every reattach attempt precedes it, and
+        # it runs only when none of them produced a tree.
+        assert 'ALLOC=""' in reattach
 
     def test_a_resumed_run_recaptures_the_session_id(self):
         """`claude --resume` may answer with a different id. Keeping the seeded
