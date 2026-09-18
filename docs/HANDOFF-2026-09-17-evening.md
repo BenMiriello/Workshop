@@ -190,7 +190,7 @@ a worktree path, and the shared-tree case is byte-identical to before.
 landed logged the new line with the server rooted at the worktree:
 
     [ralph] workshop search tool: enabled (inline mcp-config; server
-      /home/clawd-a/workshop/branches/development/<worktree>/backend/mcp/workshop_query_server.py)
+      <workshop-root>/branches/development/<worktree>/backend/mcp/workshop_query_server.py)
 
 Before the fix that path named the platform checkout and the CLI dropped the
 server without saying so. It now names the tree the worker is actually in, and
