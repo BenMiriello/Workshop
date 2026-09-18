@@ -17,24 +17,44 @@ NEVER OVERRIDES. A value already in the environment wins, so an explicit
 `WORKSHOP_DATABASE_URL=... python db/whatever.py` still points where the caller
 said, and a test harness pointing at a scratch database cannot be silently
 redirected at the real one.
+
+PRECEDENCE MATCHES THE UNIT, DELIBERATELY. `infra/systemd/workshop-backend.service`
+loads `EnvironmentFile=-%h/.config/workshop/secrets.env` then
+`EnvironmentFile=-%h/.config/workshop/instance.env`, and systemd's own semantics
+for a key repeated across `EnvironmentFile=` lines is LAST WINS -- so the
+running backend resolves a conflicting key to whatever instance.env says. The
+loop below is the opposite shape: the FIRST file to set a key wins, so that an
+already-exported value (see NEVER OVERRIDES above) is never revisited. To land
+on the same answer as the unit, this module has to visit instance.env BEFORE
+secrets.env. `db-admin.env` is not part of the unit at all -- the backend
+process is deliberately never handed the OWNER database credential (see
+`db/bootstrap.py`'s module docstring) -- so it is appended last and, in
+practice, only ever supplies `WORKSHOP_DATABASE_ADMIN_URL`, a key neither of the
+other two files declares.
+
+`backend/tests/test_script_env_config_precedence.py` pins this against the
+unit file itself rather than restating the expected order here, so the two
+cannot drift apart silently again.
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-# Both files are optional: a checkout with no database configured should fail
-# on the missing variable with engine.py's pointed message, not on a missing
-# file here.
-_FILES = ("secrets.env", "db-admin.env")
+# Order matters -- see "PRECEDENCE MATCHES THE UNIT" above. instance.env is
+# visited first so it wins ties with secrets.env, matching systemd's
+# last-EnvironmentFile-wins semantics for the two files the unit actually
+# loads. db-admin.env is additional: the unit never loads it, and it is
+# expected not to collide with the other two.
+CONFIG_FILES = ("instance.env", "secrets.env", "db-admin.env")
 
 
-def _config_dir() -> Path:
+def config_dir() -> Path:
     return Path(os.environ.get("WORKSHOP_CONFIG_DIR")
                 or (Path.home() / ".config" / "workshop"))
 
 
-def _parse(text: str) -> dict[str, str]:
+def parse_env_file(text: str) -> dict[str, str]:
     """KEY=VALUE lines, `export ` prefix and surrounding quotes tolerated.
 
     Deliberately not a dotenv library: these files are written by
@@ -62,13 +82,13 @@ def _parse(text: str) -> dict[str, str]:
 def load_config_env() -> list[str]:
     """Fill in any config values this process is missing. Returns the names set."""
     added: list[str] = []
-    for name in _FILES:
-        path = _config_dir() / name
+    for name in CONFIG_FILES:
+        path = config_dir() / name
         try:
             text = path.read_text()
         except (OSError, UnicodeDecodeError):
             continue
-        for key, value in _parse(text).items():
+        for key, value in parse_env_file(text).items():
             if key not in os.environ:
                 os.environ[key] = value
                 added.append(key)

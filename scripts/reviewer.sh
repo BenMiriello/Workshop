@@ -661,6 +661,33 @@ else
   AMBIGUOUS+=("prompt_layers_check_unavailable")
 fi
 
+# 4.6c-iiic-2 One config key, one value, on this install. Measured 2026-09-17:
+# WORKSHOP_OPERATOR_NAME was declared in both instance.env and secrets.env with
+# two different values, and three different loaders (the running backend, an
+# interactive script, cron) each resolved the conflict differently, silently.
+#
+# UNCONDITIONAL, same reasoning as no-app-names and prompt-layers just above:
+# the config files live outside this repo entirely, so no diff could ever
+# "touch" them in a way a change-gated check could key off, and a newly
+# introduced duplicate is exactly the kind of thing nobody thought to add to a
+# gate list.
+#
+# ABSOLUTE: it fails only on an actual conflicting value, never on a key
+# merely repeated in agreement, and there is no baseline to ratchet -- either
+# every declared key has one answer or it does not. A fresh clone (or any
+# environment with none of the config files present) reads as clean by
+# definition; see check_config_duplicate_keys.py's own header.
+CONFIG_DUPLICATE_KEYS_CHECK="skipped"
+if [[ -f "$WORKSHOP/scripts/check_config_duplicate_keys.py" ]]; then
+  if python3 "$WORKSHOP/scripts/check_config_duplicate_keys.py" >/dev/null 2>&1; then
+    CONFIG_DUPLICATE_KEYS_CHECK="ok"
+  else
+    CONFIG_DUPLICATE_KEYS_CHECK="fail"
+  fi
+else
+  AMBIGUOUS+=("config_duplicate_keys_check_unavailable")
+fi
+
 # 4.6c-iiid THE PROMPT HAS A BUDGET AND THIS IS WHERE IT IS ENFORCED.
 #
 # The four-layer contract specifies who owns each layer and in what order they
@@ -1188,6 +1215,10 @@ if [[ "$PROMPT_LAYERS_CHECK" == "fail" ]]; then
   REASONS+=("installation_fact_in_platform_prompt")
   COMPLETE="false"
 fi
+if [[ "$CONFIG_DUPLICATE_KEYS_CHECK" == "fail" ]]; then
+  REASONS+=("config_key_declared_with_conflicting_values")
+  COMPLETE="false"
+fi
 if [[ "$PROMPT_SIZE_CHECK" == "fail" ]]; then
   REASONS+=("prompt_budget_got_worse")
   COMPLETE="false"
@@ -1313,7 +1344,7 @@ export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK AP
 export VERDICT BLOCKED_REASON AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
 export DEAD_SURFACE_CHECK
-export PLAN_LANDED_CHECK TICKET_ACCEPTANCE_CHECK FRESH_CLONE_CHECK DEV_MODE_OFF_CHECK FRONTEND_STATE_CHECK RESPONSE_TYPES_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK PROMPT_SIZE_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK
+export PLAN_LANDED_CHECK TICKET_ACCEPTANCE_CHECK FRESH_CLONE_CHECK DEV_MODE_OFF_CHECK FRONTEND_STATE_CHECK RESPONSE_TYPES_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK PROMPT_SIZE_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK CONFIG_DUPLICATE_KEYS_CHECK
 RESULT_JSON=$(python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -1368,6 +1399,10 @@ out = {
     # installation-specific facts, so a new one is not incremental debt,
     # it is a fact about this checkout shipped to every installation.
     "prompt_layers": os.environ.get("PROMPT_LAYERS_CHECK", "skipped"),
+    # Absolute, not ratcheted: a config key either has one value across every
+    # file that declares it, or the answer depends on which loader read it
+    # first. See check_config_duplicate_keys.py's own header.
+    "config_duplicate_keys": os.environ.get("CONFIG_DUPLICATE_KEYS_CHECK", "skipped"),
     "ticket_acceptance": os.environ.get("TICKET_ACCEPTANCE_CHECK", "skipped"),
     "plan_landed": os.environ.get("PLAN_LANDED_CHECK", "skipped"),
     "explainer_text": os.environ.get("EXPLAINER_CHECK", "skipped"),
@@ -1417,7 +1452,7 @@ PYEOF
 printf '%s\n' "$RESULT_JSON"
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK backend_tests=$BACKEND_TESTS_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK ticket_acceptance=$TICKET_ACCEPTANCE_CHECK plan_landed=$PLAN_LANDED_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK dead_surface=$DEAD_SURFACE_CHECK response_types=$RESPONSE_TYPES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK dev_mode_off=$DEV_MODE_OFF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK backend_tests=$BACKEND_TESTS_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK config_duplicate_keys=$CONFIG_DUPLICATE_KEYS_CHECK ticket_acceptance=$TICKET_ACCEPTANCE_CHECK plan_landed=$PLAN_LANDED_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK dead_surface=$DEAD_SURFACE_CHECK response_types=$RESPONSE_TYPES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK dev_mode_off=$DEV_MODE_OFF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi

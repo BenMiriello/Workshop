@@ -26,6 +26,38 @@ def _csv(name: str) -> tuple[str, ...]:
     return tuple(s.strip() for s in raw.split(",") if s.strip())
 
 
+# STATUS, measured 2026-09-17: of these five declarations, only
+# WORKSHOP_CANONICAL_ORIGIN is actually set anywhere. The other four are
+# empty NOT because they are inapplicable to this installation -- an
+# installation that runs an agentic coding CLI against a GitHub remote, behind
+# some egress and network policy, is exactly the case these exist to name --
+# but because populating them was never done after this module was created on
+# 2026-08-27 to receive them. That is worth writing down explicitly, because
+# "empty" alone does not say whether a value belongs here and is simply
+# missing, or whether it does not apply. All four below are the former:
+#
+#   WORKSHOP_RUNNER_LABEL          not set yet. Knowable and low-risk to
+#                                   declare (a product name, not a secret);
+#                                   simply never written to instance.env.
+#   WORKSHOP_GIT_FORGE             not set yet, same as above -- this
+#                                   installation already has WORKSHOP_GITHUB_OWNER
+#                                   set (github_identity.py), so the vendor is
+#                                   already known, just not named here too.
+#   WORKSHOP_EGRESS_ALLOWED_HOSTS  not set yet, and NOT something to fill from
+#                                   a guess: it asserts what this host's actual
+#                                   firewall/proxy egress policy allows, and a
+#                                   wrong enumeration here is worse than the
+#                                   generalized fallback because it would be
+#                                   read as verified.
+#   WORKSHOP_REACHABLE_NETWORKS    not set yet, same caution as the egress list
+#                                   -- it is a claim about real network
+#                                   topology (a tailnet, a LAN) that only the
+#                                   operator can state correctly.
+#
+# None of the four is populated by this module or by any code path: they are
+# declared with `~/.config/workshop/instance.env`, which is outside this repo
+# and not writable from here. This file only reads them and falls back to a
+# generalized phrase when they are absent, by design (see module docstring).
 def runner_label() -> str:
     """The coding runner that actually executes an agentic turn, e.g. a CLI's
     product name. Empty when this installation has not declared one."""
