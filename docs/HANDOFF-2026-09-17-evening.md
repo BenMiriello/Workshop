@@ -156,8 +156,29 @@ the 3.25M ... and the next task needs 150K more`. 61 refusals today by 10:35, an
 it is still refusing at 20:16.
 
 A large share of that spend was the flat 150k nominal charge booked for killed
-runs that produced nothing, while the real cost of such a run is 506k to 1.04M.
-`eda29e6a` corrects the nominal figure so it can only ever bill more, never less.
+runs that produced nothing. `eda29e6a` corrects the nominal figure so it can only
+ever bill more, never less.
+
+**And the honest number changes what the binding constraint is, so read this
+before adjusting anything.** Two charges in today's log:
+
+- task `ba533b4b`, attempt 2: **1,925,257 tokens, $2.8124, PRICED**, meaning that
+  is real reported usage and not an estimate
+- task `7d9c053f`: 1,725,600 tokens, unpriced, i.e. the new duration-scaled
+  nominal for a killed iteration
+
+So a long worker run genuinely costs about 1.7M to 1.9M tokens, and the old flat
+150k was under-billing it by roughly **thirteen** times, not the fivefold I first
+estimated from the 506k-1.04M figures. The consequence: at 3.25M per five hours,
+the window affords roughly **one and a half long runs**, so the loop will
+self-block after about two attempts whether or not they succeed. That is not a
+bug in the ledger; it is the ledger finally telling the truth.
+
+Which means the next move is NOT to raise the ceiling reflexively. The reason a
+run costs 1.9M is that it burned a full wall without its search tools, and
+`1ccaebd1` is what addresses that. Fix the waste first, re-measure, and only then
+decide whether 3.25M is the wrong number. Raising it now would buy more of the
+same failure at a higher price.
 
 **The loop did get further after my morning fixes**: iterations now run 1440s
 rather than 900s and a second iteration happened at all, one of which succeeded
