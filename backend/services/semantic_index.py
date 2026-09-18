@@ -54,6 +54,7 @@ from pathlib import Path
 
 import numpy as np
 
+from services import entity_kinds
 from wsplatform import paths
 
 log = logging.getLogger("workshop.semantic_index")
@@ -83,13 +84,16 @@ CHUNK_OVERLAP = 150
 # The platform's own corpora. An app contributes more through
 # `AppSpec.index_collectors`; a personal Markdown vault used to be listed here
 # and is now declared by the app that owns it.
-PLATFORM_KINDS = ("note", "doc", "chat", "ticket")
+PLATFORM_KINDS = entity_kinds.PLATFORM_KINDS
 
 # Indexed on every build. A corpus an app marks opt-in (its id absent from
 # `AppSpec.index_collectors_default`) is indexed only when asked for by name, so
 # a search about routing code never surfaces a personal note. See the decision in
 # docs/memory-and-transcript-simplification-2026-08-12.md.
-PLATFORM_DEFAULT_KINDS = ("note", "doc", "chat", "ticket")
+# Equal to PLATFORM_KINDS today: every platform corpus is indexed by default.
+# A derivation rather than a second copy, so the two cannot silently disagree.
+# Give it its own literal at the moment a corpus becomes opt-in.
+PLATFORM_DEFAULT_KINDS = PLATFORM_KINDS
 
 
 def _app_collectors() -> tuple[dict, set[str]]:

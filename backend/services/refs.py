@@ -35,6 +35,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from services import entity_kinds
+
 log = logging.getLogger("workshop.refs")
 
 VALID_KINDS = ("note", "doc", "ticket", "chat", "run", "project", "agent", "app", "file")
@@ -551,7 +553,7 @@ BODY_PART_CHARS = 20_000
 # The kinds a body can be read for: exactly the kinds the semantic index holds.
 # `run`, `project`, `agent` and `app` are records, not documents -- they have no
 # body to read -- and `file` is an upload, which `get_file` already reads.
-READABLE_KINDS = ("note", "doc", "ticket", "chat")
+READABLE_KINDS = entity_kinds.PLATFORM_KINDS
 
 
 def _mtime_iso(path: Path) -> str:

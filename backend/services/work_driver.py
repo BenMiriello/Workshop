@@ -74,16 +74,20 @@ RECONCILE_INTERVAL = 60.0
 # forever for a scope that can never run.
 RETRY_AFTER = 600.0
 
-# root -> monotonic timestamp of the last start attempt that did not take.
-_failed_at: dict[str, float] = {}
-
 # The longest a budget refusal may suppress a start. `next_admissible_at` is an
 # ESTIMATE that assumes nothing else spends in the meantime, so a long one is
 # re-asked rather than trusted to the end; a short one is honoured exactly.
 BUDGET_HOLD_MAX = 900.0
 
-# worker scope key -> monotonic time before which starting a runner is pointless.
-_budget_hold: dict[str, float] = {}
+# root -> (monotonic timestamp of the last start that did not take, how long to
+# wait before the next one). ONE dict rather than a second one beside it: a
+# process-local mutable global is what stops this backend running more than one
+# uvicorn worker (target-architecture-2026-08-17.md 2.6), so the budget hold
+# reuses this rather than adding another name. The duration is per-entry because
+# the two reasons a start is suppressed have different natural waits -- a tree
+# the developer-mode gate refuses is RETRY_AFTER, a budget ceiling is until the
+# window rolls.
+_failed_at: dict[str, tuple[float, float]] = {}
 
 
 # ---- process facts ---------------------------------------------------------
@@ -287,6 +291,20 @@ def worker_for(root: str | Path) -> str | None:
     return f"agent:{live[0]['slug']}"
 
 
+def _backing_off(target: str) -> bool:
+    """Whether `target` is inside the wait recorded by the last suppressed start."""
+    ent = _failed_at.get(target)
+    if ent is None:
+        return False
+    when, wait = ent
+    return (time.monotonic() - when) < wait
+
+
+def _hold_off(target: str, wait: float = RETRY_AFTER) -> None:
+    """Record that a start was suppressed, and for how long not to retry."""
+    _failed_at[target] = (time.monotonic(), wait)
+
+
 def _hold_for(next_admissible_at: str | None) -> float:
     """Seconds to suppress starts for, given the refusal's own estimate.
 
@@ -306,7 +324,7 @@ def _hold_for(next_admissible_at: str | None) -> float:
     return max(RECONCILE_INTERVAL, min(delta, BUDGET_HOLD_MAX))
 
 
-def _budget_admits(worker: str) -> bool:
+def _budget_admits(worker: str, target: str) -> bool:
     """Whether the usage budget would let a runner for `worker` do any work.
 
     ASK BEFORE PAYING FOR THE SPAWN. A budget-refused sweep still starts, still
@@ -328,25 +346,17 @@ def _budget_admits(worker: str) -> bool:
 
     Fails OPEN: a metering read is never allowed to be the thing that stops work.
     """
-    now = time.monotonic()
-    held = _budget_hold.get(worker)
-    if held is not None and now < held:
-        return False
     try:
         decision = usage_ledger.admission(worker)
     except Exception:
         log.exception("work driver: budget check failed for %s; starting anyway", worker)
-        _budget_hold.pop(worker, None)
         return True
     if decision.get("ok"):
-        if held is not None:
-            log.info("work driver: budget admits %s again", worker)
-        _budget_hold.pop(worker, None)
         return True
-    refusal = decision.get("refusal") or {}
-    hold = _hold_for(refusal.get("next_admissible_at"))
-    _budget_hold[worker] = now + hold
-    # Logged on entry to the hold and then once per expiry, not once per tick.
+    hold = _hold_for((decision.get("refusal") or {}).get("next_admissible_at"))
+    _hold_off(target, hold)
+    # Logged on entry to the hold and then once per expiry, not once per tick,
+    # because `_backing_off` short-circuits before this is reached.
     log.info("work driver: not starting a runner for %s: %s holding %ds",
              worker, decision.get("reason") or "refused", int(hold))
     return False
@@ -365,8 +375,7 @@ def ensure(root: str | Path, mode: str = "supervised") -> bool:
     if not QUEUE_WATCHDOG.exists():
         log.warning("work driver: watchdog missing at %s", QUEUE_WATCHDOG)
         return False
-    last = _failed_at.get(target)
-    if last is not None and (time.monotonic() - last) < RETRY_AFTER:
+    if _backing_off(target):
         return False
     worker = worker_for(target)
     if worker is None:
@@ -374,12 +383,12 @@ def ensure(root: str | Path, mode: str = "supervised") -> bool:
         # starting one here would put a resident, healthy-looking, permanently
         # idle runner on the tree, which is precisely the state this check was
         # added to stop being possible.
-        _failed_at[target] = time.monotonic()
+        _hold_off(target)
         log.warning("work driver: not starting a runner for %s: the scope has "
                     "no single maker agent to run as, so an unattended sweep "
                     "could select nothing", target)
         return False
-    if not _budget_admits(worker):
+    if not _budget_admits(worker, target):
         return False
     try:
         subprocess.Popen(
@@ -392,7 +401,7 @@ def ensure(root: str | Path, mode: str = "supervised") -> bool:
         )
     except OSError:
         log.exception("work driver: could not spawn watchdog for %s", target)
-        _failed_at[target] = time.monotonic()
+        _hold_off(target)
         return False
     # The watchdog spawns the runner detached; give it a beat before deciding
     # whether the start took, so a slow fork is not recorded as a refusal.
@@ -404,7 +413,7 @@ def ensure(root: str | Path, mode: str = "supervised") -> bool:
     # Most likely the developer-mode gate refused the tree; the watchdog has
     # already written why into queue-runner.log. Back off rather than retry
     # every tick forever.
-    _failed_at[target] = time.monotonic()
+    _hold_off(target)
     log.warning("work driver: runner did not come up for %s; see %s",
                 target, QUEUE_RUNNER_LOG)
     return False
