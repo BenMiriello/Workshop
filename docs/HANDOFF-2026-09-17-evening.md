@@ -82,8 +82,12 @@ Filed: [A killed worker can leave the shared database at a revision no commit co
   baseline (function-local 571 to 605, SCC 82 to 83, upward 32 to 34) are
   inherited at the base ref and the script says so itself.
 
-Branch is `feat/client-state-consolidation`, **490 commits ahead of `main` and
-1302 ahead of `origin/main`, with nothing ever merged.** It began on 2026-08-26.
+Branch is `feat/client-state-consolidation`, begun 2026-08-26, **with nothing
+ever merged**. It was 502 ahead of `main` and 1314 ahead of `origin/main` at
+20:50, and that grows with every commit, so read it rather than quoting mine:
+`git rev-list --left-right --count main...HEAD`. The figure that does not drift is
+the second half of the sentence: `main` is 0 behind in the other direction, so
+nothing on this branch has ever gone back.
 
 ---
 
