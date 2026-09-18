@@ -154,8 +154,25 @@ CLI silently drops the workshop server, and the worker runs with no `search` or
 
 **`1ccaebd1` fixes the worker side** by rooting the emitted spec at `$DIR` and
 making the log say "not applied" instead of "enabled" when the command is
-unresolvable. Verified: the server answers a JSON-RPC initialize from a worktree
-path, and the shared-tree case is byte-identical to before.
+unresolvable. Verified at the time: the server answers a JSON-RPC initialize from
+a worktree path, and the shared-tree case is byte-identical to before.
+
+**AND IT IS NOW PROVEN LIVE, not merely tested.** Four unattended runs after it
+landed logged the new line with the server rooted at the worktree:
+
+    [ralph] workshop search tool: enabled (inline mcp-config; server
+      /home/clawd-a/workshop/branches/development/<worktree>/backend/mcp/workshop_query_server.py)
+
+Before the fix that path named the platform checkout and the CLI dropped the
+server without saying so. It now names the tree the worker is actually in, and
+the line reports the resolved path rather than only that a flag was passed, which
+is the honesty half of the same change. One of those runs is ticket
+[1e2b7f87](workshop:ticket/1e2b7f87)'s own, at 17:26.
+
+So a worker now has its search tools. It is not yet a clean win: one of those runs
+still had `iter 1` killed at 1440s, but a second iteration then succeeded
+(`exit=0, tokens=773257`), which is something the old arithmetic never permitted.
+What remains unproven is whether a worker with tools finishes inside one wall.
 
 This is the same defect as a project chat having no tools. One cause, two
 victims. See section 5.
