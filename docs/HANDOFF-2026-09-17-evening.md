@@ -68,8 +68,14 @@ Filed: [A killed worker can leave the shared database at a revision no commit co
   files and says so.
 - A later run at a clean tree DID take the full `reviewer.sh` path, over 53 files
   measured against the session baseline `c113a279`, i.e. two days of work. It
-  reports three reasons. **All three are accounted for and none is new
-  unattributed damage, so do not go hunting:**
+  reported five reasons. **Two of them were mine and are now fixed**, which is
+  worth stating because a reader who runs the gate today should see three, not
+  five: `hardcoded_identity_in_docs` and `fresh_clone_regression` were both one
+  line of this handoff quoting a log line complete with this machine's absolute
+  home path. Replaced with a placeholder in `96c3eca5`; `check_no_hardcoding.sh
+  --all` and `check_fresh_clone.sh` are both clean again.
+  **The remaining three are accounted for and none is new unattributed damage,
+  so do not go hunting:**
   - `ratchet_baseline_loosened`. `static_chars` was 23840 at `c113a279` and is
     23922 now, so **82 characters of my own overrun from yesterday remain** out
     of the 416 I added in `ef1bffa0`. 334 were repaid today in `8a1b6f36` by
