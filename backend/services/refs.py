@@ -315,7 +315,7 @@ def _resolve_doc(ref: Ref) -> dict | None:
 _TICKET_PREFIX_MIN = 8
 
 
-def _ticket_by_prefix(prefix: str):
+def _ticket_by_prefix(prefix: str, roots, tasks):
     """The one ticket whose id starts with `prefix`, or None.
 
     AMBIGUOUS RESOLVES TO NOTHING. Two tickets sharing a prefix means the ref
@@ -323,13 +323,15 @@ def _ticket_by_prefix(prefix: str):
     operator's chip -- worse than the unresolved state, because it reads as
     confirmed. Returns None for a short prefix too, so a stray hex-ish word in
     prose cannot accidentally resolve to a real ticket.
+
+    Takes `roots` and the `tasks` module rather than importing them: the caller
+    already holds both, and a second deferred-import site here would be two more
+    function-local imports in a module the layout ratchet counts.
     """
-    from routes import tasks_all
-    from services import tasks
     if len(prefix) < _TICKET_PREFIX_MIN:
         return None
     hit = None
-    for scope, root in tasks_all.scope_roots():
+    for scope, root in roots:
         for t in tasks.list_tasks(root):
             if str(t.get("id") or "").startswith(prefix):
                 if hit is not None:
@@ -350,11 +352,12 @@ def _resolve_ticket(ref: Ref) -> dict | None:
     """
     from routes import tasks_all
     from services import tasks
-    for scope, root in tasks_all.scope_roots():
+    roots = list(tasks_all.scope_roots())
+    for scope, root in roots:
         task = tasks.get_task(root, ref.key)
         if task is not None:
             return _ticket_card(scope, task, ref.key)
-    hit = _ticket_by_prefix(ref.key)
+    hit = _ticket_by_prefix(ref.key, roots, tasks)
     if hit is not None:
         scope, task = hit
         return _ticket_card(scope, task, str(task.get("id") or ref.key))
