@@ -112,7 +112,9 @@ nothing on this branch has ever gone back.
 
 ## 2. What landed today
 
-Eleven commits. `git log 6bf71bcf..HEAD`.
+Eleven substantive commits, listed below. `git log 6bf71bcf..HEAD` returns more
+than eleven, because everything after `eda29e6a` is this handoff and the
+corrections I made to it while cross-checking its own claims.
 
 - `6e89b97b` WORKSHOP_CANONICAL_ORIGIN documented in instance.env, out of secrets
 - `ecdf3dc1` + `9170ae05` a killed worker's commits skip the reviewer and go to
