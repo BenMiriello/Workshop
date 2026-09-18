@@ -496,14 +496,23 @@ noted. Of today's reports:
 3. **`assignee` at file time**, section 6 item 1. This is his "blindly execute
    the past tickets" fear, so it is his call. A safe shape exists: set it only on
    newly filed tickets in an armed scope, never retroactively on the 138.
-4. **Worktree mode.** It is what breaks the loop today, and disabling it would
-   put unattended workers back into the shared tree writing on his branch.
-   Recommended: keep it and let `1ccaebd1` prove itself once the budget frees,
-   rather than turning isolation off.
-5. **Does an operator message into an armed thread silence it?** Open since
+4. **Worktree mode.** Keep it. This was the day's open question and it is now
+   close to answered: worktree mode was what broke the loop, `1ccaebd1` fixes the
+   cause, and four runs have logged the corrected spec, so the argument for
+   turning isolation off has largely evaporated. Disabling it would put unattended
+   workers back into the shared tree committing on his branch, which already
+   happened once today (`6e89b97b`, plus a `git add -A` that swept up another
+   agent's file). The remaining doubt is only whether a worker with its tools
+   finishes inside one wall, and that is measurable rather than a judgment call.
+5. **Is 3.25M per five hours the right autonomy ceiling?** New question, created
+   by the billing becoming honest. See section 3: a long run really costs 1.7M to
+   1.9M, so the window affords about one and a half of them. **Do not raise it
+   first.** A run costs that much because it burned a full wall without its search
+   tools; fix the waste, re-measure, then decide.
+6. **Does an operator message into an armed thread silence it?** Open since
    2026-08-27. Small, blocks nothing, but the arming control's copy depends on
    it. Recommended: merge and continue, and say nothing.
-6. **The word that replaces "armed" in data**, if any. The UI no longer says it.
+7. **The word that replaces "armed" in data**, if any. The UI no longer says it.
    Renaming the column is a migration and was not done.
 
 ---
