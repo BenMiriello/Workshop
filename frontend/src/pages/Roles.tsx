@@ -258,14 +258,18 @@ export default function Roles() {
       ) : !threads ? (
         <Stack><Skeleton /><Skeleton /><Skeleton /></Stack>
       ) : listed.length === 0 ? (
+        /* THE HINT USED TO NAME TWO PLACES THAT CANNOT DO IT. It read "Open a
+           chat and set its arming, or arm one from Chats", and neither is true:
+           a chat's own page has no such control, and the Chats filter that
+           gestured at this was removed once it was measured at 0 of 240. It also
+           used the word the operator rejected. Pointing a reader at a control
+           that does not exist is worse than telling them the state, so this says
+           the state. The row control below IS the only writer, and it renders
+           only for threads that already qualify, which is why this block is what
+           everyone sees. */
         <StateBlock
           title="Nothing runs unasked"
-          hint={
-            <span>
-              Every thread waits for you. Open a chat and set its arming, or arm
-              one from <Link to="/chats">Chats</Link>.
-            </span>
-          }
+          hint="Every thread waits for you, and no screen changes that yet."
         />
       ) : (
         <Stack>
