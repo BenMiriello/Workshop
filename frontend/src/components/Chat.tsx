@@ -1122,11 +1122,19 @@ export default function Chat({
     >
       {/* Both sentences in the body, and the disclosure after them: `detail`
           renders after `children`, so putting the advice there would have left
-          the Details toggle sitting between the problem and what to do. */}
+          the Details toggle sitting between the problem and what to do.
+
+          IT NAMED TWO REMEDIES AND NEITHER EXISTED. "approve the host in
+          Settings" has no surface: `WORKSHOP_EGRESS_ALLOWED_HOSTS` is read by
+          `installation.egress_allowed_hosts()` and written by nothing -- no
+          route, no page, no writer anywhere in the tree. And "run it in your
+          own terminal" is the hand-back the operator rejected outright on
+          2026-09-18. Naming a door that does not open is the same defect the
+          /roles empty state had. So this states the fact and stops. */}
       External network is blocked in this environment.{" "}
       <span className="ws-notice__detail">
-        Run network commands (git clone / npm install) in your own terminal, or
-        approve the host in Settings.
+        This installation's egress policy decides it, and there is no control
+        for it here yet.
       </span>
       <details className="chat-egress__details">
         <summary className="ws-card__meta">Details</summary>

@@ -3,7 +3,9 @@
 
 WHY THIS EXISTS. Measured 2026-09-17: `WORKSHOP_OPERATOR_NAME` was declared in
 both `~/.config/workshop/instance.env` and `~/.config/workshop/secrets.env`
-with two different values ("Ben" and "benmiriello"), and three different
+with two different values -- not quoted here, because naming this install's
+operator in tracked source is the very thing `check_no_hardcoding.sh` forbids,
+and this docstring was failing that gate -- and three different
 loaders disagreed about which one won -- the running backend, an interactive
 script, and cron each answered differently, silently. `WORKSHOP_DEV_MODE` and
 one app-specific channel id were ALSO declared twice and happened to agree,

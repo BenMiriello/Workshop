@@ -1053,12 +1053,19 @@ def role_preamble(
         )
     else:
         egress = (
+            # IT TOLD THE AGENT TO HAND BACK A SHELL COMMAND, and that is
+            # exactly what agents did. Pasting a command for the operator to run
+            # is not a remedy this product offers -- it moves the work to the
+            # one place the operator is not working -- and the second remedy it
+            # named ("approve the host") has no surface to do it in. Say what
+            # was needed and stop; a blocker the operator can act on is a thing
+            # to BUILD, not a sentence to write here.
             "NETWORK EGRESS IS RESTRICTED: external network access (git clone, "
             "package installs, curl/wget to public hosts) is BLOCKED in this "
             f"environment. Only {nets} reachable. If a task needs an external "
-            "fetch, do NOT promise it and do NOT pretend it succeeded: surface that "
-            "it is blocked and ask the operator to run it in their own terminal or "
-            "to approve the host."
+            "fetch, do NOT promise it, do NOT pretend it succeeded, and do NOT "
+            "hand back a command to paste: say what you needed and that it is "
+            "blocked."
         )
     return (
         "=== YOUR CAPABILITIES (read this first) ===\n"
