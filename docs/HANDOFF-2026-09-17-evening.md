@@ -142,6 +142,11 @@ corrections I made to it while cross-checking its own claims.
   nothing says "armed"
 - `b4793613` the prefs file moved below the import cycle so the clock can read it
 - `eda29e6a` one wall budget, no floor above the fraction, six missing owner pins
+- `55ffadcb` the Roles empty state stopped naming two controls that cannot do it,
+  in the word the operator rejected. Found by reading the screenshot the gate
+  demands, not by grep: the copy is a hint prop with the word split across a line
+  break, so the word sweep that reported `frontend/src` clean was correct and
+  still missed it.
 
 The last one was **recovered this evening** from an agent that was killed after
 making the changes and before validating or committing them. Its work was intact
@@ -335,8 +340,9 @@ database:
   `assignedThreads()`, which filters to threads that are already armed or
   already carry a role. With zero in either state the control appears for zero
   threads. The only thing that can arm a thread only shows up on threads that
-  are already armed. `Roles.tsx` even tells the operator to "arm one from Chats",
-  where no such control exists.
+  are already armed. Until `55ffadcb` today its empty state also told the
+  operator to "open a chat and set its arming, or arm one from Chats", and
+  neither place has such a control; that copy now states the situation instead.
 - **The app-chats payload drops both fields**, and this is measured rather than
   read. `routes/apps.py` declares `armed: str = "off"` and `role: str | None =
   None` on the response model, with a comment citing the design doc, and
