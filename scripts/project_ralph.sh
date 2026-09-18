@@ -413,6 +413,39 @@ PYEOF
 )
 }
 
+# The branch slug of a task's most recently allocated worktree, or nothing.
+# Pure -- reads $1 (the task JSON, already in hand as $NEXT) rather than the
+# store or the database, so it works identically on a file-backed project tree
+# and needs no ownership pin. Used by the retry path below to reattach to the
+# tree a previous attempt already committed to.
+retry_branch_slug_for() {  # $1=task_json
+  [[ -n "${1:-}" ]] || return 0
+  PYTHONPATH="$WORKSHOP/backend" python3 -c "
+import json, sys
+from services import tasks
+try:
+    t = json.load(sys.stdin)
+except Exception:
+    t = {}
+print(tasks.retry_worktree_branch_slug(t) if isinstance(t, dict) else '')
+" <<<"$1" 2>>"$LOG"
+}
+
+# Prompt text naming the prior attempt's reviewer reason, or nothing on a
+# task's first attempt. Same pure/no-DB shape as retry_branch_slug_for above.
+retry_prompt_context_for() {  # $1=task_json
+  [[ -n "${1:-}" ]] || return 0
+  PYTHONPATH="$WORKSHOP/backend" python3 -c "
+import json, sys
+from services import tasks
+try:
+    t = json.load(sys.stdin)
+except Exception:
+    t = {}
+sys.stdout.write(tasks.retry_prompt_context(t) if isinstance(t, dict) else '')
+" <<<"$1" 2>>"$LOG"
+}
+
 alloc_task_worktree() {  # $1=task_id $2=task_title
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" "$2" <<'PYEOF' 2>>"$LOG"
 import sys
@@ -1217,6 +1250,20 @@ release_or_block() {  # $1=task_id $2=attempts $3=cap $4=reason-verb
     log "task=$1 BLOCKED: $4 after $2/$3 attempts"
     echo blocked
   else
+    # A NEXT attempt on this ticket sees why THIS one did not land, via
+    # retry_prompt_context (services/tasks.py) folding this note into its
+    # prompt. Prefer the reviewer's own reasons off the receipt ralph.sh just
+    # wrote -- "missing test coverage" is more actionable than "incomplete
+    # (rc=2)" -- and fall back to the reason-verb itself when there is no
+    # receipt or it carries none (an acceptance-criteria/command-acceptance
+    # failure, or a run killed before the reviewer ever ran).
+    local retry_reason="$4"
+    if [[ -f "${RECEIPT_FILE:-}" ]]; then
+      local rr
+      rr=$(jq -r '(.reviewer.reasons // []) | map(select(length > 0)) | join("; ")' "$RECEIPT_FILE" 2>/dev/null)
+      [[ -n "$rr" ]] && retry_reason="$rr"
+    fi
+    python3 "$PTASKS" note "$DIR" "$1" "$retry_reason" --kind retry_reason --ref "$retry_reason" >/dev/null 2>>"$LOG"
     ptasks_tx set-status "$DIR" "$1" todo \
       --expect-claim-token "${CLAIM_TOKEN:-}" || true
     log "task=$1 released to todo ($4; attempt $2/$3)"
@@ -1332,6 +1379,18 @@ while (( n < MAX_TASKS )); do
     log "task=$TASK_ID control: folded a steered request into this iteration"
   fi
 
+  # A RETRY SEES WHY THE PREVIOUS ATTEMPT DID NOT CONVERGE. $NEXT already
+  # carries every evidence entry a prior attempt wrote (it was just re-read
+  # from the store), so a task's own `retry_reason` evidence -- written below
+  # on a non-converged attempt, right before it is released back to `todo` --
+  # is visible to this claim without any extra lookup. First attempt: no such
+  # evidence, this is a no-op.
+  RETRY_CONTEXT=$(retry_prompt_context_for "$NEXT")
+  if [[ -n "$RETRY_CONTEXT" ]]; then
+    TASK_TEXT="${TASK_TEXT}${RETRY_CONTEXT}"
+    log "task=$TASK_ID retry: folded the prior attempt's reviewer reason into the prompt"
+  fi
+
   # Usage-budget admission (Stage 5). Stop the sweep the moment this scope's
   # rolling-window budget is exhausted, so autonomous work can never run away
   # with the operator's Claude usage. Chats are unmetered and never gated.
@@ -1445,6 +1504,26 @@ while (( n < MAX_TASKS )); do
         log "task=$TASK_ID paused branch $RESUME_BRANCH has no worktree on disk; allocating a fresh one. The paused commits are still on that branch and are named on the ticket, so they are recoverable, but this run does NOT continue from them."
       fi
     fi
+    # REATTACH, DO NOT RE-BRANCH, on an ordinary retry too. A ticket that came
+    # back through `next-ready` rather than the pause bookmark still had a
+    # worktree from its last attempt -- `retry_branch_slug_for` reads it off
+    # the ticket's own `worktree` evidence (written below the first time this
+    # task got a tree). Without this, `alloc_task_worktree` sees the old slug
+    # still taken and mints a DISAMBIGUATED SIBLING instead of reusing it,
+    # which is exactly how one ticket ended up with three branches and three
+    # independent implementations of the same fix (measured 2026-09-18).
+    if [[ -z "$ALLOC" ]]; then
+      RETRY_SLUG=$(retry_branch_slug_for "$NEXT")
+      if [[ -n "$RETRY_SLUG" ]]; then
+        RETRY_DIR=$(branch_dir_for "$RETRY_SLUG")
+        if [[ -n "$RETRY_DIR" && -d "$RETRY_DIR" ]]; then
+          ALLOC=$(printf '%s\t%s' "$RETRY_DIR" "$RETRY_SLUG")
+          log "task=$TASK_ID retry: reattaching prior attempt's worktree $RETRY_DIR (branch wt/$WT_SLUG/$RETRY_SLUG)"
+        else
+          log "task=$TASK_ID retry: prior branch $RETRY_SLUG has no worktree on disk; allocating a fresh one"
+        fi
+      fi
+    fi
     [[ -z "$ALLOC" ]] && ALLOC=$(alloc_task_worktree "$TASK_ID" "$TASK_TEXT")
     WT_DIR=$(printf '%s' "$ALLOC" | cut -f1)
     WT_BRANCH_SLUG=$(printf '%s' "$ALLOC" | cut -f2)
@@ -1453,6 +1532,10 @@ while (( n < MAX_TASKS )); do
       PR_TITLE="$(echo "$TASK_TEXT" | head -c 72 | tr '\n' ' ')"
       PR_BODY="Automated change for task $TASK_ID in project $WT_SLUG."
       log "task=$TASK_ID provisioned worktree $WT_DIR (branch wt/$WT_SLUG/$WT_BRANCH_SLUG)"
+      # Record the branch on the ticket's OWN evidence (file-backed, no DB
+      # needed) so a LATER attempt can find this tree via retry_branch_slug_for
+      # even if it never goes through the pause-bookmark path above.
+      python3 "$PTASKS" note "$DIR" "$TASK_ID" "$WT_BRANCH_SLUG" --kind worktree --ref "$WT_BRANCH_SLUG" >/dev/null 2>>"$LOG"
       # HOLD IT (sec 4). A tree somebody else holds is not a tree this run may
       # write to, and section 8's rule is "the answer to a busy tree is a verb,
       # not a silent second writer". A sweep has no operator to offer a verb to,

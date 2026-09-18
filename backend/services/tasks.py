@@ -1855,6 +1855,63 @@ def get_task(root: Path, task_id: str, *, owner: str | None = None) -> dict | No
     return None
 
 
+# ---- Retry context: a retry sees the prior attempt --------------------------
+#
+# A worktree-per-task sweep that fails or does not converge leaves its branch
+# and commits on disk (see `worktrees.branch_dir`), but nothing told the NEXT
+# attempt they were there: it allocated a fresh worktree and re-derived the
+# same change from nothing. These two readers close that gap without a
+# database round-trip -- both work off the `evidence` list the ticket already
+# carries, the same file-backed record every scope has, so a retry can build
+# on the previous attempt whether or not this installation has Postgres.
+#
+# The writer side lives in `scripts/project_ralph.sh`: it appends a `worktree`
+# evidence entry (`ref` = branch slug) right after allocating a task's tree,
+# and a `retry_reason` entry (`ref` = the reviewer's joined reasons) right
+# before releasing a non-converged attempt back to `todo`.
+
+def last_evidence_ref(task: dict, kind: str) -> str:
+    """The `ref` of this task's most recent evidence entry of one `kind`.
+
+    "" when there is none. Evidence is append-only and read oldest-first, so
+    the most recent entry of a kind is the last match in the list -- the same
+    rule `project_ralph.sh`'s `resume_candidate` already applies to the
+    `resume` kind.
+    """
+    for entry in reversed(task.get("evidence") or []):
+        if isinstance(entry, dict) and entry.get("kind") == kind:
+            return str(entry.get("ref") or "")
+    return ""
+
+
+def retry_worktree_branch_slug(task: dict) -> str:
+    """The branch slug of this task's most recently allocated worktree, or "".
+
+    A retry claim uses this to reattach to the tree the previous attempt
+    already committed to, instead of `branch_slug_for_work` minting a sibling
+    slug because the old one is still on disk.
+    """
+    return last_evidence_ref(task, "worktree")
+
+
+def retry_prompt_context(task: dict) -> str:
+    """Text to append to a retry's prompt naming the previous attempt's reason.
+
+    "" on a task's first attempt (no `retry_reason` evidence yet). A retry
+    that cannot see why the last one did not converge has no way to improve
+    on it rather than repeat it.
+    """
+    reason = last_evidence_ref(task, "retry_reason")
+    if not reason:
+        return ""
+    return (
+        "\n\nThis is a RETRY of a previous attempt on this ticket. "
+        f"The reviewer's last verdict said: {reason}\n"
+        "Build on the existing branch and commits already in this worktree "
+        "rather than starting the change over."
+    )
+
+
 def _is_stale_claim(t: dict, now_dt: datetime, ttl: int) -> bool:
     """A `doing` task is a stale claim (crashed/killed/hung sweep) when either:
 
