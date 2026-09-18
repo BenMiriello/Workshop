@@ -58,13 +58,32 @@ Filed: [A killed worker can leave the shared database at a revision no commit co
 - `bash scripts/apply.sh --check`: UI bundle current (`6c5753ba8074`), backend
   current (`6d57782cbbaa`), all eight app bundles current, vite env and public
   edge ok. **The only drift is the orphan schema above.**
-- `bash scripts/done.sh --shot /chats`: **PASS**, measured at `c88dbc80` with
-  screenshots at 390 and 1440 taken and read. The commits after it are shell
-  scripts, docs and one docstring, none of which the gate weighs differently, but
-  the PASS is that commit's and a re-run is cheap if you want it at HEAD. Note
-  the gate declines to run the full `reviewer.sh` when the working tree holds
-  another agent's files, and says so; it checked `scoped (tsc, check_design.sh
-  --added)` instead.
+- `bash scripts/done.sh --shot /chats`: **PASS** at `c88dbc80`, screenshots at 390
+  and 1440 taken and read. That run used the SCOPED path, because the gate
+  declines the full `reviewer.sh` when the working tree holds another agent's
+  files and says so.
+- A later run at a clean tree DID take the full `reviewer.sh` path, over 53 files
+  measured against the session baseline `c113a279`, i.e. two days of work. It
+  reports three reasons. **All three are accounted for and none is new
+  unattributed damage, so do not go hunting:**
+  - `ratchet_baseline_loosened`. `static_chars` was 23840 at `c113a279` and is
+    23922 now, so **82 characters of my own overrun from yesterday remain** out
+    of the 416 I added in `ef1bffa0`. 334 were repaid today in `8a1b6f36` by
+    removing redundancy rather than deleting the rule. Against the CURRENT pin
+    nothing is loosened (`check_ratchets_not_loosened` passes); this fires only
+    across the two-day span.
+  - `module_layout_regression`. Against `c113a279` the only attributable delta is
+    `big_file_count: 27 -> 29`. Two files crossed the threshold by a handful of
+    lines: `services/app_registry.py` at 804 and `services/scoped_exec.py` at
+    805, because `mcp_server_reachable` and `host_path_visible` were added to
+    them. The other figures it prints (function-local 571 to 605, SCC 82 to 83,
+    upward 32 to 34) are inherited at the base ref and the script labels them so.
+    **I did not trim five lines off each file to clear the threshold.** The
+    functions are needed and shaving code to get under a number is the wrong
+    instinct; the honest state is plus two, with the reason recorded here.
+  - `memory_acceptance_failed`. The known one, filed as
+    [056af406](workshop:ticket/056af406). It also fails under system python for a
+    missing `numpy`/`httpx`, so it is environmental as well as substantive.
 - `npm run typecheck`: clean. `cd frontend && npm test -- --run`: 101 files, 1811
   tests pass. `bash scripts/check_design.sh`: `design: clean`.
 - `python3 scripts/check_backend_tests.py`: exit 0, 4626 passed, 9 known failures.
