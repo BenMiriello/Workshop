@@ -1,5 +1,29 @@
 # State of the work, 2026-09-17
 
+> **PARTLY SUPERSEDED THE SAME DAY. Read
+> `HANDOFF-2026-09-17-evening.md` for anything about the autonomy loop, worktrees,
+> or the thread unification.** This file was written in the morning and three of
+> its claims went false by that evening, which is the exact failure mode its own
+> opening paragraph warns about:
+>
+> - Lines 240 and 345 say **"nothing has used one since 2026-08-23"** and "no
+>   worktree has been cut in three weeks". False. Twenty-three worktrees were cut
+>   on 2026-09-16 and 2026-09-17, all title-named, and the unattended sweep
+>   provisions a fresh one per attempt. `git worktree list`.
+> - The loop's failure was diagnosed here as arming and routing. The measured
+>   cause is **confinement**: in a worktree the scope root is not the repo root,
+>   so the MCP spec path is never remapped and the worker runs with no search
+>   tools until the wall kills it. Seven attempts in a worktree died; the one in
+>   the shared checkout succeeded first try. Fixed worker-side in `1ccaebd1`.
+> - Section 8.5 says merging chats, agents and subagents has "no design doc". It
+>   does not need one: the model was settled on 2026-08-29 and is already
+>   decomposed into tickets. It is **inert**, not unstarted, because `armed` and
+>   `role` never reach Postgres and the only control that can arm a thread renders
+>   only for threads that are already armed.
+>
+> The rest of this file, including its section 8 list of decisions Ben still owns,
+> remains the best month-scale account and is not replaced.
+
 **What this is.** Ben asked for an updated report covering roughly the past
 month: what he has asked for, what was specified, what was built, what is left,
 and which of the remainder still needs a decision rather than an implementer.
