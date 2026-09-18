@@ -55,9 +55,10 @@ import subprocess
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
-from services import autonomy_override, scope_execution
+from services import autonomy_override, scope_execution, usage_ledger
 from wsplatform import paths
 
 log = logging.getLogger(__name__)
@@ -75,6 +76,14 @@ RETRY_AFTER = 600.0
 
 # root -> monotonic timestamp of the last start attempt that did not take.
 _failed_at: dict[str, float] = {}
+
+# The longest a budget refusal may suppress a start. `next_admissible_at` is an
+# ESTIMATE that assumes nothing else spends in the meantime, so a long one is
+# re-asked rather than trusted to the end; a short one is honoured exactly.
+BUDGET_HOLD_MAX = 900.0
+
+# worker scope key -> monotonic time before which starting a runner is pointless.
+_budget_hold: dict[str, float] = {}
 
 
 # ---- process facts ---------------------------------------------------------
@@ -278,6 +287,71 @@ def worker_for(root: str | Path) -> str | None:
     return f"agent:{live[0]['slug']}"
 
 
+def _hold_for(next_admissible_at: str | None) -> float:
+    """Seconds to suppress starts for, given the refusal's own estimate.
+
+    Clamped into [RECONCILE_INTERVAL, BUDGET_HOLD_MAX] so a missing or absurd
+    estimate still yields a sane cadence: never tighter than the reconcile tick
+    (which would be a no-op), never so long that freed budget goes unused.
+    """
+    if not next_admissible_at:
+        return BUDGET_HOLD_MAX
+    try:
+        when = datetime.fromisoformat(next_admissible_at)
+    except (TypeError, ValueError):
+        return BUDGET_HOLD_MAX
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    delta = (when - datetime.now(timezone.utc)).total_seconds()
+    return max(RECONCILE_INTERVAL, min(delta, BUDGET_HOLD_MAX))
+
+
+def _budget_admits(worker: str) -> bool:
+    """Whether the usage budget would let a runner for `worker` do any work.
+
+    ASK BEFORE PAYING FOR THE SPAWN. A budget-refused sweep still starts, still
+    takes its lease, declines, and exits -- and it takes longer to do that than
+    the two seconds `ensure` waits before deciding whether the start "took". So
+    the driver saw the doomed sweep holding the flock, recorded a success, and
+    cleared the RETRY_AFTER backoff that exists for exactly this. The ceiling
+    therefore produced a runner respawned every RECONCILE_INTERVAL rather than a
+    backoff.
+
+    Measured 2026-09-18 before this gate: 2,888 sweeps that worked nothing, and
+    the most recent 25 of them were the ENTIRE contents of the 50-record window
+    `dispatch_triggers.circuit_open` reads -- so the refusal storm also blinded
+    the circuit breaker to real failures. A refusal is not a failed sweep
+    (`tasks_failed` is 0), so nothing else was ever going to count it.
+
+    `dispatch_triggers._budget_ok` already gates the DISPATCHED path this way.
+    This is the RESIDENT path's half of the same question.
+
+    Fails OPEN: a metering read is never allowed to be the thing that stops work.
+    """
+    now = time.monotonic()
+    held = _budget_hold.get(worker)
+    if held is not None and now < held:
+        return False
+    try:
+        decision = usage_ledger.admission(worker)
+    except Exception:
+        log.exception("work driver: budget check failed for %s; starting anyway", worker)
+        _budget_hold.pop(worker, None)
+        return True
+    if decision.get("ok"):
+        if held is not None:
+            log.info("work driver: budget admits %s again", worker)
+        _budget_hold.pop(worker, None)
+        return True
+    refusal = decision.get("refusal") or {}
+    hold = _hold_for(refusal.get("next_admissible_at"))
+    _budget_hold[worker] = now + hold
+    # Logged on entry to the hold and then once per expiry, not once per tick.
+    log.info("work driver: not starting a runner for %s: %s holding %ds",
+             worker, decision.get("reason") or "refused", int(hold))
+    return False
+
+
 def ensure(root: str | Path, mode: str = "supervised") -> bool:
     """Make a runner resident for `root`. Idempotent and race-free: the watchdog
     probes the same flock the runner holds, so a blind call is safe.
@@ -304,6 +378,8 @@ def ensure(root: str | Path, mode: str = "supervised") -> bool:
         log.warning("work driver: not starting a runner for %s: the scope has "
                     "no single maker agent to run as, so an unattended sweep "
                     "could select nothing", target)
+        return False
+    if not _budget_admits(worker):
         return False
     try:
         subprocess.Popen(
