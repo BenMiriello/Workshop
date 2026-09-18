@@ -157,10 +157,21 @@ victims. See section 5.
 
 ### It is still stopped, for a different reason
 
-`agent:development-maker` has used **3.65M of the 3.25M** tokens allowed in a
-5-hour window. Every sweep now ends `refused: autonomous work has used 3.65M of
-the 3.25M ... and the next task needs 150K more`. 61 refusals today by 10:35, and
-it is still refusing at 20:16.
+`agent:development-maker` has used **3,650,857** tokens in the 5-hour window.
+Every sweep now ends `refused: autonomous work has used 3.65M of the 3.25M ...
+and the next task needs 150K more`. 61 refusals today by 10:35, and it was still
+refusing at 20:30.
+
+**There are two ceilings and they are different numbers, so be precise about
+which one you are changing.** The refusal message quotes a global autonomous
+ceiling of **3.25M**. `usage_ledger.status()` reports this scope's own
+`allowance` as **2.00M**, with `development` and `workshop` each sitting at 0 used
+of 1.5M. So the scope is at roughly 1.8 times its own allowance and 1.1 times the
+global one, and either could be the thing that refuses a given sweep.
+
+The window is rolling rather than fixed, so it frees gradually as the large
+charges age out: the 1.7M charge lands around 12:15 and the 1.9M around 15:45, so
+capacity should return substantially after about 20:45.
 
 A large share of that spend was the flat 150k nominal charge booked for killed
 runs that produced nothing. `eda29e6a` corrects the nominal figure so it can only
