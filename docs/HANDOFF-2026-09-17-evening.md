@@ -55,9 +55,13 @@ Filed: [A killed worker can leave the shared database at a revision no commit co
 
 ## 1. Delivery and gate state, as of now
 
-- `bash scripts/apply.sh --check`: UI bundle current (`6c5753ba8074`), backend
-  current (`6d57782cbbaa`), all eight app bundles current, vite env and public
-  edge ok. **The only drift is the orphan schema above.**
+- `bash scripts/apply.sh --check`: UI bundle current, all eight app bundles
+  current, vite env and public edge ok. **The only drift is the orphan schema
+  above.** `apply.sh` was run as the final action; the bundle was rebuilt and a
+  **backend restart is ARMED and fires after this turn's reply lands**, so the
+  first thing to do next session is `bash scripts/apply.sh --check` to confirm it
+  did. The change waiting on that restart is one docstring with no runtime
+  behaviour, so nothing is at risk if it did not.
 - `bash scripts/done.sh --shot /chats`: **PASS** at `c88dbc80`, screenshots at 390
   and 1440 taken and read. That run used the SCOPED path, because the gate
   declines the full `reviewer.sh` when the working tree holds another agent's
