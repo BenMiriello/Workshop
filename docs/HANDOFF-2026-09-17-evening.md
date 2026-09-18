@@ -163,18 +163,35 @@ runs that produced nothing, while the real cost of such a run is 506k to 1.04M.
 rather than 900s and a second iteration happened at all, one of which succeeded
 (`iter 2: exit=0, tokens=773257`). So it is no longer single-shot.
 
-### Two things the next session must do
+### The budget arithmetic is already live, and NO restart is needed
 
-1. **Restart `queue_runner.sh`.** It is pid 5635 and bash holds its parsed loop
-   body in memory, so it is still running pre-`eda29e6a` code. `work_driver.reconcile_loop`
-   (started from `backend/main.py` lifespan) re-spawns a missing runner, so
-   killing it is self-healing. I did not do it because the budget is exhausted
-   anyway and a restart now buys nothing.
-2. **Decide what to do with 23 stranded branches.** Every `wt/development/*`
-   branch carries 2 to 3 commits not in HEAD. None is merged. That is roughly 50
-   commits of worker output. `git branch --list 'wt/development/*'` then
-   `git rev-list --count HEAD..<branch>`. One of them is ticket
-   [1e2b7f87](workshop:ticket/1e2b7f87)'s own work from 17:26 tonight.
+I first wrote here that `queue_runner.sh` needed restarting to pick up
+`eda29e6a`. **That is wrong and I checked it rather than leaving it.** Only
+`queue_runner.sh`'s own body is held in memory; it spawns `project_ralph.sh` and
+`ralph.sh` as fresh processes every sweep, so their changes are read from disk
+each time. Which also means the loop was already running the repair agent's
+uncommitted code from 10:32 this morning, before I committed it this evening.
+
+Measured from the log just now, so the fix is proven live rather than argued:
+
+- a task gets `max_wall=2700s`, so the raise from 1200 is in effect
+- per-iteration timeouts run `1440s` then about `715s`, which is exactly
+  `(2700 - reviewer reserve) * 2/3` for the first iteration and the remainder for
+  the second
+- so **two iterations now fit inside one wall**, where the old arithmetic made it
+  single-shot every time, and one of those second iterations succeeded tonight
+  (`iter 2: exit=0, tokens=773257`)
+
+`[project_ralph]`'s own `max_wall=8220s` is the whole-sweep budget for up to
+three tasks (`3 * 2700 + 120`) and is not a per-task value. Do not read it as one.
+
+### So the one thing left here is the stranded work
+
+**Decide what to do with 23 worktree branches.** Every `wt/development/*` branch
+carries 2 to 3 commits not in HEAD. None is merged. That is roughly 50 commits of
+worker output. `git branch --list 'wt/development/*'` then
+`git rev-list --count HEAD..<branch>`. One of them is ticket
+[1e2b7f87](workshop:ticket/1e2b7f87)'s own work from 17:26 tonight.
 
 ### A hazard to know about
 
