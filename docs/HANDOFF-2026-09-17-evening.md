@@ -557,6 +557,19 @@ noted. Of today's reports:
 
 ## 9. Traps that cost time today
 
+- **A grep over strings is not a check that the screen is right.** The "armed"
+  sweep reported no user-visible occurrences left in `frontend/src`, `mobile/` or
+  `packages/ui`, and that was true. Then the screenshot of `/roles` showed the
+  empty state still reading "Open a chat and set its arming, or arm one from
+  Chats": the rejected word, plus two doors that do not exist, one of which was
+  deleted the same morning. It survived because it is a hint prop built from a
+  `<span>` with the word split across a line break, so no single-line grep
+  matched it. **Read the screenshot.** It is also the reason the gate demands one.
+- **Two gates hide docs by default.** `check_no_hardcoding.sh` excludes `docs/**`
+  and `*.md` unless `--all` is passed. I ran it plain, read "clean", and had
+  already committed a host path into the handoff; the full `reviewer.sh` then
+  failed on `hardcoded_identity_in_docs` and `fresh_clone_regression` together.
+  Always `--all` when you have touched a doc.
 - **`output bytes=0` after a kill means nothing.** Section 3.
 - **The git index is shared between concurrent agents.** Two agents' work landed
   in one commit (`12839052`) whose message describes half of it, and one agent's
