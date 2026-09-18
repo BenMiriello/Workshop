@@ -355,9 +355,18 @@ lens reads GET /leases, genuinely undone.
 [1d779456](workshop:ticket/1d779456) and [65cb8c6f](workshop:ticket/65cb8c6f) are
 **done and should be closed**; their blocked_reason and acceptance are stale.
 
-Recommended order: close the three stale ones first (about thirty minutes of
-adjudication, and it removes three false prerequisites), then `9fc4ce67`, then
-`e35a808a`, which is what makes `role` mean anything.
+Recommended order: close the stale ones first (see section 10, about thirty
+minutes of adjudication, and it removes three false prerequisites), then
+`9fc4ce67`, then `e35a808a`, which is what makes `role` mean anything.
+
+`9fc4ce67` is genuinely a pure deletion and I verified it rather than trusting
+the ticket: `routes/agents.py` still serves `/from-template` (line 477) and
+`/adopt-group` (line 494), `agents_registry` still defines `fork_from_template`
+(1076) and `adopt_group` (1115), and the ONLY frontend references are in the
+generated `schema.gen.ts`. There are no hand-written callers, so it is a deletion
+plus a client regeneration and nothing else. The same is true of the bigger
+prize: nothing in the UI navigates to `AgentDetail.tsx` either, so the 1761 lines
+of second-entity surface are reachable only by typing a URL.
 
 ### The genuinely undesigned parts, and there are only four
 
