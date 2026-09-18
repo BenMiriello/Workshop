@@ -7,6 +7,13 @@ so the next session can re-run it rather than trust it.
 
 Read this file, then `CLAUDE.md`. Nothing else is required to continue.
 
+Source chat: `7d940563-66ae-4a99-86e7-f414b36bc4e7`, scope `development`. The
+scope's auto-written handoff note, `shared/knowledge/development/working-state.md`,
+was hand-corrected to agree with this file and to point at it; that note is
+instance-local and untracked, so it is not in git history. If a claim here is
+thinner than you need, the full transcript of that chat has the measurement
+behind it, including the subagent reports this was compressed from.
+
 ---
 
 ## 0. The one thing that needs the operator's own hands
