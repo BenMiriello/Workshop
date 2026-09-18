@@ -134,9 +134,9 @@ def agent_cwd(scope_dir) -> str:
 
     A build turn is confined to its scope, bind-mounted at the managed
     mountpoint, so the host path the backend knows does not exist in the turn's
-    mount namespace -- `services/scoped_exec` states that as a guarantee: "the
-    real /home/... path does not exist inside the sandbox for the scope, so it
-    cannot be echoed". The prompt echoed it anyway, from two places that each
+    mount namespace -- `services/scoped_exec` states that as a guarantee: the
+    real host path does not exist inside the sandbox for the scope, so it
+    cannot be echoed. The prompt echoed it anyway, from two places that each
     resolved the question on their own, and only `runtime_briefing` got it
     right. One function so the briefing, the capabilities block and the build
     personas cannot disagree about where the reader is.
