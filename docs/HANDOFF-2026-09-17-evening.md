@@ -323,11 +323,15 @@ database:
   threads. The only thing that can arm a thread only shows up on threads that
   are already armed. `Roles.tsx` even tells the operator to "arm one from Chats",
   where no such control exists.
-- **The app-chats payload drops both fields.** `routes/apps.py` declares
-  `armed: str = "off"` and `role: str | None = None` on the response model, with
-  a comment citing the design doc, and `services/apps.py` never populates them.
-  So the defaults always win and an app's Chats tab could not show an armed
-  thread even once the column starts being written. This is a live bug.
+- **The app-chats payload drops both fields**, and this is measured rather than
+  read. `routes/apps.py` declares `armed: str = "off"` and `role: str | None =
+  None` on the response model, with a comment citing the design doc, and
+  `services/apps.py` never populates them. Calling `app_chats` directly for the
+  operator's own project returns the chat correctly and with `armed: None, role:
+  None`, so the thread's real values never arrive and the model's defaults are
+  what a client sees. An app's Chats tab therefore could not show an armed thread
+  even once the column starts being written. Live bug, and it is the smallest of
+  the four to fix.
 - **The second entity is still routed and editable.** `pages/AgentDetail.tsx`
   (1171 lines) plus `components/MakerPanel.tsx` (505) and `lib/agentTriggers.ts`
   (85) serve full CRUD over 11 markdown agent files. Good news: **nothing in the
