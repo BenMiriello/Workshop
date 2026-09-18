@@ -125,7 +125,7 @@ cleared. **The tree is clean.**
 
 ---
 
-## 3. The autonomy loop: root cause found, partly fixed, still stopped
+## 3. The autonomy loop: root cause found, fix proven live, now budget-stopped
 
 This is the largest finding of the day and it reframes months of "the loop does
 nothing".
