@@ -195,6 +195,47 @@ class TestTicketResolutionAndBacklinks:
     def test_resolve_unknown_ticket_refuses(self, scoped):
         assert refs.resolve_ref("workshop:ticket/does-not-exist") is None
 
+    def test_resolve_by_unique_id_prefix(self, scoped):
+        """THE FORM EVERY HUMAN AND DOC USES HAS TO RESOLVE.
+
+        CLAUDE.md, ticket bodies, handoff docs and chat replies all name a
+        ticket by its first eight characters. Resolving by full id only meant
+        an agent writing the convention its own instructions use produced a
+        chip reading "Unavailable" -- five in a row on 2026-09-18."""
+        t = tasks.add(scoped, title="Fix the thing", body="details")
+        got = refs.resolve_ref(f"workshop:ticket/{t['id'][:8]}")
+        assert got is not None
+        assert got["title"] == "Fix the thing"
+        # The href carries the FULL id even though the ref was a prefix.
+        assert got["href"] == f"/tickets/workshop/{t['id']}"
+
+    def test_prefix_shorter_than_eight_refuses(self, scoped):
+        """A stray hex-ish word in prose must not resolve to a real ticket."""
+        t = tasks.add(scoped, title="Fix the thing", body="details")
+        assert refs.resolve_ref(f"workshop:ticket/{t['id'][:6]}") is None
+
+    def test_ambiguous_prefix_resolves_to_nothing(self, scoped, monkeypatch):
+        """Guessing between two matches would put the wrong title on the chip,
+        which reads as confirmed and is worse than unresolved."""
+        a = tasks.add(scoped, title="First", body="")
+        b = tasks.add(scoped, title="Second", body="")
+        shared = "abcdef0123"
+        real_list = tasks.list_tasks
+
+        def fake_list(root, **kw):
+            out = []
+            for t in real_list(root, **kw):
+                t = dict(t)
+                if t["id"] == a["id"]:
+                    t["id"] = shared + "1"
+                elif t["id"] == b["id"]:
+                    t["id"] = shared + "2"
+                out.append(t)
+            return out
+
+        monkeypatch.setattr(tasks, "list_tasks", fake_list)
+        assert refs.resolve_ref(f"workshop:ticket/{shared}") is None
+
     def test_backlink_recorded_and_removed_on_edit(self, scoped):
         target = tasks.add(scoped, title="Target ticket", body="")
         source = tasks.add(

@@ -306,20 +306,70 @@ def _resolve_doc(ref: Ref) -> dict | None:
     }
 
 
+# The shortest id prefix that may stand for a ticket in a ref. Eight is not
+# arbitrary: it is the form this repository already uses everywhere a ticket is
+# named in prose -- CLAUDE.md, ticket bodies, handoff docs, commit messages and
+# chat replies all write `eb30f479`, never the 32-character id.
+_TICKET_PREFIX_MIN = 8
+
+
+def _ticket_by_prefix(prefix: str):
+    """The one ticket whose id starts with `prefix`, or None.
+
+    AMBIGUOUS RESOLVES TO NOTHING. Two tickets sharing a prefix means the ref
+    does not identify one, and guessing which would put the wrong title on the
+    operator's chip -- worse than the unresolved state, because it reads as
+    confirmed. Returns None for a short prefix too, so a stray hex-ish word in
+    prose cannot accidentally resolve to a real ticket.
+    """
+    from routes import tasks_all
+    from services import tasks
+    if len(prefix) < _TICKET_PREFIX_MIN:
+        return None
+    hit = None
+    for scope, root in tasks_all.scope_roots():
+        for t in tasks.list_tasks(root):
+            if str(t.get("id") or "").startswith(prefix):
+                if hit is not None:
+                    return None  # ambiguous across this scope or another
+                hit = (scope, t)
+    return hit
+
+
 def _resolve_ticket(ref: Ref) -> dict | None:
+    """Resolve by full id, then by unique id PREFIX.
+
+    WHY THE PREFIX PATH EXISTS. This resolved by exact id only, and every
+    convention in this repository names a ticket by its first eight characters.
+    So an agent writing the form its own instructions use produced a chip
+    reading "Unavailable", every time; the operator saw five of them in a row on
+    2026-09-18. The id a human quotes has to be the id a ref accepts, or the ref
+    is a feature only a machine can use.
+    """
     from routes import tasks_all
     from services import tasks
     for scope, root in tasks_all.scope_roots():
         task = tasks.get_task(root, ref.key)
         if task is not None:
-            return {
-                "kind": "ticket",
-                "title": task.get("title") or ref.key,
-                "href": f"/tickets/{scope}/{ref.key}",
-                "status": task.get("status") or "todo",
-                "preview": {"excerpt": _excerpt(task.get("body"))},
-            }
+            return _ticket_card(scope, task, ref.key)
+    hit = _ticket_by_prefix(ref.key)
+    if hit is not None:
+        scope, task = hit
+        return _ticket_card(scope, task, str(task.get("id") or ref.key))
     return None
+
+
+def _ticket_card(scope: str, task: dict, task_id: str) -> dict:
+    """The ref card for a ticket. `task_id` is the FULL id, so the href a chip
+    links to always addresses the ticket exactly even when the ref was a
+    prefix."""
+    return {
+        "kind": "ticket",
+        "title": task.get("title") or task_id,
+        "href": f"/tickets/{scope}/{task_id}",
+        "status": task.get("status") or "todo",
+        "preview": {"excerpt": _excerpt(task.get("body"))},
+    }
 
 
 def _resolve_chat(ref: Ref) -> dict | None:
