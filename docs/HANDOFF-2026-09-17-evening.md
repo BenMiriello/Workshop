@@ -416,9 +416,11 @@ server**, so a project turn's tool map is still false, just less so. That is
 The operator asked why orchestration is not automatic. It is not a missing
 design.
 
-1. **149 tickets pass every eligibility gate except one.** `tasks.next_ready`
-   requires the ticket's `assignee` to equal the sweep's worker. 138 sit on
-   `assignee: operator`, which is not a worker; 11 are assigned to the maker. The
+1. **146 tickets pass every eligibility gate except one.** `tasks.next_ready`
+   requires the ticket's `assignee` to equal the sweep's worker. **138 sit on
+   `assignee: operator`, which is not a worker**; 8 are assigned to the maker.
+   (Measured 20:50; it read 149 and 11 at 10:30, so three moved out during the
+   day. The 138 has not budged, which is the number that matters.) The
    chat filing path sets `execution`, `source` and `status` and even pokes the
    wake file, and never sets `assignee`. **Changing that default is the
    operator's call**, because it is exactly his stated fear of "blindly executing
