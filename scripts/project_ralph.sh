@@ -63,6 +63,9 @@ export WORKSHOP
 # while the same sweep launched through queue_runner.sh (which already sources
 # this) was allowed.
 source "$WORKSHOP/scripts/lib/instance.sh"
+# The ONE per-task wall budget (WORKSHOP_PER_TASK_WALL). RALPH_MAX_WALL below
+# defaults to it instead of restating the number. See that file's header.
+source "$WORKSHOP/scripts/lib/wall_budget.sh"
 SECRETS="${WORKSHOP_CONFIG_DIR:-$HOME/.config/workshop}/secrets.env"
 if [[ -z "${WORKSHOP_DATABASE_URL:-}" && -r "$SECRETS" ]]; then
   set -a; source "$SECRETS"; set +a
@@ -86,7 +89,11 @@ MAX_TASKS=20         # cap tasks per sweep
 # START a task it cannot finish inside the remaining sweep budget, so a sweep
 # budget smaller than MAX_TASKS * this value silently caps tasks-per-sweep at one.
 # See scripts/queue_runner.sh, which sets both from one number.
-RALPH_MAX_WALL="${RALPH_MAX_WALL:-1200}"
+#
+# The DEFAULT comes from scripts/lib/wall_budget.sh and is not written here: this
+# line used to say 1200, and it is the copy that ate the 2026-09-17 raise of the
+# same number in queue_runner.sh. One definition, three readers.
+RALPH_MAX_WALL="${RALPH_MAX_WALL:-$WORKSHOP_PER_TASK_WALL}"
 RALPH_INNER_MAX_ITER=10  # FIXED inner ralph loop cap (iterations per attempt),
                          # distinct from the per-task ATTEMPT cap below (review F13)
 # Per-task EFFORT -> inner-loop cap + model tier (O6/O7-config). A task carries an
@@ -389,7 +396,13 @@ branch_dir_for() {  # $1=branch_slug
   [[ -n "${1:-}" ]] || return 0
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" <<'PYEOF' 2>>"$LOG"
 import sys
-from services import worktrees
+from services import ownership, worktrees
+# PIN THE DATA OWNER. Each heredoc is its own process with no request behind it,
+# so without this worktree_records._require_db() raises OwnerUnset and NO worktree
+# row is written. worktrees._record swallows that, so the tree still works and the
+# failure is silent except for a traceback: `tree_access` and the /branches UI
+# simply cannot see these worktrees. Same set-point as open_change_for_task below.
+ownership.pin_operator()
 try:
     d = worktrees.branch_dir(sys.argv[1], sys.argv[2])
     if d and d.is_dir():
@@ -403,7 +416,13 @@ PYEOF
 alloc_task_worktree() {  # $1=task_id $2=task_title
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" "$2" <<'PYEOF' 2>>"$LOG"
 import sys
-from services import worktrees
+from services import ownership, worktrees
+# PIN THE DATA OWNER. Each heredoc is its own process with no request behind it,
+# so without this worktree_records._require_db() raises OwnerUnset and NO worktree
+# row is written. worktrees._record swallows that, so the tree still works and the
+# failure is silent except for a traceback: `tree_access` and the /branches UI
+# simply cannot see these worktrees. Same set-point as open_change_for_task below.
+ownership.pin_operator()
 try:
     # provision_worktree, not allocate_task_worktree: it allocates the same
     # worktree and then hardlink-clones the heavy inputs the app DECLARES
@@ -426,7 +445,13 @@ PYEOF
 publish_task_worktree() {  # $1=branch_slug $2=title $3=body
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
 import sys
-from services import worktrees
+from services import ownership, worktrees
+# PIN THE DATA OWNER. Each heredoc is its own process with no request behind it,
+# so without this worktree_records._require_db() raises OwnerUnset and NO worktree
+# row is written. worktrees._record swallows that, so the tree still works and the
+# failure is silent except for a traceback: `tree_access` and the /branches UI
+# simply cannot see these worktrees. Same set-point as open_change_for_task below.
+ownership.pin_operator()
 slug, branch_slug, title, body = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 try:
     r = worktrees.publish_branch(slug, branch_slug, title=title, body=body)
@@ -453,7 +478,13 @@ PYEOF
 merge_task_worktree_local() {  # $1=branch_slug
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" <<'PYEOF' 2>>"$LOG"
 import sys
-from services import worktrees
+from services import ownership, worktrees
+# PIN THE DATA OWNER. Each heredoc is its own process with no request behind it,
+# so without this worktree_records._require_db() raises OwnerUnset and NO worktree
+# row is written. worktrees._record swallows that, so the tree still works and the
+# failure is silent except for a traceback: `tree_access` and the /branches UI
+# simply cannot see these worktrees. Same set-point as open_change_for_task below.
+ownership.pin_operator()
 slug, branch_slug = sys.argv[1], sys.argv[2]
 try:
     r = worktrees.merge_branch(slug, branch_slug)
@@ -587,7 +618,12 @@ if best and best[1]['id']:
 cleanup_merged_worktrees() {
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" <<'PYEOF' >/dev/null 2>>"$LOG"
 import sys
-from services import worktrees
+from services import ownership, worktrees
+# PIN THE DATA OWNER — this was the block PROVING the bug. Measured 2026-09-17:
+# `worktree record write failed (list_records)` + an OwnerUnset traceback in
+# .runtime/ralph.log on every single sweep, once a minute, because cleanup_merged
+# reads the records to decide what to reap and had no owner to read them as.
+ownership.pin_operator()
 try:
     worktrees.cleanup_merged(sys.argv[1])
 except Exception as e:

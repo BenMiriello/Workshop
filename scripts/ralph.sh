@@ -1021,6 +1021,39 @@ print(int(usage_ledger.load_config().get('nominal_task_tokens') or 150000))
 " 2>/dev/null) || echo 150000)
 [[ -z "$NOMINAL_TOKENS" ]] && NOMINAL_TOKENS=150000
 
+# WHAT A KILLED ITERATION ACTUALLY COST, per second of wall clock.
+#
+# The flat NOMINAL_TOKENS above was billing a timeout-killed iteration at 150k,
+# and that is off by most of an order of magnitude. Measured 2026-09-17 against
+# runs of the SAME shape that did report `modelUsage` before finishing:
+#
+#   tokens=1042287, dur=820s   ->  1271 tok/s
+#   tokens=737215,  dur=902s   ->   817 tok/s
+#   tokens=336356,  dur=434s   ->   775 tok/s   (a real completed run)
+#
+# and the observed range for a ~900s Opus turn was 506k to 1.04M tokens, against
+# a flat charge of 150k. A killed iteration is the most expensive thing this loop
+# can do and it was the cheapest thing on the ledger, which is why a scope could
+# sit at 2.14M of a 2.00M allocation with roughly half of that total being
+# nominal charges: the charges were not the problem, the UNDERCHARGING before
+# them was, because admission could not see the spend coming.
+#
+# 800 tok/s is the median of the three measurements, deliberately on the low side
+# of their mean (954) — under-billing a kill is the failure being fixed, but a
+# rate that over-bills would pause healthy scopes, so this errs toward the middle
+# and gets re-measured rather than guessed upward. A 900s kill therefore bills
+# ~720k, inside the measured 506k-1.04M band, where 150k never was.
+#
+# DURATION-SCALED rather than flat, because the duration is already in hand
+# (ITER_DUR) and a 65s kill and a 900s kill are not the same event. The floor
+# below keeps it at or above the ledger's own nominal figure, so this can only
+# ever raise a charge relative to the old behaviour.
+#
+# NOT a ledger change: the window, the period, the ceilings and MAX_RUN_TOKENS
+# (still derived from NOMINAL_TOKENS) are all untouched. This is only the price
+# put on one unmetered event.
+RALPH_KILLED_TOKENS_PER_SEC="${RALPH_KILLED_TOKENS_PER_SEC:-800}"
+
 # In-run no-progress / thrash guards (Fix 3). The sweep-level circuit breaker only
 # sees a run's terminal tally; it cannot catch thrash WITHIN one run. These stop a
 # run mid-flight (exit 6 -> caller release/blocks) when it is churning without
@@ -1045,6 +1078,32 @@ RALPH_RUN_TOKEN_FACTOR="${RALPH_RUN_TOKEN_FACTOR:-3}"
 MAX_RUN_TOKENS="${RALPH_MAX_RUN_TOKENS:-$(( MAX_ITER * NOMINAL_TOKENS * RALPH_RUN_TOKEN_FACTOR ))}"
 PREV_REJECT_SIG=""; SAME_REJECT_COUNT=0
 PREV_DIFF_SIG="";   SAME_DIFF_COUNT=0
+
+# THE REVIEWER SPENDS THIS RUN'S WALL CLOCK TOO, and until 2026-09-17 nothing in
+# the arithmetic knew that. reviewer.sh runs below, inside the same MAX_WALL the
+# iteration is timed against, and it is not cheap: measured 2026-09-17 over three
+# consecutive runs in .runtime/ralph.log, 481s, 470s and 470s — call it ~480s.
+#
+# So the old sizing could not fit two iterations at the budget the resident loop
+# was passing. At MAX_WALL=1200 the iteration cap came out at 900 (the floor,
+# below), the reviewer then wanted ~480, and 900+480=1380 > 1200: the wall cap
+# fired at iter=2 every single time and a ten-iteration re-fire loop was
+# single-shot by arithmetic. Reserving the reviewer's share here is what makes
+# `--max-iter` mean anything.
+#
+# 540 is the ~480 measurement plus a margin, because a reviewer that gets killed
+# halfway leaves the run with no verdict at all. Env-overridable; the loop clamps
+# it to half of MAX_WALL so a deliberately tiny --max-wall still gets an
+# iteration rather than a negative budget.
+RALPH_REVIEWER_WALL_RESERVE="${RALPH_REVIEWER_WALL_RESERVE:-540}"
+# Smallest wall an iteration may be STARTED with. `min(REMAINING, ITER_CAP)` had
+# no lower bound, so a nearly-exhausted budget handed the next iteration a
+# one-second timeout and `timeout` killed the model turn on contact — spending an
+# attempt, a session and a log line to produce nothing. Below this the loop stops
+# cleanly on the wall cap instead (exit 2), which the caller already handles as
+# "did not converge" and refunds. Deliberately low: its job is to refuse an
+# impossible iteration, not to second-guess a short task.
+RALPH_MIN_ITER_WALL="${RALPH_MIN_ITER_WALL:-120}"
 
 while (( iter < MAX_ITER )); do
   # Renew the task-store lease at the TOP of each iteration, before the (possibly
@@ -1085,14 +1144,51 @@ while (( iter < MAX_ITER )); do
   # thrown away leaves the task with nothing AND no time to try again, so the
   # single most expensive outcome was also the one the arithmetic guaranteed.
   #
-  # So an iteration gets at most two thirds of the task budget, with a floor so a
-  # deliberately short budget still gets one usable pass. The remaining third is
+  # So an iteration gets at most two thirds of the budget. The remaining third is
   # what makes a retry possible at all: this is a re-fire loop, and a loop whose
   # first iteration can consume the fuel is not one.
-  ITER_CAP=$(( MAX_WALL * 2 / 3 ))
-  (( ITER_CAP < 900 )) && ITER_CAP=900
+  #
+  # TWO THIRDS OF WHAT, THOUGH. Not of MAX_WALL: the reviewer runs inside MAX_WALL
+  # as well and wants ~480s (see RALPH_REVIEWER_WALL_RESERVE above), so an
+  # iteration handed two thirds of the whole budget is still taking time the
+  # reviewer needs. It is two thirds of what is left AFTER the reviewer's share.
+  RESERVE=$RALPH_REVIEWER_WALL_RESERVE
+  (( RESERVE > MAX_WALL / 2 )) && RESERVE=$(( MAX_WALL / 2 ))
+  ITER_CAP=$(( (MAX_WALL - RESERVE) * 2 / 3 ))
+  # AND THERE IS NO FLOOR ANY MORE. There used to be `(( ITER_CAP < 900 )) &&
+  # ITER_CAP=900`, and a floor under a fraction can only ever exceed the fraction
+  # it is flooring — that is the whole reason it fires. At MAX_WALL=1200 it made
+  # the cap 900, which is 75% of the budget, so the "remaining third" this comment
+  # promises did not exist and the reviewer's ~480s could not fit. The share above
+  # IS the usable pass a short budget gets; RALPH_MIN_ITER_WALL below is what
+  # decides whether that pass is worth starting.
   (( ITER_CAP > 1500 )) && ITER_CAP=1500
-  PER_ITER_TIMEOUT=$(( REMAINING < ITER_CAP ? REMAINING : ITER_CAP ))
+  # Against the REMAINING budget, reserved the same way: iteration 2 must not
+  # spend the reviewer's time either, and REMAINING shrinks while MAX_WALL does
+  # not. This can go negative, which is exactly the signal the floor below reads.
+  ITER_REMAIN=$(( REMAINING - RESERVE ))
+  PER_ITER_TIMEOUT=$(( ITER_REMAIN < ITER_CAP ? ITER_REMAIN : ITER_CAP ))
+  if (( PER_ITER_TIMEOUT < RALPH_MIN_ITER_WALL )); then
+    if (( iter == 1 )); then
+      # ITERATION 1 ALWAYS GETS A PASS. Here a sub-floor timeout means the CALLER
+      # asked for a tiny --max-wall (REMAINING is still ~MAX_WALL on the first
+      # iteration), not that a budget drained mid-run. Refusing to start would
+      # turn `ralph --max-wall 300` into a run that makes no model call at all.
+      # Take the floor out of the reviewer's reserve; a short run that produces
+      # committed work and no verdict beats one that produces neither.
+      PER_ITER_TIMEOUT=$RALPH_MIN_ITER_WALL
+      (( PER_ITER_TIMEOUT > REMAINING )) && PER_ITER_TIMEOUT=$REMAINING
+      log "max-wall ${MAX_WALL}s is smaller than one iteration plus the reviewer's ${RESERVE}s; giving iter 1 the ${RALPH_MIN_ITER_WALL}s minimum (${PER_ITER_TIMEOUT}s) out of that reserve"
+    else
+      log "wall budget exhausted before iter=$iter: ${REMAINING}s left of ${MAX_WALL}s, ${RESERVE}s of it reserved for the reviewer, leaving ${PER_ITER_TIMEOUT}s — under the ${RALPH_MIN_ITER_WALL}s minimum, so stopping instead of starting an iteration that would be killed on contact"
+      # Give the count back: this iteration makes no model call, and the receipt's
+      # `iterations` must not claim one that never ran. Same reasoning as the
+      # heartbeat/displacement check at the top of the loop.
+      iter=$((iter - 1))
+      exit_code=2
+      break
+    fi
+  fi
 
   # ---- BUDGET-CAP PAUSE (ticket 70860d58) ------------------------------------
   # STOP AT THE LINE RATHER THAN DISCOVERING IT AFTER CROSSING. Admission is a
@@ -1386,8 +1482,15 @@ print(sid)
   # admission gate. We are past the env-failure bail, so exit 124 + no metered
   # tokens + >60s of real runtime is a genuine long run, not an outage. (review F8b)
   if (( CLAUDE_EXIT == 124 && ITER_TOKENS == 0 && ITER_DUR > 60 )); then
-    RUN_TOKENS=$((RUN_TOKENS + NOMINAL_TOKENS))
-    log "iter $iter: timeout kill, no usage JSON after ${ITER_DUR}s, billing nominal $NOMINAL_TOKENS tokens (F8b)"
+    # Priced from the iteration's own wall clock, not from a flat figure — see
+    # RALPH_KILLED_TOKENS_PER_SEC above for the three measurements this rate
+    # comes from and why the flat 150k was wrong by most of an order of
+    # magnitude. Floored at the ledger's nominal so it can only ever bill MORE
+    # than the old behaviour did.
+    KILLED_TOKENS=$(( ITER_DUR * RALPH_KILLED_TOKENS_PER_SEC ))
+    (( KILLED_TOKENS < NOMINAL_TOKENS )) && KILLED_TOKENS=$NOMINAL_TOKENS
+    RUN_TOKENS=$((RUN_TOKENS + KILLED_TOKENS))
+    log "iter $iter: timeout kill, no usage JSON after ${ITER_DUR}s, billing $KILLED_TOKENS tokens (${RALPH_KILLED_TOKENS_PER_SEC}/s measured, floor $NOMINAL_TOKENS) (F8b)"
   fi
 
   # SEVERED RUN: `timeout` killed the worker mid-turn, so there is no result

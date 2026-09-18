@@ -53,8 +53,18 @@ AUTH_ENV="${WORKSHOP_AUTH_ENV:-$HOME/.config/workshop/auth.env}"
 # the next tick attempts to start.
 TICK_BUDGET=1500
 
-# Per-task ralph budget. Tasks longer than this get re-picked on the next tick.
-RALPH_MAX_WALL=1200
+# NO PER-TASK RALPH BUDGET HERE. This file carried `RALPH_MAX_WALL=1200` until
+# 2026-09-17, left behind by the Phase 2 retirement below (2026-07-15): nothing
+# in this script has started a ralph since, the variable was never exported and
+# never read, and `grep -n RALPH_MAX_WALL cron_agent.sh` returned exactly that
+# one assignment.
+#
+# It was not harmless. It was the THIRD copy of the per-task wall budget, and a
+# raise applied to queue_runner.sh alone on 2026-09-17 did not reach the worker
+# because the copies disagreed. A dead literal restating a live number is a trap
+# for the next reader, so it is gone rather than repointed. The one definition is
+# scripts/lib/wall_budget.sh; the sweeps that actually run a ralph
+# (queue_runner.sh -> project_ralph.sh) read it from there.
 
 # Sub auth env (subscription token; defense against accidental API-key auth)
 if [[ -r "$AUTH_ENV" ]]; then

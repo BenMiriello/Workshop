@@ -67,7 +67,14 @@ ONCE=0
 # work was still going at 20 minutes and had real output on disk. The sweep
 # budget below scales with it automatically, which is the whole point of there
 # being one number.
-PER_TASK_WALL="${PER_TASK_WALL:-2700}"
+#
+# AND THE NUMBER ITSELF NOW LIVES IN ONE FILE, because "one number, both sides"
+# was true of this script and false of the system. The 2700 above used to be a
+# literal here while project_ralph.sh and cron_agent.sh each carried their own
+# 1200, so raising it here changed nothing the worker saw. Read
+# scripts/lib/wall_budget.sh for the measurement; change the budget THERE.
+source "$WORKSHOP/scripts/lib/wall_budget.sh"
+PER_TASK_WALL="${PER_TASK_WALL:-$WORKSHOP_PER_TASK_WALL}"
 
 # SUPERVISED BY DEFAULT, and deliberately so. This loop is the unattended path:
 # nobody is watching the run, so the last step is the operator's. A passing task
