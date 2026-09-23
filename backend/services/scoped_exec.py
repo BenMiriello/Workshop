@@ -311,7 +311,26 @@ def _grants(root: str | None = None) -> list[tuple[str, str, str]]:
     cli_root = _cli_root()
     if cli_root and not any(cli_root == r or cli_root.startswith(r + "/") for r in _RO_SYSTEM):
         candidates.append(("ro", cli_root, cli_root))
+    candidates += _configured_binds()
     return [(mode, s, d) for mode, s, d in candidates if s and os.path.exists(s)]
+
+
+def _configured_binds() -> list[tuple[str, str, str]]:
+    """Extra paths this installation grants to every confined turn, from
+    `WORKSHOP_SCOPED_EXEC_BINDS`: comma-separated entries, each `ro:<path>` or
+    `rw:<path>` (a bare path is read-only), bound at their real locations. For
+    work whose inputs live outside any one scope. Unset means none."""
+    out: list[tuple[str, str, str]] = []
+    for entry in (os.environ.get("WORKSHOP_SCOPED_EXEC_BINDS") or "").split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        mode, path = "ro", entry
+        if entry[:3] in ("ro:", "rw:"):
+            mode, path = entry[:2], entry[3:]
+        path = os.path.expanduser(path)
+        out.append((mode, path, path))
+    return out
 
 
 def _remap(arg: str, root: str) -> str:

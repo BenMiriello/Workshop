@@ -322,6 +322,23 @@ def test_grants_no_longer_bind_the_whole_xdg_runtime_dir(monkeypatch):
         assert src != xdg, "the bare XDG runtime dir must not be a whole-directory grant"
 
 
+def test_configured_binds_parse_mode_and_default_read_only(monkeypatch, tmp_path):
+    rw, ro, bare = tmp_path / "rw", tmp_path / "ro", tmp_path / "bare"
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC_BINDS", f"rw:{rw}, ro:{ro},{bare},")
+    assert scoped_exec._configured_binds() == [
+        ("rw", str(rw), str(rw)), ("ro", str(ro), str(ro)), ("ro", str(bare), str(bare))]
+
+
+def test_configured_binds_reach_grants_only_when_present(monkeypatch, tmp_path):
+    here, gone = tmp_path / "here", tmp_path / "gone"
+    here.mkdir()
+    monkeypatch.delenv("WORKSHOP_TURN_USER", raising=False)
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC_BINDS", f"rw:{here},rw:{gone}")
+    srcs = [src for _, src, _ in scoped_exec._grants(None)]
+    assert str(here) in srcs
+    assert str(gone) not in srcs
+
+
 # --- linked git worktrees -------------------------------------------------
 #
 # A worktree confined alone is not a git repository: its `.git` is a FILE
