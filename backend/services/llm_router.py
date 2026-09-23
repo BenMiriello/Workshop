@@ -54,7 +54,9 @@ TIER_SONNET = "claude-sonnet-4-6"
 TIER_SONNET_5 = "claude-sonnet-5"
 TIER_OPUS = "claude-opus-4-8"
 TIER_OPUS_5 = "claude-opus-5"
+TIER_OPUS_5_5 = "claude-opus-5-5"
 TIER_FABLE = "claude-fable-5"
+TIER_FABLE_5_1 = "claude-fable-5-1"
 
 # Short tier names, for anything DECLARED rather than coded. A definition file
 # says `model: sonnet` and keeps saying it when the handle behind that tier
@@ -66,7 +68,9 @@ TIERS = {
     "sonnet-5": TIER_SONNET_5,
     "opus": TIER_OPUS,
     "opus-5": TIER_OPUS_5,
+    "opus-5-5": TIER_OPUS_5_5,
     "fable": TIER_FABLE,
+    "fable-5-1": TIER_FABLE_5_1,
 }
 
 

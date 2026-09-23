@@ -10,9 +10,10 @@
 // anything the backend serves that isn't named here keeps its original position
 // at the end, so a newly added model still shows up.
 const MODEL_ORDER = [
-  "claude-fable-5",
+  "claude-opus-5-5",
+  "claude-fable-5-1",
   "claude-opus-5",
-  "claude-opus-4-8",
+  "claude-fable-5",
   "claude-sonnet-5",
   "claude-sonnet-4-6",
   "claude-haiku-4-5-20251001",
@@ -27,8 +28,10 @@ export function orderModels(ids: string[]): string[] {
 }
 
 export const MODEL_LABELS: Record<string, string> = {
+  "claude-opus-5-5": "Opus 5.5",
   "claude-opus-5": "Opus 5",
   "claude-opus-4-8": "Opus 4.8",
+  "claude-fable-5-1": "Fable 5.1",
   "claude-fable-5": "Fable 5",
   "claude-sonnet-5": "Sonnet 5",
   "claude-sonnet-4-6": "Sonnet 4.6",
@@ -64,10 +67,12 @@ export function modelDisplay(model?: string | null): ModelDisplay {
 // all 200k, which made the meter read 155% (clamped to a confident 100%) on a
 // chat using under a third of its window.
 const CONTEXT_WINDOW: Record<string, number> = {
+  "claude-opus-5-5": 1_000_000,
   "claude-opus-5": 1_000_000,
   "claude-opus-4-8": 1_000_000,
   "claude-opus-4-7": 1_000_000,
   "claude-opus-4-6": 1_000_000,
+  "claude-fable-5-1": 1_000_000,
   "claude-fable-5": 1_000_000,
   "claude-sonnet-5": 1_000_000,
   "claude-sonnet-4-6": 1_000_000,

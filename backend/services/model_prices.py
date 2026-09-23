@@ -123,11 +123,24 @@ _V_2026_09_04 = {
     "claude-haiku-4-5": Price(1.0, 5.0),
 }
 
+# Source: platform.claude.com/docs/en/models/overview, read 2026-09-22. Adds
+# the two models that shipped after the 09-04 table: Opus 5.5 and Fable 5.1.
+# Also carries a real price change the live page shows for Sonnet 5 ($2/$10,
+# not the $3/$15 above) -- a NEW version rather than an edit to 09-04, so a row
+# billed under the old rate keeps the cost it actually had.
+_V_2026_09_22 = {
+    **_V_2026_09_04,
+    "claude-opus-5-5": Price(4.0, 20.0),
+    "claude-fable-5-1": Price(10.0, 50.0),
+    "claude-sonnet-5": Price(2.0, 10.0),
+}
+
 # Keyed by the date the version took effect, newest LAST. `price_for` picks the
 # newest version whose date is <= the row's own version, so adding a table here
 # never changes what an already-written row costs.
 _TABLES: dict[str, dict[str, Price]] = {
     "2026-09-04": _V_2026_09_04,
+    "2026-09-22": _V_2026_09_22,
 }
 
 CURRENT_VERSION = max(_TABLES)

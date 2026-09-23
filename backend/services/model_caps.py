@@ -35,7 +35,9 @@ DEFAULT_EFFORT = "high"
 # An empty tuple means "no effort control for this model" and is rendered as no
 # control at all, not as a disabled one.
 EFFORT_BY_MODEL: dict[str, tuple[str, ...]] = {
+    _llm.TIER_OPUS_5_5: ("low", "medium", "high", "xhigh", "max"),
     _llm.TIER_OPUS_5: ("low", "medium", "high", "xhigh", "max"),
+    _llm.TIER_FABLE_5_1: ("low", "medium", "high", "xhigh", "max"),
     _llm.TIER_SONNET_5: ("low", "medium", "high", "xhigh", "max"),
     _llm.TIER_FABLE: ("low", "medium", "high", "xhigh", "max"),
     _llm.TIER_OPUS: ("low", "medium", "high", "xhigh", "max"),  # opus-4-8

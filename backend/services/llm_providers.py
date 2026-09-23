@@ -155,8 +155,9 @@ def _cli_model_order() -> tuple[str, ...]:
     from services import llm_router
 
     return (
+        llm_router.TIER_OPUS_5_5,
         llm_router.TIER_OPUS_5,
-        llm_router.TIER_OPUS,
+        llm_router.TIER_FABLE_5_1,
         llm_router.TIER_FABLE,
         llm_router.TIER_SONNET_5,
         llm_router.TIER_SONNET,
