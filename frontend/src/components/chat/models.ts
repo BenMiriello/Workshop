@@ -5,26 +5,41 @@
 // it is a lookup table with opinions, and it belongs where it can be read in one
 // screen and changed without touching the chat.
 
-// Display order for the model picker: most-reached-for first. The backend's list
-// order drives default-model resolution, so this reorders the MENU only —
-// anything the backend serves that isn't named here keeps its original position
-// at the end, so a newly added model still shows up.
+// Display order for the model picker: grouped by family, Haiku block first,
+// then Sonnet, then Opus, then Fable — operator's explicit call, 2026-09-22.
+// Matched by PREFIX rather than a flat id list, so a family's next release
+// (a new Haiku, a new Sonnet) sorts into its block on the day it ships, with
+// no second edit here to remember.
+const FAMILY_ORDER = ["claude-haiku", "claude-sonnet", "claude-opus", "claude-fable"];
+
+// Within-family order, newest first. An id whose family isn't listed here
+// falls in after its family's known ids but still inside that family's block;
+// a family not in FAMILY_ORDER at all sorts after every named family.
 const MODEL_ORDER = [
-  "claude-opus-5-5",
-  "claude-fable-5-1",
-  "claude-opus-5",
-  "claude-fable-5",
+  "claude-haiku-4-5-20251001",
   "claude-sonnet-5",
   "claude-sonnet-4-6",
-  "claude-haiku-4-5-20251001",
+  "claude-opus-5-5",
+  "claude-opus-5",
+  "claude-fable-5-1",
+  "claude-fable-5",
 ];
+
+function familyRank(id: string): number {
+  const i = FAMILY_ORDER.findIndex((family) => id.startsWith(family));
+  return i === -1 ? FAMILY_ORDER.length : i;
+}
 
 export function orderModels(ids: string[]): string[] {
   const rank = (id: string) => {
     const i = MODEL_ORDER.indexOf(id);
     return i === -1 ? MODEL_ORDER.length : i;
   };
-  return [...ids].sort((a, b) => rank(a) - rank(b));
+  return [...ids].sort((a, b) => {
+    const fa = familyRank(a);
+    const fb = familyRank(b);
+    return fa !== fb ? fa - fb : rank(a) - rank(b);
+  });
 }
 
 export const MODEL_LABELS: Record<string, string> = {
