@@ -163,7 +163,8 @@ class StandaloneSurface(BaseModel):
     pid: int | None = None
     port: int | None = None
     url: str | None = None
-    started_at: str | None = None
+    # Epoch seconds from app_runner's subprocess path, a string elsewhere.
+    started_at: str | float | None = None
 
 
 class Surfaces(BaseModel):
