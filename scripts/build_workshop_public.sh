@@ -56,7 +56,7 @@ if [ "$(systemctl --user show -p LoadState --value workshop-public.service 2>/de
   systemctl --user restart workshop-public.service
   sleep 2
   systemctl --user is-active --quiet workshop-public.service \
-    && echo "public edge active on :8002" \
+    && echo "public edge active on :${WORKSHOP_EDGE_PORT:-8002}" \
     || { echo "public edge failed to come up"; journalctl --user -u workshop-public.service -n 20 --no-pager; exit 1; }
 else
   echo "workshop-public.service not installed yet — run scripts/install_public_service.sh first."

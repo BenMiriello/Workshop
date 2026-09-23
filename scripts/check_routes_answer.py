@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -76,7 +77,7 @@ from pathlib import Path
 
 _WORKSHOP = Path(__file__).resolve().parents[1]
 _BACKEND = _WORKSHOP / "backend"
-_DEFAULT_BASE = "http://127.0.0.1:8000"
+_DEFAULT_BASE = f"http://127.0.0.1:{os.environ.get('WORKSHOP_BACKEND_PORT', '8000')}"
 
 # Reached-and-answered. Anything else in 5xx is the failure this looks for.
 _OK_CEILING = 500
