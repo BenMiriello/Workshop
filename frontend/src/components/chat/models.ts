@@ -5,24 +5,29 @@
 // it is a lookup table with opinions, and it belongs where it can be read in one
 // screen and changed without touching the chat.
 
-// Display order for the model picker: grouped by family, Haiku block first,
-// then Sonnet, then Opus, then Fable — operator's explicit call, 2026-09-22.
-// Matched by PREFIX rather than a flat id list, so a family's next release
-// (a new Haiku, a new Sonnet) sorts into its block on the day it ships, with
-// no second edit here to remember.
-const FAMILY_ORDER = ["claude-haiku", "claude-sonnet", "claude-opus", "claude-fable"];
+// Display order for the model picker: grouped by family, Fable at the top,
+// then Opus, then Sonnet, then Haiku at the bottom, newest-first within a
+// family — operator's explicit call, 2026-09-23 (corrected from an earlier,
+// reversed reading of the same instruction). Matched by PREFIX rather than a
+// flat id list, so a family's next release (a new Haiku, a new Sonnet) sorts
+// into its block on the day it ships, with no second edit here to remember.
+const FAMILY_ORDER = ["claude-fable", "claude-opus", "claude-sonnet", "claude-haiku"];
 
-// Within-family order, newest first. An id whose family isn't listed here
-// falls in after its family's known ids but still inside that family's block;
-// a family not in FAMILY_ORDER at all sorts after every named family.
+// Within-family order, newest first (top of that family's block). An id whose
+// family isn't listed here falls in after its family's known ids but still
+// inside that family's block; a family not in FAMILY_ORDER at all sorts after
+// every named family. Opus 4.8 is back after being dropped from the picker
+// earlier — the operator wants all three live Opus releases shown, not just
+// the newest two.
 const MODEL_ORDER = [
-  "claude-haiku-4-5-20251001",
-  "claude-sonnet-5",
-  "claude-sonnet-4-6",
-  "claude-opus-5-5",
-  "claude-opus-5",
   "claude-fable-5-1",
   "claude-fable-5",
+  "claude-opus-5-5",
+  "claude-opus-5",
+  "claude-opus-4-8",
+  "claude-sonnet-5",
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5-20251001",
 ];
 
 function familyRank(id: string): number {
