@@ -213,15 +213,15 @@ def session_alive(session_id: str | None, cwd: str) -> bool:
     agents (or anything from before a session was pruned) point at an id that no
     longer exists, and `--resume` on it fails the whole turn with "No
     conversation found with session ID". Checking the file lets callers start a
-    fresh session instead of failing."""
+    fresh session instead of failing. A session found under a different cwd's
+    dir is copied to where the CLI will look first (see `_adopt_session`)."""
     if not session_id:
         return False
     # The CLI keys the session dir on the cwd IT sees. Under scoped exec that is
     # the mountpoint (/workspace), not the real path, so a session must be found
-    # in that dir for --resume to succeed. Checking the real-cwd dir (or globbing
-    # every dir) would find a session the CLI, chdir'd to /workspace, cannot then
-    # resume, and the turn would fail. So when scoped, look only where the CLI
-    # will look; the failed-resume self-heal is the backstop, not the norm.
+    # in that dir for --resume to succeed. Finding it in the real-cwd dir (or any
+    # other) is not enough on its own: the CLI, chdir'd to /workspace, cannot
+    # resume it from there, so it is adopted into the dir the CLI looks in.
     from services import scoped_exec
     # Under the uid layer the CLI runs (and writes its session files) as the
     # turn-user, HOME'd at its own directory (turn_env()), not the host user's -- and
@@ -240,15 +240,41 @@ def session_alive(session_id: str | None, cwd: str) -> bool:
     primary = os.path.join(home, ".claude", "projects", encoded, f"{session_id}.jsonl")
     if os.path.exists(primary):
         return True
-    if scoped:
-        # A session minted before the flip lives under the old real-cwd dir the
-        # CLI can no longer reach. Treat it as gone so the next turn mints a fresh
-        # one and re-sends the assembled history, seamlessly, instead of a doomed
-        # --resume.
+    # A session minted under a different cwd (before turns moved to their own
+    # chat dir, or before scoped exec mounted them at /workspace) sits in a dir
+    # the CLI will not look in, and `--resume` from here fails with "No
+    # conversation found". The id is a unique uuid, so a copy of that file in
+    # the dir the CLI WILL look in resumes the same conversation instead of
+    # starting over from the re-assembled history.
+    return _adopt_session(home, encoded, session_id)
+
+
+def _adopt_session(home: str, encoded: str, session_id: str) -> bool:
+    """Copy `session_id` from whichever `~/.claude/projects/*` dir holds it into
+    `encoded`'s dir. The original is left in place. False when no dir holds it
+    or the copy cannot be written (the fresh-session path then takes over)."""
+    projects = os.path.join(home, ".claude", "projects")
+    found = glob.glob(os.path.join(projects, "*", f"{session_id}.jsonl"))
+    if not found:
         return False
-    # Un-scoped: encoding could shift across CLI versions; the id is a unique
-    # uuid, so a glob across all projects is a safe fallback.
-    return bool(glob.glob(os.path.join(home, ".claude", "projects", "*", f"{session_id}.jsonl")))
+    src = found[0]
+    dest_dir = os.path.join(projects, encoded)
+    dest = os.path.join(dest_dir, f"{session_id}.jsonl")
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        tmp = f"{dest}.adopt-{os.getpid()}"
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dest)
+        # The CLI keeps a session's subagent transcripts and spilled tool
+        # results in a sibling dir named for the session.
+        side = os.path.join(os.path.dirname(src), session_id)
+        if os.path.isdir(side):
+            shutil.copytree(side, os.path.join(dest_dir, session_id), dirs_exist_ok=True)
+    except OSError as e:
+        log.warning("session %s: could not adopt it from %s: %s", session_id, src, e)
+        return os.path.exists(dest)
+    log.info("session %s: adopted from %s for resume under %s", session_id, src, encoded)
+    return True
 
 
 @dataclass
