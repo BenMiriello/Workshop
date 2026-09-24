@@ -647,15 +647,9 @@ a5_run() { # $1 = clone dir
   local admin_dsn="postgresql+psycopg://workshop@/workshop?host=$PG_SOCK"
   local app_dsn="postgresql+psycopg://workshop_app:freshclone@/workshop?host=$PG_SOCK"
 
-  # THE ROLE COMES FIRST, before alembic, and this is not the documented order.
-  # db/bootstrap.py says "run after alembic upgrade"; run that way against an
-  # empty cluster the migration dies on `REVOKE ... FROM workshop_app`, because
-  # the role does not exist yet. Recorded in the design doc, section 3.2.
-  if ! "$PGBIN/psql" -h "$PG_SOCK" -U workshop -d workshop -v ON_ERROR_STOP=1 \
-        -c "CREATE ROLE workshop_app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'freshclone'" \
-        >>"$A5_LOG" 2>&1; then
-    A5_STATUS="fail"; A5_NOTE="could not create the workshop_app role"; return
-  fi
+  # The documented order: `upgrade head`, then bootstrap. Migration
+  # 7bf9ae20fe0d creates the application role bare when an empty cluster has
+  # none, and bootstrap gives it LOGIN and the password below.
   echo "== alembic upgrade head ==" >>"$A5_LOG"
   if ! ( cd "$dir/backend" && env -i "${ISO[@]}" \
           "WORKSHOP_ROOT=$dir" "WORKSHOP_DATABASE_ADMIN_URL=$admin_dsn" \
@@ -701,13 +695,13 @@ PY
        ) >>"$A5_LOG" 2>&1; then
     A5_STATUS="fail"; A5_NOTE="could not promote the first user to operator"; return
   fi
-  echo "== db/backfill.py --apply --force ==" >>"$A5_LOG"
+  echo "== db/backfill.py --apply ==" >>"$A5_LOG"
   backend_stop
   if ! ( cd "$dir/backend" && env -i "${ISO[@]}" \
           "WORKSHOP_ROOT=$dir" "WORKSHOP_DATABASE_URL=$app_dsn" \
           "WORKSHOP_DATABASE_ADMIN_URL=$admin_dsn" \
-          "$VENV/bin/python" db/backfill.py --apply --force ) >>"$A5_LOG" 2>&1; then
-    A5_STATUS="fail"; A5_NOTE="db/backfill.py --apply --force failed"; return
+          "$VENV/bin/python" db/backfill.py --apply ) >>"$A5_LOG" 2>&1; then
+    A5_STATUS="fail"; A5_NOTE="db/backfill.py --apply failed"; return
   fi
   if ! a5_start_backend "$dir" "$port" "$app_dsn"; then
     A5_STATUS="fail"
