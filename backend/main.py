@@ -93,10 +93,19 @@ async def lifespan(app: FastAPI):
                 log.warning("app %s startup hook failed: %s", spec.id, e)
         for loop in spec.background:
             app.state._app_bg.append(asyncio.create_task(loop()))
-    # App platform: free the ports of processes that have died. Apps themselves are
-    # kept alive by docker's restart policy, not by us.
+    # App platform: free the ports of processes that have died. Containers are
+    # kept alive by docker's restart policy; a process-mode app that should be
+    # running is started again here, because nothing else outlives this process.
     from services import port_registry
     app.state._bg_port_reconcile = asyncio.create_task(port_registry.reconcile_loop())
+    from services import app_runner as _app_runner
+    try:
+        restored = await asyncio.to_thread(_app_runner.restore_desired_running)
+    except Exception as e:  # noqa: BLE001 - a restore never blocks a boot
+        log.warning("app restore skipped: %s", e)
+    else:
+        if restored:
+            log.info("restarting app(s) that should be running: %s", ", ".join(restored))
     # Job liveness: close Jobs left `running` by a process that died. Its only
     # shell caller never fires (the dispatcher exits early while autonomy is
     # engaged), so a crashed run used to read `running` forever. The backend
