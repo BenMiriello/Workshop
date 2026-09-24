@@ -110,6 +110,9 @@ bash scripts/restart_backend.sh --deferred                  # if backend/ change
 bash scripts/build_workshop_public.sh                       # if frontend/ changed
 ```
 
+Pulling a long way forward? [UPGRADING.md](../UPGRADING.md) lists the changes an
+older install does not pick up by itself.
+
 `--deferred` waits for any in-flight agent turn to finish before restarting, so
 an update cannot cut off a reply mid-stream. It refuses outright (exit 2) if a
 turn is running and you did not ask it to wait.
