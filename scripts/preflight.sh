@@ -70,15 +70,13 @@ opt "rsync"        "$(have rsync)"    "apt install rsync (rsync/ssh deploy provi
 # ---- node/python version detail --------------------------------------------
 if command -v node >/dev/null 2>&1; then
   NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-  # 18 is the floor vite 5 actually needs and it is what builds on this box
-  # today. 20 is what .nvmrc pins and what the frontend unit runs, so anything
-  # between the two is a warning, not a failure: it works, it just is not what
-  # the deployment is pinned to.
-  [ "${NODE_MAJOR:-0}" -ge 18 ] && n=1 || n=0
-  req "node >= 18 (found $(node -v 2>/dev/null))" "$n" "install node 20 (see .nvmrc)"
+  # 20 is the floor, not a preference: package.json `engines`, .nvmrc, the
+  # screenshot driver and several dependencies all need it, and on 18 an install
+  # silently skips optional packages and later commands fail far from the cause.
+  # scripts/require_node.cjs refuses the build/typecheck/test path on the same
+  # floor.
   [ "${NODE_MAJOR:-0}" -ge 20 ] && n=1 || n=0
-  opt "node >= 20 (the pinned version)" "$n" \
-      "builds work on 18, but .nvmrc and the frontend unit both pin 20+"
+  req "node >= 20 (found $(node -v 2>/dev/null))" "$n" "install node 20 (see .nvmrc)"
 fi
 
 # ---- config files -----------------------------------------------------------
