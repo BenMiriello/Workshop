@@ -47,6 +47,9 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
+# shellcheck source=/dev/null
+[ -f scripts/lib/instance.sh ] && source scripts/lib/instance.sh
+BACKEND_PORT="${WORKSHOP_BACKEND_PORT:-8000}"
 
 CHECK=0
 PUBLISH_WIP=0
@@ -267,11 +270,11 @@ esac
 #    is deferred rather than immediate.
 # ---------------------------------------------------------------------------
 BE_SRC="$(bash scripts/backend_source_id.sh 2>/dev/null || echo unknown)"
-BE_RUN="$(curl -sf --max-time 4 http://127.0.0.1:8000/healthz 2>/dev/null \
+BE_RUN="$(curl -sf --max-time 4 http://127.0.0.1:${BACKEND_PORT}/healthz 2>/dev/null \
   | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_id") or "unknown")' 2>/dev/null || echo unreachable)"
 
 if [ "$BE_RUN" = "unreachable" ]; then
-  warn "backend not answering on :8000; cannot tell what it is running"
+  warn "backend not answering on :${BACKEND_PORT}; cannot tell what it is running"
 elif [ "$BE_RUN" = "unknown" ] || [ "$BE_SRC" = "unknown" ]; then
   # Undecidable is NOT the same as in-sync and must never be reported as it.
   warn "backend does not report a source id (restart it once to pick this up: bash scripts/restart_backend.sh --deferred)"

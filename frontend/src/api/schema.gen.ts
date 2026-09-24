@@ -15786,7 +15786,7 @@ export interface components {
             /** Service */
             service?: string | null;
             /** Started At */
-            started_at?: string | null;
+            started_at?: string | number | null;
             /** Url */
             url?: string | null;
         } & {

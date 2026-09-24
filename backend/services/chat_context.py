@@ -2288,6 +2288,19 @@ def _projects_root() -> _Path:
     return paths.projects_root()
 
 
+def _extra_project_roots() -> list[_Path]:
+    """Directories outside `projects/` that a project symlink may point into.
+
+    An installation that keeps a project tree outside `projects/` links it
+    in; the containment check below would refuse it. The installation names
+    the directories such links may resolve into in
+    `WORKSHOP_PROJECTS_EXTRA_ROOTS` (os.pathsep separated). Unset means none,
+    which is the check exactly as before.
+    """
+    raw = os.environ.get("WORKSHOP_PROJECTS_EXTRA_ROOTS", "")
+    return [_Path(p).expanduser().resolve() for p in raw.split(os.pathsep) if p.strip()]
+
+
 class ProjectOutsideRoot(ValueError):
     """A project slug resolved to a directory outside `projects/`."""
 
@@ -2311,7 +2324,8 @@ def contained_project_dir(slug: str) -> _Path:
     """
     root = _projects_root().resolve()
     candidate = (root / slug).resolve()
-    if candidate != root and not candidate.is_relative_to(root):
+    if candidate != root and not candidate.is_relative_to(root) \
+            and not any(candidate.is_relative_to(r) for r in _extra_project_roots()):
         raise ProjectOutsideRoot(
             f"project slug {slug!r} resolves outside {root} (to {candidate})")
     return candidate
@@ -2995,9 +3009,12 @@ def list_providers(scope: str | None = None) -> list[dict]:
 
     out = [_provider_entry(p) for p in provider_map().values()]
     for slug in _project_slugs():
-        out.append(_provider_entry(
-            ProjectContextProvider(slug), f"Build · project · {slug}"
-        ))
+        try:
+            out.append(_provider_entry(
+                ProjectContextProvider(slug), f"Build · project · {slug}"
+            ))
+        except ProjectOutsideRoot as e:  # one unreachable project must not sink the list
+            log.warning("project chat provider skipped for %s: %s", slug, e)
     # EVERY AGENT IS A PLACE YOU CAN TYPE. This is the entry that makes "chat
     # with an agent" appear in the scope picker at all; it was a list of build
     # agents whose keys the store then rewrote on first send.

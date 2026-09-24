@@ -12,6 +12,9 @@
 set -euo pipefail
 
 SERVICE=workshop-backend.service
+# shellcheck source=/dev/null
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/instance.sh"
+PORT="${WORKSHOP_BACKEND_PORT:-8000}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE="$REPO_ROOT/infra/systemd/$SERVICE"
 UNIT_DIR="$HOME/.config/systemd/user"
@@ -44,7 +47,7 @@ fi
 
 # Render the unit: substitute @WORKSHOP_ROOT@ with this checkout's absolute path.
 mkdir -p "$UNIT_DIR"
-sed "s#@WORKSHOP_ROOT@#$REPO_ROOT#g" "$TEMPLATE" > "$DEST"
+sed -e "s#@WORKSHOP_ROOT@#$REPO_ROOT#g" -e "s#@WORKSHOP_BACKEND_PORT@#$PORT#g" "$TEMPLATE" > "$DEST"
 echo "Installed unit -> $DEST (WORKSHOP_ROOT=$REPO_ROOT)"
 
 # Survive reboot/logout without a login session.
@@ -55,7 +58,7 @@ if command -v loginctl >/dev/null 2>&1; then
   fi
 fi
 
-# Free :8000 from any ad-hoc nohup backend so the service can bind it.
+# Free :$PORT from any ad-hoc nohup backend so the service can bind it.
 #
 # Skip the service's OWN process: the pattern below matches the systemd-managed
 # backend just as well as an ad-hoc one, so an unguarded pkill here kills a
@@ -63,12 +66,12 @@ fi
 # be an idempotent re-install. Only ad-hoc PIDs (not the unit's MainPID) qualify.
 main_pid="$(systemctl --user show -p MainPID --value "$SERVICE" 2>/dev/null || echo 0)"
 adhoc=""
-for p in $(pgrep -f 'uvicorn main:app.*8000' 2>/dev/null || true); do
+for p in $(pgrep -f "uvicorn main:app.*${PORT}" 2>/dev/null || true); do
   [ "$p" = "${main_pid:-0}" ] && continue
   adhoc="$adhoc $p"
 done
 if [ -n "$adhoc" ]; then
-  echo "Stopping ad-hoc backend on :8000 (pids:$adhoc) ..."
+  echo "Stopping ad-hoc backend on :${PORT} (pids:$adhoc) ..."
   kill $adhoc 2>/dev/null || true
   sleep 1
 fi
@@ -79,7 +82,7 @@ systemctl --user enable --now "$SERVICE"
 # Verify.
 ok=""
 for _ in $(seq 1 15); do
-  code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/agents/ || true)"
+  code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${PORT}/agents/ || true)"
   if [ "$code" = "200" ]; then ok=1; break; fi
   sleep 1
 done

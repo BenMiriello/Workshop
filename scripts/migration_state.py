@@ -117,7 +117,7 @@ def live_url() -> str:
             or os.environ.get("WORKSHOP_DATABASE_ADMIN_URL", "").strip())
 
 
-BACKEND_HEALTHZ = "http://127.0.0.1:8000/healthz"
+BACKEND_HEALTHZ = f"http://127.0.0.1:{os.environ.get('WORKSHOP_BACKEND_PORT', '8000')}/healthz"
 
 
 def live_from_backend() -> tuple[str | None, str | None]:

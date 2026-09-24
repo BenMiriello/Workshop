@@ -92,3 +92,20 @@ def test_an_unknown_scope_changes_nothing(thread):
     assert t["context_key"] == "general"
     # A refused rescope must not cost the chat its session either.
     assert t["claude_session"] == sid
+
+
+def test_a_missing_folder_behind_a_bare_key_is_a_400(thread, tmp_path, monkeypatch):
+    """A scope key need not contain ':' (the platform's own `development`
+    scope is bare). When its folder is missing the route must say so, not
+    crash building the message."""
+    from fastapi import HTTPException
+    from services import chat_context
+
+    missing = object.__new__(chat_context.ProjectContextProvider)
+    missing.key = "bare-scope"
+    missing.dir = tmp_path / "not-there"
+    monkeypatch.setattr(chat_context, "get_provider", lambda key: missing)
+
+    with pytest.raises(HTTPException) as err:
+        _rescope(thread["id"], "bare-scope")
+    assert err.value.status_code == 400

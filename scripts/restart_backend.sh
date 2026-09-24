@@ -10,6 +10,10 @@ set -euo pipefail
 
 SERVICE=workshop-backend.service
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[ -f "$REPO_ROOT/scripts/lib/instance.sh" ] && source "$REPO_ROOT/scripts/lib/instance.sh"
+# Exported so the detached deferred waiter below, a separate bash, sees it.
+export PORT="${WORKSHOP_BACKEND_PORT:-8000}"
 
 have_unit() {
   # `systemctl --user cat` reads the unit FILE off disk client-side, which a
@@ -183,7 +187,7 @@ if [ "${1:-}" = "--deferred" ]; then
     old_pid="$(systemctl --user show -p MainPID --value workshop-backend.service 2>/dev/null || echo 0)"
     bash "$self" --force; code=$?
     new_pid="$(systemctl --user show -p MainPID --value workshop-backend.service 2>/dev/null || echo 0)"
-    served="$(curl -sf --max-time 3 http://127.0.0.1:8000/healthz 2>/dev/null \
+    served="$(curl -sf --max-time 3 http://127.0.0.1:${PORT}/healthz 2>/dev/null \
       | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"source_id\") or \"\")" 2>/dev/null || true)"
     # VERIFY, do not assume. A zero exit that left the same pid running means the
     # restart did not happen, which is precisely the failure this whole block
@@ -360,7 +364,7 @@ if have_unit; then
   # a source id, which proves the process is up AND which code it is running.
   served=""; ok=0
   for _ in $(seq 1 30); do
-    served="$(curl -sf --max-time 2 http://127.0.0.1:8000/healthz 2>/dev/null \
+    served="$(curl -sf --max-time 2 http://127.0.0.1:${PORT}/healthz 2>/dev/null \
       | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_id") or "")' 2>/dev/null || true)"
     [ -n "$served" ] && { ok=1; break; }
     sleep 1
@@ -391,7 +395,7 @@ echo "No systemd unit found; using legacy nohup path. (Run scripts/install_servi
 cd "$REPO_ROOT/backend"
 
 envv=()
-pid="$(pgrep -f 'uvicorn main:app.*8000' | head -1 || true)"
+pid="$(pgrep -f "uvicorn main:app.*${PORT}" | head -1 || true)"
 if [ -n "${pid:-}" ]; then
   while IFS= read -r -d '' line; do
     [ -n "$line" ] && envv+=("$line")
@@ -411,11 +415,11 @@ envv+=("WORKSHOP_PROJECTS_ROOT=${WORKSHOP_PROJECTS_ROOT:-$HOME}")
 envv+=("WORKSHOP_ROOT=${WORKSHOP_ROOT:-$REPO_ROOT}")
 envv+=("HOME=$HOME" "PATH=$PATH")
 
-pkill -f 'uvicorn main:app.*8000' || true
+pkill -f "uvicorn main:app.*${PORT}" || true
 sleep 1
-env -i "${envv[@]}" nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 \
+env -i "${envv[@]}" nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port "${PORT}" \
   >>/tmp/workshop-backend.log 2>&1 &
 disown || true
 sleep 2
-newpid="$(pgrep -f 'uvicorn main:app.*8000' | head -1 || true)"
+newpid="$(pgrep -f "uvicorn main:app.*${PORT}" | head -1 || true)"
 echo "Backend restarted via nohup (new pid ${newpid:-unknown}). Log: /tmp/workshop-backend.log"
