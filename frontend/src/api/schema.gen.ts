@@ -9607,6 +9607,16 @@ export interface components {
             source_id?: string | null;
         };
         /**
+         * AppScreen
+         * @description One screen an app serves: an exposed service of its manifest.
+         */
+        AppScreen: {
+            /** Label */
+            label: string;
+            /** Service */
+            service: string;
+        };
+        /**
          * AppStatus
          * @description Probed on every call, never cached, so the snapshot is current. `desired`
          *     and `deps` are absent on the stop path for an app the runner never held, and
@@ -9650,6 +9660,11 @@ export interface components {
             home: string;
             /** Project Slug */
             project_slug?: string | null;
+            /**
+             * Screens
+             * @default []
+             */
+            screens: components["schemas"]["AppScreen"][];
             /** Tabs */
             tabs: string[];
         };
