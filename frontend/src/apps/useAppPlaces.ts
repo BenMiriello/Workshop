@@ -40,6 +40,8 @@ export type AppPlace = {
   hasFiles?: boolean;
   /** Whether this app ships its own screens at `home`. */
   ownScreen?: boolean;
+  /** The screens it serves, from its manifest's exposed services. */
+  screens?: readonly { service: string; label: string }[];
 };
 
 /** `GET /api/base-apps/launcher`. Exported so every reader of this list uses
@@ -86,6 +88,7 @@ function place(app: LauncherCard, known: AppPlace | undefined): AppPlace {
     projectSlug: surface?.project_slug ?? null,
     hasFiles: surface?.files ?? false,
     ownScreen: !!known,
+    screens: surface?.screens ?? [],
   };
 }
 

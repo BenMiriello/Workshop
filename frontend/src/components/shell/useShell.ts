@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
+  AppWindow,
   Shapes,
   Archive,
   Blocks,
@@ -73,6 +74,8 @@ const ICONS = {
   archived: Archive,
   projects: FolderGit2,
   apps: LayoutGrid,
+  // A screen an app serves, framed inside it.
+  screen: AppWindow,
   agents: Bot,
   // A role is a DEFINITION picked from a list, not a robot.
   roles: Shapes,

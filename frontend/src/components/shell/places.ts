@@ -111,7 +111,20 @@ export type AppDescriptor = {
    *  a row for it above its tabs; one that does not would get a row pointing
    *  at a redirect, which is a row to nowhere. */
   ownScreen?: boolean;
+  /** The screens this app serves (its exposed services), in its order. Each
+   *  is a row above the tabs, at `home/ui/<service>`. */
+  screens?: readonly AppScreenRef[];
 } & Partial<AppTabFacts>;
+
+export type AppScreenRef = { service: string; label: string };
+
+/** A served screen's row label. A lone screen with no label of its own is the
+ *  app itself, so it takes the app's name rather than a service name like
+ *  "web" that the operator never chose. */
+export function screenLabel(app: { name: string }, screen: AppScreenRef, count: number): string {
+  if (screen.label !== screen.service) return screen.label;
+  return count === 1 ? app.name : screen.service;
+}
 
 function matchesPrefix(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(prefix + "/");
@@ -357,6 +370,14 @@ export function buildPlaces(
       ...(app.ownScreen
         ? [{ id: "app", label: app.name, to: app.home, Icon: icons.apps }]
         : []),
+      // And one row per screen it SERVES, also ahead of the tabs: what an app
+      // runs is the first thing in it (app-screens-2026-09-23.md).
+      ...(app.screens ?? []).map((s) => ({
+        id: `ui:${s.service}`,
+        label: screenLabel(app, s, app.screens?.length ?? 0),
+        to: `${app.home}/ui/${s.service}`,
+        Icon: icons.screen ?? icons.apps,
+      })),
       ...tabs.map((t) => ({
         id: t.id,
         label: t.label,
