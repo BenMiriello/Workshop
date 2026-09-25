@@ -1,2 +1,0 @@
-<!-- author: legacy-md; reach: always -->
-DO NOT leave a backend route added to a file without wiring it in `backend/main.py` (`app.include_router(...)`). Untested routes that 404 because they aren't wired are not "done".

@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-For any change to what a page looks like, load it in a real browser and screenshot it at 390px and 1440px before reporting it done, and say what you saw. Use bash scripts/shoot.sh. Typecheck, design checks and unit tests cannot see layout, duplicated chrome, or misalignment; only a screenshot proves the screen is right.

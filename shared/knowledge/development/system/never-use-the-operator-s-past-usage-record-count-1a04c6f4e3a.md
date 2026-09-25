@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-Never use the operator's past usage, record counts, or scale of his personal usage as design reasoning. Emptiness is a signal to go look at the design, never a verdict on it. Judge whether a design makes sense assuming nothing has ever been used, then use counts only as a pointer to where to look. He has corrected this repeatedly across chats and it is his single most-repeated correction.

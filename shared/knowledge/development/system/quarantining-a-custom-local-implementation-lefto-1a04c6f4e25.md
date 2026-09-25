@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-Quarantining a custom/local-implementation leftover under an honest name (e.g. the 'This host' Settings tab) is NOT removal; the operator still counts a relabeled leftover as an unfixed defect. When auditing for non-production/custom code, the deliverable is removal or relocation out of core, not a holding pen.

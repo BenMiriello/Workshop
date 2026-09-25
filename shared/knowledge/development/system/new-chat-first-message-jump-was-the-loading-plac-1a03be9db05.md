@@ -1,8 +1,0 @@
-<!-- author: self; chat: 95f7fd7fe8f6413dbcea1b7e80d47979 -->
-The "user message at the start of a new chat jumps down then back up" bug (reported 6-7 times, 5+ agents failed) was NOT in the transcript placement logic (transcriptBlocks.ts, workingPieceIndex, the midTurn fold, cut tokens) that every prior agent kept tuning. Reproduced frame-by-frame in a real browser (scratch/send_probe.mjs): on a new chat the first message commits at the top (y=16), then ~50ms later the `.chat-empty` region rendering 'Loading...' inserts ABOVE it (message drops ~530px to y=545), sits ~800ms, then clears and the message snaps back to y=16.
-
-CAUSE: logPlaceholder (chatLogState.ts) returned 'loading' BEFORE checking emptiness (a deliberate 2026-08-14 fix so a cold-opened thread with only a restored outbox stub shows a loading indicator). On a NEW chat the thread is created the instant the first message is sent, so `hydrated` (useThreadLog) flips back to false while the new empty thread hydrates, logLoading goes true, and the Loading REGION drew above the message already on screen. A region stands in place of the transcript; it must never stack over it.
-
-FIX (commit a0c573da): logPlaceholder lets 'loading' win only when there is no real content. 'Real content' excludes a restored FAILED-pending stub (new helper noRealContent), so the 2026-08-14 case still shows loading. Verified: send-repro dip 530px -> 0px, repeated, on the BUILT origin (8002).
-
-LESSON: this is reproducible HEADLESS (it is a send + lifecycle race, not SSE streaming). The frame-by-frame DOM-order recording is what pinned it; reading placement code and guessing is what failed 5 times.

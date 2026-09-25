@@ -184,6 +184,10 @@ PERSONAL_DATA_PATTERNS=(
   '.runtime/**' 'projects.json' 'build_agents.json' 'backend/apps.json'
   'backend/resource-grants.json' 'backend/store-policies.json'
   'shared/relay-corpus.jsonl' 'shared/queue/.tasks.json'
+  # The operator's knowledge notes and the workshop queue export. Both are
+  # written by the running backend; 215 note files and the queue's TODO.md were
+  # tracked until they moved under .runtime/workspace/.
+  'shared/knowledge/**' 'shared/queue/**'
   # One operator's installed apps and their data.
   'apps/**' 'commute/**' 'backend/mcp/plaid/**'
   # Per-rig engineering records: hardware, tailnet addresses, bring-up history.
@@ -199,8 +203,6 @@ PERSONAL_DATA_ALLOWED=(
   # Scaffold content: a TODO.md a new project starts FROM. Its sibling
   # .tasks.json is machine state and is NOT excepted.
   'projects/_templates/*/TODO.md'
-  # The tracked human-readable work queue. Its .tasks.json is not tracked.
-  'shared/queue/TODO.md'
   # Example/template config, which is the documented way to learn what to set.
   'infra/systemd/instance.env.example'
   'infra/systemd/secrets.env.example'

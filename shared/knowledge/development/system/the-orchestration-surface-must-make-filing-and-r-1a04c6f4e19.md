@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-The orchestration surface must make filing-and-running work a single obvious, discoverable action with visible live state (queued/running/blocked-on-X/needs-input) surfaced in the UI. Never require the operator to know a hidden verb or hit an unlabeled control, and never have the assistant stand in for a missing button by saying 'run'. Discoverability and honest visible status are acceptance criteria for tickets B1/B2/B3.

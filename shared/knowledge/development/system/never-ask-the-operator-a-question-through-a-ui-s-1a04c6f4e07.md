@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-Never ask the operator a question through a UI surface that has a known-open bug (the ui-card prompt renders as raw JSON, so a prompt card leaves him unable to reply at all). Ask in prose instead, and check whether a surface works before making his response depend on it.

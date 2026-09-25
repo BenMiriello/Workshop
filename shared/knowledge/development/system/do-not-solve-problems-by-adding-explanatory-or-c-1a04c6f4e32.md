@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-Do not solve problems by adding explanatory or cautionary text. State a fact once, in one place. Estimates get at most one short info note beside the totals in Settings, never a per-figure caveat, per-row tooltip, or banner, and a doc must not restate a warning it already made. Keep the UI simple.

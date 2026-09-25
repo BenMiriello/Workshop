@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-A backend capability is not delivered until it is a visible, manageable feature in the frontend. The operator judges completion by what he can see and operate in the UI, not by what the API can answer, and he has corrected this explicitly: 'if you're not wiring this up into the front end as a full feature, then you're not doing your job.'

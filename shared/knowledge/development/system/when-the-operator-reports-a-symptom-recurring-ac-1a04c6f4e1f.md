@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-When the operator reports a symptom recurring across many chats with identical wording, treat it as a system artifact and go find the emitting mechanism (grep ~/.claude/projects/*/*.jsonl, check model/usage/isMeta on surrounding records) before accepting blame — apologising is not a diagnosis and delays the fix.

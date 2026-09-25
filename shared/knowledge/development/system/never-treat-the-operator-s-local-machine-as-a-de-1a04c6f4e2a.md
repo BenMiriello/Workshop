@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-Never treat the operator's local machine as a design input. Free disk, filesystem type, and installed package managers on this box are one runtime profile's facts, not constraints on the model, which targets production with any number of users and apps of any size. Measure mechanisms, configure capacities. He has corrected this more than once and finds the repetition especially annoying.

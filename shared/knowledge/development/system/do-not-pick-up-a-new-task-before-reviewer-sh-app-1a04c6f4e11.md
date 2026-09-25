@@ -1,2 +1,0 @@
-<!-- author: legacy-md; reach: always -->
-DO NOT pick up a new task before reviewer.sh approves the current one. The completion gate is mandatory; bypassing it is what created the "marked done but caveats hiding" failure mode.
