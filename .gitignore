@@ -199,3 +199,10 @@ docs/instance-audits/
 # every chat. An existing install's files are copied across once at startup
 # (services/workspace_relocate.py) and the old copies stay on disk, ignored.
 /shared/knowledge/
+
+# Skill links a build chat creates in its working directory
+# (services/skills.link_into_cwd). They are absolute symlinks into the
+# installation that made them, so a tracked copy dangles on every other
+# checkout, and link_into_cwd never replaces an existing entry, so the dangling
+# link also blocks the real skill from being linked there.
+/.claude/skills/
