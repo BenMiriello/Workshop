@@ -32,6 +32,7 @@ from routes import control as control_routes
 from routes import leases as leases_routes
 from services import app_registry
 from services import app_mount_record
+from services import installation
 # Imported HERE rather than inside `lifespan` like its neighbours: this module is
 # a timer around two shell commands (stdlib plus `wsplatform.paths`), so there is
 # no heavy import to defer and no cycle to break, and a function-local import
@@ -386,10 +387,7 @@ async def strip_api_prefix(request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173", "http://127.0.0.1:5173",
-        "http://localhost:5174", "http://127.0.0.1:5174",
-    ],
+    allow_origins=list(installation.dev_origins()),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
