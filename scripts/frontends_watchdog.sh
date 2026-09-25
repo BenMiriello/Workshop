@@ -104,5 +104,3 @@ if [ "${WORKSHOP_DEV_SERVER:-1}" = "0" ]; then
 else
   ensure workshop "${WORKSHOP_VITE_PORT:-5173}" "$WORKSHOP/frontend" workshop-frontend.service
 fi
-# Commute was retired as a standalone app (:8444 PWA) — it's now a native page
-# inside the Workshop frontend at /apps/commute. No separate dev server.

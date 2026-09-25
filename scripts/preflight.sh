@@ -64,7 +64,7 @@ req "claude CLI ($CLAUDE_BIN)" "$c" "npm i -g @anthropic-ai/claude-code, or set 
 opt "docker"       "$(have docker)"   "the app runner needs it; without it apps fall back to bare subprocesses"
 opt "gh"           "$(have gh)"       "apt install gh && gh auth login (needed for PRs and issue trackers)"
 opt "jq"           "$(have jq)"       "apt install jq (the reviewer gate uses it)"
-opt "ffmpeg"       "$(have ffmpeg)"   "apt install ffmpeg (birds audio only)"
+opt "ffmpeg"       "$(have ffmpeg)"   "apt install ffmpeg (audio apps only)"
 opt "rsync"        "$(have rsync)"    "apt install rsync (rsync/ssh deploy provider only)"
 
 # ---- node/python version detail --------------------------------------------
@@ -179,7 +179,7 @@ port_note 8002 "the public edge"
 
 # ---- scheduled work ---------------------------------------------------------
 # Cron is this deployment's scheduler and nothing else reports on it: there are
-# no systemd timers. A missing or drifted block means the commute briefs, the
+# no systemd timers. A missing or drifted block means apps' scheduled briefs, the
 # daily digest and the frontend watchdog silently do not happen, and the only
 # symptom is an absence -- which is the hardest kind of failure to notice.
 # Optional, not required: a clone that only serves the UI needs none of it.
@@ -189,7 +189,7 @@ if command -v crontab >/dev/null 2>&1; then
   elif crontab -l 2>/dev/null | grep -qF "managed by scripts/install_cron.sh"; then
     WARNS+=("cron block DRIFTED from infra/cron/workshop.crontab|bash scripts/install_cron.sh --check shows the diff; re-run install_cron.sh to reconcile")
   else
-    WARNS+=("cron block not installed|bash scripts/install_cron.sh — without it nothing scheduled runs (commute briefs, daily digest, frontend watchdog)")
+    WARNS+=("cron block not installed|bash scripts/install_cron.sh — without it nothing scheduled runs (app briefs, daily digest, frontend watchdog)")
   fi
 fi
 

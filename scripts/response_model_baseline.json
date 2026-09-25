@@ -1,16 +1,14 @@
 {
   "per_file_without_response_model": {
-    "backend/routes/birds.py": 78,
-    "backend/routes/budget.py": 6,
+    "backend/routes/autonomy.py": 2,
+    "backend/routes/base_apps.py": 1,
     "backend/routes/chat.py": 5,
-    "backend/routes/commute.py": 27,
-    "backend/routes/environment.py": 2,
-    "backend/routes/finance.py": 8,
-    "backend/routes/owntracks.py": 2,
-    "backend/routes/plaid_webhook.py": 1,
+    "backend/routes/files.py": 1,
+    "backend/routes/github_identity_routes.py": 2,
+    "backend/routes/memory_compat.py": 3,
     "backend/routes/trackers.py": 16
   },
-  "total_routes": 410,
-  "with_response_model": 266,
-  "without_response_model": 144
+  "total_routes": 320,
+  "with_response_model": 290,
+  "without_response_model": 30
 }
