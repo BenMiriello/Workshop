@@ -39,7 +39,7 @@ ACTIVE_STATE_TYPES = ("unstarted", "started")
 
 
 # The scope KINDS with no task queue of their own. The workshop root has one
-# (`shared/queue`) but a chat is not put in front of it just for being unbound:
+# (`task_scope.WORKSHOP_SCOPE_DIR`) but a chat is not put in front of it just for being unbound:
 # showing a general chat the root backlog would make every chat in the system
 # look like it owned the same work. An app dock has no queue at all.
 _QUEUELESS_SCOPES = ("workshop",)

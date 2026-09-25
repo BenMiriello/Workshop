@@ -52,7 +52,7 @@ def _runtime() -> Path:
 
 
 def _shared_knowledge_root() -> Path:
-    """`shared/knowledge/` FOR THE CURRENT OWNER — the `workshop`, `role:` and
+    """The knowledge root FOR THE CURRENT OWNER — the `workshop`, `role:` and
     `development` layers.
 
     `read_layers` puts the `workshop` layer into every scope's prompt by design
@@ -68,10 +68,14 @@ def _shared_knowledge_root() -> Path:
     everybody, against their own. Those gates are removed rather than kept
     alongside this.
 
-    The operator's tracked `shared/knowledge/` does not move.
+    The operator's layer is `paths.operator_workspace("knowledge")`, under the
+    runtime root like every other owner's. It used to be the tracked
+    `shared/knowledge/`, so every note an agent wrote was a change to the
+    product repo; `services.workspace_relocate` copies an existing install's
+    notes across once.
     """
     from services import ownership
-    return ownership.workspace_path(_root() / "shared" / "knowledge", "knowledge")
+    return ownership.workspace_path(paths.operator_workspace("knowledge"), "knowledge")
 
 
 # --- scope mapping -----------------------------------------------------------
@@ -109,17 +113,16 @@ def _parse_scope(scope_key: str) -> tuple[str, str]:
 def scope_dir(scope_key: str, *, create: bool = False) -> Path:
     """The knowledge directory for a scope, created on demand.
 
-    - `workshop`       -> shared/knowledge/
-    - `development`    -> shared/knowledge/development/  (developer mode only)
+    - `workshop`       -> <knowledge root>/   (`_shared_knowledge_root`)
+    - `development`    -> <knowledge root>/development/  (developer mode only)
     - `project:<slug>` -> projects/<slug>/knowledge/
     - `app:<name>`     -> apps/<name>/knowledge/
     - `agent:<id>`     -> .runtime/agents/<id>/knowledge/
-    - `role:<role>`    -> shared/knowledge/roles/<role>/
+    - `role:<role>`    -> <knowledge root>/roles/<role>/
 
-    Role memory lives under `shared/` rather than `.runtime/` because it is
-    durable, cross-agent, git-inspectable knowledge — the same class of thing as
-    `workshop`, addressed on the other axis. An agent's own scope stays in
-    `.runtime/` because it is that instance's episodic record.
+    Role memory rides on the owner's knowledge root because it is durable,
+    cross-agent knowledge — the same class of thing as `workshop`, addressed on
+    the other axis. An agent's own scope is that instance's episodic record.
 
     `create` DEFAULTS TO FALSE, AND THAT IS THE POINT. This used to mkdir
     unconditionally, so every READ created the directory it was about to read.
@@ -136,8 +139,8 @@ def scope_dir(scope_key: str, *, create: bool = False) -> Path:
     if kind == "workshop":
         d = shared
     elif kind == "development":
-        # A sub-directory of the workshop notes layer, like `role:`: durable,
-        # git-inspectable knowledge about this installation's own source, kept
+        # A sub-directory of the workshop notes layer, like `role:`: durable
+        # knowledge about this installation's own source, kept
         # out of the layer every other scope inherits from.
         #
         # NOT per-owner in any meaningful sense even though it rides on the
@@ -1521,7 +1524,7 @@ def register_knowledge_stores() -> None:
     Enumerates the on-disk scope directories (never creating one) and registers a
     Store per scope under owner_app "knowledge". Best-effort and idempotent.
 
-    THE TRACKED PATH BELOW IS DELIBERATE; do not "fix" it to
+    THE OPERATOR'S PATH BELOW IS DELIBERATE; do not "fix" it to
     `_shared_knowledge_root()`. `services.stores._REGISTRY` is a process-global
     dict keyed by store URI, and `register_all()` runs on every `/stores` read,
     so a per-owner path here would let whichever owner called last rewrite
@@ -1540,7 +1543,7 @@ def register_knowledge_stores() -> None:
     root = _root()
     found: list[tuple[str, Path]] = []
 
-    ws = root / "shared" / "knowledge"
+    ws = paths.operator_workspace("knowledge")
     if ws.exists():
         found.append(("workshop", ws))
 
@@ -1556,11 +1559,11 @@ def register_knowledge_stores() -> None:
                 if d.is_dir() and _SLUG_RE.fullmatch(child.name):
                     found.append((f"{kind}:{child.name}", d))
 
-    roles_base = root / "shared" / "knowledge" / "roles"
+    roles_base = ws / "roles"
     if roles_base.exists():
         for child in sorted(roles_base.iterdir()):
             # A role scope IS its directory (no nested `knowledge/`), because it
-            # already lives under shared/knowledge.
+            # already lives under the knowledge root.
             if child.is_dir() and _SLUG_RE.fullmatch(child.name):
                 found.append((f"role:{child.name}", child))
 

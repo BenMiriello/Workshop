@@ -11,7 +11,7 @@ Terminology: the store, CLI, and API all say `task`. The UI may call these
 
 Scope keys mirror `task_scope.root_for_context`:
   development     -> the platform repo itself; developer mode only (ADR 0014)
-  workshop        -> the root inbox (shared/queue), which has no working tree
+  workshop        -> the root inbox (.runtime/workspace/queue), which has no working tree
   project:<slug>  -> projects/<slug>
   agent:<slug>    -> a maker's linked project dir, else .runtime/agent-scopes/<slug>
 

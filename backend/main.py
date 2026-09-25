@@ -187,6 +187,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.error("state file relocation failed at startup: %s", e)
     try:
+        # The operator's knowledge notes and the workshop queue export moved
+        # from the tracked `shared/` tree to the runtime root; copy an existing
+        # install's files across once, logging what moved. See
+        # services/workspace_relocate.
+        from services import workspace_relocate
+        workspace_relocate.run_once()
+    except Exception as e:
+        log.error("workspace relocation failed at startup: %s", e)
+    try:
         # The chat store's on-disk `run` vocabulary becomes `turn`, once. This
         # runs BEFORE anything reads a thread, because the keys and the code
         # that fences on them have to change together: a turn in flight under

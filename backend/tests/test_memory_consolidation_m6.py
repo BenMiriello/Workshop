@@ -60,7 +60,7 @@ def two_owners(tmp_path, monkeypatch):
     member = auth_store.create_user("member-m6@example.com", "password2")
     auth_store.set_operator(op["id"])
 
-    # The operator's tracked layer, with one note nobody else may see.
+    # The operator's layer, with one note nobody else may see.
     ownership.set_current_owner(op["id"])
     asyncio.run(knowledge.put_note("workshop", "op-only", "Operator house style",
                                    "the operator's own cross-cutting note"))
@@ -91,15 +91,16 @@ class TestB1TheNotesListingIsPerOwner:
         """The half that WAS broken: `_scope_roots` answered "does the workshop
         scope exist?" about the operator's directory for every account."""
         from routes import notes_all
-        tracked = (two_owners["tmp"] / "shared" / "knowledge").resolve()
+        from wsplatform import paths
+        operators = paths.operator_workspace("knowledge").resolve()
 
         ownership.set_current_owner(two_owners["op"])
         op_roots = dict(notes_all._scope_roots())
-        assert op_roots["workshop"] == tracked
+        assert op_roots["workshop"] == operators
 
         ownership.set_current_owner(two_owners["member"])
         member_roots = dict(notes_all._scope_roots())
-        assert member_roots["workshop"] != tracked
+        assert member_roots["workshop"] != operators
         assert member_roots["workshop"] == knowledge._shared_knowledge_root().resolve()
 
     def test_a_fresh_account_can_still_be_offered_the_workshop_scope(self, two_owners):
@@ -291,7 +292,7 @@ class TestB5TheGpuNoteIsTrue:
         """
         from wsplatform import paths
 
-        root = paths.workshop_root() / "shared" / "knowledge"
+        root = paths.operator_workspace("knowledge")
         hits = sorted(root.rglob(f"{self.NOTE_ID}.md")) if root.is_dir() else []
         if not hits:
             pytest.skip(f"this instance has no knowledge note {self.NOTE_ID}")
@@ -334,7 +335,7 @@ class TestB5TheGpuNoteIsTrue:
         from services import knowledge
         from wsplatform import paths
 
-        root = paths.workshop_root() / "shared" / "knowledge"
+        root = paths.operator_workspace("knowledge")
         lines = [ln for index in sorted(root.rglob(knowledge.INDEX_FILENAME))
                  for ln in index.read_text().splitlines()
                  if self.NOTE_ID in ln] if root.is_dir() else []

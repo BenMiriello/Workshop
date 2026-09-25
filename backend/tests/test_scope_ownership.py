@@ -147,12 +147,17 @@ class TestUnqualifiedScopesArePartitionedByDirectory:
             ownership.user_runtime_dir(two_users["member"]))
         assert not member_dir.is_relative_to(two_users["tmp"] / "repo")
 
-    def test_the_operators_layer_does_not_move(self, two_users, monkeypatch):
+    def test_the_operators_layer_is_under_the_runtime_root(self, two_users, monkeypatch):
+        """Runtime data, not source: the operator's notes used to be the tracked
+        `shared/knowledge/`, so every note written was a change to the repo."""
         from services import knowledge
         repo = two_users["tmp"] / "repo"
         monkeypatch.setenv("WORKSHOP_ROOT", str(repo))
+        monkeypatch.delenv("WORKSHOP_RUNTIME", raising=False)
         ownership.set_current_owner(two_users["op"])
-        assert knowledge.scope_dir("workshop") == repo / "shared" / "knowledge"
+        op_dir = knowledge.scope_dir("workshop")
+        assert op_dir == repo / ".runtime" / "workspace" / "knowledge"
+        assert not op_dir.is_relative_to(repo / "shared")
 
     def test_standing_notes_follow_the_same_split(self, two_users, monkeypatch):
         """This used to assert it of `.runtime/learnings`, which had its own

@@ -91,6 +91,28 @@ def projects_registry() -> Path:
         "WORKSHOP_PROJECTS_REGISTRY", str(runtime_dir() / "projects.json")))
 
 
+def operator_workspace(under: str) -> Path:
+    """`.runtime/workspace/<under>/` — the installation operator's copy of a
+    workspace-level store (knowledge, the root work queue).
+
+    Every other owner's copy is `.runtime/users/<id>/workspace/<under>/`
+    (`ownership.workspace_path`); this is the same shape one level up, because
+    resolving the operator's numeric id needs the auth database, and CLI
+    scripts, background loops and tests read these stores without one.
+
+    These stores used to live in the source tree (`shared/knowledge/`,
+    `shared/queue/`), where every note and ticket export the platform wrote
+    became a tracked change to the product repo. `legacy_workspace(under)` names
+    that old location for the one-time copy in `services.workspace_relocate`.
+    """
+    return runtime_dir() / "workspace" / under
+
+
+def legacy_workspace(under: str) -> Path:
+    """The in-source location `operator_workspace(under)` replaced."""
+    return workshop_root() / "shared" / under
+
+
 class TreeUnresolvable(RuntimeError):
     """A project record names a tree that does not exist in THIS namespace.
 

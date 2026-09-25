@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 
 from services import tasks
+from wsplatform import paths
 
 # ```task-patch\n{...}\n``` — same fence style as the budget plan-patch.
 _PATCH_BLOCK = re.compile(r"```task-patch\s*\n(.*?)\n```", re.DOTALL)
@@ -64,8 +65,13 @@ WORKSHOP_ROOT = Path(os.environ.get(
 # with no working tree — nothing sweeps it, because there is no code in it — and
 # `development` is the platform repo. The root `.tasks.json` did not move; it was
 # always the development queue, and is now named that.
+#
+# Under the runtime root, not the source tree: the store is instance state and
+# its `TODO.md` export is regenerated on every ticket write. It used to be the
+# tracked `shared/queue/`, which put one operator's queue into every clone;
+# `services.workspace_relocate` copies an existing install's export across once.
 WORKSHOP_SCOPE_DIR = Path(os.environ.get(
-    "WORKSHOP_SCOPE_DIR", str(WORKSHOP_ROOT / "shared" / "queue")))
+    "WORKSHOP_SCOPE_DIR", str(paths.operator_workspace("queue"))))
 
 # The ONE key that resolves to the platform repo (ADR 0014 §4). Named rather
 # than spelled inline, because the point of the constant is that there is

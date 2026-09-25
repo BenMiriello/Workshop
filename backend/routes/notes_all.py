@@ -11,9 +11,9 @@ noun is "Notes". Per-note read/write/delete reuse the existing knowledge routes
 cross-scope aggregation and scope enumeration.
 
 Scope keys mirror `knowledge.scope_dir`:
-  workshop        -> shared/knowledge/
-  development     -> shared/knowledge/development/   (developer mode only)
-  role:<role>     -> shared/knowledge/roles/<role>/
+  workshop        -> <knowledge root>/   (knowledge._shared_knowledge_root)
+  development     -> <knowledge root>/development/   (developer mode only)
+  role:<role>     -> <knowledge root>/roles/<role>/
   project:<slug>  -> projects/<slug>/knowledge/
   app:<name>      -> apps/<name>/knowledge/
   agent:<slug>    -> .runtime/agents/<slug>/knowledge/
@@ -33,7 +33,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from services import knowledge, ownership
-from wsplatform import dev_mode
+from wsplatform import dev_mode, paths
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
@@ -88,8 +88,8 @@ def _scope_roots() -> list[tuple[str, Path]]:
     root = knowledge._root()
     runtime = knowledge._runtime()
 
-    # THE CURRENT OWNER'S shared/knowledge, not the tracked one. This used to be
-    # spelled `root / "shared" / "knowledge"` inline, which is the operator's
+    # THE CURRENT OWNER'S knowledge root, not the operator's. This used to be
+    # spelled as the operator's directory inline, which is the operator's
     # copy for everybody. It did not disclose anybody's notes, because the
     # listing reads contents through `knowledge.list_notes_meta(scope_key)` and
     # that resolves per-owner via `knowledge._shared_knowledge_root()` — but the
@@ -100,16 +100,16 @@ def _scope_roots() -> list[tuple[str, Path]]:
     try:
         ws = knowledge._shared_knowledge_root()
     except Exception:
-        # No owner pinned and no bootstrap yet. Fall back to the tracked layer,
-        # which is exactly what `_shared_knowledge_root` itself returns in that
-        # state, rather than dropping every shared scope from the listing.
-        ws = root / "shared" / "knowledge"
+        # No owner pinned and no bootstrap yet. Fall back to the operator's
+        # layer, which is exactly what `_shared_knowledge_root` itself returns
+        # in that state, rather than dropping every shared scope from the listing.
+        ws = paths.operator_workspace("knowledge")
 
     # `workshop` is surfaced whether or not its directory exists yet, for the
     # same reason `development` is (see below): it is a fixed scope of every
     # installation, not one that comes and goes with a project. Enumerating it
     # from disk was harmless while the only reader was the operator, whose
-    # `shared/knowledge/` has always existed. It stops being harmless the moment
+    # knowledge directory has always existed. It stops being harmless the moment
     # the layer is per-owner: a second account starts with no directory, so the
     # scope would be missing from the filter and from the New note dialog, and
     # writing the first note is the only thing that would create the directory.
@@ -131,7 +131,7 @@ def _scope_roots() -> list[tuple[str, Path]]:
     # the directory. `workshop` never hit this because its directory has always
     # existed.
     #
-    # The alternative was to create shared/knowledge/development at install or at
+    # The alternative was to create <knowledge root>/development at install or at
     # import. Rejected: an empty directory is a worse carrier for "this scope
     # exists" than the flag that actually decides it, it would be created on
     # installs that must not have the scope at all, and git does not track empty
@@ -153,7 +153,7 @@ def _scope_roots() -> list[tuple[str, Path]]:
 
     # `role:<role>` — the SECOND AXIS (see the knowledge.py module docstring and
     # scope_tree's "TWO AXES, NOT ONE"). A role scope is a real, writable
-    # knowledge scope: `knowledge.scope_dir` maps it to shared/knowledge/roles/
+    # knowledge scope: `knowledge.scope_dir` maps it to <knowledge root>/roles/
     # <role>/, `scope_tree.parse` accepts it, and `scope_tree.govern` puts it in
     # every agent's prompt between the house layer and the agent's own place.
     # It was missing from this enumeration entirely, so the one thing it holds
@@ -170,7 +170,7 @@ def _scope_roots() -> list[tuple[str, Path]]:
         for child in sorted(roles_base.iterdir()):
             if child.is_dir() and knowledge._SLUG_RE.fullmatch(child.name):
                 # A role scope IS its directory: it already lives under
-                # shared/knowledge, so there is no nested `knowledge/`.
+                # the knowledge root, so there is no nested `knowledge/`.
                 add(f"role:{child.name.lower()}", child)
 
     # Projects: the registry order first (mirrors tasks_all), then a filesystem
