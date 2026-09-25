@@ -1,17 +1,16 @@
 # In-app updates and migrations for downstream Workshop instances
 
-Status: proposal for operator decision · Date: 2026-07-12 · Branch: `simonsays-local`
+Status: proposal for operator decision · Date: 2026-07-12 · Branch: a downstream instance branch
 
-Companion to [`workshop-self-hosting-and-panel.md`](workshop-self-hosting-and-panel.md)
-(the supervisor that restarts Workshop is the same thing that must roll it
-back) and grounded in [`simonsays-local-instance.md`](../simonsays-local-instance.md)
-(what a permanent downstream fork actually carries) and
+Written alongside a self-hosting proposal (the supervisor that restarts
+Workshop is the same thing that must roll it back), grounded in what a permanent
+downstream fork actually carries, and bounded by
 [`apps-are-pluggable.md`](../apps-are-pluggable.md) (the platform/app boundary
 this must not blur).
 
 ## 0. Problem statement
 
-This instance runs `simonsays-local`: a permanent fork of
+A downstream instance runs its own branch (`<instance-branch>` below): a permanent fork of
 `github.com/<owner>/Workshop` carrying ~13 local-only commits that must
 never go upstream and must survive every update — PIN auth, tailnet origin
 config, the app removals, the `.runtime` data relocations. "Update" therefore
@@ -37,7 +36,7 @@ One operation with a well-defined abort (`git merge --abort`), never rewrites
 the local commits (their SHAs, and anything pinned to them, stay stable), and
 each conflict is resolved exactly once — the resolution is recorded in the
 merge commit, and `git rerere` replays it if the same hunks ever conflict
-again. Local divergence stays enumerable: `git log simonsays-local ^origin/main`
+again. Local divergence stays enumerable: `git log <instance-branch> ^origin/main`
 still lists exactly the local-only commits after any number of merges.
 Downside: merge history is uglier than a clean patch series, and a naive
 implementation does the merge in the *live* checkout.
@@ -55,7 +54,7 @@ bundle anyway, at which point it is (a) with extra steps.
 **(c) Maintained three-way patch set (quilt/stgit style), re-applied per update.**
 Same mechanics and same failure modes as (b) — its one real advantage, a
 clean, reviewable list of "what we carry," is already provided for free by
-`git log simonsays-local ^origin/main`. Not worth adopting a patch-queue tool
+`git log <instance-branch> ^origin/main`. Not worth adopting a patch-queue tool
 for.
 
 **Decision: (a), merge — but never in the live checkout.** All merging happens
@@ -70,7 +69,7 @@ patch conflicts), the updater:
 
 1. Marks state `needs-attention` (see §4) with the conflicting paths.
 2. For each conflicting file, attributes it to local commits via
-   `git log simonsays-local ^origin/main -- <file>` so Settings can say
+   `git log <instance-branch> ^origin/main -- <file>` so Settings can say
    "conflicts with your local patch: *PIN login* (`9a6f59c`)" — not just a
    filename.
 3. Offers two actions in Settings: **Abort** (delete the staging worktree,
@@ -127,7 +126,7 @@ release, read at the tag:
 **Detection.** A daily background task plus a "Check now" button runs
 `git fetch origin --tags --prune` (or fetches a release bundle), finds the
 highest release tag reachable from `origin/main`, and compares it with the
-**merge base**: `git merge-base simonsays-local origin/main`, described against
+**merge base**: `git merge-base <instance-branch> origin/main`, described against
 tags. Fetch-and-compare beats "poll the ref" because it distinguishes *new
 release* from *new commits*, and beats "poll a hosted feed" because there is no
 hosted feed to run — the manifest travels inside the repo, versioned with it.
@@ -256,7 +255,7 @@ running updater's own source out from under it. A second oneshot,
 `workshop-update-recover.service`, is ordered `Before=workshop-backend.service`
 at every boot. This is the concrete coupling to the self-hosting proposal:
 systemd is the bootloader (its Phase 0 native units are a **prerequisite**),
-Workshop decides; panel is not in the loop.
+Workshop decides; no external service supervisor is in the loop.
 
 **On-disk state.** `.runtime/update/state.json`, written atomically
 (temp + `os.replace` + fsync of file and directory), holding
@@ -318,7 +317,7 @@ journaled (`step: N` in state.json) and idempotent so they can be re-run from
 the journal after a crash:
 
 1. `systemctl --user stop workshop-backend workshop-public`.
-2. Fast-forward `simonsays-local` in the live checkout to the staged merge
+2. Fast-forward `<instance-branch>` in the live checkout to the staged merge
    commit (objects already local; this is a ref move + checkout, sub-second).
 3. Flip `frontend/dist` and `backend/.venv` symlinks to the new release dirs.
 4. Run the migration runner (new venv, backend stopped) up to the new
@@ -480,7 +479,7 @@ per `frontend/CLAUDE.md`).
 ## 8. Phased build path
 
 Prerequisite: self-hosting proposal Phase 0 (native systemd `--user` units for
-backend/public; panel out of the loop) — the updater drives `systemctl`.
+backend/public; no external supervisor in the loop) — the updater drives `systemctl`.
 
 **Phase 1 — safe minimum, server only, CLI-driven.** `workshop_update.py`
 with: release detection (fetch + manifest, tolerating manifest absence by
