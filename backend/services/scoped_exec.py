@@ -188,6 +188,18 @@ def enabled() -> bool:
     return functional()
 
 
+def agent_root() -> str:
+    """Where a turn's scope root is, spelled the way the turn's own tools spell it.
+
+    `spawn_argv` is fail-closed: a turn runs inside `wrap()`'s namespace with its
+    scope bound at MOUNTPOINT, or it is refused and never spawned. No spawned
+    turn can see its scope's host path, so this is the only answer a prompt may
+    give, whatever `enabled()` reports while the prompt is rendered -- a prompt
+    rendered with confinement off belongs to a turn that will be refused.
+    """
+    return MOUNTPOINT
+
+
 def tree_lease_mounts() -> bool:
     """Whether the mount follows the worktree lease ([B1], §4). Default OFF.
 

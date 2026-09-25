@@ -138,14 +138,15 @@ def agent_cwd(scope_dir) -> str:
     real host path does not exist inside the sandbox for the scope, so it
     cannot be echoed. The prompt echoed it anyway, from two places that each
     resolved the question on their own, and only `runtime_briefing` got it
-    right. One function so the briefing, the capabilities block and the build
-    personas cannot disagree about where the reader is.
+    right. One function so the briefing, the capabilities block, the agent
+    self-preamble and the build personas cannot disagree about where the reader
+    is.
 
-    An unconfined turn is a real configuration (`WORKSHOP_SCOPED_EXEC=0`, or a
-    host that cannot namespace) and gets the real answer, because there the real
-    directory IS where the agent is standing."""
+    The answer is the spawn path's, not a second reading of the flag:
+    `scoped_exec.spawn_argv` refuses any turn it cannot confine, so there is no
+    unconfined turn to describe, and `scope_dir` is never echoed."""
     from services import scoped_exec
-    return scoped_exec.MOUNTPOINT if scoped_exec.enabled() else str(scope_dir)
+    return scoped_exec.agent_root()
 
 # The three pickable models surfaced in the composer's model selector, full ids.
 # Sourced from llm_router so they never drift from the actual call tiers.
@@ -1140,7 +1141,7 @@ def agent_self_preamble(
     lines = [
         f"You are {name} (@{slug}), a {role} agent in {operator_name()}'s Workshop.",
         f"SCOPE: {scope}. Where you work and the corpus you can see.",
-        f"WORKSPACE: {cwd}",
+        f"WORKSPACE: {agent_cwd(cwd) if cwd else 'none'}",
     ]
     lines.append(
         f"TOOLS: {', '.join(granted)}. In your workspace, and nothing else "
