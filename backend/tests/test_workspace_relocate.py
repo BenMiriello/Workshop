@@ -28,8 +28,8 @@ def _legacy_knowledge(repo):
     (old / "system").mkdir(parents=True)
     (old / "roles" / "reviewer").mkdir(parents=True)
     (old / "INDEX.md").write_text(
-        "# Knowledge index\n\n- [Ports are squatted](system/ports.md) - 8012 lies\n")
-    (old / "system" / "ports.md").write_text("8012 fakes healthy.\n")
+        "# Knowledge index\n\n- [Ports are squatted](system/ports.md) - the health probe lies\n")
+    (old / "system" / "ports.md").write_text("the port fakes healthy.\n")
     (old / "roles" / "reviewer" / "INDEX.md").write_text(
         "# role:reviewer memory index\n\n- [Ask for evidence](evidence.md)\n")
     (old / "roles" / "reviewer" / "evidence.md").write_text("Cite a command.\n")
@@ -54,7 +54,7 @@ def test_existing_notes_are_copied_and_read_back(repo, caplog):
         lines = workspace_relocate.run_once()
 
     new = paths.operator_workspace("knowledge")
-    assert (new / "system" / "ports.md").read_text() == "8012 fakes healthy.\n"
+    assert (new / "system" / "ports.md").read_text() == "the port fakes healthy.\n"
     assert (new / "roles" / "reviewer" / "evidence.md").exists()
     assert any(ln.startswith("knowledge: copied 4 file(s)") for ln in lines)
     assert "workspace relocated: knowledge" in caplog.text
