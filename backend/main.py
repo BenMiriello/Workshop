@@ -12,8 +12,7 @@ from deps_user import (
 )
 from middleware.compression import SSEAwareGZipMiddleware
 
-# Platform-core routers only — the shell. App routers (finance/budget/commute/
-# location/birds/health/…) are NOT imported here; they mount from the installed-
+# Platform-core routers only — the shell. App routers are NOT imported here; they mount from the installed-
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
 from routes import agents, projects, base_apps, relay, services, events, jobs, push, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers, refs as refs_routes, memory_policy as memory_policy_routes, memory as memory_routes, memory_compat
@@ -83,7 +82,7 @@ async def lifespan(app: FastAPI):
                      "partition", moved)
     _model_credentials.require_encryption_in_multi_user()
     # Installed apps: run each installed app's startup hooks + background loops
-    # (finance prewarm/categorize, birds env-refresh/atlas). A fresh instance with
+    # (cache prewarms, periodic refreshes). A fresh instance with
     # no apps installed starts none of these. Adding an app never edits this file.
     app.state._app_bg = []
     for spec in app_registry.installed_specs():
@@ -577,7 +576,7 @@ app.include_router(relay.router, dependencies=_LOOPBACK)
 # own comment says was removed for every other platform router, and it had a
 # measured cost: /services is on the edge blocklist, so the endpoint 404'd on
 # the origin the operator actually uses, which silently broke the Apps
-# launcher's per-app status AND made Commute's settings say the 511 API key was
+# launcher's per-app status AND made one app's settings say its API key was
 # "missing" whether or not it was set. Identity gates it on either origin now.
 app.include_router(services.router, dependencies=_OPERATOR)
 app.include_router(events.router, dependencies=_LOOPBACK)

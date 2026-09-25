@@ -590,7 +590,7 @@ async def _run_turn(worker: VoiceWorker, turn: VoiceTurn) -> None:
 #
 # The one branch meant to prevent this shares the AGENT'S session, but it was
 # gated on a `build:` context key and NO thread that has ever used voice had one:
-# a project chat is keyed `development` or `project:notes-app` and falls straight
+# a project chat is keyed `development` or `project:<slug>` and falls straight
 # through to the fresh-session path, which the comment there already admits. All
 # nine threads in the store that have spoken turns took that path. It reads
 # `agent:` since T2 deleted the other spelling, so it can at least fire now; it

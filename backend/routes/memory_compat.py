@@ -12,7 +12,7 @@ orientation manifest, every saved request, and the MCP surface a model may have
 been told about. A 307 costs one hop and turns "the endpoint vanished" into "the
 endpoint moved", which is the difference between a confusing failure and none.
 
-`/notes-app` is not here. That prefix belongs to an installed app, not to the
+An app's notes prefix is not here. That prefix belongs to an installed app, not to the
 platform's memory, and merging them would put an app inside a platform surface.
 """
 from __future__ import annotations

@@ -332,7 +332,7 @@ async def queue_runner_stop(dir: str | None = None):
     `dir` IS REQUIRED IN PRACTICE even though the parameter is optional, and it
     is refused rather than defaulted. Runners are per tree: the lock and the
     pidfile are both keyed on it. A missing `dir` used to resolve to
-    WORKSHOP_ROOT, so a caller who had started a runner on `projects/birds` and
+    WORKSHOP_ROOT, so a caller who had started a runner on `projects/<slug>` and
     then stopped without naming it killed the PLATFORM repo's runner (or nothing
     at all) and got a "stopped" answer back. Start requires a named tree; a
     per-tree Start with a Stop that guesses is worse than either.

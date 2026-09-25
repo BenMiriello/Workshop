@@ -9,7 +9,7 @@ answer "give me a Store of type X"), and a mandatory portable `export`.
 
 The registry is populated from two sources:
   * `register_builtin_stores()` — the concrete data stores the built-in apps own
-    (budget plan, plaid items, commute data, secrets), each pointing at its real
+    (plans, linked-account items, app data, secrets), each pointing at its real
     existing path.
   * `register_from_manifests()` — app-manifest `provides` entries that carry a
     store `type` (the declarative half; see services/manifests.py).

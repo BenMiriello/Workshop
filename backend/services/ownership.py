@@ -1,12 +1,11 @@
 """Request-scoped data owner — the single source of "whose data is this".
 
-Every personal store (location, health, budget, chat, push, finance cache, the
-commute runtime) is partitioned per owner. Rather than thread an `owner_id`
-argument through dozens of call sites (many buried in the commute internals),
-the owner is pinned in a contextvar for the duration of a request or an
+Every personal store (each app's data, chat, push, caches) is partitioned per
+owner. Rather than thread an `owner_id` argument through dozens of call sites
+(many buried in app internals), the owner is pinned in a contextvar for the duration of a request or an
 automation pass, and the stores resolve their per-owner directory from it.
 
-This generalizes the birds `_viewer_ctx` pattern with one critical inversion:
+This generalizes an earlier app's `_viewer_ctx` pattern with one critical inversion:
 **when the owner is unset, `current_owner()` RAISES.** It does NOT default to the
 operator. A forgotten set-point is therefore a crash (fail-closed), never a
 cross-owner data leak. The owner is set in exactly three kinds of place:
@@ -114,7 +113,7 @@ def pin_operator() -> int | None:
 
 
 def owner_or_none() -> int | None:
-    """The pinned owner id without raising — for the birds viewer bridge and any
+    """The pinned owner id without raising — for a public viewer bridge and any
     caller that legitimately tolerates 'no owner' (e.g. a public, non-personal
     read). Personal stores must use current_owner() instead."""
     return _owner_ctx.get()

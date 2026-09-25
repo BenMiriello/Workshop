@@ -351,7 +351,7 @@ def test_assert_role_unique_does_NOT_cover_maker_and_this_module_does_not_either
     """THE LOAD-BEARING NEGATIVE RESULT, pinned so nobody relies on the wrong
     guard -- and so nobody restores the claim that used to be in this module's
     header, that one-per-scope was "ENFORCED HERE". It was not. On the live
-    install `birds` and `budget` each had two.
+    install two apps each had two.
 
     `agents_registry.SINGLETON_ROLES` is `("triager", "keeper")` and deliberately
     EXEMPTS `maker` -- several makers on one scope is the concurrency case,
@@ -377,7 +377,7 @@ def test_assert_role_unique_does_NOT_cover_maker_and_this_module_does_not_either
 
 def test_the_scopes_makers_are_all_of_them_not_whichever_file_sorts_first(tree):
     """WHY THIS EXISTS. `maker_for_scope` was a `sorted(glob)` search that
-    returned the FIRST match, so Birds showed `birds-builder-2` purely because
+    returned the FIRST match, so an app showed `<slug>-builder-2` purely because
     `-2.md` sorts before `.md`. The roster was reporting a choice nobody made.
 
     Now the list is the answer, `maker_for_scope` declines to pick, and the

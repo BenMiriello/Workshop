@@ -24,7 +24,7 @@ local Ollama service (kept alive for exactly this) with a real semantic model
 dependency-light lexical hashing term-frequency vectorizer. The lexical fallback
 undershoots on paraphrase (two duplicate lines can score ~0.83 and be filed
 "related" instead of merged), which is exactly why the Ollama semantic path is
-preferred. The birds `/embed` model is AUDIO only and cannot embed task text. If
+preferred. An app's audio `/embed` model is AUDIO only and cannot embed task text. If
 every backend is unreachable, or embedding is force-disabled
 (WORKSHOP_DEDUP_EMBED=0), we fall back to hash-only dedup (exact dupes still
 merge) and never crash.

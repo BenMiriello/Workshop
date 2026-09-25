@@ -22,10 +22,10 @@ warning once so the reason a second name exists is discoverable rather than
 folklore.
 
 READ AT CALL TIME, NEVER CACHED. This is load-bearing and was learned the hard
-way in commute/poller: the backend's auto-restart does not always inject the
+way in one app's poller: the backend's auto-restart does not always inject the
 environment, and an import-time constant that missed the key stayed empty for
 the life of the process. Every poll then returned `needs_key` and realtime went
-dark for the whole commute, from a file that was sitting on disk the entire
+dark for a whole morning, from a file that was sitting on disk the entire
 time. The file is a few hundred bytes; reading it per call costs nothing worth
 having.
 

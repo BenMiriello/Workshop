@@ -17,7 +17,7 @@ a new app's assistant never edits this file. Adding chat to a fresh app = write
 one provider (in the app) + register it + drop the <ChatDock contextKey="..."> in.
 
 Per-provider context is bounded — Plaid balances + last-30d-summary + computed
-budget go in for budget chat; latest commute decision for commute chat; etc.
+state go in for an app's chat; etc.
 We never dump raw transaction lists (too large + redundant); the engine has
 already categorized them into actuals per bucket.
 """
@@ -1278,7 +1278,7 @@ def _detect_stack(dir_path) -> tuple[list[str], bool]:
             labels.append("docker-compose")
         # A real source tree means an actual FILE somewhere that isn't a scaffold
         # doc or dotfile — an empty `src/` dir does NOT count (that is exactly the
-        # commute-shadow scaffold case). Bounded walk; only reached when no
+        # scaffold-shadowing-an-app case). Bounded walk; only reached when no
         # package.json/pyproject/etc marker already proved source above.
         if not has_source:
             scaffold_docs = {"PROJECT.md", "TODO.md", "AGENTS.md", "README.md", ".gitignore"}
@@ -2205,7 +2205,7 @@ class ContextProvider:
         # cross-cutting questions ("how much in savings", "next train", etc.)
         # without the operator having to switch tabs. The snapshots come from the
         # INSTALLED apps that register one (app_registry) — no app is hardcoded
-        # here, so an instance that doesn't install finance/commute/… simply omits
+        # here, so an instance that doesn't install a given app simply omits
         # that section.
         from services import app_registry
 
@@ -2236,8 +2236,7 @@ class ContextProvider:
             return ""
 
     # The app id this provider's chat is bound to, for permissions resolution.
-    # Data/app assistants whose `key` matches an apps.json manifest id (budget,
-    # finance, commute, location, ...) bind to that app. The `general` provider
+    # Data/app assistants whose `key` matches an apps.json manifest id bind to that app. The `general` provider
     # and build providers return None (no single app boundary). Subclasses may
     # override if their key differs from their app id.
     def permission_app_id(self) -> str | None:
@@ -2640,8 +2639,8 @@ def agent_provider(slug: str, record: dict) -> ContextProvider:
 
 # EVERY data/assistant provider gets web access — the route + capability_for add
 # WebSearch/WebFetch centrally via effective_allowed_tools(), so providers no
-# longer need to opt in per-instance. (budget/finance keep their Plaid tools and
-# gain web; commute/location gain web; build/project agents run the full toolset.)
+# longer need to opt in per-instance. (apps keep their declared tools and
+# gain web; build/project agents run the full toolset.)
 _general = ContextProvider()
 # Stage 7 (2e): the general chat gets a scoped, read-only workshop-query tool
 # (platform MCP server, always available) so it can answer "what is going on /
