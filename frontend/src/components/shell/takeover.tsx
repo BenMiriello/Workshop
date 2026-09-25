@@ -45,9 +45,9 @@ import {
 //                description and the shell's trail go.
 //
 // WHY `directory` EXISTS AT ALL. Reported 2026-08-22, measured by screenshot:
-// /apps/birds/files opened with a breadcrumb reading "Apps / Birds", a 24px h1
+// /apps/<slug>/files opened with a breadcrumb reading "Apps / <App>", a 24px h1
 // reading "Files" and a description, roughly 290px, on a 390px screen, under a
-// bar one that already said "Birds" and a tab that already said "Files". Every
+// bar one that already said "<App>" and a tab that already said "Files". Every
 // line of it repeated something 40px above it. /memory was worse at ~600px. The
 // mobile equivalents of a page header already exist and are the bars: the place
 // name is bar one, the page name is the selected tab, and the primary action is

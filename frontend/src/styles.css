@@ -41,7 +41,7 @@ body {
    `.ws-iconbtn` went with them: nothing rendered it (TicketFilters uses
    `.ws-iconbtn-lg`, which is a different rule in the kit). */
 
-/* Linked-app switcher (Finance ⇄ Budget, Location ⇄ Commute). Lives inline in
+/* Linked-app switcher (between two apps that declare each other). Lives inline in
    the PageHeader actions row, left of Refresh — compact pills, no own row. */
 .ws-appgroup { gap: var(--space-1); }
 .ws-appgroup a { padding: 0.25rem 0.6rem; font-size: var(--fs-sm); }
@@ -141,19 +141,19 @@ label {
 }
 
 /* App-owned styles live in the app that owns them:
- *   pages/apps/birds/birds.css, pages/apps/budget/budget.css
- * `.tabs` and `.sec-h` moved to budget.css on 2026-08-20 -- they were only ever
- * used by Budget.tsx and budget/Projection.tsx, so "generic legacy classes
+ *   pages/apps/<slug>/<slug>.css
+ * `.tabs` and `.sec-h` moved to one app's sheet on 2026-08-20 -- they were only ever
+ * used by that app's pages, so "generic legacy classes
  * several pages share" was true of the set but not of those two.
  *
  * `.num-in` and the range sliders stay, and are the honest remainder: `.num-in`
- * is used by BOTH birds and budget, so moving it to either app's sheet breaks
+ * is used by two apps, so moving it to either app's sheet breaks
  * the other and copying it into both guarantees drift. It is a numeric field
  * and its real home is a kit primitive alongside Input/Select. Until then it
  * lives here on purpose, not by omission. */
 
 /* Compact numeric input used in the edit form and simulator controls. */
-/* Legacy field class, still used by the birds sub-app (migrated last per
+/* Legacy field class, still used by an app (migrated last per
    frontend/CLAUDE.md). It no longer REDEFINES a field — it borrows the design
    system's field surface, so there is one description of what a field looks
    like instead of two that drift. New code uses Input/Select from src/ui. */

@@ -122,8 +122,7 @@ def _raw_root_for_context(context_key: str | None) -> Path | None:
         # owns a ticket queue exactly when it owns a working tree: resolved
         # through `services.app_links.linked_project_slug`, the one place
         # that computes the app<->project merge, off the registries, never a
-        # hardcoded roster. An installed-only app with no project (finance,
-        # health, wearables at design time) returns None here, same as
+        # hardcoded roster. An installed-only app with no project returns None here, same as
         # before this case existed -- it genuinely has no task store, and
         # `chat_work._QUEUELESS_PREFIXES` no longer blankets every `app:`
         # scope for exactly this reason: the exclusion belongs on "no linked

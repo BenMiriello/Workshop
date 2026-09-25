@@ -4,7 +4,7 @@ import { pickupFor, pickupNote, scopeIsRunnable, type PickupMap } from "./scopeP
 describe("scopeIsRunnable", () => {
   it("accepts exactly the shapes launch_task_run accepts", () => {
     expect(scopeIsRunnable("development")).toBe(true);
-    expect(scopeIsRunnable("project:birds")).toBe(true);
+    expect(scopeIsRunnable("project:widgets")).toBe(true);
     expect(scopeIsRunnable("agent:keeper")).toBe(true);
     // `build:<slug>` is deleted on both sides.
     expect(scopeIsRunnable("build:thing")).toBe(false);
@@ -32,17 +32,17 @@ describe("scopeIsRunnable", () => {
 describe("pickupFor", () => {
   const map: PickupMap = {
     workshop: { scope: "workshop", runnable: true, automatic: true, why: "" },
-    "project:birds": {
-      scope: "project:birds",
+    "project:widgets": {
+      scope: "project:widgets",
       runnable: true,
       automatic: false,
-      why: "no runner covers birds; set its autonomy to continuous or press Run",
+      why: "no runner covers widgets; set its autonomy to continuous or press Run",
     },
   };
 
   it("prefers the server's answer", () => {
     expect(pickupFor(map, "workshop").automatic).toBe(true);
-    expect(pickupFor(map, "project:birds").automatic).toBe(false);
+    expect(pickupFor(map, "project:widgets").automatic).toBe(false);
   });
 
   it("does not assume automatic for a scope the server did not list", () => {
@@ -74,11 +74,11 @@ describe("pickupNote", () => {
 
   it("carries the server's reason for a runnable scope nothing polls", () => {
     const note = pickupNote({
-      scope: "project:birds", runnable: true, automatic: false,
-      why: "no runner covers birds; set its autonomy to continuous or press Run",
+      scope: "project:widgets", runnable: true, automatic: false,
+      why: "no runner covers widgets; set its autonomy to continuous or press Run",
     });
     expect(note).toMatch(/Nothing will pick this up on its own/);
-    expect(note).toMatch(/no runner covers birds/);
+    expect(note).toMatch(/no runner covers widgets/);
   });
 
   it("never emits an em-dash into operator-facing text", () => {

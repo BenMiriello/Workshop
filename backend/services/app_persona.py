@@ -1,8 +1,8 @@
 """What a built-in app's chat assistant IS -- the platform half.
 
 `services/app_personas.py` used to be this class plus 520 lines of four
-particular apps' business logic: Plaid transaction bucketization, a commute
-schedule reader, a location reverse-geocode summary, and a budget plan-patch
+particular apps' business logic: Plaid transaction bucketization, a schedule
+reader, a reverse-geocode summary, and a plan-patch
 applier. All of it sat in a platform directory, so "which apps exist" was
 readable off the platform's own source, and none of it could leave with its app.
 

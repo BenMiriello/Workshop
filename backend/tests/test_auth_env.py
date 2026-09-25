@@ -117,7 +117,7 @@ def test_value_default_when_nowhere(tmp_path, monkeypatch):
 def test_value_is_read_at_call_time(tmp_path, monkeypatch):
     """Load-bearing: an import-time constant that missed the key once stayed
     empty for the life of the process, and realtime went dark for a whole
-    commute from a file that was on disk the entire time."""
+    morning from a file that was on disk the entire time."""
     p = tmp_path / "auth.env"
     p.write_text("K=first\n")
     monkeypatch.delenv("K", raising=False)

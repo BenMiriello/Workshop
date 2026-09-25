@@ -164,7 +164,7 @@ class TestWhatWantsTheOperator:
     def test_an_ambient_question_with_no_ticket_still_surfaces(self, env):
         inbox.raise_item(kind="question", agent="memory-keeper",
                          scope="project:demo", title="Which port is current?",
-                         body="One note says 8012, another 8013.")
+                         body="One note says 9100, another 9101.")
         out = chat_work.needs_you()
         assert [i["kind"] for i in out["items"]] == ["question"]
         assert out["counts"]["question"] == 1

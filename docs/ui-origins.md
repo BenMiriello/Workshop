@@ -1,6 +1,6 @@
 # Which URL serves the Workshop UI (and which build it is)
 
-There are three UIs reachable on this box and they do NOT all serve the same
+There can be more than one UI reachable on a host and they do NOT all serve the same
 code. Resolve the origin before concluding that a frontend change did or did not
 land — twice now that step was skipped and the wrong thing was "fixed".
 
@@ -8,7 +8,6 @@ land — twice now that step was skipped and the wrong thing was "fixed".
 |---|---|---|---|
 | `https://<host>.<tailnet>:8443` | `127.0.0.1:5173` | Vite dev server, **from source** | **No** — edits are live on reload |
 | `workshop.<your-domain>` | cloudflared → `127.0.0.1:8002` | `frontend/dist`, the built bundle | **Yes**, but automatic — rebuilt on every commit that touches `frontend/` (below); by hand: `scripts/build_workshop_public.sh` |
-| `https://<host>.<tailnet>:8447` | `127.0.0.1:8012` | **a different user's tree** (`$HOME/<other-tenant>/…`) | not ours |
 
 **The operator uses the PUBLIC origin, the built one.** Settled 2026-08-11, and
 it reverses what this file used to say (it named the `:8443` tailnet dev origin

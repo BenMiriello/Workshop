@@ -130,16 +130,16 @@ def test_nothing_is_blocked_when_the_install_names_nothing(env, monkeypatch):
 def test_scopes_point_at_their_own_targets(env):
     tracker_bindings.connect(provider="github", target="acme/a", scope="workshop")
     tracker_bindings.connect(provider="github", target="acme/b",
-                             scope="project:birds")
+                             scope="project:widgets")
     assert tracker_bindings.target_for("workshop") == "acme/a"
-    assert tracker_bindings.target_for("project:birds") == "acme/b"
+    assert tracker_bindings.target_for("project:widgets") == "acme/b"
 
 
 def test_a_scope_with_no_target_does_not_inherit_one(env):
     """Filing into a repo nobody chose is how tickets reach a stranger's tracker."""
     tracker_bindings.connect(provider="github", target="acme/a", scope="workshop")
-    assert tracker_bindings.target_for("project:birds") is None
-    assert tracker_bindings.binding_for("project:birds") is None
+    assert tracker_bindings.target_for("project:widgets") is None
+    assert tracker_bindings.binding_for("project:widgets") is None
 
 
 def test_import_mode_forbids_writes_and_sync_allows_them(env):

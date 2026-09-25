@@ -29,7 +29,7 @@ So there is no migration. There is a **deletion**, and then a build. No data to
 preserve, no users to move, no compatibility to keep. That is the best possible
 starting position and it should be used deliberately rather than drifted past.
 
-One app has ever run: gengui, containerised on 5 July, up since 21 July.
+One app has ever run: <app>, containerised on 5 July, up since 21 July.
 
 ## 1. The one assumption that has to die first
 

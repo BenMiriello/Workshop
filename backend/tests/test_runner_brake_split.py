@@ -306,7 +306,7 @@ class TestTheTargetMustBeATree:
 class TestStopNamesItsTree:
     def test_stop_without_a_dir_is_refused(self, client):
         """Runners are per tree. A missing `dir` used to resolve to the platform
-        repo, so stopping a `projects/birds` runner without naming it killed the
+        repo, so stopping a `projects/widgets` runner without naming it killed the
         wrong one and reported success."""
         r = client.post("/api/queue/runner/stop")
         assert r.status_code == 400

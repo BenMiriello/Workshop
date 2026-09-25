@@ -122,6 +122,10 @@ from _ratchet_delta import extracted_tree  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "scripts" / "no_app_names_baseline.json"
+# The sticky roster is a list of THIS installation's apps, so it lives beside the
+# other instance registries in `.runtime/`, never in the tracked baseline: a
+# re-pin used to write every installed app's name into a file every clone gets.
+WATCHED = ROOT / ".runtime" / "no_app_names_watched.json"
 
 # THE WHOLE TRACKED TREE IS SCANNED, since 2026-08-27.
 #
@@ -452,7 +456,7 @@ def roster(baseline: dict) -> list[str]:
     THE ROSTER IS THE WHOLE GATE. An app that is not on it is not scanned, so
     its name in platform source counts zero and the total reads clean for a
     violation that is sitting right there. That is not hypothetical: on
-    2026-09-03 this function read one registry, `gengui` was declared only in
+    2026-09-03 this function read one registry, an app was declared only in
     another, and seven platform files naming it counted nothing.
 
     Three sources, unioned, because this tree has three registries that do not
@@ -463,10 +467,17 @@ def roster(baseline: dict) -> list[str]:
       2. `.runtime/installed-apps.json`    -- what is mounted here
       3. `.runtime/projects.json`          -- what has a working tree here
 
-    Plus `watched` from the baseline, which is sticky on purpose so an app that
-    leaves the catalog is still scanned for the leftovers it left behind.
+    Plus `watched`, which is sticky on purpose so an app that leaves the
+    catalog is still scanned for the leftovers it left behind. It is read from
+    `.runtime/no_app_names_watched.json` (instance-local) and from the
+    baseline's own `watched` key, which a tracked baseline leaves empty.
     """
     names: set[str] = set(baseline.get("watched", []))
+    if WATCHED.exists():
+        try:
+            names.update(json.loads(WATCHED.read_text()).get("watched", []))
+        except (ValueError, OSError, AttributeError):
+            pass
 
     # 1. The declarations, wherever they currently are.
     #
@@ -725,7 +736,8 @@ def main() -> int:
                 "extraction (stage 7), imports at the AppSpec seams (stage 4), "
                 "home_path_sites when every path in $HOME comes from config. "
                 "`watched` is sticky on purpose, so an app that leaves the catalog "
-                "is still scanned for leftovers. "
+                "is still scanned for leftovers; it names this installation's "
+                "apps, so it is kept in .runtime/no_app_names_watched.json. "
                 "NOTE 2026-08-27: content/imports/literals were re-pinned at a "
                 "HIGHER measured value on this date, once, because the scan area "
                 "was widened from six directories to the tracked tree and an "
@@ -734,7 +746,7 @@ def main() -> int:
                 "See `raised` below for the full reason, which prints on every run "
                 "until each count comes back down."
             ),
-            "watched": result["watched"],
+            "watched": [],
             "content_files": result["content_files"],
             "import_sites": result["import_sites"],
             "literal_sites": result["literal_sites"],
@@ -755,6 +767,8 @@ def main() -> int:
             if keep:
                 payload["raised"] = keep
         BASELINE.write_text(json.dumps(payload, indent=2) + "\n")
+        WATCHED.parent.mkdir(parents=True, exist_ok=True)
+        WATCHED.write_text(json.dumps({"watched": result["watched"]}, indent=2) + "\n")
         print(f"baseline written: {BASELINE.relative_to(ROOT)}")
         for k, v in sorted(payload.get("raised", {}).items()):
             print(f"  RAISED {k} {v['from']} -> {v['to']}: {v['because']}")

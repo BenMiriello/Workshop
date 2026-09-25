@@ -84,17 +84,17 @@ Standard entity-resolution / retrieve-then-rerank shape:
 Shipped in `833ee22`. The LLM is the nuanced judge the operator expected; the
 embeddings are what make it affordable to only ask it about real candidates.
 
-## Relationship to "clawd" / clawdbot, and our orchestration stack
+## Relationship to the bridge agent, and our orchestration stack
 
-Operator questions (2026-07-15): are we based on clawd? what is similar/different?
+Operator questions (2026-07-15): are we based on the bridge? what is similar/different?
 do we use a framework to orchestrate agents?
 
-**Not based on clawd.** "Clawd" here is the `clawdbot` bridge (a Discord <-> Claude
+**Not based on the bridge.** "The bridge" here is the bridge (a Discord <-> Claude
 Code bridge with cron supervision, `<bridge-checkout>/`) running under the `the service user`
 Linux user; the bridge agent runs on it. Workshop is a SEPARATE, standalone product: its
 own FastAPI backend + React frontend + task/agent pipeline. What they share is
 the HOST (`the service user` user), some infra conventions, and historically Letta (being
-removed in Stage 9). Workshop is hosted ALONGSIDE clawd, not built ON it. Keeping
+removed in Stage 9). Workshop is hosted ALONGSIDE the bridge, not built ON it. Keeping
 Workshop on the `the service user` user is fine and is separable from the naming question.
 
 **No agent-orchestration framework, on purpose.** No LangGraph / CrewAI / AutoGen
@@ -115,10 +115,10 @@ this, Temporal-style durable execution is the natural upgrade, not needed now.
 ## Deferred decision (operator to weigh in, AFTER the system is proven)
 
 Not now; revisit once the rebuilt system is tested, proven, and more mature:
-- Reevaluate the legacy "clawd" name and the `clawd` service branding. Hosting
+- Reevaluate the bridge's legacy name and its service branding. Hosting
   under the `the service user` user can probably stay; the NAME is what to reconsider.
 - Fold a the bridge agent-form agent INTO this system, defined by our own Agent primitive
   (slug + persona + trigger, riding the shared pipeline), rather than as the
-  separate clawdbot/Letta process it is today.
+  separate bridge/Letta process it is today.
 This is a discussion item that needs the operator; captured as a backlog task so
 it is not lost, explicitly gated on "system tested and matured" first.

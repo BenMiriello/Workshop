@@ -88,10 +88,10 @@ class TestTheRealTurnHandsDownTheRealChatsScope:
 
     def test_a_project_chats_context_key_rides_the_launch_env(self, monkeypatch):
         monkeypatch.setattr(chat_store, "get_thread",
-                            lambda tid: {"context_key": "project:birds"})
+                            lambda tid: {"context_key": "project:widgets"})
         doc = _config_of(bs._build_cmd(_meta("thread-2"))[0])
         env = doc["mcpServers"]["workshop"].get("env") or {}
-        assert env.get("WORKSHOP_QUERY_SCOPE") == "project:birds"
+        assert env.get("WORKSHOP_QUERY_SCOPE") == "project:widgets"
 
     def test_no_thread_omits_the_var_rather_than_guessing_workshop(self, monkeypatch):
         """No context_key known (a thread that vanished between claiming the
@@ -144,10 +144,10 @@ class TestTheBackendProcesssOwnEnvironmentIsNeverConsulted:
         real context_key may decide it now."""
         monkeypatch.setenv("WORKSHOP_QUERY_SCOPE", "development")
         monkeypatch.setattr(chat_store, "get_thread",
-                            lambda tid: {"context_key": "project:birds"})
+                            lambda tid: {"context_key": "project:widgets"})
         doc = _config_of(bs._build_cmd(_meta("thread-5"))[0])
         env = doc["mcpServers"]["workshop"].get("env") or {}
-        assert env.get("WORKSHOP_QUERY_SCOPE") == "project:birds"
+        assert env.get("WORKSHOP_QUERY_SCOPE") == "project:widgets"
 
 
 class TestABackgroundPassNeverDefaultsToDevelopment:

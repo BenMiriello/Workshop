@@ -38,7 +38,6 @@ These govern how work is done. An agent that skips them does the wrong thing.
   origin. Still names `scripts/build_workshop_public.sh` as the by-hand rebuild.
 - [`instances-and-forking.md`](instances-and-forking.md) - date not stated - CURRENT (judged)
   Classify every change as Platform or Local before committing; when unsure, Local.
-  Links `simonsays-local-instance.md`, which does not exist in the tree.
 - [`deploying.md`](deploying.md) - date not stated - CURRENT for bring-up, STALE for updates
   `scripts/bootstrap.sh` brings up a new machine; explains why systemd not a
   container. Its "Updating an existing install" block contradicts `apply.sh`.
@@ -200,11 +199,10 @@ The durable decision layer. 19 accepted, 9 proposed, 1 template, 1 stray.
 - [`archive/root-todo-legacy-2026-07-15.md`](archive/root-todo-legacy-2026-07-15.md)
   2026-07-15 - HISTORICAL. The prose root `TODO.md` preserved at the cutover to
   `.tasks.json`. History, not a queue.
-- [`proposals/`](proposals/) - 3 files, all UNRATIFIED PROPOSAL, 2026-06-17 and
+- [`proposals/`](proposals/) - 2 files, all UNRATIFIED PROPOSAL, 2026-06-17 and
   2026-07-12: `app-versioning-rollback.md` (browse and roll back app versions from
-  the builder), `in-app-updates-and-migrations.md` (how a downstream instance pulls
-  the platform forward), `workshop-self-hosting-and-panel.md` (Workshop versus the
-  `control-panel` systemd supervisor). None implemented.
+  the builder) and `in-app-updates-and-migrations.md` (how a downstream instance
+  pulls the platform forward). None implemented.
 - [`deployments/proposal-2026-07-18.md`](deployments/proposal-2026-07-18.md)
   2026-07-18 - UNRATIFIED PROPOSAL. A Deployment as a hosted target above
   `app_runner`; sits above the entity model. Note that
@@ -240,9 +238,6 @@ Five audits plus one living posture doc plus two runbooks. Open items in section
   2026-08-11/12 - CURRENT for its open list, section 6 explicitly HISTORICAL.
   Application-layer separation between chat scopes and between users. Section 8 is
   what shipped; sections "Still open" are the live backlog.
-- [`security-remediation-runbook.md`](security-remediation-runbook.md) - 2026-07-18 -
-  CURRENT as a backlog. The items from the 07-18 audit needing root, another stack
-  owner, or an architecture decision. Exact commands.
 - [`instance-audits/security-fixes-for-sister-instances.md`](instance-audits/security-fixes-for-sister-instances.md)
   2026-07-18 - CURRENT if a sister instance exists. What travels by git and what
   each instance must apply by hand.
@@ -251,7 +246,7 @@ Five audits plus one living posture doc plus two runbooks. Open items in section
 - [`instance-audits/security-invariants.md`](instance-audits/security-invariants.md) - CURRENT for
   <bridge-agent> only. The rules the nightly `<bridge-checkout>/security/audit.sh` enforces.
 - [`instance-audits/bringup-playbook.md`](instance-audits/bringup-playbook.md) - 2026-05-17 -
-  HISTORICAL (judged). Per-tenant clawdbot bring-up, drafted for promotion elsewhere.
+  HISTORICAL (judged). Per-tenant bridge-agent bring-up, drafted for promotion elsewhere.
 - [`instance-audits/security-audit-install-cron.txt`](instance-audits/security-audit-install-cron.txt) -
   the cron install snippet for that audit.
 
@@ -328,48 +323,8 @@ Chat has the densest doc set and most of it is closed. The two to read are
 
 ## 6. The apps
 
-Installed on this instance per `.runtime/installed-apps.json`: finance, budget,
-birds, location, commute, health, wearables, notes-app. gengui is a project used as
-the multi-service runner test case, not an installed app.
-
-Birds (live):
-- [`birdnet-accuracy.md`](birdnet-accuracy.md) - CURRENT. Four filters over raw
-  BirdNET so it stops reporting birds it never heard; the range filter is the big win.
-- [`birds-atlas.md`](birds-atlas.md) - CURRENT. Call-type clustering from BirdNET
-  embeddings: clip to embedding to cluster to one hand label to auto-tag.
-- [`birds-recordings-plan.md`](birds-recordings-plan.md) - 2026-06-16 - UNRATIFIED
-  PROPOSAL (judged). Keep the audio clip per detection under per-bird rules and a
-  hard storage budget.
-- [`birds-presence-vs-count.md`](birds-presence-vs-count.md) - 2026-06-09 - WIP,
-  not scheduled, says so in its banner. Reframe detections as vocalization events
-  with intensity, separating presence from talkativeness.
-- [`birds-redesign/`](birds-redesign/) - 5 files, 2026-06-18 - HISTORICAL, COMPLETE.
-  All 8 phases shipped on the `birds-redesign` branch. `MASTER_SPEC.md` and
-  `CHARTS_SPEC.md` are still the reference for birds chart encoding (presence
-  first); `PLAN.md` carries the completion banner; the two `.html` files are the
-  design-team visual references.
-
-Commute and location (live):
-- [`commute-v2-plan.md`](commute-v2-plan.md) - 2026-06-13 - approved to build,
-  status of completion UNKNOWN from the doc. Prime directive: zero hardcoding of the
-  operator's commute; everything learned from observed location plus transit feeds.
-- [`owntracks-ios.md`](owntracks-ios.md) - CURRENT setup doc. Owntracks streams
-  background location to a tailnet-only endpoint under Basic auth. The web Location
-  tab is gone because iOS suspends backgrounded browser geolocation.
-
-Health and wearables (live):
-- [`health-auto-export-ios.md`](health-auto-export-ios.md) - CURRENT setup doc.
-  Health Auto Export (paid iOS app) posts Apple Health to a tailnet endpoint.
-  States that Open Wearables was poorly built and out of date and was replaced.
-
-Notes (live):
-- [`notes-app/apple-notes-import.md`](notes-app/apple-notes-import.md) - 2026-07-14 -
-  CURRENT. Two committed stdlib-only idempotent scripts import Apple Notes into the
-  Workshop Notes vault as Markdown, re-runnable without duplicating.
-
-Finance and budget (live): no dedicated doc under `docs/` outside
-`platform-redesign/`. Their security-relevant behaviour is in `security-posture.md`
-and the Plaid items in section 9.
+App-specific docs live with each app, in its own tree or repository, not in this
+one. What an installation has installed is in its own `.runtime/installed-apps.json`.
 
 Platform-level app docs: [`app-platform-plan.md`](app-platform-plan.md) - 2026-06-06 -
 HISTORICAL proposal, largely realised by `apps-are-pluggable.md` and the pluggable
@@ -428,8 +383,8 @@ Wrong typecheck gate (`npx tsc --noEmit`, which exits 0 having checked nothing):
   [`chat-system-overhaul-handoff-2026-07-25.md`](chat-system-overhaul-handoff-2026-07-25.md)
   lines 125 and 269, [`chat/chat-header-restructure-2026-07-30.md`](chat/chat-header-restructure-2026-07-30.md)
   line 213, [`agent-chat-redesign/phase-1-spec.md`](agent-chat-redesign/phase-1-spec.md)
-  lines 33 and 276, [`workshop-v1/04-implementation-plan.md`](workshop-v1/04-implementation-plan.md),
-  [`birds-redesign/PLAN.md`](birds-redesign/PLAN.md). Use `npm run typecheck` from the root.
+  lines 33 and 276, [`workshop-v1/04-implementation-plan.md`](workshop-v1/04-implementation-plan.md) and
+  an app's own redesign plan. Use `npm run typecheck` from the root.
 
 Contradicts the current design model:
 
@@ -442,79 +397,51 @@ Contradicts the current design model:
   entities. Superseded by `platform-redesign/app-is-the-entity-2026-08-20.md`.
 - [`PROJECT.md`](../PROJECT.md) - points at a root `TODO.md` work queue retired at the
   2026-07-15 `.tasks.json` cutover, and at `src/ui` primitives now at `packages/ui`.
-- [`instances-and-forking.md`](instances-and-forking.md),
-  [`proposals/in-app-updates-and-migrations.md`](proposals/in-app-updates-and-migrations.md),
-  [`proposals/workshop-self-hosting-and-panel.md`](proposals/workshop-self-hosting-and-panel.md) -
-  all link `docs/simonsays-local-instance.md`, which is not in the tree. Dead link.
 
 ---
 
 ## 9. Open security remediation items
 
-Extracted from the audits. Nothing here is marked done in its source doc.
-
-From `instance-audits/security-audit-2026-07-18.md` (prioritized action list) and
-`security-remediation-runbook.md`:
-
-1. C3 - inbound IPv6 firewall policy unverified. Decides the blast radius of
-   everything bound on `[::]`. Root.
-2. C2 - `lovelace-redis` unauthenticated on `0.0.0.0` plus IPv6, known RCE path.
-   Needs `requirepass` and a loopback bind. Stack owner plus root.
-3. C1 / A1 - the service user is in the `docker` group, which is root-equivalent,
-   and the app runner depends on it. Runbook Part 1 proposes rootless Docker plus
-   dropping the group. Architecture decision plus root.
-4. H2 - backend binds `0.0.0.0:8000` with RFC1918 trust, so LAN-reachable host code
-   execution. Bind to `127.0.0.1`.
-5. H4 / H7 - ComfyUI `:8188` and Ollama `:11434` / `:11435` unauthenticated on
-   `0.0.0.0`. Loopback-bind. Stack owners plus root.
-6. H5 - unauthenticated control-panel service manager on `:9000` exposed to the
-   tailnet. Auth wall or drop the `8449` Serve mapping.
-7. H3 - `NOPASSWD` sudo to `git` as `clawd-house` is code execution as that user.
-   Drop or wrap. Root.
-8. M3 - sshd password authentication effectively enabled on `0.0.0.0:22`. Key-only.
-9. M2 - open-wearables dev frontend on `0.0.0.0:3100`; its backend env holds many
-   third-party secrets in a committed file.
-10. L2 - the Vite dev server `:5173` is served to the tailnet via Serve `8443`.
-11. L5 - Samba anonymous share enumeration.
-
-Closed in that pass and listed only so they are not re-reported: H1, H6, M4, L1,
-L3, L4.
+Extracted from the audits. Nothing here is marked done in its source doc. Items
+about one host (its users, daemons, firewall and exposed ports) are kept in that
+installation's own `docs/instance-audits/`, which is untracked; only the platform
+items are listed here.
 
 From `instance-audits/security-audit-2026-07-18-agents.md`:
 
-12. A2 - `touches`, `latitude` and `grants` are advisory and the agent can rewrite them.
-13. A3 - exfiltration channels remain open despite the egress guard.
-14. A4 - recursive `claude` spawn with no recursion or token budget.
-15. A5 - the personal-data partition is application-layer only.
-16. A6 - app containers run unconfined.
+1. A2 - `touches`, `latitude` and `grants` are advisory and the agent can rewrite them.
+2. A3 - exfiltration channels remain open despite the egress guard.
+3. A4 - recursive `claude` spawn with no recursion or token budget.
+4. A5 - the personal-data partition is application-layer only.
+5. A6 - app containers run unconfined.
 
 From `instance-audits/security-audit-2026-08-11-scope-separation.md`, "Still open" plus "Still open
 after phase two":
 
-17. `shared/knowledge/` is gated, not partitioned. A second user gets none of the
+6. `shared/knowledge/` is gated, not partitioned. A second user gets none of the
     workshop knowledge layer rather than their own. Blocked on `projects/`, `apps/`
     and `build-agents/` having no `owner_id`.
-18. `WORKSHOP_CHAT_CWD` is set on this deployment and points into the workshop tree.
+7. `WORKSHOP_CHAT_CWD` is set on this deployment and points into the workshop tree.
     Operator config, deliberately not changed in that pass.
-19. A non-operator project or build turn still runs the full built-in toolset under
+8. A non-operator project or build turn still runs the full built-in toolset under
     `bypassPermissions` at its cwd. The fix underneath everything else is a dedicated
-    lower-privilege OS execution identity for chat-driven turns. Same item as C1/A1.
-20. `POST /chat/threads` still stores an arbitrary `context_key` verbatim.
-21. Background sweeps have no owner axis. `dispatch_triggers.sh`, `project_ralph.sh`,
+    lower-privilege OS execution identity for chat-driven turns.
+9. `POST /chat/threads` still stores an arbitrary `context_key` verbatim.
+10. Background sweeps have no owner axis. `dispatch_triggers.sh`, `project_ralph.sh`,
     `liveness_watchdog.sh` and `memory_keeper_run.sh` iterate every project as one OS
     user with the operator's `gh` login and OAuth token. Named as the next thing to build.
-22. `stores.py`'s `per_owner` flag is unimplemented; `_operator_runtime_dir()` resolves
+11. `stores.py`'s `per_owner` flag is unimplemented; `_operator_runtime_dir()` resolves
     once at registration. The Store-registry door is not per-owner even though the REST
     path is.
-23. The Plaid MCP (`mcp/plaid/server.js`) reads one global `plaid-tokens.json` with no
+12. The Plaid MCP (`mcp/plaid/server.js`) reads one global `plaid-tokens.json` with no
     owner parameter. Currently closed only by denying non-operators MCP wholesale.
-24. Single-`domain_owner` ingest paths (location, health, commute) each need a per-user
+13. Single-`domain_owner` ingest paths (an app's machine-ingest endpoints) each need a per-user
     credential before they can be per-user.
-25. `apps/<key>/` is tracked source shared by everyone, which is wrong for
-    `apps/<slug>/birdnet.db`, one database for all users.
+14. `apps/<key>/` is tracked source shared by everyone, which is wrong for an
+    app database kept inside it: one database for all users.
 
 Cross-reference: `decisions/0014` cites `[SEC-A1]` (execution identity) and `[SEC-A2]`
-(stop representing scope as a security boundary). Those are items 3 and 19 above.
+(stop representing scope as a security boundary). `[SEC-A1]` is item 8 above.
 
 ---
 
@@ -531,14 +458,9 @@ Cross-reference: `decisions/0014` cites `[SEC-A1]` (execution identity) and `[SE
   [`auth-redesign/04-critique-and-refinements.md`](auth-redesign/04-critique-and-refinements.md),
   [`proposals/in-app-updates-and-migrations.md`](proposals/in-app-updates-and-migrations.md),
   [`archive/root-todo-legacy-2026-07-15.md`](archive/root-todo-legacy-2026-07-15.md).
-  Security finding M1 in [`instance-audits/security-audit-2026-07-18.md`](instance-audits/security-audit-2026-07-18.md)
-  and its runbook entry are about a Letta server that is gone, as is the
-  `infra/letta/.env` chmod in L1. `agent-chat-redesign/plan.md` already notes the
-  2026-07-15 Stage 9 teardown.
-- **Open Wearables** - replaced. [`health-auto-export-ios.md`](health-auto-export-ios.md)
-  says so directly; `instance-audits/security-audit-2026-07-18.md` finding M2 is still written against
-  a running open-wearables dev server.
-- **The web Location tab** - removed. [`owntracks-ios.md`](owntracks-ios.md) records why.
+  The `infra/letta/.env` chmod in the 07-18 audit is about the same removed
+  server. `agent-chat-redesign/plan.md` already notes the 2026-07-15 Stage 9
+  teardown.
 - **The root `TODO.md` prose work queue** - retired 2026-07-15 into `.tasks.json`.
   [`PROJECT.md`](../PROJECT.md) still directs work through it.
 - **`INTERVENTIONS.md` as the Notes surface** - retired by `decisions/0002`.
@@ -572,8 +494,6 @@ Whole directories, all superseded. Do not update them and do not build from them
   bar one DNS command. `04-critique-and-refinements.md` wins over the earlier four
   where they disagree. Historical as a plan, but this is the design the shipped auth
   model came from, so read it if you touch auth.
-- [`birds-redesign/`](birds-redesign/) - see section 6. Complete, but the two SPEC
-  files remain the reference for birds charts.
 - [`chat/`](chat/) - 2 files, July 2026. Pre-rebuild chat audits, both overtaken by
   the August rebuild set in section 5.
 - [`archive/`](archive/) - 1 file. History by definition.

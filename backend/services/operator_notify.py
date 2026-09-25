@@ -9,10 +9,10 @@ operator notify file -- and a chat had none.
 
 WHY THIS DOES NOT USE THE NOTIFY FILE. Measured 2026-09-01: nothing reads it.
 `WORKSHOP_NOTIFY_FILE` has four writers (`services/scoped_exec`,
-`services/commute/alerter`, and the two report scripts) and no reader anywhere --
+an app's alerter, and the two report scripts) and no reader anywhere --
 not in this repo, not on the host, not in any timer or unit. The file names a
 "chat bridge" that was to tail it; that bridge is gone from this host, so every
-line written since has gone into a drop nobody empties. The commute alerter's own
+line written since has gone into a drop nobody empties. That alerter's own
 delivery log records `{"queued": true, "via": "notify-file"}` for its last alerts,
 which is that path reporting, accurately, that it did not deliver. Appending to
 it here would have produced a tool that always succeeds and never arrives, which
@@ -59,7 +59,7 @@ _TOKEN_VAR = "DISCORD_BOT_TOKEN"
 # 2026-09-01, the only mention of it in the tree was a commented line in the
 # instance-config example. So an installation could name its credential file,
 # have a valid credential in it, and still have every notification fall back to
-# the file nothing reads -- which is exactly what the commute alerter's delivery
+# the file nothing reads -- which is exactly what that app alerter's delivery
 # log recorded, `{"queued": true, "via": "notify-file"}`, for every alert it
 # ever sent. The variable is a declaration; something has to honour it.
 _TOKEN_FILE_VAR = "WORKSHOP_DISCORD_ENV"

@@ -91,8 +91,8 @@ def _has_route_module(name: str) -> bool:
 def _in_tree_factories() -> "list[tuple[str, Callable[[], AppSpec]]]":
     """Every `services/<app>_app.py` that exposes `app_spec()`, by module name.
 
-    The id is deliberately NOT derived from the filename: `notes_app.py`
-    declares the app `notes-app`, and a filename-derived id would have to
+    The id is deliberately NOT derived from the filename: `<name>_app.py`
+    may declare the app `<name>-app`, and a filename-derived id would have to
     special-case that -- which is a platform file knowing an app's name again.
     The module is imported, `app_spec()` is called by the builder, and the id is
     read off the returned spec.

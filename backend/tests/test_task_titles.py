@@ -29,7 +29,7 @@ def _balanced_brackets(s: str) -> bool:
 
 
 def test_short_title_is_left_alone():
-    text = "Fix the commute alerter\nObjective: it stopped firing on Fridays."
+    text = "Fix the widget alerter\nObjective: it stopped firing on Fridays."
     assert tasks._normalize_text(text) == text
 
 
@@ -104,7 +104,7 @@ def test_normalizing_is_idempotent():
     """
     for text in [
         "Rewire " + "everything everywhere all at once " * 8,
-        "[SEC-M2] open-wearables: get vendor secrets out of container env into a "
+        "[SEC-M2] remote-sensors: get vendor secrets out of container env into a "
         "non-committed secret store, and rotate every one of them",
         "A short one\nwith a body",
     ]:
@@ -114,9 +114,9 @@ def test_normalizing_is_idempotent():
 
 def test_a_stacked_preview_from_an_older_threshold_is_repaired():
     stacked = (
-        "[SEC-M2] open-wearables: get vendor secrets out of…\n"
-        "[SEC-M2] open-wearables: get vendor secrets out of container env into a…\n"
-        "[SEC-M2] open-wearables: get vendor secrets out of container env into a "
+        "[SEC-M2] remote-sensors: get vendor secrets out of…\n"
+        "[SEC-M2] remote-sensors: get vendor secrets out of container env into a…\n"
+        "[SEC-M2] remote-sensors: get vendor secrets out of container env into a "
         "non-committed secret store"
     )
     out = tasks._normalize_text(stacked)

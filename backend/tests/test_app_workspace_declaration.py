@@ -2,15 +2,12 @@
 
 Two candidate directories exist for one app while the registries are unmerged
 (app-is-the-entity-2026-08-20.md sec 9): `apps/<slug>` and `projects/<slug>`.
-Which one actually holds the app is NOT uniform, measured 2026-08-23:
-
-    birds      apps/ 30150 files   projects/    41   (a scaffold)
-    gengui     apps/     0         projects/  1754
-    commute    apps/     3         projects/    10   (split across both)
+Which one actually holds the app is NOT uniform: some apps live only under
+`apps/`, some only under `projects/`, and some are split across both.
 
 `_resolve_app` used to say "an app's files ARE its linked project's working
 tree", which left the largest app unreachable from its own Files tab. An
-emptiness heuristic gets `commute` wrong the other way, so the app has to say,
+emptiness heuristic gets a split app wrong the other way, so the app has to say,
 and it says it with a manifest in its own tree.
 """
 from __future__ import annotations

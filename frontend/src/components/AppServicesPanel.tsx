@@ -198,7 +198,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
   const phaseLabel = status?.phase === "up" ? "running" : (status?.phase ?? "stopped");
 
   // Deps only matter to the services that consume them. If the only services
-  // that need Docker are disabled (gengui: postgres/redis/falkordb feed `core`,
+  // that need Docker are disabled (e.g. postgres/redis feed a `core` service
   // which is off), a down dep is expected — not an alarm. Treat deps as blocking
   // only when an enabled service actually failed to come up.
   const enabledFailed = services.some(

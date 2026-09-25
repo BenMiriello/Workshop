@@ -28,8 +28,8 @@ import {
 
 const tree: ScopeNode[] = [
   { key: "workshop", parent: null, depth: 0 },
-  { key: "project:birds", parent: "workshop", depth: 1 },
-  { key: "agent:scout", parent: "project:birds", depth: 2 },
+  { key: "project:widgets", parent: "workshop", depth: 1 },
+  { key: "agent:scout", parent: "project:widgets", depth: 2 },
   { key: "development", parent: null, depth: 0 },
 ];
 
@@ -46,8 +46,8 @@ describe("node ids round-trip", () => {
     { kind: "root" },
     { kind: "docs" },
     { kind: "scope", scope: "workshop" },
-    { kind: "scope", scope: "project:birds" },
-    { kind: "note", scope: "project:birds", id: "ports-are-squatted-abc" },
+    { kind: "scope", scope: "project:widgets" },
+    { kind: "note", scope: "project:widgets", id: "ports-are-squatted-abc" },
     { kind: "docdir", path: "docs/platform-redesign" },
     { kind: "doc", path: "docs/platform-redesign/entity-model.md" },
   ];
@@ -76,8 +76,8 @@ describe("scope levels", () => {
   });
 
   it("lists only the direct children of a scope", () => {
-    expect(childScopes(tree, "workshop")).toEqual(["project:birds"]);
-    expect(childScopes(tree, "project:birds")).toEqual(["agent:scout"]);
+    expect(childScopes(tree, "workshop")).toEqual(["project:widgets"]);
+    expect(childScopes(tree, "project:widgets")).toEqual(["agent:scout"]);
     expect(childScopes(tree, "agent:scout")).toEqual([]);
   });
 });
@@ -85,14 +85,14 @@ describe("scope levels", () => {
 describe("notesInScope", () => {
   const notes = [
     { id: "a", scope: "workshop", title: "A", hook: "" },
-    { id: "b", scope: "project:birds", title: "B", hook: "" },
+    { id: "b", scope: "project:widgets", title: "B", hook: "" },
   ] as NoteRow[];
 
   // `GET /api/memory/notes?scope=workshop` answers with the scope AND everything it
   // reaches, so a level has to narrow it or a child's note appears twice.
   it("keeps a reached child's note off its parent's level", () => {
     expect(notesInScope(notes, "workshop").map((n) => n.id)).toEqual(["a"]);
-    expect(notesInScope(notes, "project:birds").map((n) => n.id)).toEqual(["b"]);
+    expect(notesInScope(notes, "project:widgets").map((n) => n.id)).toEqual(["b"]);
   });
 });
 
@@ -141,7 +141,7 @@ describe("path helpers", () => {
 
 describe("parentOf walks containment, not history", () => {
   it("takes a root-level note up to the root", () => {
-    expect(parentOf({ kind: "note", scope: "project:birds", id: "x" }, tree)).toEqual({
+    expect(parentOf({ kind: "note", scope: "project:widgets", id: "x" }, tree)).toEqual({
       kind: "root",
     });
   });
@@ -162,7 +162,7 @@ describe("parentOf walks containment, not history", () => {
   it("takes a scope up to its parent scope, and a root scope up to the tree root", () => {
     expect(parentOf({ kind: "scope", scope: "agent:scout" }, tree)).toEqual({
       kind: "scope",
-      scope: "project:birds",
+      scope: "project:widgets",
     });
     expect(parentOf({ kind: "scope", scope: "workshop" }, tree)).toEqual({ kind: "root" });
   });
@@ -212,7 +212,7 @@ describe("the kit's vocabulary", () => {
     expect(nodeLabel({ kind: "root" })).toBe("Memory");
     expect(nodeLabel({ kind: "docs" })).toBe("Documents");
     expect(nodeLabel({ kind: "docdir", path: "docs/platform-redesign" })).toBe("platform-redesign");
-    expect(nodeLabel({ kind: "scope", scope: "project:birds" })).toBeTruthy();
+    expect(nodeLabel({ kind: "scope", scope: "project:widgets" })).toBeTruthy();
   });
 
   it("labels a leaf from its address, which the level builder then overrides", () => {
@@ -310,9 +310,9 @@ describe("URL addressing keeps the links refs.py already handed out", () => {
       id: "ports-abc",
     });
     expect(nodeForParams({ path: "docs/a.md" })).toEqual({ kind: "doc", path: "docs/a.md" });
-    expect(nodeForParams({ scope: "project:birds" })).toEqual({
+    expect(nodeForParams({ scope: "project:widgets" })).toEqual({
       kind: "scope",
-      scope: "project:birds",
+      scope: "project:widgets",
     });
   });
 
@@ -402,8 +402,8 @@ describe("titleOfMarkdown", () => {
 
 describe("scopeForNewNote", () => {
   it("files into the scope of the note you are reading", () => {
-    expect(scopeForNewNote({ kind: "note", scope: "project:birds", id: "x" }, "workshop"))
-      .toBe("project:birds");
+    expect(scopeForNewNote({ kind: "note", scope: "project:widgets", id: "x" }, "workshop"))
+      .toBe("project:widgets");
   });
 
   it("files into the scope you have selected", () => {
@@ -431,7 +431,7 @@ describe("scopeForNewNote", () => {
 // ---- Where Memory opens (2026-08-27, MEM-16) -------------------------------
 
 describe("openingScope", () => {
-  const scopes = ["workshop", "development", "project:birds"];
+  const scopes = ["workshop", "development", "project:widgets"];
 
   it("opens at the scope you were last in", () => {
     expect(openingScope("development", scopes)).toBe("development");

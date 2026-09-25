@@ -516,8 +516,8 @@ relevant to a cloud-hosted production version at all; **GPU memory** and **the
 broker** are "a specific thing to my particular distribution and should not be
 included in this at all."
 
-He is right about the broker: `gpubrokerd` is an external daemon at
-`127.0.0.1:8447` that Workshop is only a client of, with a hardcoded 22500 MiB
+He is right about the broker: `gpubrokerd` is an external daemon on a
+loopback port that Workshop is only a client of, with a hardcoded 22500 MiB
 budget. It cannot exist in a cloud deploy.
 
 **And Events and Services are already dead on his origin, which settles them.**

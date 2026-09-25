@@ -462,7 +462,7 @@ def revoke_device_by_prefix(user_id: int, id_prefix: str) -> int:
 
 def create_service_token(user_id: int, scope: str, label: Optional[str] = None) -> str:
     """Mint an opaque service token bound to a user AND a scope (e.g.
-    'ingest:location', 'automation:commute'). Returns the raw token once."""
+    'ingest:<domain>', 'automation:<app>'). Returns the raw token once."""
     if not scope:
         raise ValueError("a service token requires a scope")
     init_db()

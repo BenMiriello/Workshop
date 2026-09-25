@@ -4,7 +4,7 @@ WHY THIS MODULE EXISTS. The append-to-events.jsonl sequence was hand-copied in
 three places (`routes/events.py` plus two app routers, one of which has
 since left this repo)
 and the three copies had already drifted: plaid's omitted the `signature` field
-entirely, and birds' reached into `routes.events` for a private helper
+entirely, and another app's reached into `routes.events` for a private helper
 (`_load_subscriptions`) to do it, making one app's route module depend on
 another route module's internals.
 

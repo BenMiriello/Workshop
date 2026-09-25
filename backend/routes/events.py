@@ -45,7 +45,7 @@ def known_sources() -> set[str]:
     return PLATFORM_SOURCES | app_registry.installed_event_sources()
 
 
-# `_load_subscriptions` was a third copy of the same read, and routes/birds.py
+# `_load_subscriptions` was a third copy of the same read, and an app's route module
 # imported it across route modules to publish an event. Both are gone: one
 # implementation, in services/event_log.
 _load_subscriptions = event_log.load_subscriptions
@@ -217,8 +217,8 @@ async def receive_event(source: str, request: Request):
 
 # GET /events/subscriptions IS GONE (2026-08-20). It dumped the source -> agent
 # map for frontend/src/pages/Events.tsx, which is deleted; nothing else called
-# it. `_load_subscriptions` stays, because event_dispatch and routes/birds read
-# it.
+# it. `_load_subscriptions` stays, because event_dispatch and app route modules
+# read it.
 #
 # GET /events/recent SURVIVES, and not for the UI. `scripts/chat_event_bridge.py`
 # polls it every 2s as an OUTBOUND MESSAGE BUS: it reads `discord-reply` records

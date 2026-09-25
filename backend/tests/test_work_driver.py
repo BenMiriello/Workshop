@@ -217,8 +217,8 @@ def test_the_worker_is_resolved_through_makers_not_re_derived(monkeypatch):
 
     THE BUG THIS PINS WAS WRITTEN AND CAUGHT THE SAME NIGHT. The first version
     of `worker_for` compared the agent record's `project_slug` against the scope
-    key directly. The registry stores a BARE slug (`notes-app`) and
-    `task_scope.key_for_root` returns a PREFIXED key (`project:notes-app`), so
+    key directly. The registry stores a BARE slug (`<slug>`) and
+    `task_scope.key_for_root` returns a PREFIXED key (`project:<slug>`), so
     the comparison was false for every project scope. It was true only for
     `development`, whose key happens to carry no prefix, which is the one scope
     it was tested against -- and because `ensure()` refuses to start a runner it

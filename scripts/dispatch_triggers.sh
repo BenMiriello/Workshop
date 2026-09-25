@@ -376,7 +376,7 @@ for slug, p in sorted(projects.items()):
 
     # DOOR 7 (design §2). The `self: true` registry row — slug `development`,
     # dir = the platform repo — reaches this loop as an ordinary candidate, and
-    # until this branch existed nothing here told it apart from `birds`. It was
+    # until this branch existed nothing here told it apart from an app's project. It was
     # closed only by DATA: that row's autonomy happens to be on-demand, so the
     # preset test below skipped it. A stored value someone can change from the
     # UI is not a gate. §8 decision 2: the dispatcher iterates projects always,

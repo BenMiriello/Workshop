@@ -9,7 +9,7 @@ and importable/fresh. It generalizes the single-process `LocalRunner` from
 and is designed local-now, remote-later: the manifest is the contract a future
 `RemoteRunner` (containers) reads unchanged.
 
-Test case: **gengui** (a Bun `core` API + a Vite `frontend` + a Python
+Test case: **<app>** (a Bun `core` API + a Vite `frontend` + a Python
 `inference-worker`, plus Postgres/Redis/FalkorDB) — the exact "multiple servers as
 one app" shape this targets.
 
@@ -84,14 +84,14 @@ overlay run).
    **The app must be base-aware:** it serves correctly only if its assets use
    `WORKSHOP_PROXY_BASE` (a web service can pass `--base $WORKSHOP_PROXY_BASE` to Vite)
    AND its client router uses that base (e.g. `basepath: import.meta.env.BASE_URL`).
-   Done that way, the SPA renders fully (verified on gengui). **Limit:** WebSockets
+   Done that way, the SPA renders fully (verified on <app>). **Limit:** WebSockets
    (Vite HMR) do not traverse the HTTP proxy — edits need a manual reload, not hot.
 3. **Dedicated origin** (for an app you can't make base-aware, or want HMR): give the
    service its own tailnet HTTPS origin. Operator-run (the platform is sandboxed from
    `tailscale serve`):
    ```bash
-   tailscale serve --bg --https=8448 http://127.0.0.1:<frontend-port>
-   # then open https://<host>:8448/  — full app at base=/, its own /api proxy, HMR
+   tailscale serve --bg --https=<https-port> http://127.0.0.1:<frontend-port>
+   # then open https://<host>:<https-port>/  — full app at base=/, its own /api proxy, HMR
    ```
    Look up `<frontend-port>` in the App panel or `GET /base-apps/ports`.
 
@@ -165,7 +165,7 @@ It also detects a scaffold project that *shadows* a built-in app (e.g. a `commut
 project whose real code is in the monorepo) and says so, instead of the agent concluding
 "nothing exists". Re-sent on resumed turns too, since the session never re-reads it.
 
-## gengui status (2026-06-15)
+## <app> status (2026-06-15)
 
 - **frontend** (Vite/Bun): **runs reliably** via the platform — `bun install` then
   `vite` on an app-window port, healthy. This is the surface to view.

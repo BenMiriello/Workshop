@@ -63,8 +63,8 @@ answer must not depend on where this script happens to run:
     default posture (`services/scoped_exec`: "CONFINED BY DEFAULT ... the floor,
     not an opt-in"). A build turn's real cwd is then the managed mountpoint, and
     a prompt that names a host cwd is both a leak and a wrong instruction. `=0`
-    is an operator's deliberate choice to run unconfined, and there the prompt
-    naming a real directory is correct rather than a violation.
+    changes nothing a prompt says: `scoped_exec.spawn_argv` refuses a turn it
+    cannot confine, so every turn that runs sees the mountpoint.
   * A SCOPE'S OWN AGENTS.md / CLAUDE.md IS STUBBED OUT. `_agent_rules` splices a
     repo's own rules file into L2, and that file is explicitly exempt from this
     rule -- it is the place an installation fact is SUPPOSED to live. Rendering
@@ -349,6 +349,12 @@ def _render() -> dict[str, dict[str, str]]:
     chat: dict[str, str] = {"platform_kernel": cc.platform_kernel()}
     for tools in (True, False):
         chat[f"role_preamble[tools={tools}]"] = cc.role_preamble(tools_active=tools)
+    # Handed the host cwd the way routes/chat.py hands it, so a WORKSPACE line
+    # that echoed it would render the synthetic home path and be caught.
+    chat["agent_self_preamble"] = cc.agent_self_preamble(
+        name="Example", slug=_RENDER_SLUG, role="maker",
+        scope=f"project:{_RENDER_SLUG}",
+        cwd=str(paths.projects_root() / _RENDER_SLUG), tools=["Read"])
     for name, provider in _providers(cc, paths).items():
         chat[f"persona[{name}]"] = provider.persona()
         chat[f"runtime_briefing[{name}]"] = cc.runtime_briefing(provider)

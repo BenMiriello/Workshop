@@ -34,7 +34,7 @@ export function bundledDevSurfaces(): BundledDevSurfaces {
   return {
     devMode: DEV_MODE,
     devScopes: devScopes(),
-    orderedServerScopes: orderScopes([DEVELOPMENT_SCOPE, "workshop", "project:birds"]),
+    orderedServerScopes: orderScopes([DEVELOPMENT_SCOPE, "workshop", "project:widgets"]),
     scopeGroupKinds: scopeGroups().map((g) => String(g.kind)),
     frozenScopeGroupKinds: SCOPE_GROUPS.map((g) => String(g.kind)),
   };

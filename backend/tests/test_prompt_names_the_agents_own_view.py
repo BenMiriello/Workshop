@@ -36,8 +36,41 @@ class TestWhereTheAgentIsToldItIs:
     def test_a_confined_build_turn_is_told_the_mountpoint(self, confined):
         assert chat_context.agent_cwd("/somewhere/else/project") == scoped_exec.MOUNTPOINT
 
-    def test_an_unconfined_turn_is_told_its_real_directory(self, unconfined):
-        assert chat_context.agent_cwd("/somewhere/else/project") == "/somewhere/else/project"
+    def test_a_turn_rendered_with_confinement_off_is_still_told_the_mountpoint(
+            self, unconfined):
+        # spawn_argv refuses a turn it cannot confine, so there is no
+        # unconfined turn whose prompt could truthfully name the host path.
+        assert chat_context.agent_cwd("/somewhere/else/project") == scoped_exec.MOUNTPOINT
+
+
+def _project_provider(host_dir):
+    provider = object.__new__(chat_context.ProjectContextProvider)
+    provider.slug = "example"
+    provider.key = "project:example"
+    provider.dir = host_dir
+    provider.is_self = False
+    return provider
+
+
+class TestTheWholeContractNamesOnlyTheMountpoint:
+    @pytest.mark.parametrize("flag", ["1", "0"])
+    def test_a_build_contract_names_the_mountpoint_not_the_host_dir(
+            self, monkeypatch, tmp_path, flag):
+        monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", flag)
+        host = tmp_path / "host-side" / "example"
+        host.mkdir(parents=True)
+        text = chat_context.instruction_contract(
+            _project_provider(host), enable_chat_tools=True)
+        assert f"operating in {scoped_exec.MOUNTPOINT}" in text
+        assert str(host) not in text
+        assert str(tmp_path) not in text
+
+    def test_an_agent_is_told_its_workspace_is_the_mountpoint(self, confined):
+        text = chat_context.agent_self_preamble(
+            name="Scout", slug="scout", role="maker", scope="project:example",
+            cwd="/host/side/example", tools=["Read"])
+        assert f"WORKSPACE: {scoped_exec.MOUNTPOINT}" in text
+        assert "/host/side" not in text
 
 
 class TestTheTaskCommandIsOneTheAgentCanRun:

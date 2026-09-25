@@ -17,7 +17,7 @@ a new app's assistant never edits this file. Adding chat to a fresh app = write
 one provider (in the app) + register it + drop the <ChatDock contextKey="..."> in.
 
 Per-provider context is bounded — Plaid balances + last-30d-summary + computed
-budget go in for budget chat; latest commute decision for commute chat; etc.
+state go in for an app's chat; etc.
 We never dump raw transaction lists (too large + redundant); the engine has
 already categorized them into actuals per bucket.
 """
@@ -138,14 +138,15 @@ def agent_cwd(scope_dir) -> str:
     real host path does not exist inside the sandbox for the scope, so it
     cannot be echoed. The prompt echoed it anyway, from two places that each
     resolved the question on their own, and only `runtime_briefing` got it
-    right. One function so the briefing, the capabilities block and the build
-    personas cannot disagree about where the reader is.
+    right. One function so the briefing, the capabilities block, the agent
+    self-preamble and the build personas cannot disagree about where the reader
+    is.
 
-    An unconfined turn is a real configuration (`WORKSHOP_SCOPED_EXEC=0`, or a
-    host that cannot namespace) and gets the real answer, because there the real
-    directory IS where the agent is standing."""
+    The answer is the spawn path's, not a second reading of the flag:
+    `scoped_exec.spawn_argv` refuses any turn it cannot confine, so there is no
+    unconfined turn to describe, and `scope_dir` is never echoed."""
     from services import scoped_exec
-    return scoped_exec.MOUNTPOINT if scoped_exec.enabled() else str(scope_dir)
+    return scoped_exec.agent_root()
 
 # The three pickable models surfaced in the composer's model selector, full ids.
 # Sourced from llm_router so they never drift from the actual call tiers.
@@ -506,15 +507,34 @@ NOTE_PROTOCOL = (
 _RULES_FILES = ("AGENTS.md", "CLAUDE.md", ".cursorrules",
                 ".github/copilot-instructions.md")
 
+# An installation's own rules for a scope, kept untracked beside the tracked
+# ones: `CLAUDE.local.md` is the Claude Code convention, `AGENTS.local.md` its
+# cross-vendor spelling. They carry what is true of one installation and must
+# never be committed, so they are appended rather than chosen between.
+_LOCAL_RULES_FILES = ("AGENTS.local.md", "CLAUDE.local.md")
 
-def _agent_rules(read) -> str:
-    """The scope's agent-instructions text, AGENTS.md preferred, common aliases
-    after it. `read` is a provider's own `_read(name)->str`."""
-    for name in _RULES_FILES:
+_LOCAL_RULES_HEADER = "--- Local rules for this installation (untracked) ---"
+
+
+def _first_nonempty(read, names) -> str:
+    for name in names:
         text = read(name)
         if text and text.strip():
             return text
     return ""
+
+
+def _agent_rules(read) -> str:
+    """The scope's agent-instructions text, AGENTS.md preferred, common aliases
+    after it, followed by the installation's local rules file when one exists.
+    `read` is a provider's own `_read(name)->str`."""
+    tracked = _first_nonempty(read, _RULES_FILES)
+    local = _first_nonempty(read, _LOCAL_RULES_FILES)
+    if not local:
+        return tracked
+    parts = [tracked.rstrip()] if tracked.strip() else []
+    parts.append(f"{_LOCAL_RULES_HEADER}\n\n{local.strip()}")
+    return "\n\n".join(parts)
 
 # Git worktree / branch-philosophy pointer (Phase G3). Points agents at the
 # git-worktree-workflow skill and states the canonical-branch rule inline, so the
@@ -1140,7 +1160,7 @@ def agent_self_preamble(
     lines = [
         f"You are {name} (@{slug}), a {role} agent in {operator_name()}'s Workshop.",
         f"SCOPE: {scope}. Where you work and the corpus you can see.",
-        f"WORKSPACE: {cwd}",
+        f"WORKSPACE: {agent_cwd(cwd) if cwd else 'none'}",
     ]
     lines.append(
         f"TOOLS: {', '.join(granted)}. In your workspace, and nothing else "
@@ -1258,7 +1278,7 @@ def _detect_stack(dir_path) -> tuple[list[str], bool]:
             labels.append("docker-compose")
         # A real source tree means an actual FILE somewhere that isn't a scaffold
         # doc or dotfile — an empty `src/` dir does NOT count (that is exactly the
-        # commute-shadow scaffold case). Bounded walk; only reached when no
+        # scaffold-shadowing-an-app case). Bounded walk; only reached when no
         # package.json/pyproject/etc marker already proved source above.
         if not has_source:
             scaffold_docs = {"PROJECT.md", "TODO.md", "AGENTS.md", "README.md", ".gitignore"}
@@ -2185,7 +2205,7 @@ class ContextProvider:
         # cross-cutting questions ("how much in savings", "next train", etc.)
         # without the operator having to switch tabs. The snapshots come from the
         # INSTALLED apps that register one (app_registry) — no app is hardcoded
-        # here, so an instance that doesn't install finance/commute/… simply omits
+        # here, so an instance that doesn't install a given app simply omits
         # that section.
         from services import app_registry
 
@@ -2216,8 +2236,7 @@ class ContextProvider:
             return ""
 
     # The app id this provider's chat is bound to, for permissions resolution.
-    # Data/app assistants whose `key` matches an apps.json manifest id (budget,
-    # finance, commute, location, ...) bind to that app. The `general` provider
+    # Data/app assistants whose `key` matches an apps.json manifest id bind to that app. The `general` provider
     # and build providers return None (no single app boundary). Subclasses may
     # override if their key differs from their app id.
     def permission_app_id(self) -> str | None:
@@ -2620,8 +2639,8 @@ def agent_provider(slug: str, record: dict) -> ContextProvider:
 
 # EVERY data/assistant provider gets web access — the route + capability_for add
 # WebSearch/WebFetch centrally via effective_allowed_tools(), so providers no
-# longer need to opt in per-instance. (budget/finance keep their Plaid tools and
-# gain web; commute/location gain web; build/project agents run the full toolset.)
+# longer need to opt in per-instance. (apps keep their declared tools and
+# gain web; build/project agents run the full toolset.)
 _general = ContextProvider()
 # Stage 7 (2e): the general chat gets a scoped, read-only workshop-query tool
 # (platform MCP server, always available) so it can answer "what is going on /
@@ -2634,7 +2653,7 @@ _general = ContextProvider()
 # which several OTHER providers (app personas) also fall back to and
 # legitimately use Bash/Edit/Write in. That fallback is not a sandbox scoped to
 # "this operator's own workshop projects" — unset, it is the account's real
-# home directory, carrying `.config/clawdbot`, `.claude`, and every other
+# home directory, carrying `.config/`, `.claude`, and every other
 # credential this box holds; set (as this deployment's secrets.env does), it
 # was the platform repo itself. Once Read/Grep/Glob rode alongside the query
 # tool (2026-07-18, "Widen general chat's tool surface") plus Edit/Write/Bash,

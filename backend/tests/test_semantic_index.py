@@ -163,14 +163,14 @@ class TestSearchGuards:
         """`search()` takes a SET of allowed scopes (design doc sec C), not just
         one -- this is what lets a caller pass a whole `reach()` result."""
         meta = [
-            {"kind": "note", "ref": "a", "title": "A", "scope": "project:birds", "ts": "", "text": "a", "digest": "1"},
-            {"kind": "note", "ref": "b", "title": "B", "scope": "project:budget", "ts": "", "text": "b", "digest": "2"},
+            {"kind": "note", "ref": "a", "title": "A", "scope": "project:widgets", "ts": "", "text": "a", "digest": "1"},
+            {"kind": "note", "ref": "b", "title": "B", "scope": "project:gadgets", "ts": "", "text": "b", "digest": "2"},
             {"kind": "note", "ref": "c", "title": "C", "scope": "project:other", "ts": "", "text": "c", "digest": "3"},
         ]
         si._save(meta, np.ones((3, 2), dtype=np.float32))
         monkeypatch.setattr(si, "embed", lambda t: np.array([[1.0, 0.0]], dtype=np.float32))
-        hits = si.search("q", scope={"project:birds", "project:budget"}, min_score=0.5)["hits"]
-        assert {h["scope"] for h in hits} == {"project:birds", "project:budget"}
+        hits = si.search("q", scope={"project:widgets", "project:gadgets"}, min_score=0.5)["hits"]
+        assert {h["scope"] for h in hits} == {"project:widgets", "project:gadgets"}
 
     def test_an_unscoped_chunk_is_never_excluded_by_a_scope_filter(self, monkeypatch):
         """Docs carry `scope=""` (they are cross-cutting reference material, not
@@ -179,7 +179,7 @@ class TestSearchGuards:
                  "ts": "", "text": "x", "digest": "1"}]
         si._save(meta, np.array([[1.0, 0.0]], dtype=np.float32))
         monkeypatch.setattr(si, "embed", lambda t: np.array([[1.0, 0.0]], dtype=np.float32))
-        hits = si.search("q", scope={"project:birds"}, min_score=0.5)["hits"]
+        hits = si.search("q", scope={"project:widgets"}, min_score=0.5)["hits"]
         assert len(hits) == 1
 
     def test_the_vault_is_not_searched_by_default(self):
@@ -283,14 +283,14 @@ class TestLexicalFallback:
 
     def test_lexical_still_respects_kind_and_scope_filters(self, monkeypatch):
         meta = [
-            {"kind": "note", "ref": "a", "title": "A", "scope": "project:birds",
+            {"kind": "note", "ref": "a", "title": "A", "scope": "project:widgets",
              "ts": "", "text": "reach and scope tree", "digest": "1"},
             {"kind": "note", "ref": "b", "title": "B", "scope": "project:other",
              "ts": "", "text": "reach and scope tree", "digest": "2"},
         ]
         si._save(meta, np.ones((2, 4), dtype=np.float32))
         monkeypatch.setattr(si, "embed", lambda t: (_ for _ in ()).throw(RuntimeError("down")))
-        hits = si.search("reach scope tree", scope={"project:birds"})["hits"]
+        hits = si.search("reach scope tree", scope={"project:widgets"})["hits"]
         assert {h["ref"] for h in hits} == {"a"}
 
     def test_no_query_terms_match_means_no_hits(self, monkeypatch):

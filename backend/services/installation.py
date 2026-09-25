@@ -128,6 +128,33 @@ def declared_origins() -> tuple[str, ...]:
     return tuple(out)
 
 
+DEFAULT_DEV_PORT = 5173
+
+
+def dev_port() -> int:
+    """The port the Vite dev server listens on: WORKSHOP_VITE_PORT, the same
+    variable scripts/frontends_watchdog.sh launches it with, else 5173."""
+    raw = (os.environ.get("WORKSHOP_VITE_PORT") or "").strip()
+    try:
+        port = int(raw)
+    except ValueError:
+        return DEFAULT_DEV_PORT
+    return port if 0 < port < 65536 else DEFAULT_DEV_PORT
+
+
+def dev_origins() -> tuple[str, ...]:
+    """The loopback origins a browser uses to reach the dev server.
+
+    The standard port is always included, so a checkout that has not declared a
+    port still works; a declared WORKSHOP_VITE_PORT adds its own pair.
+    """
+    ports = [DEFAULT_DEV_PORT]
+    if dev_port() not in ports:
+        ports.append(dev_port())
+    return tuple(f"http://{host}:{p}" for p in ports
+                 for host in ("localhost", "127.0.0.1"))
+
+
 def public_origin() -> str:
     """The address the operator opens this installation at, or empty.
 

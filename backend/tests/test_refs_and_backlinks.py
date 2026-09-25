@@ -35,7 +35,7 @@ class TestParseSerialize:
         "workshop:chat/thread-1#msg-1",
         "workshop:chat/thread-1",
         "workshop:run/job_123",
-        "workshop:project/birds",
+        "workshop:project/widgets",
         "workshop:agent/reviewer",
         "workshop:app/notes",
     ])

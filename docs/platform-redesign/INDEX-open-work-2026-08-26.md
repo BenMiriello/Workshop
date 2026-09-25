@@ -476,7 +476,7 @@ Confirmed still true, no action:
   `deploys.py`, `deploys_override.py` and `deploy_providers/` all still
   exist. Valid.
 - `1e8c2fc7` Letta `/v1`. Both servers are still listening, now on
-  127.0.0.1:8283 and :8284 rather than all interfaces. The loopback is
+  loopback rather than all interfaces. The loopback is
   still shared between host users, so the cross-user reach the ticket
   describes still holds. Narrow the ticket to that, drop the exposure
   wording.
@@ -520,7 +520,7 @@ slug, not a chat id.
 - `5c893b55` (P100, parked) [SEC-C3] Verify inbound IPv6 default-deny
   for 6379/8188/11434/11435/445/139/22/111. Root.
 - `f128c5dc` (P80, parked) [SEC-H3] Replace or drop the NOPASSWD sudo
-  git as `clawd-house`. Root.
+  git as another host account. Root.
 - `dad50a93` (P80, parked) [SEC-H4] Loopback-bind ComfyUI :8188. Owned
   by another host user plus root.
 - `cc2e83df` (P80, parked) [SEC-H7] Loopback-bind Ollama :11434 and

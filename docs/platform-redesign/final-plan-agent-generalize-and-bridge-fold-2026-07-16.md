@@ -2,7 +2,7 @@
 
 Author: fable (design-review architect)
 Status: plan of record. Merges tasks 5c9223c0 (generalize agent) and da801d52
-(fold the bridge agent in, revisit clawd rename). Executes the operator's 2026-07-16
+(fold the bridge agent in, revisit bridge rename). Executes the operator's 2026-07-16
 mandate: FULLY implement, nothing half-done, nothing hardcoded for appearances,
 every overlapping subsystem PORTED or REMOVED, and testing left OFF at the end.
 
@@ -49,9 +49,9 @@ docs (`operator-asks`, `_brief`, `resource-access-protocol`,
 - The custom Plaid MCP at `<bridge-checkout>/plaid-mcp/` MOVES into the workshop tree
   (`backend/mcp/plaid/`), registered as a Store, gated by the resource-grant
   path already in `permissions.py:616-728`.
-- The `clawd` naming decision is DEFERRED again, but tightened: the plan
+- The bridge agent naming decision is DEFERRED again, but tightened: the plan
   identifies the exact surfaces that would change under any rename
-  (`clawdbot/`, `the-bridge.service`, `~/.config/clawdbot/`) and locks the
+  (`<bridge-checkout>/`, `the-bridge.service`, `<bridge-config>/`) and locks the
   service names to the current values so nothing else names them.
 - The block-and-review loop lands in P2 as a Review tab on the Work surface;
   rule minting comes out of `learnings.py` provenance (three independent blocks
@@ -181,8 +181,8 @@ Verified `find $HOME/<bridge> -type f -not -path '*/.git/*'`:
 - `<bridge-checkout>/commute-diagnostic.png`. A stray screenshot; delete.
 
 Systemd unit: `~/.config/systemd/user/the-bridge.service` (verified). Loads
-`~/.config/clawdbot/auth.env` (long-lived `CLAUDE_CODE_OAUTH_TOKEN`), forks a
-tmux session named `clawd-claude` that runs `run.sh`.
+`<bridge-config>/auth.env` (long-lived `CLAUDE_CODE_OAUTH_TOKEN`), forks a
+tmux session named `<bridge>-claude` that runs `run.sh`.
 
 Discord-handler subagent: `~/.claude/agents/discord-handler.md` (14k).
 The operational playbook for a Discord turn (dispatched from `<bridge-checkout>/CLAUDE.md`
@@ -375,7 +375,7 @@ strict sub-steps.
 | --- | --- | --- |
 | `<bridge-checkout>/CLAUDE.md` | REMOVE after PM.3 | Most content duplicates the discord-handler subagent + operator profile. The unique bits (Plaid onboarding, Google Docs quirk notes, completion contract) migrate to the workshop `agents/the bridge agent.md` body during PM.2. |
 | `<bridge-checkout>/run.sh` | REMOVE after PM.3 | Once the bridge agent rides the workshop's `claude -p` dispatch, the persistent tmux loop is superfluous. |
-| `<bridge-checkout>/plaid-mcp/{server.js, onboard.js, balances.js, transactions.js, package.json}` | PORT to `backend/mcp/plaid/` | The MCP is genuinely useful. Moves into workshop as a first-class MCP server registered in `llm_router._MCP_SERVER_SPECS`. `plaid-tokens.json` stays in `~/.config/clawdbot/` (host-level secret; KEEP path). |
+| `<bridge-checkout>/plaid-mcp/{server.js, onboard.js, balances.js, transactions.js, package.json}` | PORT to `backend/mcp/plaid/` | The MCP is genuinely useful. Moves into workshop as a first-class MCP server registered in `llm_router._MCP_SERVER_SPECS`. `plaid-tokens.json` stays in `<bridge-config>/` (host-level secret; KEEP path). |
 | `<bridge-checkout>/plaid-mcp/node_modules/` | REMOVE from source (regen on install) | Vendored deps; `npm install` at the new location. |
 | `<bridge-checkout>/security/audit.sh` + `install-cron.txt` | PORT to `scripts/security_audit.sh` | Nightly security check; keep it running, from the workshop repo. |
 | `<bridge-checkout>/docs/` (bringup, security-invariants, audit history) | PORT to `docs/the bridge agent/` | Historical value; keep in-tree. |
@@ -385,10 +385,10 @@ strict sub-steps.
 | `~/.claude/agents/discord-handler.md` | PORT into `agents/the bridge agent.md` body | This IS the bridge agent's persona. It moves in verbatim, minus the outdated Letta-era bits. |
 | `~/.claude/agents/work-reviewer.md` | KEEP as `agents/work-reviewer.md` in workshop scope | Verified `ls ~/.claude/agents`. Genuine reviewer subagent; belongs in the workshop registry now. |
 | `~/.config/systemd/user/the-bridge.service` | REPLACE with `the bridge agent-event-bridge.service` (PM.3) | New service is thin: a tiny Node/Python process that reads Discord events and POSTs to workshop's event bus. No persistent `claude -p` loop, no tmux. |
-| `~/.config/clawdbot/auth.env` | KEEP | Long-lived OAuth token. Still loaded via `EnvironmentFile=` by the new service AND by the workshop backend. |
-| `~/.config/clawdbot/plaid-auth.env` | KEEP path | Plaid client_id/secret. |
-| `~/.config/clawdbot/plaid-tokens.json` | KEEP path | Per-bank access tokens, mode 0600. Read by the ported MCP. |
-| `~/.config/clawdbot/google-auth.env`, `~/.config/google-docs-mcp/token.json` | KEEP | OAuth for the google-docs MCP. Already reachable from workshop. |
+| `<bridge-config>/auth.env` | KEEP | Long-lived OAuth token. Still loaded via `EnvironmentFile=` by the new service AND by the workshop backend. |
+| `<bridge-config>/plaid-auth.env` | KEEP path | Plaid client_id/secret. |
+| `<bridge-config>/plaid-tokens.json` | KEEP path | Per-bank access tokens, mode 0600. Read by the ported MCP. |
+| `<bridge-config>/google-auth.env`, `~/.config/google-docs-mcp/token.json` | KEEP | OAuth for the google-docs MCP. Already reachable from workshop. |
 | `~/.claude/channels/discord/{.env, access.json}` | KEEP | Discord channel state. Still owned by whatever process posts. |
 | `~/.claude/plugins/cache/claude-plugins-official/discord/0.0.4/server.ts` | KEEP (local patch documented in operator memory) | The plugin still runs, just under the new event-bridge service. |
 | `~/workshop/agents/the bridge agent.md` | REWRITE (PM.2) | Currently a 20-line stub with a Letta agent id. Becomes the real the bridge agent definition. |
@@ -490,18 +490,18 @@ would touch.
 Rationale:
 - The `the service user` Linux user is fine to keep. Renaming a Linux user is
   disruptive and does not add capability.
-- `clawdbot/` empties out under PM. Once empty (post PM.3 safety window),
+- `<bridge-checkout>/` empties out under PM. Once empty (post PM.3 safety window),
   delete it. The name goes away by virtue of removal, not renaming.
 - `the-bridge.service` gets replaced by `the bridge agent-event-bridge.service` during
-  PM.3. That is a name change already; the "clawd" naming does not survive
+  PM.3. That is a name change already; the legacy bridge naming does not survive
   PM.
-- `~/.config/clawdbot/` is a config directory holding auth secrets. Renaming
+- `<bridge-config>/` is a config directory holding auth secrets. Renaming
   it churns every service unit's `EnvironmentFile=` path for zero user-facing
   benefit. Defer.
 
 Surfaces that would need to change under a full rename (documented so a
 future decision is not blind):
-- `~/.config/clawdbot/` -> `~/.config/the bridge agent/` (or `~/.config/workshop/`)
+- `<bridge-config>/` -> `~/.config/the bridge agent/` (or `~/.config/workshop/`)
 - `~/.config/systemd/user/*bot*` -> new names
 - `/tmp/workshop-cron-agent.lock` (already workshop-named, fine)
 - Documentation references in `~/.claude/CLAUDE.md`, workshop memory docs,
@@ -601,7 +601,7 @@ depends on a later unit.
 | 10 | PM.2 the bridge agent-agent-def | rewrite `agents/the bridge agent.md`, new discord trigger kind, event bridge script |
 | 11 | PM.3 event-bridge-service | new systemd unit; the-bridge.service DISABLED |
 | 12 | PM.4 the bridge agent-commute-refactor | reuse or inline |
-| 13 | PM.5 remove-clawdbot | after 24h safety window |
+| 13 | PM.5 remove-bridge-checkout | after 24h safety window |
 | 14 | P3.a broker + policy | `broker.py`, `policy.py`, tests |
 | 15 | P3.b stores + notes wiring | `stores.py`, `routes/stores.py`, `Notes.tsx` |
 | 16 | P3.c plaid-store wiring | second store as generality proof |
