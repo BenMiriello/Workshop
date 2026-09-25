@@ -47,14 +47,14 @@ the Docker bridge — see §5.
 ### 2.2 Host users / clusters
 Two intended clusters on the shared host:
 - **the service user ↔ the operator** — the operator's personal cluster; mutual file access is intended.
-- **simonsays ↔ another tenant** — a separate pair, meant to be isolated from the the service user/the operator side.
+- **another tenant** — a separate account (or pair), meant to be isolated from the service user/the operator side.
 
 **File-layer requirement (holds today):** each home is `0700` except where sharing is intended
 (`the service user` `0750` group `the service user` with `the operator` a member; `the operator` `0710` + ACL granting
 `the service user` traverse). `another tenant` must stay fully contained (no `docker`, no `sudo`, `0700`).
 
 **Known boundary breaker:** the shared **Docker daemon**. `docker` group membership is
-root-equivalent, and the service user/the operator/simonsays all share one daemon, so the cluster boundary
+root-equivalent, and the service user, the operator and any other tenant in the `docker` group all share one daemon, so the cluster boundary
 cannot be absolute at the docker layer. the service user's membership is *load-bearing* (the app runner needs
 it — §5), so the real fix is architectural: rootless/per-user Docker, a socket-proxy, or a dedicated
 runner user. Until then, "loopback/host-local" is not a trust boundary between host users, and this
@@ -187,7 +187,7 @@ never inspects the turn's Bash actions). See `instance-audits/security-audit-202
 
 ## 8. Secrets management
 
-- Long-lived secrets live in `0600` files under `0700` dirs: `~/.config/clawdbot/*` (OAuth, Plaid,
+- Long-lived secrets live in `0600` files under `0700` dirs: the operator's credential directory (OAuth, Plaid,
   Google, Discord, Tailscale), `~/.config/workshop/secrets.env` (web app + Plaid + service tokens),
   `~/.claude/.credentials.json`, `~/.claude.json`. Keep them `0600`; never inline a secret into a
   world-readable file or a `0644` `.env`.

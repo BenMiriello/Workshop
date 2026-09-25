@@ -135,7 +135,7 @@ That question is arguably the central design decision of this whole thread.
   (task substrate, emission, dispatcher, worker, memory-keeper, autonomy presets,
   root-queue cron). O1-O7 are all DONE.
 - `docs/platform-redesign/unified-agent-model-2026-07-15.md` — the unified Agent
-  primitive design, plus a deferred clawd/the bridge agent naming decision.
+  primitive design, plus a deferred bridge agent naming decision.
 - `docs/platform-redesign/chat-tickets-orchestrator-plan-2026-07-15.md` — Task=ticket,
   Job=attempt (deliberately NOT merged).
 - `docs/platform-redesign/notes-system-plan-2026-07-15.md` — the notes plan (shipped).

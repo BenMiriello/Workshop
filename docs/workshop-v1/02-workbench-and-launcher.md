@@ -117,5 +117,5 @@ page. Off = today's launcher grid. On = cards expand (one at a time) to reveal:
 A deployed app should be viewable **inside Workshop with the workshop toolbar around
 it** (even if the app uses a non-default kit), and also reachable as a **pure
 standalone** URL with no workshop chrome. Provide a "View standalone" link from the
-integrated view. (gengui is the first real test of running a project-as-app inside
+integrated view. (<app> is the first real test of running a project-as-app inside
 the launcher.)

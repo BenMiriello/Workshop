@@ -285,7 +285,7 @@ and, once Stage 3 lands, is worked through the system itself.
   restart, check for orphaned streaming turns and nudge only ones we interrupted.
 - Restart: `bash scripts/restart_backend.sh --deferred`.
 - Backend Python: `PYTHONPATH=$WORKSHOP/backend .venv/bin/python`;
-  source `~/.config/clawdbot/auth.env` for a token in scratch tests.
+  source `<bridge-config>/auth.env` for a token in scratch tests.
 
 Key files by subsystem are listed in the four audit sections above and in
 `autonomy-task-management.md`, `review-addendum.md`, `implementation-plan.md`.

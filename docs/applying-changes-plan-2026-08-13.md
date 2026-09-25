@@ -3,7 +3,7 @@
 Status: **IMPLEMENTED, 2026-08-13.** Approved by the operator the same day, who
 also directed that a restart be made resilient ("design the system to be
 resilient so that restart doesn't break things but only ever pauses or delays")
-and reversed the gengui never-restart rule. The reference doc that came out of
+and reversed the <app> never-restart rule. The reference doc that came out of
 this is [`applying-changes.md`](applying-changes.md); this file is kept as the
 record of what was wrong and why, not as instructions.
 
@@ -222,7 +222,7 @@ Six live contradictions:
 4. **What the build command is.** Four answers:
    `build_workshop_public.sh`, `npm run build:ui && npm run build:web`,
    `npm run build:web`, and `systemctl --user restart workshop-frontend`.
-5. **Whether to restart at all.** `projects/gengui/CLAUDE.md:46` says
+5. **Whether to restart at all.** `projects/<app>/CLAUDE.md:46` says
    "NEVER restart servers, even after code changes; just tell the user".
    `~/.claude/agents/work-reviewer.md:89` treats "needs operator restart" as a
    reason to **fail** the completion gate. An agent obeying the first fails the second.
@@ -335,8 +335,8 @@ file; every other place links to it and states no command of its own.**
   and mark both as the internals `apply.sh` calls, not the agent-facing entry point.
 - **`shared/learnings.md:23`:** retire the stale "use nohup, not systemctl"
   learning (3), which is contradicted by measurement.
-- **`projects/gengui/CLAUDE.md:46`:** resolve against the work-reviewer gate (5).
-  Operator decision: is gengui genuinely hands-off, or is that line stale?
+- **`projects/<app>/CLAUDE.md:46`:** resolve against the work-reviewer gate (5).
+  Operator decision: is <app> genuinely hands-off, or is that line stale?
 - **The 25 `docs/` files:** do not edit them individually. They are dated handoffs
   and historical plans. Add one line to `CLAUDE.md`: dated handoff and
   `platform-redesign/` docs are historical; `docs/applying-changes.md` is the only
@@ -376,7 +376,7 @@ already tracked, and it must not be allowed to justify blocking on restarts.
 
 ## 6. Open questions for the operator
 
-1. **gengui.** Its `CLAUDE.md` forbids restarting servers while the reviewer gate
+1. **<app>.** Its `CLAUDE.md` forbids restarting servers while the reviewer gate
    fails work that needs an operator restart. Which one is current?
 2. **Reviewer gate on a stale bundle:** promote from warn to fail (Phase 4)?
 3. **Command name.** `scripts/apply.sh` is proposed. It is the name that will be

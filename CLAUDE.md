@@ -199,7 +199,7 @@ command's exit code and nothing else" cuts both ways.** It clones HEAD and
 inspects the resulting TREE, so it is structurally blind to four things measured
 on 2026-09-16, all of which are real and none of which it can ever see:
 
-- **Git history.** The operator's own `commute/*.json` (home and work addresses)
+- **Git history.** One app's config files holding the operator's home and work addresses
   and the Plaid MCP server are reachable from `origin/main` and five other
   remote branches. Deferred once on 2026-07-12 and unmentioned for nine weeks.
   Ticket `43dec530`, which also adds the history assertion.
