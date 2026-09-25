@@ -89,7 +89,7 @@ const serviceWorkerKillSwitchMiddleware = (): PluginOption => ({
 // Per-deployment origin config. Empty by default so a fresh clone runs locally
 // without bouncing to some other instance's hostname.
 //   WORKSHOP_CANONICAL_ORIGIN — browser-facing HTTPS origin (e.g. a Tailscale
-//     Serve URL like https://<host>.ts.net:8443) the dev server redirects to.
+//     Serve URL like https://<host>:8443) the dev server redirects to.
 //   WORKSHOP_TAILNET_HOST — the magicdns host that is already canonical, so
 //     requests arriving there (or on loopback) are not redirected.
 const CANONICAL_ORIGIN = (process.env.WORKSHOP_CANONICAL_ORIGIN || "").replace(/\/$/, "");

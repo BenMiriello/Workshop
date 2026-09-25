@@ -149,7 +149,7 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
               and the queue runner. The GPU/broker/Ollama residency rows and the
               loopback service-probe grid that used to sit here were removed on
               2026-08-20: they were a client of one local machine's daemons
-              (gpubrokerd at 127.0.0.1:8447, a single consumer GPU) and cannot
+              (a local GPU broker daemon, a single consumer GPU) and cannot
               exist in a production deploy. Ollama stays only as the embeddings
               backend behind the WORKSHOP_TEXT_EMBED_URL config seam, which is
               not a Settings control. */}

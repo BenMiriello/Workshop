@@ -2,7 +2,7 @@
 # Frontend watchdog.
 #
 # When a Vite dev server dies (reboot, OOM, stray kill) the app 502s behind
-# Tailscale Serve, which is exactly how the Commute app (:5174 -> :8444) went
+# Tailscale Serve, which is exactly how an app's dev frontend once went
 # dark. This restarts any frontend that isn't listening.
 #
 # IT PREFERS SYSTEMD, AND THAT IS A CORRECTION. This script used to assert

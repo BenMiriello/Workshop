@@ -161,20 +161,16 @@ def _resolve_app(slug: str, ref: str) -> Workspace:
     (app-is-the-entity-2026-08-20.md sec 9): `apps/<slug>`, which
     `scope_tree.scope_root` names and the knowledge store already uses, and
     `projects/<slug>`, the build tree. Which one holds the app is NOT uniform
-    and cannot be guessed, measured 2026-08-23 by counting both trees:
-
-        birds      apps/ 30150 files   projects/    41   (a scaffold)
-        gengui     apps/     0         projects/  1754
-        notes-app  apps/     0         projects/    24
-        budget     apps/     0         projects/     9
-        location   apps/     0         projects/     8
-        commute    apps/     3         projects/    10   (split across both)
+    and cannot be guessed. Counting both trees of a real installation found
+    apps whose code lived only under `apps/` (with a scaffold under
+    `projects/`), apps whose code lived only under `projects/`, and one app
+    split across both.
 
     So this used to say "an app's files ARE its linked project's working tree",
-    which is right for five of six and left the operator's largest app -- 2.2 GB
-    of it -- unreachable from its own Files tab, and from anywhere in the UI.
-    An emptiness or existence heuristic gets `commute` wrong in the other
-    direction, so there is no rule to infer: the app has to say.
+    which is right for most apps and left the largest one unreachable from its
+    own Files tab, and from anywhere in the UI. An emptiness or existence
+    heuristic gets the split app wrong in the other direction, so there is no
+    rule to infer: the app has to say.
 
     It says it with a manifest in its own tree, read through
     `app_runner._read_manifest_file`, which is the ONE reader of that file and

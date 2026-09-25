@@ -7,7 +7,6 @@ separate service (services/project_sessions.py); this router only exposes
 project-level metadata + file IO.
 
 Replaces the old /projects/ git-list, which moved to routes/base_apps.py.
-See ADR-008 and docs/projects-hub.md (in clawd-house/docs).
 """
 from __future__ import annotations
 

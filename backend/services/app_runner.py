@@ -1,8 +1,8 @@
 """Multi-service app runner — run a project made of several servers as one app.
 
 `local_runner` runs a project's standalone surface as ONE subprocess. Real apps are
-several cooperating servers (gengui = a Bun API `core` + a Vite `frontend` + a Python
-`inference-worker`, plus Postgres/Redis). This runner models that:
+several cooperating servers (for example an API `core`, a Vite `frontend` and a
+background `worker`, plus Postgres/Redis). This runner models that:
 
   - An app has N **services**, each its own managed subprocess with its own cwd,
     build step, start command, and port (allocated centrally via port_registry).
@@ -247,7 +247,7 @@ def _env_requirements_from_raw(raw: dict) -> list[EnvRequirement]:
 def _autodetect(project_dir: Path) -> AppManifest:
     """Build a manifest when none is declared.
 
-    1. A `deploy.config.yaml` with a `services:` map (gengui's shape) → one service
+    1. A `deploy.config.yaml` with a `services:` map (a multi-service app's shape) → one service
        per entry, using its `path` + `start_command`/`build_command`.
     2. Else a single service from dev_servers.suggest_command (back-compat with the
        single-process projects local_runner handled).

@@ -2634,7 +2634,7 @@ _general = ContextProvider()
 # which several OTHER providers (app personas) also fall back to and
 # legitimately use Bash/Edit/Write in. That fallback is not a sandbox scoped to
 # "this operator's own workshop projects" — unset, it is the account's real
-# home directory, carrying `.config/clawdbot`, `.claude`, and every other
+# home directory, carrying `.config/`, `.claude`, and every other
 # credential this box holds; set (as this deployment's secrets.env does), it
 # was the platform repo itself. Once Read/Grep/Glob rode alongside the query
 # tool (2026-07-18, "Widen general chat's tool surface") plus Edit/Write/Bash,

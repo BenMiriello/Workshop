@@ -204,7 +204,7 @@ def chat_cwd() -> Path:
     to run in. `WORKSHOP_CHAT_CWD` names it. What it must never be is the
     account's home: that default (`os.path.expanduser("~")`, spelled separately
     in three call sites) put every turn without a scope in the directory
-    holding `~/.config/clawdbot`, `~/.claude.json`, `~/.ssh` and every other
+    holding `~/.config/`, `~/.claude.json`, `~/.ssh` and every other
     credential on the box — so a scope with any filesystem tool at all had the
     whole host in reach, and nothing about the scope said so.
 

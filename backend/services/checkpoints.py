@@ -4,8 +4,8 @@ Part of the doc 05 history/undo substrate: after a builder turn, commit the
 working tree in the agent's directory so the branch holds a recoverable timeline
 even if the agent later breaks something or leaves work uncommitted. Best-effort:
 never raises into the turn path; silently skips non-repos and clean trees. Uses a
-neutral committer and --no-verify so project commit hooks (lefthook/commitlint,
-e.g. gengui) cannot block a checkpoint.
+neutral committer and --no-verify so project commit hooks (lefthook/commitlint)
+cannot block a checkpoint.
 """
 from __future__ import annotations
 

@@ -56,7 +56,7 @@ const holder: DirectoryEntry = {
   subject_label: "feat-widths",
   subject_status: "open",
   pid: 4118779,
-  hostname: "bgmdebian",
+  hostname: "example-host",
   last_beat_at: "2026-09-01T11:59:48Z",
   expires_at: "2026-09-01T12:29:48Z",
   lease,

@@ -3,7 +3,7 @@
 WHAT WENT WRONG WITHOUT IT. One file was reached by two different env var names
 (`WORKSHOP_AUTH_ENV` in six shell scripts and one tool module, `CLAUDE_AUTH_ENV`
 in llm_router), under two different default directories (`~/.config/workshop`
-for most of them, `~/.config/clawdbot` hardcoded in the two commute modules and
+for most of them, a legacy per-user config directory hardcoded in two app modules and
 in restart_backend.sh's fallback), parsed by four separate hand-rolled loops
 that each stripped quotes slightly differently. It worked only because a symlink
 happened to join the two directories. Anything that moved the file, or set one
