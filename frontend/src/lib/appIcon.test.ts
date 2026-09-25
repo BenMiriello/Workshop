@@ -3,10 +3,10 @@ import { ICON_TOKENS, iconComponent, monogram, resolveAppIcon } from "./appIcon"
 
 describe("monogram", () => {
   it("takes two letters, because one is ambiguous on this very instance", () => {
-    // Budget and Birds both render "B" with a single letter. That is the exact
-    // defect the shell shipped with on 2026-08-20.
-    expect(monogram("Budget")).toBe("BU");
-    expect(monogram("Birds")).toBe("BI");
+    // Two apps starting with the same letter both render "W" with a single
+    // letter. That is the exact defect the shell shipped with on 2026-08-20.
+    expect(monogram("Wallet")).toBe("WA");
+    expect(monogram("Widgets")).toBe("WI");
   });
 
   it("uses initials for a multi-word name, the way a person would write it", () => {
@@ -39,13 +39,13 @@ describe("monogram", () => {
 
 describe("resolveAppIcon", () => {
   it("accepts a bare token name", () => {
-    expect(resolveAppIcon("bird", "Yard Birds")).toEqual({ kind: "token", name: "bird" });
+    expect(resolveAppIcon("bird", "Yard Widgets")).toEqual({ kind: "token", name: "bird" });
   });
 
   it("accepts the lucide export spelling the backend cards already use", () => {
     // AppSpec cards say "PiggyBank" / "TrainFront" / "NotebookPen".
-    expect(resolveAppIcon("PiggyBank", "Budget")).toEqual({ kind: "token", name: "piggy-bank" });
-    expect(resolveAppIcon("TrainFront", "Commute")).toEqual({ kind: "token", name: "train-front" });
+    expect(resolveAppIcon("PiggyBank", "Savings")).toEqual({ kind: "token", name: "piggy-bank" });
+    expect(resolveAppIcon("TrainFront", "Transit")).toEqual({ kind: "token", name: "train-front" });
   });
 
   it("treats a url or a path as a custom image", () => {
@@ -54,10 +54,10 @@ describe("resolveAppIcon", () => {
   });
 
   it("falls back to the monogram for an unknown token, never a broken glyph", () => {
-    expect(resolveAppIcon("no-such-icon", "Yard Birds")).toEqual({ kind: "monogram", text: "YB" });
-    expect(resolveAppIcon(null, "Budget")).toEqual({ kind: "monogram", text: "BU" });
-    expect(resolveAppIcon(undefined, "Budget")).toEqual({ kind: "monogram", text: "BU" });
-    expect(resolveAppIcon("", "Budget")).toEqual({ kind: "monogram", text: "BU" });
+    expect(resolveAppIcon("no-such-icon", "Yard Widgets")).toEqual({ kind: "monogram", text: "YW" });
+    expect(resolveAppIcon(null, "Wallet")).toEqual({ kind: "monogram", text: "WA" });
+    expect(resolveAppIcon(undefined, "Wallet")).toEqual({ kind: "monogram", text: "WA" });
+    expect(resolveAppIcon("", "Wallet")).toEqual({ kind: "monogram", text: "WA" });
   });
 
   it("passes through an explicit structured declaration", () => {

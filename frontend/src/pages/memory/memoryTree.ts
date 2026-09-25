@@ -27,7 +27,7 @@ export type DocRow = components["schemas"]["DocRow"];
 /** Every kind of thing the Memory tree can point at. */
 export type MemoryNode =
   | { kind: "root" }
-  /** A knowledge scope (`workshop`, `project:birds`, `agent:x`). */
+  /** A knowledge scope (`workshop`, `project:widgets`, `agent:x`). */
   | { kind: "scope"; scope: string }
   /** One note, addressed the way the knowledge store addresses it. */
   | { kind: "note"; scope: string; id: string }
@@ -51,7 +51,7 @@ export const DOCS_ID = "docs";
  * it as the row key, the level key and the selection key).
  *
  * `#` separates a note's scope from its id because a scope key contains colons
- * (`project:birds`) and a note id is a slug that cannot contain either.
+ * (`project:widgets`) and a note id is a slug that cannot contain either.
  */
 export function encodeMemoryNode(node: MemoryNode): string {
   switch (node.kind) {

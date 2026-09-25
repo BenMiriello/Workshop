@@ -157,7 +157,7 @@ type AgentState =
 // The "Assistant" toggle in an app's Manage panel. Reads the app's manifest
 // (ui.agent_button) and writes it back on change — a view preference, so it
 // commits immediately rather than behind an Edit/Save bar. Optimistic with
-// revert on failure. Apps with no manifest (external, e.g. Wearables) render
+// revert on failure. Apps with no manifest (external ones) render
 // nothing here.
 function AgentButtonSetting({ appId }: { appId: string }) {
   const qc = useQueryClient();

@@ -2,8 +2,8 @@
 //
 // The mockup has no top toolbar, because the dock and the page column between
 // them answer "where am I" for every screen it drew. It drew no RECORD pages,
-// and this app is full of them: an agent, a project, a ticket, a run, a bird at
-// a location. Deleting the breadcrumb outright would strand those, because only
+// and this app is full of them: an agent, a project, a ticket, a run, a
+// record inside an app. Deleting the breadcrumb outright would strand those, because only
 // five of the twenty-six page files carry their own `back` slot today.
 //
 // So the trail survives, moved and cut down:
@@ -34,8 +34,8 @@ export function ShellTrail() {
   //     the screen and the thing you opened;
   //   * a directory page on a phone draws its tree as the content (section 4),
   //     and the trail is a repeat of bar one. Measured 2026-08-22:
-  //     /apps/birds/files led with "Apps / Birds" under a bar one reading
-  //     "Birds".
+  //     /apps/<slug>/files led with "Apps / <App>" under a bar one reading
+  //     "<App>".
   const chrome = usePageChrome();
   if (!chrome) return null;
   if (crumbs.length < 2) return null;

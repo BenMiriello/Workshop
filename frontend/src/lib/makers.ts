@@ -158,8 +158,8 @@ export const STOP_HELP =
  *  one-per-scope rule, because concurrent makers on disjoint `touches` is a
  *  real case. What is not legal is hiding it. On the live install two trees had
  *  two makers each, and which one the roster showed was decided by which
- *  definition FILENAME sorted first -- so `birds-builder-2` outranked
- *  `birds-builder` for no reason anyone chose. One maker says nothing here;
+ *  definition FILENAME sorted first -- so `<slug>-builder-2` outranked
+ *  `<slug>-builder` for no reason anyone chose. One maker says nothing here;
  *  more than one says how many, on every card that is one of them.
  */
 export function peerNote(m: Pick<MakerSummary, "scope_makers">,

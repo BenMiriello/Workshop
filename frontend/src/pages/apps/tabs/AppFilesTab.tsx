@@ -661,8 +661,8 @@ export default function AppFilesTab() {
   // THE TREE IS THE PAGE ON A PHONE, so there is no page header above it
   // (shell-mockup-spec-2026-08-22.md section 4; the rule and its reasoning are
   // in components/shell/pageChrome.ts). The h1 said "Files" under a tab already
-  // reading "Files" and the trail said "Birds" under a bar one already reading
-  // "Birds": ~290px of repeats before the first row, measured 2026-08-22.
+  // reading "Files" and the trail said the app's name under a bar one already
+  // reading it: ~290px of repeats before the first row, measured 2026-08-22.
   //
   // DECLARED HERE, NOT IN `FilesBody`, so it is true while the app record is
   // still loading. `FilesBody` only mounts once that resolves, and a header

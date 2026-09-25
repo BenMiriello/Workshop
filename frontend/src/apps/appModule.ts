@@ -43,7 +43,7 @@ export type AppModule = {
   /** The app's icon, DECLARED not imported: an icon token (see lib/appIcon),
    *  a url/path for a custom image, or absent for a monogram of its name.
    *  It was `Icon?: ComponentType` holding a lucide component, which put "this
-   *  particular app wants a bird" in platform source. */
+   *  particular app wants that icon" in platform source. */
   icon?: string;
   /** Live state for the launcher card. The launcher used to switch on app ids
    *  and fetch each app's endpoint itself; an app knows its own summary. */

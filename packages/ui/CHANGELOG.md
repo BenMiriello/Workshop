@@ -351,7 +351,7 @@ strictly more.
 ## 0.6.1 - 2026-08-23 - an overlay can start below chrome the shell does not own
 
 **Additive.** One new modifier. Nothing existing moved: `--bare`, `--dropdown`,
-`--under-bar1` and `--sheet` are byte-identical, so the place menu, the birds
+`--under-bar1` and `--sheet` are byte-identical, so the place menu, an app's
 bottom sheet, `Modal` and `ConfirmDialog` are all unaffected.
 
 - **New: `.ws-overlay--under-chrome`.** `top: var(--ws-overlay-top, 0px)`. For a
@@ -381,7 +381,7 @@ and anything that puts a surface over the app composes them.
 
 Reported by the operator on 2026-08-23, having counted the copies: the chat work
 sheet dimmed only the chat column and left the rest of the screen bright, the
-phone place menu had a private copy with no blur, and the birds More sheet had a
+phone place menu had a private copy with no blur, and an app's More sheet had a
 third with a raw `rgba()` fill and a raw z-index. "why do we have multiple
 randomly implemented poorly implemented different overlay backdrops... the blur
 one is better than this. we shouldnt have multiple implementations of the same

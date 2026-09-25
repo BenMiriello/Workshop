@@ -350,11 +350,11 @@ highlighted. This is non-negotiable: it is what keeps an app navigable and stops
 sub-pages from feeling like they replaced the home page.
 
 Rules:
-1. **One header, every page.** Each app has exactly one header component (Birds: `BirdsHeader`).
+1. **One header, every page.** Each app has exactly one header component (e.g. `WidgetsHeader`).
    Every page of that app renders it as its top element. Do not hand-roll a per-page
    `<h2>` header or a bespoke toolbar.
 2. **One source of sections.** The navigable sections live in a single exported list
-   (Birds: `BIRDS_NAV` in `BirdsHeader.tsx`). To add a page: add a `<Route>` to that app's
+   (e.g. `WIDGETS_NAV` in `WidgetsHeader.tsx`). To add a page: add a `<Route>` to that app's
    entry in `src/apps/registry.tsx` AND one entry to the section list. Never scatter
    one-off section links in page bodies as the way to reach a section (a contextual CTA
    is fine, but it is not the nav).
@@ -367,11 +367,11 @@ Rules:
    in CI rather than in the browser.
 3. **Active section is highlighted.** The header marks the current section (`is-active`
    + `aria-current="page"`) so "you are here" is always clear.
-4. **Home is always reachable** from the header (Birds: the bird icon → dashboard).
+4. **Home is always reachable** from the header (e.g. the app icon → dashboard).
 
 When you add or move a page and the nav doesn't update automatically from the section
 list, that's the bug — fix the list, not the page.
 
 ## Migration status
 
-The shell + token foundation are live. Pages are migrated to the primitives incrementally; when you touch a page that still uses legacy classes (`.card`, `.muted`, `.pill`, `.btn`, ad-hoc inline styles), migrate the part you touch to `ws-*`/primitives rather than extending the old idiom. As pages migrate, delete the now-dead rules they leave behind in `styles.css` (handoff step 9). The `birds` sub-app has its own established calm UI and is migrated last.
+The shell + token foundation are live. Pages are migrated to the primitives incrementally; when you touch a page that still uses legacy classes (`.card`, `.muted`, `.pill`, `.btn`, ad-hoc inline styles), migrate the part you touch to `ws-*`/primitives rather than extending the old idiom. As pages migrate, delete the now-dead rules they leave behind in `styles.css` (handoff step 9). An app with its own established UI may be migrated last.

@@ -12,7 +12,7 @@ import type { ReactNode } from "react";
 //
 // So the shell (Workshop's `apps/registry.tsx`) constructs a renderer bound
 // to the app's own id and passes it down as a `renderChatDock` prop; the page
-// calls it wherever it wants to mount the dock, or not at all (Birds gates
+// calls it wherever it wants to mount the dock, or not at all (an app may gate
 // its call on a `PUBLIC` flag). This type is the only piece of that contract
 // an app page needs to import, so its prop is well-typed without pulling in
 // the platform's `AppChatDock` component or the chat system it wraps.
