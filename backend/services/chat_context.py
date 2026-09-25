@@ -507,15 +507,34 @@ NOTE_PROTOCOL = (
 _RULES_FILES = ("AGENTS.md", "CLAUDE.md", ".cursorrules",
                 ".github/copilot-instructions.md")
 
+# An installation's own rules for a scope, kept untracked beside the tracked
+# ones: `CLAUDE.local.md` is the Claude Code convention, `AGENTS.local.md` its
+# cross-vendor spelling. They carry what is true of one installation and must
+# never be committed, so they are appended rather than chosen between.
+_LOCAL_RULES_FILES = ("AGENTS.local.md", "CLAUDE.local.md")
 
-def _agent_rules(read) -> str:
-    """The scope's agent-instructions text, AGENTS.md preferred, common aliases
-    after it. `read` is a provider's own `_read(name)->str`."""
-    for name in _RULES_FILES:
+_LOCAL_RULES_HEADER = "--- Local rules for this installation (untracked) ---"
+
+
+def _first_nonempty(read, names) -> str:
+    for name in names:
         text = read(name)
         if text and text.strip():
             return text
     return ""
+
+
+def _agent_rules(read) -> str:
+    """The scope's agent-instructions text, AGENTS.md preferred, common aliases
+    after it, followed by the installation's local rules file when one exists.
+    `read` is a provider's own `_read(name)->str`."""
+    tracked = _first_nonempty(read, _RULES_FILES)
+    local = _first_nonempty(read, _LOCAL_RULES_FILES)
+    if not local:
+        return tracked
+    parts = [tracked.rstrip()] if tracked.strip() else []
+    parts.append(f"{_LOCAL_RULES_HEADER}\n\n{local.strip()}")
+    return "\n\n".join(parts)
 
 # Git worktree / branch-philosophy pointer (Phase G3). Points agents at the
 # git-worktree-workflow skill and states the canonical-branch rule inline, so the
