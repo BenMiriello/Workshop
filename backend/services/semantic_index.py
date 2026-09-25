@@ -478,8 +478,8 @@ def collect_notes() -> list[Chunk]:
     # and every note moved into a `system/` or `user/` subfolder; a one-level
     # glob left 195 of 196 notes out of the index entirely (measured 2026-08-29).
     #
-    # But SCOPE DIRECTORIES NEST. `shared/knowledge` is the workshop scope and
-    # `shared/knowledge/development`, `system`, `user` and `roles/reviewer` all
+    # But SCOPE DIRECTORIES NEST. The knowledge root is the workshop scope and
+    # its `development`, `system`, `user` and `roles/reviewer` subdirectories all
     # sit inside it. A recursive walk from the parent therefore claims the
     # child's notes a SECOND time, under the WRONG scope -- which is not merely
     # duplication, because scope drives the reach mask, so a workshop-scope

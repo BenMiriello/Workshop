@@ -24,6 +24,7 @@ import asyncio
 import pytest
 
 from services import knowledge, ownership, task_scope
+from wsplatform import paths
 
 
 @pytest.fixture
@@ -132,7 +133,8 @@ def test_an_untouched_old_note_stays_byte_for_byte_the_same(tree):
 @pytest.fixture()
 def chat_root(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKSHOP_ROOT", str(tmp_path))
-    (tmp_path / "shared" / "knowledge").mkdir(parents=True)
+    monkeypatch.setenv("WORKSHOP_RUNTIME", str(tmp_path / ".runtime"))
+    paths.operator_workspace("knowledge").mkdir(parents=True)
     from services import auth_store, ownership as _ownership
     monkeypatch.setattr(auth_store, "DB_PATH", tmp_path / "auth.db")
     auth_store.init_db()
@@ -158,7 +160,7 @@ def test_apply_note_block_threads_the_thread_id_into_the_note(chat_root):
     ))
     assert len(refs) == 1
     ref = refs[0]
-    written = chat_root / "shared" / "knowledge" / f"{ref['id']}.md"
+    written = paths.operator_workspace("knowledge") / f"{ref['id']}.md"
     assert written.exists()
     from services import knowledge as _knowledge
     assert _knowledge.note_chat(written.read_text()) == "thread-abc"
@@ -170,6 +172,6 @@ def test_apply_note_block_with_no_thread_id_records_no_chat(chat_root):
         _block('{"title": "No chat here", "body": "body text.", "scope": "workshop"}'),
     ))
     ref = refs[0]
-    written = chat_root / "shared" / "knowledge" / f"{ref['id']}.md"
+    written = paths.operator_workspace("knowledge") / f"{ref['id']}.md"
     from services import knowledge as _knowledge
     assert _knowledge.note_chat(written.read_text()) == ""

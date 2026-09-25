@@ -1,8 +1,0 @@
-<!-- author: self; chat: 95f7fd7fe8f6413dbcea1b7e80d47979 -->
-The recurring "chat flickers/jumps up and down on load, filling in chunks above" complaint (5+ agents failed on it) is NOT a re-render/memo/streaming issue. Measured with a headless-Chromium scroll probe against the built app on a real 10k-event thread (scratch/scroll_probe.mjs etc.):
-
-CAUSE 1 (the flicker on open): Chat.tsx had a background effect that, on opening a thread, eagerly paged in the ENTIRE history 30 events at a time every 200ms, PREPENDING each window above the viewport (useThreadLog.loadOlder -> olderEventsReceived). On a long thread the log grew ~18k->74k px over several seconds while the operator read the newest messages; scrollTop travelled 106,300px with 28,978px jumps and 7 direction reversals in the first ~600ms. Fix: load older ON DEMAND as he scrolls within 2 screens of the top (useLogScroll onNearTop), plus a MIN_FILL_SCREENS top-up so short threads stay scrollable. Opened-at-bottom now loads nothing (0 direction flips, verified).
-
-CAUSE 2 (jump when a page loads on scroll-up): prepended blocks mount unclamped, then each ElidedContent clamps to preview height a few frames later (~6000px total shrink) via an async measure. .chat-log has `overflow-anchor: none`, so the shrink is uncompensated. The old holdForOlder added the gained height to scrollTop ONCE (before the clamps settled) so it jumped by the shrink. Fix: hold DISTANCE-FROM-BOTTOM constant across the settle (it is the invariant when everything that moves is above the viewport), re-derived each frame. Verified 0px.
-
-Key lesson: this is reproducible HEADLESS (it is load/scroll, not SSE streaming), which is why prior agents who said "can't repro headless" never pinned it. Commit b310a873.

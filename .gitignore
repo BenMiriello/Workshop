@@ -134,11 +134,16 @@ shared/relay-corpus.jsonl
 .tasks.json
 TODO.md
 # The scaffold templates ship a TODO.md as scaffold CONTENT (it is what a new
-# project starts from), and shared/queue/TODO.md is the tracked human-readable
-# queue. Both are source, so both are re-included. Their sibling .tasks.json is
-# not: that is the machine state.
+# project starts from), so it is re-included. Its sibling .tasks.json is not:
+# that is the machine state.
+#
+# The workshop queue's own TODO.md used to be re-included here too, as "the
+# tracked human-readable queue". It is an export the backend regenerates on
+# every ticket write, so tracking it meant one operator's queue in every clone
+# and a modified file in every checkout. It lives under
+# .runtime/workspace/queue/ now; the old directory is ignored outright.
 !/projects/_templates/**/TODO.md
-!/shared/queue/TODO.md
+/shared/queue/
 
 # Tenant operational records: bring-up playbook and security audits of one
 # operator's own box. Kept on disk, not shipped as platform documentation.
@@ -186,16 +191,18 @@ docs/instance-audits/
 /backend/mcp/plaid/
 /commute/
 
-# COMPACTION HANDOFFS ARE INSTANCE STATE, NOT SOURCE.
-# `shared/knowledge/<scope>/working-state.md` is written by the summariser every
-# time a chat in that scope compacts, and overwritten by the next one. Two
-# consequences made tracking them actively harmful:
-#   * The tree was never clean. done.sh saw an uncommitted file it could not
-#     attribute, so it fell back to scoped checks and the full reviewer.sh had
-#     not run all session.
-#   * They carry this installation's identity. The summariser writes whatever
-#     the chat discussed, and on 2026-09-01 that was the operator's own domain,
-#     twice, which check_no_hardcoding correctly counts as a new identity
-#     reference in tracked source.
-# They stay on disk and keep working; a new chat still reads its scope's file.
-shared/knowledge/**/working-state.md
+# KNOWLEDGE NOTES ARE INSTANCE STATE, NOT SOURCE.
+# The operator's knowledge layer (notes, per-scope INDEX.md, compaction
+# handoffs in working-state.md) is written by the running backend and lives
+# under .runtime/workspace/knowledge/. It used to be this directory, which put
+# one operator's notes into the product repo and left the tree dirty after
+# every chat. An existing install's files are copied across once at startup
+# (services/workspace_relocate.py) and the old copies stay on disk, ignored.
+/shared/knowledge/
+
+# Skill links a build chat creates in its working directory
+# (services/skills.link_into_cwd). They are absolute symlinks into the
+# installation that made them, so a tracked copy dangles on every other
+# checkout, and link_into_cwd never replaces an existing entry, so the dangling
+# link also blocks the real skill from being linked there.
+/.claude/skills/

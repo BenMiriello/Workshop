@@ -149,7 +149,7 @@ class TestDoorSevenIsGated:
 
 class TestDevelopmentNotesScope:
     def _dev_dir(self) -> Path:
-        return Path(knowledge._root()) / "shared" / "knowledge" / "development"
+        return knowledge._shared_knowledge_root() / "development"
 
     def test_absent_from_enumeration_in_a_normal_install(self):
         assert "development" not in [k for k, _ in notes_all._scope_roots()]

@@ -42,7 +42,7 @@ export function scopeForContext(contextKey: string | null | undefined): string {
 }
 
 // The scopes a chat gets no task queue for. The workshop root HAS one
-// (`shared/queue`), but a chat is not put in front of it just for being
+// (`task_scope.WORKSHOP_SCOPE_DIR`), but a chat is not put in front of it just for being
 // unbound: showing a general chat the root backlog would make every chat in
 // the system look like it owned the same work. `chat_work._QUEUELESS_SCOPES`
 // is the same rule on the server.

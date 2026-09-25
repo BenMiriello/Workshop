@@ -18,12 +18,14 @@ import asyncio
 import pytest
 
 from services import task_scope
+from wsplatform import paths
 
 
 @pytest.fixture()
 def root(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKSHOP_ROOT", str(tmp_path))
-    (tmp_path / "shared" / "knowledge").mkdir(parents=True)
+    monkeypatch.setenv("WORKSHOP_RUNTIME", str(tmp_path / ".runtime"))
+    paths.operator_workspace("knowledge").mkdir(parents=True)
     # The fence's explicit `scope` is an operator-only override (see
     # apply_note_block): for anyone else it is a way to write into a scope the
     # chat is not bound to, `workshop` above all, which is read into every other
@@ -62,7 +64,7 @@ def test_a_written_note_comes_back_with_somewhere_to_open_it(root):
     # The id is the store's slug for that title, and it is what /memory?note=
     # selects, so it has to be the id the file was actually written under.
     assert ref["id"].startswith("ports-are-squatted-")
-    written = root / "shared" / "knowledge" / f"{ref['id']}.md"
+    written = paths.operator_workspace("knowledge") / f"{ref['id']}.md"
     assert written.exists(), "the ref must point at a note that exists"
     assert "8012 fakes healthy." in written.read_text()
 

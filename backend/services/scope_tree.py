@@ -607,7 +607,7 @@ def scope_root(scope_key: str) -> Path:
     downward -- which it already does.
 
     Raises ValueError for the non-tree scopes (`workshop`, `development`,
-    `role:<role>`): those are facets of one `shared/knowledge/` layer, not a
+    `role:<role>`): those are facets of one owner's knowledge root, not a
     per-scope tree, so there is no single root to point at.
     """
     scope = parse(scope_key)

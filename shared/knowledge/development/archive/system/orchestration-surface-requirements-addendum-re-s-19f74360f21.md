@@ -1,4 +1,0 @@
-Two operator corrections layered onto the raw requirements dump:
-
-1. **Scoping/decomposition happens in the MAIN chat thread, before the chat decides to spawn a run** (revises the earlier 'ticket scoping should happen in the run'). Discussion, thinking, and sub-ticket splitting occur in-thread; the run executes an already-scoped ticket. The ticket-maker's own sub-splitting inherits this.
-2. **Re-scope warning wording**: when a chat is re-scoped while it still has live runs/agents/work in the old scope, show a light warning worded like: 'Move to X and disconnect from runs/agents/other outside this scope?' with Yes / Cancel actions.

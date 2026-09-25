@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-Never write explanatory copy, tooltips, help text, or info blurbs unless explicitly asked. Default to the barest possible form: for a readout, just the numbers (e.g. 'used / total'), no sentence around them. The operator has corrected this repeatedly and finds the long explainers almost never what he wants.

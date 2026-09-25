@@ -1,2 +1,0 @@
-<!-- author: legacy-md; reach: always -->
-DO NOT write `# TODO: implement this` / `// TODO: ...` / `pass # stub` / `raise NotImplementedError()` / `...` as a function body. If a function is too complex for the current tick, mark the TASK `[~] BLOCKED: too-complex-for-single-tick — break into N sub-tasks` and propose the sub-tasks under `## Proposed`. Stub bodies in committed code are forbidden.

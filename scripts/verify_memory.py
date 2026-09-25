@@ -381,9 +381,10 @@ def c_letta_memory_was_exported(name: str) -> None:
     """Letta held 23 memory blocks across 7 agents that nothing read. They must
     survive as notes before the wiring is removed."""
     import subprocess
+    from wsplatform import paths
 
     out = subprocess.run(
-        ["grep", "-rl", "-i", "letta", str(_BACKEND.parent / "shared" / "knowledge")],
+        ["grep", "-rl", "-i", "letta", str(paths.operator_workspace("knowledge"))],
         capture_output=True, text=True).stdout.strip()
     agent_notes = list((_BACKEND.parent / ".runtime" / "agents").glob("*/knowledge/*.md"))
     n = len([l for l in out.splitlines() if l]) + len(agent_notes)

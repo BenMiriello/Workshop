@@ -141,7 +141,7 @@ def _stores(only: str | None) -> list[tuple[str, Path]]:
 
     NOT every store in the tree, which is what this used to claim. It is
     `["workshop"] + task_scope.dev_scopes()`, which today resolves to exactly two
-    directories: `shared/queue` and the repo root. A `project:*` or `app:*` store
+    directories: `task_scope.WORKSHOP_SCOPE_DIR` and the repo root. A `project:*` or `app:*` store
     is NOT classified, so its tickets keep `execution: None` and are invisible to
     unattended dispatch. That is the fail-closed direction, and it is correct
     behaviour rather than a bug, but it is not what "every non-scratch store"

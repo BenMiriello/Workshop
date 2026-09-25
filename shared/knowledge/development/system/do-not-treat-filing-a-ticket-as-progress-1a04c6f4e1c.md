@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-Do not treat filing a ticket as progress: the workshop queue is a passive store and only drains when the autonomy/worker loop is running. Until the automated path is observed pulling and completing several tickets end-to-end, treat it as unproven, do work in-conversation where possible, and monitor the queue across rounds rather than assuming it executes.

@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-The @workshop/ui kit is the shared styling package and is intended to become a public npm package usable outside Workshop; classes that apps depend on and that are not yet in the kit get consolidated INTO it. This is settled design, not an open question, and it applies to the whole class set the apps use rather than to a few named classes. Do not re-ask it as a choice.

@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-Never report app separation as done on the basis of a count, a status line or a doc: the only acceptable evidence is scripts/check_fresh_clone.sh (a clone that installs, builds and boots with zero apps), because a count can be re-pinned and a sentence has already failed twice. And when reporting app files, run git ls-files first and say explicitly whether they are tracked or merely on disk.

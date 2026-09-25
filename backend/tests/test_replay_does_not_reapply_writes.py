@@ -30,7 +30,9 @@ from services import knowledge, ownership, task_scope
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr(knowledge, "_root", lambda: tmp_path)
     monkeypatch.setattr(ownership, "_RUNTIME", tmp_path / ".runtime")
-    return tmp_path / "shared" / "knowledge"
+    monkeypatch.setenv("WORKSHOP_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKSHOP_RUNTIME", str(tmp_path / ".runtime"))
+    return knowledge._shared_knowledge_root()
 
 
 NOTE_REPLY = (

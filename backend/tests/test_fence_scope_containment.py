@@ -28,7 +28,8 @@ from services import auth_store, ownership, task_scope
 @pytest.fixture
 def instance(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKSHOP_ROOT", str(tmp_path))
-    (tmp_path / "shared" / "knowledge").mkdir(parents=True)
+    monkeypatch.setenv("WORKSHOP_RUNTIME", str(tmp_path / ".runtime"))
+    (tmp_path / ".runtime" / "workspace" / "knowledge").mkdir(parents=True)
     monkeypatch.setattr(auth_store, "DB_PATH", tmp_path / "auth.db")
     monkeypatch.setattr(ownership, "_RUNTIME", tmp_path / ".runtime")
     auth_store.init_db()

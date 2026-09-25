@@ -310,13 +310,14 @@ class TestAppsAndAgentsAreRegistryDriven:
         installed_apps.REGISTRY_PATH.write_text(
             json.dumps({"installed": [app_id]}))
 
-        assert not (tmp_path / "shared" / "knowledge").exists()
+        knowledge_root = tmp_path / ".runtime" / "workspace" / "knowledge"
+        assert not knowledge_root.exists()
         assert not (tmp_path / "apps" / app_id).exists()
 
         assert f"app:{app_id}" in scope_tree.children("workshop")
         assert f"app:{app_id}" in scope_tree.reach("workshop")
         # Reading the tree must not itself have created a directory.
-        assert not (tmp_path / "shared" / "knowledge").exists()
+        assert not knowledge_root.exists()
         assert not (tmp_path / "apps" / app_id).exists()
 
     def test_a_newly_registered_unattached_agent_appears_with_no_knowledge_dir(self, registry_tree):

@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-Never describe app absence as a 'missing app' or treat a tolerant/degrading catalog as a valid end state. Apps are installed content and are NEVER in platform source, so the only real state is 'not installed', answered by the install list. The _has_module / 'route module not shipped' skip logic in app_registry is legacy scaffolding for in-tree apps and must be removed at extraction, not defended.

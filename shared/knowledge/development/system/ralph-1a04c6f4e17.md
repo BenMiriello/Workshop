@@ -1,2 +1,0 @@
-<!-- author: ralph; reach: always -->
-Ralph: worker completed the task but left its changes UNCOMMITTED — the loop auto-committed them. Always commit before emitting the sentinel (prompt rule 5); the completion gate reads the git log, not the working tree.

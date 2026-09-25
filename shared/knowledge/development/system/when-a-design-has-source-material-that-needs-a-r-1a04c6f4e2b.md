@@ -1,2 +1,0 @@
-<!-- author: chat; reach: always -->
-When a design has source material that needs a runtime or tool to view (a mockup export, a Figma file, a prototype bundle), extract it into text measurements and commit that BEFORE building anything. A prose design doc carries intent; the mockup carries geometry, and building from intent alone produces surfaces that are structurally right and visually wrong.

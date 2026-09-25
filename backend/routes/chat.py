@@ -1634,7 +1634,7 @@ def _build_prompt(
         parts.append(cap_note)
     # These three blocks were briefly operator-only, because all three read
     # stores that had no owner concept: `learnings`, `workspace_digest`'s
-    # cross-chat roll-up, and `shared/knowledge/`'s `workshop` layer, which
+    # cross-chat roll-up, and the knowledge store's `workshop` layer, which
     # `read_layers` puts into EVERY scope's prompt by design. Gating them
     # stopped the leak and left a second account with a Workshop whose memory,
     # digest and knowledge silently did nothing.

@@ -1,2 +1,0 @@
-<!-- author: legacy-md; reach: always -->
-DO NOT modify a file you didn't read first this tick. The "modified since read" tooling errors usually mean a parallel writer (cron + supervisor + you) is racing.

@@ -129,7 +129,7 @@ def caller_is_operator() -> bool:
     no request path may branch on it to grant access to data someone else
     owns. This is narrower and different in kind: it exists for the handful of
     INSTANCE-WIDE stores that predate per-user ownership and have no owner_id
-    in them at all — `shared/knowledge/`'s workshop layer, the cross-chat work
+    in them at all — the knowledge store's workshop layer, the cross-chat work
     digest, MCP server credentials (Plaid, Google, Discord) — all of it
     configured by, and about, whoever set up this Workshop instance. Until
     those get real per-user partitioning, "belongs to the operator" is the
@@ -167,11 +167,11 @@ def workspace_path(operator_default: Path, under: str) -> Path:
 
     Two rules, and the second is why this is a helper rather than a convention:
 
-    1. **The operator does not move.** `projects/`, `agents/`, `shared/knowledge/`
-       are git-tracked, opened in editors, and referenced by scripts and cron.
-       Repointing them would be a migration with a blast radius far larger than
-       the leak it closes, so the operator keeps `operator_default` byte for
-       byte and everyone else gets `.runtime/users/<id>/workspace/<under>/`.
+    1. **The operator keeps `operator_default`.** The caller names it, and it
+       is the installation's own location for the store (for knowledge,
+       `paths.operator_workspace("knowledge")`; for state files, a directory
+       under the runtime root). Everyone else gets
+       `.runtime/users/<id>/workspace/<under>/`.
     2. **No owner pinned means the operator's**, matching `ownership.py`'s own
        rule for background loops (they pin the operator's id) and keeping every
        CLI script and unit test working unchanged. Request paths always have an

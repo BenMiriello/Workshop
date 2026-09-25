@@ -21,14 +21,13 @@ Durable scoped facts and running notes go into the knowledge Notes store
 (`services/knowledge.py`) at the right scope. Per-scope `INDEX.md` index plus one
 `<id>.md` per note, injected into that scope's chat context and searchable on recall.
 
-- `workshop` -> shared cross-cutting facts (`shared/knowledge/`, committed)
-- `project:<slug>` -> per-project notes (`projects/<slug>/knowledge/`, gitignored)
-- `agent:<slug>` -> per-agent running notes (`.runtime/agents/<slug>/knowledge/`, gitignored)
-- `app:<name>` -> per-app notes (`apps/<name>/knowledge/`, committed)
+- `workshop` -> cross-cutting facts (`.runtime/workspace/knowledge/`)
+- `project:<slug>` -> per-project notes (`projects/<slug>/knowledge/`)
+- `agent:<slug>` -> per-agent running notes (`.runtime/agents/<slug>/knowledge/`)
+- `app:<name>` -> per-app notes (`apps/<name>/knowledge/`)
 
-Commit-or-not is decided by scope, not by hand: `workshop` and `app` are committed
-(shared, want history); `project` and `agent` stay gitignored (instance-local, a
-fresh clone starts blank). Write with `knowledge.put_note(scope, id, title, content,
+Notes are instance data, so none of these is committed to the platform repo; a
+fresh clone starts blank. Write with `knowledge.put_note(scope, id, title, content,
 hook=...)` or the Notes UI. This is where agent-written and operator-written notes
 meet; use it instead of a write-only log nobody re-reads.
 

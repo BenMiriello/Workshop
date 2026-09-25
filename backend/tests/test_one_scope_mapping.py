@@ -69,7 +69,7 @@ KEY_FORMS: list[tuple[str, str]] = [
 ]
 
 # The scopes above that a chat gets no task queue for. `workshop` HAS a queue
-# (`shared/queue`) but a chat is not put in front of the root backlog just for
+# (`task_scope.WORKSHOP_SCOPE_DIR`) but a chat is not put in front of the root backlog just for
 # being unbound, and an app dock has no queue at all.
 QUEUELESS = {"workshop"}
 
