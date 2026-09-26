@@ -192,12 +192,51 @@ class TestTheProcessGroupIsSignalled:
         monkeypatch.setattr(build_streaming.os, "getpgid", lambda pid: 777)
         monkeypatch.setattr(build_streaming.os, "killpg",
                             lambda pgid, sig: signals.append((pgid, sig)))
+        # The group empties as soon as it is signalled.
+        monkeypatch.setattr(build_streaming, "_pgid_alive",
+                            lambda pgid: pgid == 777 and not signals)
         proc = FakeProc(pid=555)
-        proc.die()      # already gone, so the helper returns on its first check
 
         asyncio.run(build_streaming._retire_turn_proc(proc.pid, proc))
 
         assert signals == [(777, signal.SIGTERM)]
+
+    def test_a_member_that_outlives_the_leader_is_killed(self, monkeypatch):
+        """bwrap leads the group and dies on SIGTERM; `claude` catches SIGTERM and
+        mid-tool does not exit. Waiting on the leader returned at once and left
+        the CLI orphaned (turn 00c1a114, 2026-09-25). Done means the GROUP is
+        empty, so a survivor gets SIGKILL."""
+        signals: list[tuple[int, int]] = []
+        monkeypatch.setattr(build_streaming.os, "getpgid", lambda pid: 777)
+        monkeypatch.setattr(build_streaming.os, "killpg",
+                            lambda pgid, sig: signals.append((pgid, sig)))
+        monkeypatch.setattr(build_streaming, "_pgid_alive",
+                            lambda pgid: signal.SIGKILL not in [s for _g, s in signals])
+        proc = FakeProc(pid=555)
+        proc.die()
+
+        asyncio.run(build_streaming._retire_turn_proc(proc.pid, proc))
+
+        assert signals == [(777, signal.SIGTERM), (777, signal.SIGKILL)]
+
+    def test_a_group_whose_leader_is_gone_is_still_addressed(self, monkeypatch):
+        """`os.getpgid` fails once the leader has exited, and the group it led
+        can still hold the CLI. The spawn uses start_new_session, so the group
+        id is the leader's pid."""
+        def gone(pid):
+            raise ProcessLookupError(pid)
+        signals: list[tuple[int, int]] = []
+        monkeypatch.setattr(build_streaming.os, "getpgid", gone)
+        monkeypatch.setattr(build_streaming.os, "killpg",
+                            lambda pgid, sig: signals.append((pgid, sig)))
+        monkeypatch.setattr(build_streaming, "_pgid_alive",
+                            lambda pgid: pgid == 555 and not signals)
+        proc = FakeProc(pid=555)
+        proc.die()
+
+        asyncio.run(build_streaming._retire_turn_proc(proc.pid, proc))
+
+        assert signals == [(555, signal.SIGTERM)]
 
 
 class TestStoppingIsIdempotent:

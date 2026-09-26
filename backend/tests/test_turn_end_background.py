@@ -146,3 +146,70 @@ def test_the_other_background_chatter_is_not_counted():
 
     assert "task_updated" not in _BG_TASK_EVENTS
     assert "background_tasks_changed" not in _BG_TASK_EVENTS
+
+
+# BY ID, NOT BY COUNT. Turn 00c1a114 (2026-09-25) resumed a session whose
+# previous process had left eight agents behind. The CLI delivered a
+# notification for each before the new turn's own work, the old
+# started-minus-reported count absorbed them, and it read zero pending while
+# this turn's agents were running. The turn was retired mid-run.
+
+def _event(subtype, task_id):
+    return {"subtype": subtype, "task_id": task_id}
+
+
+def test_a_notification_for_a_task_this_process_never_started_is_ignored():
+    from services.build_streaming import _track_bg_task
+
+    live: set = set()
+    for tid in ("old1", "old2", "old3"):
+        _track_bg_task(live, _event("task_notification", tid))
+    _track_bg_task(live, _event("task_started", "mine"))
+
+    assert live == {"mine"}
+
+
+def test_a_task_resumed_after_it_reported_is_pending_again():
+    from services.build_streaming import _track_bg_task
+
+    live: set = set()
+    _track_bg_task(live, _event("task_started", "a"))
+    _track_bg_task(live, _event("task_notification", "a"))
+    _track_bg_task(live, _event("task_started", "a"))
+
+    assert live == {"a"}
+
+
+def test_the_parser_carries_the_task_id():
+    import json
+
+    from services.build_streaming import _BG_TASK_EVENTS, _parse_stream_event
+
+    for subtype in _BG_TASK_EVENTS:
+        _kind, payload = _parse_stream_event(
+            json.dumps({"type": "system", "subtype": subtype, "task_id": "t1"}))
+        assert payload["task_id"] == "t1"
+
+
+def test_an_adopted_turn_remembers_the_tasks_running_before_its_offset(tmp_path):
+    """A restart adopts the turn at a journal offset instead of replaying it, so
+    what was running before that point has to be read back, or the next result
+    retires the turn and kills its agents."""
+    import json
+
+    from services.build_streaming import _bg_tasks_before
+
+    lines = [
+        {"type": "system", "subtype": "task_notification", "task_id": "stale"},
+        {"type": "system", "subtype": "task_started", "task_id": "a"},
+        {"type": "system", "subtype": "task_started", "task_id": "b"},
+        {"type": "system", "subtype": "task_notification", "task_id": "a"},
+    ]
+    head = "".join(json.dumps(x) + "\n" for x in lines).encode()
+    tail = (json.dumps({"type": "system", "subtype": "task_notification",
+                        "task_id": "b"}) + "\n").encode()
+    journal = tmp_path / "stream.jsonl"
+    journal.write_bytes(head + tail)
+
+    assert _bg_tasks_before(journal, len(head)) == {"b"}
+    assert _bg_tasks_before(journal, 0) == set()

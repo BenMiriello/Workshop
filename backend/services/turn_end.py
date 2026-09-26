@@ -103,7 +103,8 @@ class TurnProgress:
     produced_since_result: bool = False
     # BACKGROUND SUBAGENTS LAUNCHED BY THIS TURN AND NOT YET REPORTED.
     #
-    # `task_started` minus `task_notification`, off the CLI's own system events.
+    # Task ids this process announced with `task_started` and has not yet seen a
+    # `task_notification` for, off the CLI's own system events.
     # A background agent runs in the turn's process GROUP, so retiring the turn
     # kills it; while one is outstanding the CLI still owes us its result, in
     # exactly the sense the other three counts mean. Defaults 0, so a caller that
