@@ -208,3 +208,27 @@ def test_list_branches_refuses_a_tree_it_cannot_find(monkeypatch, tmp_path):
 
     with pytest.raises(ValueError):
         worktrees.list_branches("gone")
+
+
+def test_a_dirless_self_row_names_the_branch_it_is_on(monkeypatch, tmp_path):
+    """A `self: true` row needs no `dir`, since `paths.project_dir` derives it.
+    The record lookup used to reject such a row as "project not found", so
+    `default_ref` fell back to `HEAD` and every platform chat's branch pill
+    read HEAD."""
+    import subprocess
+
+    from services import worktrees
+
+    here = tmp_path / "here"
+    here.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "trunk", str(here)], check=True)
+    subprocess.run(["git", "-C", str(here), "-c", "user.name=t", "-c",
+                    "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"],
+                   check=True)
+    reg = tmp_path / "projects.json"
+    reg.write_text(json.dumps({"projects": {"development": {"self": True}}}),
+                   encoding="utf-8")
+    monkeypatch.setenv("WORKSHOP_ROOT", str(here))
+    monkeypatch.setattr(worktrees, "PROJECTS_REGISTRY", reg)
+
+    assert worktrees.default_ref("development") == "trunk"

@@ -211,7 +211,8 @@ def _project_record(project_slug: str) -> dict:
     except Exception as e:
         raise ValueError(f"projects registry unreadable: {e}")
     p = (reg.get("projects") or {}).get(project_slug)
-    if not p or not p.get("dir"):
+    # A `self: true` row carries no `dir`: `paths.project_dir` derives it.
+    if not p or not (p.get("dir") or p.get("self")):
         raise ValueError(f"project not found: {project_slug}")
     return p
 
