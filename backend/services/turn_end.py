@@ -110,6 +110,14 @@ class TurnProgress:
     # exactly the sense the other three counts mean. Defaults 0, so a caller that
     # does not track it behaves as before.
     background_pending: int = 0
+    # REPORTS ANNOUNCED BUT NOT YET HANDED TO THE MODEL.
+    #
+    # A task the turn itself backgrounded reports in two steps: the CLI writes
+    # `task_notification`, and only afterwards echoes the report back as a user
+    # message and starts a request to answer it. Between the two, nothing is
+    # pending and nothing has been produced, so the balance below reads "done".
+    # Counted from the notification until its echo arrives.
+    wakes_owed: int = 0
 
 
 def turn_is_over(p: TurnProgress) -> bool:
@@ -158,6 +166,22 @@ def turn_is_over(p: TurnProgress) -> bool:
     # task that dies without reporting.
     if p.background_pending > 0:
         return p.idle_s >= BACKGROUND_GRACE_S
+    # A REPORT THE MODEL HAS NOT BEEN GIVEN YET IS A PROMPT STILL OWED.
+    #
+    # The case `background_pending` cannot see: the last background task
+    # reports, which empties the pending set, and the CLI has not yet echoed the
+    # report or started answering it. Retiring here kills the request that was
+    # about to read it, and the turn ends on the agent's "I'll report when it
+    # finishes" with the report sitting unread. It is also the case where the
+    # task finishes BEFORE the model's closing message: the CLI queues the
+    # report, delivers it after the result, and the process must still be
+    # there to do so.
+    #
+    # Bounded by the ordinary silence bound, not the background one: the echo
+    # normally follows within milliseconds, so a report that is never echoed
+    # costs a minute rather than holding the thread.
+    if p.wakes_owed > 0:
+        return p.idle_s >= STUCK_GRACE_S
     if p.produced_since_result:
         return p.idle_s >= STUCK_GRACE_S
     # Everything we handed over has been read, everything read has been
