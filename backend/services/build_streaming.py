@@ -995,11 +995,14 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
         # so the receipt path can tell an operator injection from a sidechain.
         content = ev.get("message", {}).get("content")
         if isinstance(content, str):
-            return ("user_echo", {"text": content, "parent": parent})
+            return ("user_echo", {"text": content, "parent": parent,
+                                  "task": _echoed_task(ev, content)})
         if isinstance(content, list) and content and isinstance(content[0], dict):
             b0 = content[0]
             if b0.get("type") == "text":
-                return ("user_echo", {"text": b0.get("text") or "", "parent": parent})
+                text = b0.get("text") or ""
+                return ("user_echo", {"text": text, "parent": parent,
+                                      "task": _echoed_task(ev, text)})
             return ("tool_result", {
                 "tool_use_id": b0.get("tool_use_id"),
                 "text": _tool_result_text(b0.get("content")),
@@ -1012,6 +1015,9 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
                                 "parent": parent})
     if t == "result":
         return ("result", {
+            # "task-notification" when the request this result ends was started
+            # by a background task's report rather than by a prompt of ours.
+            "origin": (ev.get("origin") or {}).get("kind"),
             "stop_reason": ev.get("stop_reason") or ev.get("terminal_reason"),
             # How the CLI ended the turn: "success", "error_during_execution",
             # … Kept as telemetry for diagnosing a turn that ended badly. Note
@@ -1031,6 +1037,10 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
             "modelUsage": ev.get("modelUsage"),
         })
     if t == "system":
+        if ev.get("subtype") in _BG_TASK_EVENTS:
+            return ("meta", {"subtype": ev.get("subtype"), "task_id": ev.get("task_id"),
+                             "backgrounded": bool(ev.get("is_backgrounded")),
+                             "subagent_owned": bool(ev.get("owned_by_subagent"))})
         return ("meta", {"subtype": ev.get("subtype")})
     # A PARTIAL-MESSAGE FRAME (from --include-partial-messages). The whole reason
     # we ask for these is the model's reasoning: the final `assistant` message
@@ -1865,6 +1875,34 @@ _MEMORY_CHECK_EVERY_S = 5.0
 _PAGE_MB = os.sysconf("SC_PAGE_SIZE") / (1024 * 1024)
 
 
+def _pgid_stats(pgid: int):
+    """The `/proc/<pid>/stat` fields after comm, for every process in `pgid`.
+
+    Read from /proc rather than signalled, so it answers the same way whether or
+    not the group runs under another uid."""
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return
+    for name in entries:
+        if not name.isdigit():
+            continue
+        try:
+            with open(f"/proc/{name}/stat", "rb") as fh:
+                data = fh.read()
+            # comm (field 2) is parenthesised and may contain spaces, so split
+            # after the LAST ')'. rest[0] is field 3, hence pgrp=rest[2].
+            rest = data[data.rfind(b")") + 2:].split()
+            if int(rest[2]) == pgid:
+                yield rest
+        except (OSError, IndexError, ValueError):
+            continue   # the process exited mid-read, or /proc raced us
+
+
+def _pgid_alive(pgid: int | None) -> bool:
+    return pgid is not None and next(_pgid_stats(pgid), None) is not None
+
+
 def _pgid_rss_mb(pgid: int) -> float:
     """Resident MB across every process in `pgid`, the turn's process group.
 
@@ -1873,25 +1911,11 @@ def _pgid_rss_mb(pgid: int) -> float:
     is what makes the ceiling mean anything. Returns 0.0 if nothing matches (the
     group is already gone), so a missing group never trips the ceiling."""
     total_pages = 0
-    try:
-        entries = os.listdir("/proc")
-    except OSError:
-        return 0.0
-    for name in entries:
-        if not name.isdigit():
-            continue
+    for rest in _pgid_stats(pgid):
         try:
-            with open(f"/proc/{name}/stat", "rb") as fh:
-                data = fh.read()
-            # comm (field 2) is parenthesised and may contain spaces, so split
-            # after the LAST ')'. rest[0] is field 3, hence pgrp=rest[2],
-            # rss=rest[21] (fields 5 and 24).
-            rest = data[data.rfind(b")") + 2:].split()
-            if int(rest[2]) != pgid:
-                continue
-            total_pages += int(rest[21])
-        except (OSError, IndexError, ValueError):
-            continue   # the process exited mid-read, or /proc raced us
+            total_pages += int(rest[21])   # rss, field 24
+        except (IndexError, ValueError):
+            continue
     return total_pages * _PAGE_MB
 
 
@@ -2136,6 +2160,112 @@ def _proc_alive(pid: int | None, *, starttime: str | None = None) -> bool:
 # needs). Named here so the driver and `turn_end` agree on one vocabulary.
 _BG_TASK_EVENTS = frozenset({"task_started", "task_notification"})
 
+
+def _track_bg_task(live: set, payload: dict) -> None:
+    tid = payload.get("task_id")
+    if not tid:
+        return
+    if payload.get("subtype") == "task_started":
+        live.add(tid)
+    else:
+        live.discard(tid)
+
+
+_ECHOED_TASK_ID = re.compile(r"<task-id>\s*([^<\s]+)\s*</task-id>")
+
+
+def _echoed_task(ev: dict, text: str) -> str | None:
+    """The background task a replayed user message delivers, if it is one.
+
+    The CLI hands a finished task's report to the model as a user message and
+    echoes it like any other: a `<task-notification>` block naming the task, and
+    for a subagent that reports through its hand-back, a second peer message
+    whose origin names the sender."""
+    origin = ev.get("origin") or {}
+    if origin.get("kind") == "peer" and origin.get("senderTaskId"):
+        return origin["senderTaskId"]
+    if origin.get("kind") == "task-notification" or "<task-notification>" in text:
+        m = _ECHOED_TASK_ID.search(text)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _track_wake(wake: dict, kind: str, payload: dict) -> None:
+    """Which reports the CLI has announced and not yet given to the model.
+
+    Only a task the turn ITSELF backgrounded comes back as a prompt. Measured
+    over every surviving turn journal: a report was echoed to the parent for
+    every task started with `is_backgrounded` and not `owned_by_subagent`, and
+    for none of the others. A foreground command reports through its tool
+    result, and a subagent's own commands report to the subagent."""
+    if kind == "user_echo":
+        if payload.get("task"):
+            wake["owed"].discard(payload["task"])
+            wake["flight"].discard(payload["task"])
+        return
+    # ON AN IDLE SESSION THE REPORT IS NOT ECHOED. The CLI starts a fresh request
+    # for it (`init`) and tags that request's `result` with the report's origin.
+    # Reports owed when a request starts are the ones it answers; one that
+    # arrives after the `init` waits for the next request.
+    if kind == "meta" and payload.get("subtype") == "init":
+        wake["flight"] = set(wake["owed"])
+        return
+    if kind == "result":
+        if payload.get("origin") == "task-notification":
+            wake["owed"] -= wake["flight"]
+        wake["flight"] = set()
+        return
+    tid = payload.get("task_id")
+    if not tid:
+        return
+    if payload.get("subtype") == "task_started":
+        if payload.get("backgrounded") and not payload.get("subagent_owned"):
+            wake["bg"].add(tid)
+    elif tid in wake["bg"]:
+        wake["bg"].discard(tid)
+        wake["owed"].add(tid)
+
+
+def _new_wake() -> dict:
+    return {"bg": set(), "owed": set(), "flight": set()}
+
+
+def _bg_tasks_before(path: Path, offset: int, wake: dict | None = None) -> set:
+    """The tasks still running as of `offset` in the turn's journal.
+
+    A turn adopted after a restart resumes its journal at `offset` rather than
+    replaying it, so everything it knew about its background tasks is behind
+    that point. Without this, a restart mid-turn forgot every running agent, and
+    the next `result` retired the turn and killed them. `wake`, when given, is
+    rebuilt from the same span, so a report announced before the restart and
+    not yet delivered is still owed after it."""
+    live: set = set()
+    if offset <= 0:
+        return live
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read(offset)
+    except OSError:
+        return live
+    for raw in data.splitlines():
+        if b'"task_' not in raw and not (wake is not None and (
+                b'"isReplay"' in raw or b'"init"' in raw or b'"result"' in raw)):
+            continue
+        parsed = _parse_stream_event(raw.decode("utf-8", "replace"))
+        if not parsed:
+            continue
+        if parsed[0] == "meta" and parsed[1].get("subtype") in _BG_TASK_EVENTS:
+            _track_bg_task(live, parsed[1])
+            if wake is not None:
+                _track_wake(wake, "meta", parsed[1])
+        elif wake is not None and (
+                (parsed[0] == "user_echo" and parsed[1].get("parent") is None)
+                or parsed[0] == "result"
+                or (parsed[0] == "meta" and parsed[1].get("subtype") == "init")):
+            _track_wake(wake, parsed[0], parsed[1])
+    return live
+
 _AGENT_COMMS = frozenset({"claude", "bwrap", "sudo", "turn-exec"})
 
 
@@ -2217,25 +2347,26 @@ async def _retire_turn_proc(pid: int | None, proc=None, *,
     from the host user onto a `workshop-turn`-owned process, and the bare
     `except Exception: pass` this used to fall into would swallow that and
     silently do nothing -- leaking the process and leaving Stop a no-op.
+
+    DONE MEANS THE GROUP IS EMPTY, not that the leader exited. The leader is
+    bwrap, which dies on SIGTERM at once; `claude` catches SIGTERM and, in the
+    middle of a tool call, does not exit. Waiting on the leader returned within
+    100ms and skipped the SIGKILL, so the CLI was orphaned to systemd and kept
+    working with nobody reading it: turn 00c1a114 (2026-09-25) went on driving
+    its agents for an hour after the chat committed it, then held the session
+    idle for a day.
     """
+    pgid = _turn_pgid(pid)
     if user is not None:
         if pid:
             from services import scoped_exec
-            try:
-                pgid = os.getpgid(pid)
-            except OSError:
-                pgid = None
             try:
                 scoped_exec.signal_pg(pid, signal.SIGTERM, user=user, pgid=pgid)
             except Exception:
                 pass
     else:
         try:
-            pgid = os.getpgid(pid) if pid else None
-        except OSError:
-            pgid = None
-        try:
-            if pgid is not None:
+            if _pgid_alive(pgid):
                 os.killpg(pgid, signal.SIGTERM)
             elif proc is not None and proc.returncode is None:
                 proc.terminate()
@@ -2243,13 +2374,28 @@ async def _retire_turn_proc(pid: int | None, proc=None, *,
             pass
     for _ in range(20):  # up to ~2s for a clean shutdown
         await asyncio.sleep(0.1)
+        if pgid is not None:
+            if not _pgid_alive(pgid):
+                return
         # waitpid-based, so this still reports correctly regardless of which
         # uid the child actually ran as -- only SIGNALLING it is uid-gated.
-        if proc is not None and proc.returncode is not None:
+        elif proc is not None and proc.returncode is not None:
             return
-        if pid and not _proc_alive(pid, starttime=starttime):
+        elif pid and not _proc_alive(pid, starttime=starttime):
             return
-    _kill_turn_proc(pid, proc, user=user, starttime=starttime)
+    _kill_turn_proc(pid, proc, user=user, starttime=starttime, pgid=pgid)
+
+
+def _turn_pgid(pid: int | None) -> int | None:
+    """The turn's process group. The spawn uses `start_new_session`, so the
+    group id IS the leader's pid, and stays valid after the leader exits, which
+    is exactly when `os.getpgid(pid)` stops being able to say so."""
+    if not pid:
+        return None
+    try:
+        return os.getpgid(pid)
+    except OSError:
+        return pid
 
 
 def _cleanup_turn_input(turn_id: str) -> None:
@@ -2263,16 +2409,14 @@ def _cleanup_turn_input(turn_id: str) -> None:
 
 def _kill_turn_proc(pid: int | None, proc=None, *,
                      user: str | None = None,
-                     starttime: str | None = None) -> None:
+                     starttime: str | None = None,
+                     pgid: int | None = None) -> None:
+    pgid = pgid if pgid is not None else _turn_pgid(pid)
     if user is not None:
         # See `_retire_turn_proc`: proc.kill() is not safe to try cross-uid,
         # so this does not fall through to it on any failure here.
         if pid:
             from services import scoped_exec
-            try:
-                pgid = os.getpgid(pid)
-            except OSError:
-                pgid = None
             try:
                 scoped_exec.signal_pg(pid, signal.SIGKILL, user=user, pgid=pgid)
             except Exception:
@@ -2293,11 +2437,7 @@ def _kill_turn_proc(pid: int | None, proc=None, *,
     # turn stopped, and reclaimed none of the memory it fired over — so the
     # ceiling did not do the one thing it exists to do.
     try:
-        pgid = os.getpgid(pid) if pid else None
-    except OSError:
-        pgid = None
-    try:
-        if pgid is not None:
+        if _pgid_alive(pgid):
             os.killpg(pgid, signal.SIGKILL)
         elif proc is not None and proc.returncode is None:
             proc.kill()
@@ -2913,9 +3053,13 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     state = {"compacted": False, "saw_result": False, "last_ctx": 0,
              "replays": 0, "results": 0, "foreign_results": 0,
              "seg_at_result": -1,
-             # Background subagents launched by this turn, and how many have
-             # reported. The difference is what `turn_end` waits on.
-             "bg_started": 0, "bg_reported": 0,
+             # Ids of the tasks this process started and has not heard back
+             # from. Its size is what `turn_end` waits on. Seeded below once
+             # the resume offset is known.
+             "bg_live": set(),
+             # Reports from this turn's own background tasks that the CLI has
+             # announced and not yet handed to the model (`_track_wake`).
+             "wake": _new_wake(),
              # Seeded at NOW, not at 0: `chat_worktree.enter` wrote the first beat
              # when it took the lease, so the first renewal is due one window
              # from the start of the turn rather than on the first loop pass.
@@ -2937,6 +3081,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     # consistent. Anything after that offset is re-read and appended, which is
     # exactly right because the segments stop there.
     offset = _resume_from(turn)
+    state["bg_live"] = _bg_tasks_before(path, offset, state["wake"])
     last_persist = 0.0
 
     # RESUMED PAST A FINISHED TURN. A turn that wrote its `result` before a
@@ -3029,6 +3174,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             state["spend_sum"] = int(state.get("spend_sum") or 0) + _spend_tokens_from_usage(payload.get("usage"))
         elif kind == "result":
             state["saw_result"] = True
+            _track_wake(state["wake"], kind, payload)
             # A RESULT THAT LANDS BEFORE THE CLI HAS READ ANY PROMPT OF OURS IS
             # NOT AN ANSWER TO ONE. It belongs to a prompt the CLI generated for
             # itself — on `--resume`, a `<task-notification>` for a background
@@ -3076,6 +3222,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                     _maybe_write_blocked(turn, meta, payload)
             elif kind == "meta" and payload.get("subtype") == "compact_boundary":
                 state["compacted"] = True
+            elif kind == "meta" and payload.get("subtype") == "init":
+                _track_wake(state["wake"], kind, payload)
             elif kind == "meta" and payload.get("subtype") in _BG_TASK_EVENTS:
                 # A BACKGROUND SUBAGENT IS WORK THIS TURN IS STILL OWED, and
                 # these are the CLI's own words for its lifecycle. Verified
@@ -3084,11 +3232,15 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                 # parent's own `result` can land, and retiring on it kills the
                 # subagent, because it lives in this turn's process group.
                 # `turn_end` reads the difference and holds the turn open.
-                sub = payload.get("subtype")
-                if sub == "task_started":
-                    state["bg_started"] += 1
-                else:
-                    state["bg_reported"] += 1
+                #
+                # BY ID, NOT BY COUNT. On `--resume` the CLI first delivers a
+                # notification for every task the PREVIOUS process left behind.
+                # Counted, those cancelled this turn's own live tasks one for
+                # one: turn 00c1a114 (2026-09-25) resumed with eight, read zero
+                # pending while its agents worked, and was retired mid-run. A
+                # notification for an id this process never started is ignored.
+                _track_bg_task(state["bg_live"], payload)
+                _track_wake(state["wake"], kind, payload)
                 # A notification is real activity, so it resets the silence clock
                 # the background bound measures.
                 state["activity_at"] = time.time()
@@ -3101,6 +3253,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                 if payload.get("parent") is None:
                     state["replays"] += 1
                     state["activity_at"] = time.time()
+                    _track_wake(state["wake"], kind, payload)
                     # FIFO: stdin is read in order, so the oldest outstanding
                     # delivery is the one this echo acknowledges. What is left
                     # at the end was never read (`_requeue_unread`).
@@ -3201,11 +3354,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                 produced_since_result=(
                     int(state["seg_at_result"]) >= 0
                     and len(turn.segments) > int(state["seg_at_result"])),
-                # Clamped: a `task_notification` can belong to a task started by
-                # a PREVIOUS process (the resume case turn_end's header
-                # describes), which would otherwise drive this negative.
-                background_pending=max(
-                    0, int(state["bg_started"]) - int(state["bg_reported"])))):
+                background_pending=len(state["bg_live"]),
+                wakes_owed=len(state["wake"]["owed"]))):
             # THE FIRST RESULT IS NOT THE END OF THE TURN, only the end of one
             # request. Retiring on it killed whatever the CLI had started for a
             # second prompt — an injected message, or the task-notification the
