@@ -532,7 +532,7 @@ def _document(meta: dict, messages: list[dict], seqs: list[int], cut_seq: int = 
     # SCOPE IS DERIVED, NOT STORED. It used to be back-filled only when the
     # stored field was absent, which made it stale from the moment anything
     # moved: `rescope_thread` writes `context_key` and nothing else, so a chat
-    # rebound from `general` to `project:birds` went on reporting `workshop`
+    # rebound from `general` to `project:<slug>` went on reporting `workshop`
     # for the rest of its life. Reads that trusted the stored value are what
     # carried `app:development` (see scope_tree.scope_for_context) onto 27
     # threads and out to `Memory.tsx`, which filters the chat list against

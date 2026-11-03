@@ -48,7 +48,7 @@ REACH VS GOVERN, THE CORE DISTINCTION (design doc sec 4.2, 4.3):
   * `govern(S)` is `[widest_governance_layer, role:<r>, S, private]`, widest
     first. It is NOT the ancestor chain: on a developer build `development` is
     an ancestor of every scope, and injecting an ancestor chain would put
-    platform working notes into a birds chat and a finance chat, and would grow
+    platform working notes into every app's chat, and would grow
     unboundedly with tree depth. Governance is one small named layer, injected
     into every prompt; reach is unbounded and only ever pulled on demand.
 

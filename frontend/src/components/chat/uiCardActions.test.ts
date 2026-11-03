@@ -170,9 +170,9 @@ describe("addTasksAndRun honours the server's pickup answer", () => {
   });
 
   it("refuses a scope the server calls not runnable even where the local list would allow it", async () => {
-    expect(scopeIsRunnable("project:birds")).toBe(true); // local says yes...
-    const res = await UI_CARD_ACTIONS.addTasksAndRun(state("project:birds"), ctx({
-      scope: "project:birds", runnable: false, automatic: false,
+    expect(scopeIsRunnable("project:widgets")).toBe(true); // local says yes...
+    const res = await UI_CARD_ACTIONS.addTasksAndRun(state("project:widgets"), ctx({
+      scope: "project:widgets", runnable: false, automatic: false,
       why: "the autonomy brake is engaged",
     })); // ...server says no, and the server wins.
     expect(res.status).toBe("error");

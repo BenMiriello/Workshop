@@ -271,7 +271,7 @@ export default function MakerPanel({
               per-tree. The lock is (`queue-runner-<hash>.lock`), but every tree
               writes `.runtime/queue-runner.log`, so `last_line` is whatever the
               busiest tree wrote last. On a stopped maker that is plainly
-              another maker's work: the notes-app maker's page showed a line
+              another maker's work: one app maker's page showed a line
               from the development tree. The path is printed beside it so the
               reader can see which file it is reading. */}
           {runner?.running && runner.last_line && (

@@ -8,9 +8,9 @@
 //
 // It was built in: `frontend/src/apps/registry.tsx` did
 // `import { Bird } from "lucide-react"` and hung the component off the app's
-// entry, so the platform bundle knew what a bird looks like and knew that one
+// entry, so the platform bundle knew what that icon looks like and knew that one
 // particular app wanted one. The backend was already doing this correctly -- an
-// AppSpec card declares `"icon": "Bird"`, a string -- and the frontend override
+// AppSpec card declares `"icon": "<Name>"`, a string -- and the frontend override
 // took precedence over it.
 //
 // THE TOKEN TABLE BELOW IS NOT AN APP LIST. It is a design vocabulary, the same
@@ -122,8 +122,8 @@ export function iconComponent(name: string): ComponentType<LucideProps> | null {
  *
  * TWO letters by default, not one. The operator asked for "the first letter or
  * first two letters", and one letter is genuinely ambiguous on this very
- * instance: Budget and Birds both render "B". Multi-word names take initials
- * ("Yard Birds" -> "YB") because that is what a person would write.
+ * instance: two apps with the same first letter render alike. Multi-word
+ * names take initials ("Yard Widgets" -> "YW") because that is what a person would write.
  */
 export function monogram(name: string): string {
   const clean = (name ?? "").trim();
@@ -147,7 +147,7 @@ export function monogram(name: string): string {
  * Normalise whatever an app declared into something renderable.
  *
  * Accepts the loose shapes that already exist in the tree: a bare string is a
- * token name (`"Bird"` from a backend card, case-insensitively), and a string
+ * token name (`"PiggyBank"` from a backend card, case-insensitively), and a string
  * that looks like a path or URL is an image. Anything unrecognised falls
  * through to the monogram rather than to a broken glyph.
  */

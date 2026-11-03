@@ -53,7 +53,7 @@ def _block(payload: str) -> str:
 
 def test_a_written_note_comes_back_with_somewhere_to_open_it(root):
     cleaned, labels, refs = _apply(_block(
-        '{"title": "Ports are squatted", "body": "8012 fakes healthy.", "scope": "workshop"}'
+        '{"title": "Ports are squatted", "body": "9100 fakes healthy.", "scope": "workshop"}'
     ))
     assert "```note" not in cleaned
     assert labels == ["Saved a note to workshop."]
@@ -66,7 +66,7 @@ def test_a_written_note_comes_back_with_somewhere_to_open_it(root):
     assert ref["id"].startswith("ports-are-squatted-")
     written = paths.operator_workspace("knowledge") / f"{ref['id']}.md"
     assert written.exists(), "the ref must point at a note that exists"
-    assert "8012 fakes healthy." in written.read_text()
+    assert "9100 fakes healthy." in written.read_text()
 
 
 def test_no_block_writes_nothing_and_refs_nothing(root):

@@ -98,7 +98,7 @@ async def require_operator(request: Request) -> dict[str, Any]:
 
 
 def require_domain_owner(domain: str):
-    """Dependency factory for single-dataset domains (finance/budget/commute):
+    """Dependency factory for single-dataset domains (an app's personal data):
     require an authenticated user who is the recorded DATA owner of `domain`.
     Anyone else — including another is_operator account — gets 403. The owner is
     set by the bootstrap migration (auth_store.domain_owners), never by role or
@@ -118,8 +118,8 @@ def require_domain_owner(domain: str):
 def require_user_or_service(scope: str):
     """Dependency factory: pass if there is a valid user (cookie/device) OR a
     service token of `scope`. Used for low-sensitivity routers that mix
-    authenticated reads with a machine ingest path (e.g. birds: yard detections
-    are already public, but no access is anonymous). Pins the owner either way."""
+    authenticated reads with a machine ingest path (e.g. a sensor app whose
+    detections are already public, but no access is anonymous). Pins the owner either way."""
 
     async def _dep(request: Request) -> dict[str, Any]:
         user, method, _ = _resolve(request)

@@ -18,7 +18,7 @@ Two follow-on plans extend this one and are sequenced to slot in AFTER this plan
 7. The orchestrator is a persona upgrade to the existing `general` provider plus the already-shipped learnings store. No new runtime loop, no new name (naming is operator-gated and deferred). D6 confirmed with one correction: `general` must gain the workshop-root task scope, which the orchestration doc already assigns it.
 8. Clean the ground first: the curriculum/work-generator/verifier swarm and compact_todo.py actively fight the canonical store today (curriculum_tick greps `^\[ \]` which the new export never emits, so it always thinks the queue is empty and appends lines the store then destroys). Remove them before building on top.
 9. Phases 0 (cleanup), 1 (receipt), 2 (tickets UI) can run as parallel subagents with disjoint file ownership; 3 (chat seam) and 4 (orchestrator) are sequential after them.
-10. Explicitly not now: GitHub Issues sync, bridge folding, clawd rename, board UI, any heavy learning conductor, and any multi-tenant guardrails.
+10. Explicitly not now: GitHub Issues sync, bridge folding, bridge rename, board UI, any heavy learning conductor, and any multi-tenant guardrails.
 
 ---
 
@@ -89,7 +89,7 @@ Right because: the docs explicitly rejected a heavy learning conductor ("ants, n
 
 Correction 1: a persona alone does not satisfy ask 5 unless the general chat can actually FILE and RUN work. Today `task_scope.root_for_context("general")` returns None, so a general chat cannot hold a task-patch or a proposal scope-default. The orchestration doc (decision 5) already assigns the general chat `scope = workshop`. Implement that: `general` resolves to the workshop root store. That is the difference between "a chat that talks about work" and "a chat that owns a queue".
 
-Correction 2: do not name it. The bridge-folding / clawd-rename decision is deferred and operator-gated, and christening a new named agent now would preempt it. The upgrade goes into the existing `general` provider (`chat_context.py:_general`), whose display identity the operator already knows; the operator picks a name later if he wants one. If he asks for "a NAMED orchestrator with its own identity" after using it, that becomes a registry assistant creation (one operator action in the existing agents UI), not new engineering.
+Correction 2: do not name it. The bridge-folding / bridge-rename decision is deferred and operator-gated, and christening a new named agent now would preempt it. The upgrade goes into the existing `general` provider (`chat_context.py:_general`), whose display identity the operator already knows; the operator picks a name later if he wants one. If he asks for "a NAMED orchestrator with its own identity" after using it, that becomes a registry assistant creation (one operator action in the existing agents UI), not new engineering.
 
 Does this satisfy the operator's ask, or does he need more? The ask decomposes as: learns preferences (learnings store, shipped, needs a chat-side capture affordance), broad scope (workshop-root task scope + cross-scope query via `mcp__workshop__query`, shipped), scopes/prioritizes (persona + task-proposal cards + priority field), surfaces questions (the `awaiting` payload + attention surfaces, shipped). The one thing a persona cannot do is act between conversations, and that is deliberately the dispatcher's job. If, after living with it, he wants proactive between-session behavior (e.g. a morning brief), that is the doc's memory-keeper/scheduled-assistant slot (O5/O6), a follow-on, not a blocker.
 
@@ -208,7 +208,7 @@ Verification: a general-chat conversation files, prioritizes, and runs a root-sc
 ## Part 4: explicitly not now
 
 - GitHub Issues sync: operator-deferred by name. Nothing in the ticket surface may assume or scaffold it (no `external_ref` field speculation).
-- bridge folding / clawd rename / naming the orchestrator: deferred, operator-gated (unified-agent-model doc). The orchestrator ships as the existing general identity.
+- bridge folding / bridge rename / naming the orchestrator: deferred, operator-gated (unified-agent-model doc). The orchestrator ships as the existing general identity.
 - Board/kanban UI: docs say list + drawer, board deferred. The Work page is a list.
 - Heavy learning conductor / any persistent orchestrator runtime: explicitly rejected in the orchestration doc; the dispatcher stays thin and mechanical.
 - Memory-keeper scheduled consolidation agent (O5): designed, valuable, and NOT in this plan's critical path; build after the operator has lived with Phases 0-4.

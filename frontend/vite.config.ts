@@ -30,7 +30,7 @@ const permissionsPolicyMiddleware = (): PluginOption => ({
 // JS reads the wrong field (e.g. AgentConfig reading `metadata_` instead of
 // `metadata`) and won't pick up the new bundle even on pull-to-refresh,
 // visiting `/clear` returns Clear-Site-Data which wipes cache + storage for
-// this origin. Same pattern as apps/commute/vite.config.ts.
+// this origin. Same pattern an app's own vite config can use.
 const CLEAR_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>Cleared</title>
 <meta http-equiv="refresh" content="2; url=/">
 <style>body{font-family:system-ui;background:#0b0f17;color:#e7eaee;padding:2rem;text-align:center}</style>
@@ -43,7 +43,7 @@ const CLEAR_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>Clea
 </script>
 </body></html>`;
 
-// Service-worker kill-switch (same pattern as commute app). Catches any
+// Service-worker kill-switch (same pattern an app can use). Catches any
 // residual SW from earlier builds and unregisters it on the next page load.
 const KILL_SWITCH_SW = `// Service-worker kill-switch — unregister + drop caches.
 self.addEventListener('install', (e) => { self.skipWaiting(); });
@@ -89,7 +89,7 @@ const serviceWorkerKillSwitchMiddleware = (): PluginOption => ({
 // Per-deployment origin config. Empty by default so a fresh clone runs locally
 // without bouncing to some other instance's hostname.
 //   WORKSHOP_CANONICAL_ORIGIN — browser-facing HTTPS origin (e.g. a Tailscale
-//     Serve URL like https://<host>.ts.net:8443) the dev server redirects to.
+//     Serve URL like https://<host>:8443) the dev server redirects to.
 //   WORKSHOP_TAILNET_HOST — the magicdns host that is already canonical, so
 //     requests arriving there (or on loopback) are not redirected.
 const CANONICAL_ORIGIN = (process.env.WORKSHOP_CANONICAL_ORIGIN || "").replace(/\/$/, "");

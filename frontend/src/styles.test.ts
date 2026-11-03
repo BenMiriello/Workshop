@@ -157,7 +157,7 @@ describe("the app shell cannot scroll its own chrome away", () => {
 //
 // Reported 2026-08-23: "why do we have multiple randomly implemented poorly
 // implemented different overlay backdrops". There were four (the kit's
-// `.ws-overlay`, the chat work sheet's, the place menu's, the birds More
+// `.ws-overlay`, the chat work sheet's, the place menu's, an app's More
 // sheet's), they differed in blur, in z-index and in which part of the screen
 // they covered, and one of them dimmed only the chat column. They are one rule
 // now, and this is what stops a fifth being written: a dimming surface is

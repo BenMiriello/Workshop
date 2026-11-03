@@ -131,10 +131,10 @@ def test_device_token_roundtrip_and_revoke(db):
 
 def test_service_token_carries_scope(db):
     u = auth_store.create_user("svc@example.com", "password1")
-    raw = auth_store.create_service_token(u["id"], "ingest:location", "owntracks")
+    raw = auth_store.create_service_token(u["id"], "ingest:example", "tracker")
     ident = auth_store.service_identity(raw)
     assert ident["user"]["id"] == u["id"]
-    assert ident["scope"] == "ingest:location"
+    assert ident["scope"] == "ingest:example"
     assert auth_store.service_identity("nope") is None
 
 

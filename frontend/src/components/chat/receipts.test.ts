@@ -34,8 +34,8 @@ describe("receiptHref", () => {
 
   it("escapes a scope that contains a colon", () => {
     expect(receiptHref({
-      kind: "note", label: "x", ref: { scope: "project:birds", id: "n1" },
-    })).toBe("/memory?scope=project%3Abirds&note=n1");
+      kind: "note", label: "x", ref: { scope: "project:widgets", id: "n1" },
+    })).toBe("/memory?scope=project%3Awidgets&note=n1");
   });
 
   it("falls back to the scope's list for a receipt stored before refs existed", () => {
@@ -43,8 +43,8 @@ describe("receiptHref", () => {
     // they all stay dead sentences.
     expect(receiptHref({ kind: "note", label: "Saved a note to workshop." }))
       .toBe("/memory?scope=workshop");
-    expect(receiptHref({ kind: "note", label: "Saved a note to project:birds." }))
-      .toBe("/memory?scope=project%3Abirds");
+    expect(receiptHref({ kind: "note", label: "Saved a note to project:widgets." }))
+      .toBe("/memory?scope=project%3Awidgets");
   });
 
   it("never links a warning, even one carrying a ref", () => {

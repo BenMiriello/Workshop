@@ -30,12 +30,6 @@ router = APIRouter()
 
 SESSION_COOKIE = "workshop_session"
 
-_DEV_ORIGINS = {
-    "http://localhost:5173", "http://127.0.0.1:5173",
-    "http://localhost:5174", "http://127.0.0.1:5174",
-}
-
-
 def _origin_ok(ws: WebSocket) -> bool:
     """Is this socket coming from a page we serve?
 
@@ -57,7 +51,7 @@ def _origin_ok(ws: WebSocket) -> bool:
     origin = ws.headers.get("origin")
     if not origin:
         return True                      # a native client sends none
-    if origin in _DEV_ORIGINS:
+    if origin in installation.dev_origins():
         return True
     # The declared origins, read from the one place that knows them
     # (`installation.declared_origins`). Any of them is this installation.

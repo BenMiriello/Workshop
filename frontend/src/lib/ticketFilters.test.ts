@@ -98,7 +98,7 @@ describe("the URL is the filter state", () => {
 
   it("round-trips a fully specified state", () => {
     const filters = {
-      q: "oauth", status: ["todo", "blocked"] as TaskStatus[], scope: "project:birds",
+      q: "oauth", status: ["todo", "blocked"] as TaskStatus[], scope: "project:widgets",
       labels: ["design", "chat-reported"], effort: ["quick"], assignee: ["agent:builder"],
       source: ["operator", "chat"],
     };
@@ -189,8 +189,8 @@ describe("chips say what is narrowing the list", () => {
   });
 
   it("renders a scope through the caller's vocabulary", () => {
-    const chips = chipsFor({ ...defaultFilters("list"), scope: "project:birds" }, fmt);
-    expect(chips.find((c) => c.field === "scope")?.value).toBe("Project: birds");
+    const chips = chipsFor({ ...defaultFilters("list"), scope: "project:widgets" }, fmt);
+    expect(chips.find((c) => c.field === "scope")?.value).toBe("Project: widgets");
   });
 
   it("keeps a fixed chip order as filters come and go", () => {
@@ -206,7 +206,7 @@ describe("chips say what is narrowing the list", () => {
     // The app Tickets tab mounts this list pinned to the app. A chip there
     // carries a clear button, and clearing it would ask for a list the surface
     // cannot show.
-    const f = { ...defaultFilters("list"), scope: "project:birds" };
+    const f = { ...defaultFilters("list"), scope: "project:widgets" };
     expect(chipsFor(f, fmt, { lockedScope: true })
       .some((c) => c.field === "scope")).toBe(false);
     // Every other chip is unaffected.

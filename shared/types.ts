@@ -38,11 +38,11 @@ export type BuildAgent = {
 };
 
 // A worktree-pinned development branch off a project's main, as returned by
-// /api/worktrees/<project>. The git ref name is e.g. "wt/gengui/refactor-css".
+// /api/worktrees/<project>. The git ref name is e.g. "wt/widgets/refactor-css".
 export type WorktreeBranch = {
   project_slug: string;
   branch_slug: string;
-  branch: string;       // full git ref name, e.g. "wt/gengui/refactor-css"
+  branch: string;       // full git ref name, e.g. "wt/widgets/refactor-css"
   dir: string;
   head?: string;
   created?: string;
@@ -50,7 +50,6 @@ export type WorktreeBranch = {
 
 // Operator-built Project: standalone-or-integrated, with a working brain,
 // surfaces, and a persistent vibe-coding session. Lives at /projects.
-// See ADR-008 + docs/projects-hub.md (in clawd-house/docs).
 export type ProjectState =
   | "sketch"
   | "wip"

@@ -322,7 +322,7 @@ class App(Base, Timestamps, SoftDelete):
     # See the class docstring. Populated by the stage-A backfill wherever a
     # slug names both an installed app and a row in the project registry --
     # "the same thing, two records" the design doc calls out by name (sec
-    # 2.1: budget, birds, location, commute, notes-app). NULL means this app
+    # 2.1, five apps at design time). NULL means this app
     # has no working tree of its own (an installed-only app with no repo).
     project_slug: Mapped[str | None] = mapped_column(String(64))
     dev_only: Mapped[bool] = mapped_column(Boolean, nullable=False,

@@ -137,7 +137,7 @@ Two fallbacks, in order:
    `dev_servers.suggest_command`.
 
 Measured: exactly one `deploy.config.yaml` exists in the tree
-(`/workspace/projects/gengui/deploy.config.yaml`, 677 bytes, mtime 2026-06-13). Its
+(`/workspace/projects/<app>/deploy.config.yaml`, 677 bytes, mtime 2026-06-13). Its
 schema is a DIFFERENT schema again: `services.<n>.platform: lightsail|vercel` and
 `environments.{dev,prod}.manual_approval`. Nothing under `backend/` reads `platform:` or
 `environments:` (grep: zero hits). Only the `services:` block is read, and only as a
@@ -148,7 +148,7 @@ manifest fallback.
 
 | Path | Size | mtime | Content |
 |---|---|---|---|
-| `/workspace/projects/gengui/workshop.app.json` | 4362 | 2026-07-05 | 3 services (core disabled, frontend enabled plus expose, inference-worker disabled), 3 deps, 6 env_requirements |
+| `/workspace/projects/<app>/workshop.app.json` | 4362 | 2026-07-05 | 3 services (core disabled, frontend enabled plus expose, inference-worker disabled), 3 deps, 6 env_requirements |
 | `/workspace/projects/notes-app/workshop.app.json` | 645 | 2026-07-13 | 1 service `api`, uvicorn, enabled plus expose, 1 optional env requirement |
 | `/workspace/projects/_templates/fastapi-capability-provider/workshop.app.json` | 356 | 2026-07-11 | the notes-app shape with `{{slug}}` |
 | `/workspace/apps/<slug>/workshop.app.json` | 554 | 2026-08-23 | `{"name": "<slug>"}` plus a comment. **Declares no services at all.** It exists only so `app_files._resolve_app` points the Files tab at `apps/<slug>`. It is not runnable and was never intended to be. |
@@ -176,15 +176,15 @@ Service status vocabulary, measured at `app_runner.py:690`: `pending`, `building
 (`_CSTATE`, `app_runner.py:832`) adds `crashlooping` for docker `restarting`.
 
 **Live content of `.runtime/app-deploys.json`** (1432 bytes, mtime **2026-07-05
-21:48**), measured: exactly one app, `gengui`, `backend: "container"`, `phase: "up"`,
+21:48**), measured: exactly one app, `<app>`, `backend: "container"`, `phase: "up"`,
 `manifest_detected: false`, service `frontend` `running` on port 8799 with
 `healthy: true` but `pid: null` and `started_at: null`, services `core` and
 `inference-worker` `disabled`, all three deps `ok: false`.
 
 That is the entire persisted runner state. One app, frozen since 5 July.
 
-Measured inconsistency: `manifest_detected: false` is recorded for gengui even though
-`projects/gengui/workshop.app.json` has existed since 2026-07-05 19:52, three hours
+Measured inconsistency: `manifest_detected: false` is recorded for <app> even though
+`projects/<app>/workshop.app.json` has existed since 2026-07-05 19:52, three hours
 before that state was written. Inference: either the field means the opposite of its name
 or detection did not fire. Either way it is not a field a new design should carry forward
 without re-deriving what it is for.
@@ -272,7 +272,7 @@ in its `keep` tuple, so it cannot matter there either.
 Every service listens on the same fixed `INTERNAL_PORT = 8080` inside its container
 (`compose_gen.py:37`). Peers address each other as `http://<service>:8080`.
 
-**Measured drift**: the one real generated file, `.runtime/compose/gengui.yml` (mtime
+**Measured drift**: the one real generated file, `.runtime/compose/<app>.yml` (mtime
 2026-07-05 21:48), carries NO `security_opt`, `cap_drop`, or `user: nobody`. Those were
 added to `compose_gen` later. The running container therefore predates the hardening and
 runs without it. Nothing regenerates a compose file except a fresh `start_app`.
@@ -297,8 +297,9 @@ Windows (`port_registry.py:46-50`), measured:
 | `deploy` | 8600-8699 | `services/local_runner.py` (dead, see 1.6) |
 | `app` | 8700-8799 | `services/app_runner.py` |
 
-`RESERVED` (`port_registry.py:55-60`) hardcodes `8000` (backend), `5173/5174/5175`
-(vite), `11434/11435` (ollama), `8443/8445/8446/8447` (tailscale serve mounts).
+`RESERVED` (`port_registry.py:55-60`) hardcoded the backend port, the vite port
+plus two alternates, two ollama ports and four tailscale serve mounts, several of
+them one deployment's own choices.
 
 Allocation (`allocate`, `port_registry.py:193`) is idempotent per owner, probes
 `bind(("127.0.0.1", port))` before handing a port out, honours a `preferred`, and raises
@@ -318,7 +319,7 @@ Non-test importers, measured: `main.py`, `routes/base_apps.py`,
 `services/presence.py` (which uses only `process_alive`).
 
 **Live content of `.runtime/ports.json`** (208 bytes, mtime 2026-07-05 21:48), measured:
-a single allocation, `app:gengui/frontend` to 8799, `pid: null`, claimed
+a single allocation, `app:<app>/frontend` to 8799, `pid: null`, claimed
 2026-07-06T04:48:57Z. In the entire history of this registry, one port has been handed
 out.
 
@@ -357,7 +358,7 @@ Measured:
   a rootless cgroup path of the form
   `0::/user.slice/user-<uid>.slice/user-<uid>.service/user.slice/docker-<id>.scope`.
   Those two pids are `bun run dev -- --port 8080 --strictPort --host 0.0.0.0 --base
-  /base-apps/run/gengui/proxy/frontend/` and its vite child, started 21 July, still alive,
+  /base-apps/run/<app>/proxy/frontend/` and its vite child, started 21 July, still alive,
   both with RSS 0 (fully paged out).
 
 So: the container backend really did run, once, and its one container is still up seven
@@ -405,7 +406,7 @@ updated_at`, none with `current` or `last_run_id`.
 Two things follow, both measured:
 
 1. `gizmo` **does not exist**. Not in `.runtime/projects.json` (which holds
-   `development, gengui, commute, location, birds, budget, notes-app`), and
+   `development` plus six apps), and
    `/workspace/projects/gizmo` is not a directory.
 2. `target.kind = "static"` is **not a registered provider**. `deploy_providers.kinds()`
    returns `["cloudflare-pages", "rsync-ssh"]` (`deploy_providers/__init__.py:14-17`,
@@ -513,13 +514,13 @@ This is the shortest section in the document, and that is the finding.
 
 | Resource | What an app gets today | Evidence |
 |---|---|---|
-| **Database** | **Nothing.** There is no per-app database, no provisioning step, no connection string minted for an app. If an app wants postgres it must ship its own `docker-compose.yml` and point a manifest `deps[]` entry at it, and then hardcode the credentials in its own manifest `env`. | grep for `createdb` / `CREATE DATABASE` / provisioning across `backend/services` and `backend/routes`: zero hits related to apps. `information_schema.columns` where `table_name ilike '%deploy%' or column_name ilike '%deploy%'` returns **0 rows**. The 23-table Workshop schema has no app-storage tables. gengui's manifest hardcodes `DB_USER: gengui`, `DB_PASSWORD: gengui_dev_pass`. |
+| **Database** | **Nothing.** There is no per-app database, no provisioning step, no connection string minted for an app. If an app wants postgres it must ship its own `docker-compose.yml` and point a manifest `deps[]` entry at it, and then hardcode the credentials in its own manifest `env`. | grep for `createdb` / `CREATE DATABASE` / provisioning across `backend/services` and `backend/routes`: zero hits related to apps. `information_schema.columns` where `table_name ilike '%deploy%' or column_name ilike '%deploy%'` returns **0 rows**. The 23-table Workshop schema has no app-storage tables. <app>'s manifest hardcodes `DB_USER: <app>`, `DB_PASSWORD: <app>_dev_pass`. |
 | **Object storage** | **Nothing.** No blob store, no bucket, no upload target for an app. | No such module exists. |
 | **Files** | The project directory itself, bind-mounted read-write into the container at `/app` (`compose_gen.py:213`). On the subprocess path, the process simply runs with `cwd` inside the tree. Either way an app writes to the operator's checkout. | measured |
 | **Named volumes** | Only those a dep block already referenced, hoisted to the top level by `_collect_named_volumes` (`compose_gen.py:102`). No volume is created FOR the app. | measured |
 | **Env vars** | Two tiers. (a) Non-secret config from manifest `services[].env`, which is committed in the repo. (b) Secret values from `services/secrets_store.py`. | measured |
 | **Secrets at rest** | `.runtime/secrets/<slug>.json`, dir mode 0700, file mode 0600, created 0600 from the open (`secrets_store.py:93`). Encrypted at rest only when `secrets_crypto.enabled()`, plaintext JSON otherwise (`secrets_store.py:88-91`). A `_workspace` slug provides a cross-project fallback (`secrets_store.py:42, 148`). The container path also writes a sibling 0600 env file at `.runtime/compose/<slug>__<service>.env` (`compose_gen.py:229`). | measured |
-| **Secrets in practice** | **Never used.** `.runtime/secrets/` contains exactly one file, `gengui.json`, whose entire content is `{}` (2 bytes, mtime 2026-06-16). No secret value has ever been stored for any app or for `_workspace`. | measured |
+| **Secrets in practice** | **Never used.** `.runtime/secrets/` contains exactly one file, `<app>.json`, whose entire content is `{}` (2 bytes, mtime 2026-06-16). No secret value has ever been stored for any app or for `_workspace`. | measured |
 | **Identity / auth** | Nothing. An app gets no user identity, no session, no token, no service account. | measured |
 | **Logs** | `.runtime/app-logs/<slug>__<service>.log`, append-only, unbounded, never rotated. On the container path, logs come from `docker compose logs` instead and the file is unused. | measured |
 
@@ -532,7 +533,7 @@ operator's laptop.
 
 | # | Store | Rows (measured) | What a row carries | Who reads it |
 |---|---|---|---|---|
-| 1 | `.runtime/projects.json` | 7: `development` (self), `gengui`, `commute`, `location`, `birds`, `budget`, `notes-app` | `dir`, `state` (`mounted` / `sketch`), `self`, `surfaces{integrated, standalone, public}` | `routes/projects.py`, `app_runner._project_dir`, `deploy_runner._resolve_project_dir`, `deploy_watcher._resolve_project_dir`, `build_agents`, `tasks_all` |
+| 1 | `.runtime/projects.json` | 7: `development` (self) plus six apps | `dir`, `state` (`mounted` / `sketch`), `self`, `surfaces{integrated, standalone, public}` | `routes/projects.py`, `app_runner._project_dir`, `deploy_runner._resolve_project_dir`, `deploy_watcher._resolve_project_dir`, `build_agents`, `tasks_all` |
 | 2 | `.runtime/installed-apps.json` | 8: `finance, budget, birds, location, commute, health, wearables, notes-app` | a bare id string | `services/installed_apps.py`, then `app_registry`, `main.py` router mounting, the launcher, the public edge blocklist |
 | 3 | `.runtime/apps.json` | 8 | the identity manifest per app: `title`, `sensitivity`, `api_prefixes`, `provides`, `needs`, `kit`, `ui.agent_button` | `services/manifests.py`, `GET /base-apps/manifests` |
 | 4 | Postgres `app` table | approx 9 (planner estimate; rows unreadable under RLS) | `id` (uuid), `slug`, `name`, `icon`, `kind`, `parent_id`, `project_slug`, `archived_at` | `routes/apps.py` and `services/apps.py` |
@@ -836,7 +837,7 @@ the backend booted. Inference: that is a correctness hazard, not just a portabil
 - Any isolation from the operator's filesystem beyond the bind mount and `user: nobody`.
 
 And measured: the secrets store has **never held a value**. `.runtime/secrets/` contains
-one file, `gengui.json`, content `{}`. The entire declare-then-fill env pipeline has run
+one file, `<app>.json`, content `{}`. The entire declare-then-fill env pipeline has run
 end to end zero times.
 
 ### Q4. What has provably never run, has no caller, or is unreachable
@@ -896,9 +897,9 @@ Ordered by confidence, all measured.
 
 **Ran once, long ago, and is now frozen:**
 
-23. The subprocess backend. `.runtime/app-logs/` has exactly two files, both `gengui`:
-    `gengui__core.log` (4684 B, 2026-06-15, every start ends `Environment validation
-    failed: Missing required API keys`) and `gengui__frontend.log` (8170 B, 2026-06-22,
+23. The subprocess backend. `.runtime/app-logs/` has exactly two files, both `<app>`:
+    `<app>__core.log` (4684 B, 2026-06-15, every start ends `Environment validation
+    failed: Missing required API keys`) and `<app>__frontend.log` (8170 B, 2026-06-22,
     vite ready).
 24. The container backend. One compose file generated 2026-07-05, one container
     (`64008f127ca3`) running since 2026-07-21.
@@ -919,7 +920,7 @@ paths (approx 300).
   records.
 - `compose_gen` tests write `test-app.yml` and `test-app-with-deps.yml` into the live
   `.runtime/compose/`.
-- `.runtime/compose/gengui.yml` predates the `security_opt` / `cap_drop` / `user: nobody`
+- `.runtime/compose/<app>.yml` predates the `security_opt` / `cap_drop` / `user: nobody`
   hardening, so the one running container does not have it.
 - `manifest_detected: false` recorded for an app whose manifest existed three hours
   earlier.
@@ -948,8 +949,8 @@ multi-tenant design cannot inherit.
 
 8. `WINDOWS` gives 100 ports each to preview, deploy and app (`port_registry.py:46-50`).
    Three hundred concurrent services is the ceiling for the entire installation, forever.
-9. `RESERVED` hardcodes this deployment's own ports: 8000, 5173/5174/5175, 11434/11435
-   (ollama), 8443/8445/8446/8447 (tailscale serve) (`port_registry.py:55-60`).
+9. `RESERVED` hardcodes this deployment's own ports: the backend, vite plus two
+   alternates, two ollama ports and four tailscale serve mounts (`port_registry.py:55-60`).
 10. `AppServicesPanel.proxyHref` hardcodes the port map 8443 to 8446 and 5173 to 8000
     (`AppServicesPanel.tsx:75`). Two magic numbers about one machine's tailscale
     configuration, compiled into the frontend.
@@ -980,7 +981,7 @@ multi-tenant design cannot inherit.
 17. `compose_gen` bind-mounts an **absolute host path** into the container
     (`compose_gen.py:213`, `f"{abs_cwd}:/app"`). The generated compose file is only valid
     on the machine that generated it, for that user.
-18. `.runtime/compose/gengui.yml` literally contains
+18. `.runtime/compose/<app>.yml` literally contains
     `~/workshop/projects/<slug>/frontend:/app`.
 19. `notes-app`'s manifest carries the example value
     `~/workshop/projects/<slug>/vault`.

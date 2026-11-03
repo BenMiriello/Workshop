@@ -11,7 +11,7 @@ describe("parseWorkScope", () => {
   });
 
   it("passes a real scope through", () => {
-    expect(parseWorkScope("project:birds")).toBe("project:birds");
+    expect(parseWorkScope("project:widgets")).toBe("project:widgets");
   });
 });
 
@@ -33,7 +33,7 @@ describe("nextWorkParams", () => {
   });
 
   it("sets a scope", () => {
-    expect(nextWorkParams(of(""), { scope: "project:birds" }).get("scope")).toBe("project:birds");
+    expect(nextWorkParams(of(""), { scope: "project:widgets" }).get("scope")).toBe("project:widgets");
   });
 
   it("sets and clears a status", () => {

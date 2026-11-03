@@ -543,7 +543,7 @@ record names six items. The store gained a hundred and forty-seven.
   `69a7465b` (list every app row, 16:59) -> `5814939f` (revert: an app with no
   surface gets no tile, 17:11) -> `79592119` (restore, plus the icon fallback
   that was the actual missing piece, 17:42). The revert's stated argument was
-  that `development` and `gengui` are "things you work ON" and should not be
+  that `development` and `<app>` are "things you work ON" and should not be
   tiles, which directly contradicts `5082d28b` ninety minutes earlier ("the
   self-hosting project **is** an app"). The restore wins on the better argument,
   but nothing in the tree records that the revert's argument was retired, so it
@@ -582,7 +582,7 @@ Things that will silently rot.
 
 | Source | Slugs |
 |---|---|
-| `.runtime/projects.json` (7) | birds, budget, commute, **development**, **gengui**, location, notes-app |
+| `.runtime/projects.json` (7) | **development**, **<app>**, and five other apps |
 | `.runtime/installed-apps.json` (8) | birds, budget, commute, finance, health, location, notes-app, wearables |
 | `app` table (10) | the union of the two |
 

@@ -67,7 +67,7 @@ _BLOCKED_PREFIXES = (
     # "/services" was here until 2026-08-20 and should not be: it is a read-only
     # health prober with no ingest, it is require_operator-authed now, and
     # blocking it broke two real features on this origin (the Apps launcher's
-    # per-app status, and Commute reporting its 511 key missing when it was set).
+    # per-app status, and an app reporting its API key missing when it was set).
     #
     # "/events" STAYS, and the asymmetry is the point: that router carries
     # POST /events/{source}, an unauthenticated webhook receiver. Its two

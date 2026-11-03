@@ -35,8 +35,7 @@ log = logging.getLogger("workshop.llm_router")
 # Cloud chat shells out to the `claude` CLI. Per-deployment and portable: honor
 # an explicit CLAUDE_CLI, else resolve `claude` on PATH, else bare "claude".
 # Under systemd --user the PATH can be minimal (no ~/.local/bin), so a local
-# build should set CLAUDE_CLI explicitly on its service. See
-# docs/simonsays-local-instance.md.
+# build should set CLAUDE_CLI explicitly on its service.
 CLAUDE_CLI = os.environ.get("CLAUDE_CLI") or shutil.which("claude") or "claude"
 # Optional extra env for the subprocess (e.g. an API key). Missing file is fine —
 # a CLI already logged in (its own ~/.claude creds) needs nothing here.

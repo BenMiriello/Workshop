@@ -1,11 +1,11 @@
 // Byte sizes, in one place. Three independent copies of a `fmtBytes` existed
-// on 2026-08-17 (`pages/Memory.tsx`, `pages/apps/birds/recordings.tsx`,
+// on 2026-08-17 (`pages/Memory.tsx`, an app's recordings page,
 // `components/AutonomyControls.tsx`) and, unlike the six `fmtTs` copies that
 // produced `lib/time.ts`, they were not the same function wearing one name:
 //
 //   Memory          B / KB / MB, and nothing above it, so a 2 GiB file read
 //                   "2048.0 MB"
-//   birds           B / KB / MB / GB, the same ladder with the tier Memory
+//   that app        B / KB / MB / GB, the same ladder with the tier Memory
 //                   was missing
 //   AutonomyControls  B / MiB / GiB in IEC words, nullable, "-" when unknown
 //

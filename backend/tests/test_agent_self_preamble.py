@@ -21,12 +21,13 @@ def _preamble(**over):
 
 
 def test_states_identity_scope_and_workspace():
-    out = _preamble(name="Notes builder", slug="notes-builder", role="maker",
-                    scope="project:notes-app", cwd="/tmp/notes")
-    assert "Notes builder (@notes-builder)" in out
+    out = _preamble(name="Widgets builder", slug="widgets-builder", role="maker",
+                    scope="project:widgets", cwd="/tmp/widgets")
+    assert "Widgets builder (@widgets-builder)" in out
     assert "a maker agent" in out
-    assert "project:notes-app" in out
-    assert "/tmp/notes" in out
+    assert "project:widgets" in out
+    assert "WORKSPACE: /workspace" in out
+    assert "/tmp/widgets" not in out
 
 
 def test_tools_line_tracks_the_run_config():
@@ -87,5 +88,5 @@ def test_optional_lines_are_omitted_not_empty():
 
 
 def test_scope_names_the_boundary_it_is_bounding():
-    out = _preamble(scope="project:birds")
-    assert "Take on work outside project:birds" in out
+    out = _preamble(scope="project:widgets")
+    assert "Take on work outside project:widgets" in out

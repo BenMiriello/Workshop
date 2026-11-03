@@ -183,7 +183,7 @@ Three unmade decisions, each of which is the decision:
    Section 3.2 states the three Cloudflare disqualifiers honestly (128 MB, CPU
    ceiling, no native binaries, no C-extension Python) and then never applies
    them to this repo. Measured: `notes-app`'s manifest starts
-   `uvicorn app.main:app`; `gengui` is bun plus a Python core plus an inference
+   `uvicorn app.main:app`; `<app>` is bun plus a Python core plus an inference
    worker plus three compose deps; `birds`, `budget`, `commute` and `location`
    are Python modules inside the backend process. **Zero existing apps can run on
    a Worker.** Step 4 as written strands every app the platform has. This is the
@@ -377,7 +377,7 @@ enough to parse or act on.
 | Field | As specified | What is missing |
 |---|---|---|
 | `ui` | "the bundle (this is the app loader's contract, already designed)" | The pointer is honest and the loader plan is genuinely detailed (`ui.contract`, `kit`, `dir`, `entry`, `styles`, `provider_entry`, `pages`, `layouts`, `settings`, a closed mount vocabulary). **But it is the contract for a shell plugin, not for a hosted site.** Reusing the name for a CDN-hosted static app is where step 2 goes wrong. Pick one meaning. |
-| `compute` | `none \| http` and the entrypoint | Entrypoint of what, in what language, at what runtime version, against what request interface? A Worker needs `export default { fetch }`; a container needs a start command and a port; uvicorn needs an ASGI path. Also: `none` plus a non-empty `schedule` is unrepresentable, and `http` has no notion of the multiple services every real manifest here declares (gengui has three). |
+| `compute` | `none \| http` and the entrypoint | Entrypoint of what, in what language, at what runtime version, against what request interface? A Worker needs `export default { fetch }`; a container needs a start command and a port; uvicorn needs an ASGI path. Also: `none` plus a non-empty `schedule` is unrepresentable, and `http` has no notion of the multiple services every real manifest here declares (<app> has three). |
 | `storage` | `sql \| kv \| object`, each optional, each provisioned by the platform | No name, no size, no multiplicity (two buckets?), no binding name or env var by which the app reaches it, no schema, no migration hook, no backup or retention. And **`sql` is a category, not a primitive**: D1 is SQLite, the local dep is Postgres, and an app's SQL is not portable between them. This field is the one most likely to be wrong in a way that is expensive to reverse. |
 | `secrets` | "names only, never values" | **This contradicts the inventory.** `env_requirements[]` already exists with `key`, `description`, `required`, `secret`, `example`, `how_to_obtain`, `service`, `group`, and the inventory calls it "the best-designed thing in the surface... Keep the schema verbatim", singling out `how_to_obtain` as the AI-builder differentiator. The design proposes a strictly poorer field and never says what happens to the existing one. |
 | `schedule` | "cron entries, optional" | No timezone, no per-entry handler, no overlap policy, no retry, no timeout, no failure surface. Local cron and Cloudflare Cron Triggers are different mechanisms with different limits (15 min CPU on the latter). |

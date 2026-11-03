@@ -132,7 +132,7 @@ _METHOD_WRITE = re.compile(r'\bmethod\s*:\s*["\'](POST|PUT|DELETE|PATCH)["\']\s*
 # error that stops this recurring.
 #
 # AND THERE IS NO EXEMPTION FOR THE KEY MODULES, deliberately. A factory writes
-# its tuple as a RETURN VALUE (`locations: (p) => ["birds", "locations", p]`),
+# its tuple as a RETURN VALUE (`locations: (p) => ["widgets", "locations", p]`),
 # which this pattern does not match, so the modules need no carve-out in order
 # to define their keys. An earlier version exempted any file named `queries.ts`
 # or `queryKeys.ts`; it protected nothing -- there is not one such literal in

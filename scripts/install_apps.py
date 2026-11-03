@@ -154,7 +154,7 @@ def main() -> int:
         #
         # NOT `-e`. An editable install writes THIS PROCESS'S absolute path into
         # a finder module in site-packages, e.g.
-        #     MAPPING = {'birds_app': '/workspace/apps/birds/birds_app'}
+        #     MAPPING = {'widgets_app': '/workspace/apps/widgets/widgets_app'}
         # and the process that runs the app is not this one. An agent installs
         # from a sandbox where the tree is bind-mounted at /workspace; the
         # backend service runs in the host namespace where that path does not

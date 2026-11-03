@@ -7,7 +7,7 @@ state, not a stale cache.
 Two sources, because there are two kinds of process. The PLATFORM's own are
 listed here. An app that runs out of process (a separate backend, a worker, a
 dashboard) declares its own on its AppSpec, so its probes exist exactly while it
-is installed and a fresh instance does not report three wearables services down
+is installed and a fresh instance does not report another app's services down
 because it inherited someone else's roster.
 
 This route also carries `credentials`, which are NOT services and are kept in

@@ -193,7 +193,7 @@ Consider a Fable review pass like the ones used earlier this session.
 - **Restart** via `bash scripts/restart_backend.sh --deferred`; it is a systemd --user
   service with env overlays.
 - **Backend Python:** `PYTHONPATH=$WORKSHOP/backend .venv/bin/python`;
-  source `~/.config/clawdbot/auth.env` for a token when a scratch test spawns claude.
+  source `<bridge-config>/auth.env` for a token when a scratch test spawns claude.
 - Design gate + typecheck before "done": `bash scripts/check_design.sh` and
   `cd frontend && npx tsc --noEmit`.
 

@@ -51,8 +51,7 @@ _QUEUELESS_SCOPES = ("workshop",)
 # (stage A/B), exactly when it owns a working tree. Whether THIS app does is
 # decided per-call, below, by asking `task_scope.root_for_context` the same
 # question every other scope answers already -- not by a second copy of the
-# app<->project link rule. An installed-only app with no project (finance,
-# health, wearables at design time) still gets no queue, because it still has
+# app<->project link rule. An installed-only app with no project still gets no queue, because it still has
 # no task-store root; that is the one case the old prefix rule was right
 # about, and it now falls out of the resolution instead of being asserted.
 #

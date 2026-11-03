@@ -1768,7 +1768,7 @@ span.ws-filterchip__open { cursor: default; }
    That is a correction, not a preference. On 2026-08-23 the operator counted
    the bespoke ones: the chat's work sheet dimmed only the chat column and left
    the rest of the screen bright, the phone place menu had its own copy with no
-   blur, and the birds More sheet had a third with a raw rgba fill and a raw
+   blur, and an app's More sheet had a third with a raw rgba fill and a raw
    z-index. His words: "why do we have multiple randomly implemented poorly
    implemented different overlay backdrops... the blur one is better than this.
    we shouldnt have multiple implementations of the same thing done different

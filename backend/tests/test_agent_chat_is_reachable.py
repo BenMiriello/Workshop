@@ -306,7 +306,7 @@ class TestBuildIsDeleted:
         assert chat_store.canonical_context_key("build:smith") == "build:smith"
 
     def test_canonicalising_is_now_only_about_the_empty_case(self):
-        for key in ("agent:smith", "project:birds", "development"):
+        for key in ("agent:smith", "project:widgets", "development"):
             assert chat_store.canonical_context_key(key) == key
         assert chat_store.canonical_context_key("") == "general"
         assert chat_store.canonical_context_key(None) == "general"

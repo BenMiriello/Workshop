@@ -119,7 +119,7 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   90s on an idle browser tab (SSE generators release on shutdown, plus
   `--timeout-graceful-shutdown 10`). Instructions collapsed from ~30 files with
   six contradictions to `docs/applying-changes.md` plus three pointers; the
-  gengui never-restart rule is reversed; the stale-bundle warning is now a hard
+  <app> never-restart rule is reversed; the stale-bundle warning is now a hard
   gate when the diff touches `frontend/` or `packages/ui/`. Also fixed:
   `ui_source_id.sh` never hashed `packages/ui`, so kit edits were invisible to
   every staleness check despite compiling into the bundle.
@@ -553,7 +553,7 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   IT PAID FOR ITSELF IMMEDIATELY. The first three screenshots found what a week
   of green gates had not: the mobile file list carried about 290px of duplicated
   chrome above the first row (an h1 reading "Files" directly under a tab reading
-  "Files", a breadcrumb reading "Birds" directly under a bar reading "Birds"),
+  "Files", a breadcrumb reading the app's name directly under a bar reading it),
   and Memory carried about 600px (title, description, four segmented tabs, a
   search field, two buttons) before a single row. The mockup says a phone has no
   page header at all. Fixed by extending the shell's takeover machinery with a
@@ -882,12 +882,12 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   resolves through `app_links` to `projects/<slug>`. `app:<slug>` means two
   different directories depending on which subsystem asks, and `app:X` and
   `project:X` sit as unrelated SIBLINGS in the scope tree (eight rows for four
-  things). commute is the proof: it has 2 real operator notes, filed under
-  `project:commute`, invisible to the Commute app's Memory tab.
+  things). One app is the proof: it has 2 real operator notes, filed under
+  `project:<slug>`, invisible to that app's Memory tab.
   THE BIGGEST FINDING WAS ON THE FILES SIDE AND NOBODY HAD LOOKED. `_resolve_app`
-  says "an app's files ARE its linked project's working tree". So the Birds
-  Files tab serves projects/birds: 118 files, 976K, an empty src/ and June
-  Playwright logs. The Birds app is apps/<slug>: 30,150 files, 2.2G, with pi/,
+  says "an app's files ARE its linked project's working tree". So one app's
+  Files tab serves projects/<slug>: 118 files, 976K, an empty src/ and June
+  Playwright logs. The app itself is apps/<slug>: 30,150 files, 2.2G, with pi/,
   brain/, bridge/, analyzer/, publish/. None of it is reachable from anywhere in
   the UI. That sentence was true when a project was where an app got built and
   is the retired model per app-is-the-entity-2026-08-20.md.
@@ -905,8 +905,8 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   views in a `<pre>`. The kit ticket named two hand-rolled trees and migrated
   one; AgentBuild was never catalogued, the same shape as the fifth private tool
   list found on 2026-08-23. Four file APIs remain and `/apps/{id}/files*` has
-  zero callers. `scopeLabel` has no `app` case, so the tree reads "app: budget"
-  beside "Project: budget" and "Agent: <bridge-agent>". And `check_no_app_names` is
+  zero callers. `scopeLabel` has no `app` case, so the tree reads "app: <slug>"
+  beside "Project: <slug>" and "Agent: <bridge-agent>". And `check_no_app_names` is
   FAILING on clean HEAD at 319 against a pinned 309, which gates reviewer.sh and
   therefore rejects unrelated work, the same shape as the three gates found on
   2026-08-22.
@@ -927,7 +927,7 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   LETTA, THE ACTUAL ANSWER TO HIS QUESTION: the server is still RUNNING. Two
   `letta server` processes owned by ROOT since Jul 21 on :8283, plus a
   docker-proxy, under the SYSTEM docker daemon. <service-user>'s rootless daemon holds
-  only workshop-db and gengui, which is why `docker ps` shows nothing and why
+  only workshop-db and <app>, which is why `docker ps` shows nothing and why
   the 2026-07-18 audit said this one needs the operator. Nothing in the tree
   talks to it: no LETTA_URL reader, no letta package in the venv.
   What WAS still in the source was provably inert and is deleted: `letta_agent_id`
@@ -962,11 +962,11 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   projects to the TOP LEVEL once they moved under their apps. It walks up to the
   nearest visible ancestor now, with a cycle guard.
   THE FILES TAB SERVED THE WRONG TREE, fixed by DECLARATION rather than a guess.
-  Counting both candidate trees per app: birds apps/ 30150 vs projects/ 41;
-  gengui 0 vs 1754; commute 3 vs 10, split across both. So "an app's files ARE
-  its linked project's tree" is right for five of six and left 2.2 GB of the
-  birds station unreachable from anywhere in the UI, while an emptiness
-  heuristic gets commute wrong the other way. There is no rule to infer, so the
+  Counting both candidate trees per app: one app had 30150 files under apps/
+  and 41 under projects/, another 0 vs 1754, a third 3 vs 10, split across both.
+  So "an app's files ARE its linked project's tree" is right for five of six and
+  left 2.2 GB of one app unreachable from anywhere in the UI, while an emptiness
+  heuristic gets the split app wrong the other way. There is no rule to infer, so the
   app declares: a manifest in `apps/<slug>` means that directory IS the app,
   read through app_runner's single manifest reader. No manifest keeps the old
   answer.
@@ -979,11 +979,11 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   THE GATE THAT BLOCKED EVERY TICKET: check_no_app_names was FAILING on clean
   HEAD, 319 against a pinned 309, so reviewer.sh was rejecting unrelated work.
   Diffed per-file against the pinning commit: ten new sites in four files. TWO
-  WERE THE CHECKER BEING WRONG -- `_AMBIGUOUS` is keyed `notes` but looked up by
-  the full id `notes-app`, so that entry has never applied to anything in its
+  WERE THE CHECKER BEING WRONG -- `_AMBIGUOUS` is keyed by an app's short name but
+  looked up by its full id, so that entry has never applied to anything in its
   life; and a JSDoc block's opening line starts with `/`, not `*`, so it was the
   one comment line per block scanned as code. `/api/notes` is the platform
-  knowledge feed (`/notes-app` is the app). The other two were real test
+  knowledge feed (the app's own prefix is a different one). The other two were real test
   fixtures naming real apps and are fictional now, except Shell.test.tsx which
   needs a REGISTERED app and so asks the registry instead. 302 now, re-pinned
   DOWN by 7. I also had to remove 29 app-name literals I had just added in my

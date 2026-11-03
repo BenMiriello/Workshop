@@ -17,8 +17,8 @@ most once and never collides with a port some other process already holds. It:
   - reconciles: an allocation whose recorded pid is dead is released automatically,
     so crashed/orphaned services free their port without manual cleanup.
 
-An "owner" is an opaque stable key the caller chooses (e.g. "preview:gengui",
-"deploy:gengui", "app:gengui/core"). Re-allocating for the same owner returns the
+An "owner" is an opaque stable key the caller chooses (e.g. "preview:widgets",
+"deploy:widgets", "app:widgets/core"). Re-allocating for the same owner returns the
 same port while it is still valid, which is what makes restarts idempotent.
 
 Single-user box, one backend process: a threading.Lock around the read-modify-write
@@ -34,6 +34,7 @@ import socket
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from services import installation
 from wsplatform import paths
 
 log = logging.getLogger("workshop.port_registry")
@@ -54,9 +55,10 @@ WINDOWS: dict[str, tuple[int, int]] = {
 # (e.g. the backend restarting). Not a security boundary — a courtesy list.
 RESERVED: frozenset[int] = frozenset({
     8000,   # workshop backend (uvicorn)
-    5173, 5174, 5175,  # workshop frontend (vite) + alternates
-    11434, 11435,  # ollama
-    8443, 8445, 8446, 8447,  # tailscale serve mounts
+    8002,   # workshop public edge
+    5173, installation.dev_port(),  # workshop frontend (vite)
+    11434,  # ollama
+    8443,   # tailscale serve's default https mount
 })
 
 STORE = paths.env_path("WORKSHOP_PORT_REGISTRY", "ports.json")

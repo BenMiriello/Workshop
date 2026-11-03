@@ -96,7 +96,7 @@ backend `backend/routes/base_apps.py`, `projects.py`, a new app-manifest read.
     workbench surfaces the app in the launcher and links back.
 22. **Standalone view.** Integrated app view keeps the workshop toolbar around any
     app (even non-default kit) and offers a "View standalone" link to chrome-free URL.
-    *Accept:* gengui runs inside the launcher with the toolbar and has a standalone
+    *Accept:* <app> runs inside the launcher with the toolbar and has a standalone
     link.
 
 ## Phase 4 — Deployment, isolation, safety (doc 05; the safety floor)

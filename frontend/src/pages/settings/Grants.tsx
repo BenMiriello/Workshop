@@ -8,8 +8,8 @@ import type { components } from "../../api/schema.gen";
 // app-platform-plan.md §3.2 + workshop-v1/01-agents-and-chat.md §2.
 //
 // grants.json governs CROSS-APP and GUEST access only. The operator is always
-// fully permitted; these rows exist so a shared/guest surface (e.g. Birds for a
-// friend) reaches exactly what it should and nothing else. Default-deny: an
+// fully permitted; these rows exist so a shared/guest surface (e.g. an app
+// shared with a friend) reaches exactly what it should and nothing else. Default-deny: an
 // app's `needs` is satisfied only by a matching grant row.
 //
 // Config write → explicit Save (ActionBar). Draft rows edit freely; Save commits
@@ -454,7 +454,7 @@ export default function Grants() {
           {doc.guests.length === 0 ? (
             <StateBlock
               title="No guests"
-              hint="A guest scope grants an external viewer a named app plus the capabilities they may read (e.g. a friend viewing Yard Birds)."
+              hint="A guest scope grants an external viewer a named app plus the capabilities they may read (e.g. a friend viewing one app)."
             />
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>

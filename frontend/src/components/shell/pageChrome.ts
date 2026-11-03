@@ -35,7 +35,7 @@
 // bottom bar is not simply "on when narrow": a phone reading a note must not
 // have New note pinned over the last line of it.
 //
-// Measured 2026-08-22 by screenshot: /apps/birds/files spent ~290px on chrome
+// Measured 2026-08-22 by screenshot: /apps/<slug>/files spent ~290px on chrome
 // before its first row and /memory ~600px, on a 390px-wide screen.
 
 export type DirectoryChromeInput = {

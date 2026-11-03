@@ -21,8 +21,7 @@ is the thing the committed types are supposed to match.
 TWO THINGS MAKE THE OUTPUT INSTANCE-INDEPENDENT, and both are load-bearing
 because the generated file is committed and diffed in review:
 
-1. THE FULL APP CATALOG IS MOUNTED. App routers (finance/budget/commute/
-   location/birds/health/wearables/notes) mount only when the app appears in
+1. THE FULL APP CATALOG IS MOUNTED. App routers mount only when the app appears in
    this instance's installed-apps registry (`services/installed_apps`), which
    is `.runtime/` state and gitignored. Generating against whatever this box
    happens to have installed would mean two developers regenerate the same

@@ -130,7 +130,7 @@ class MakerSummary(BaseModel):
     # registry allows several (`SINGLETON_ROLES` exempts `maker`), so a list of
     # two is a legal state the UI has to be able to show -- not something the
     # backend quietly resolves. It used to be resolved by filename sort order,
-    # which is how `birds-builder-2` became the Birds maker the operator saw.
+    # which is how an app's `<slug>-builder-2` became the maker the operator saw.
     scope_makers: list[str] = []
     arm_level: AutonomyMode
     armed: bool

@@ -91,7 +91,7 @@ export type ShellPlace = {
  *
  *  `icon` is a DECLARED value and it is optional. Absent, the tile falls back to
  *  a two-letter monogram of the name -- two, because one is ambiguous on this
- *  very instance: Budget and Birds both render "B", which shipped and was
+ *  very instance: two apps with the same first letter both rendered it, which shipped and was
  *  immediately visible. See lib/appIcon. */
 export type AppDescriptor = {
   id: string;

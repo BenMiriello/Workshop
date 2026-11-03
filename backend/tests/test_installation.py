@@ -45,3 +45,23 @@ def test_all_three_origin_variables_are_declared_together_in_instance_env():
         "other origin variables, so one three-value setting is not split "
         "across two files"
     )
+
+
+def test_dev_origins_default_to_the_standard_vite_port(monkeypatch):
+    monkeypatch.delenv("WORKSHOP_VITE_PORT", raising=False)
+    assert inst.dev_origins() == (
+        "http://localhost:5173", "http://127.0.0.1:5173")
+
+
+def test_a_declared_vite_port_adds_its_own_origins(monkeypatch):
+    monkeypatch.setenv("WORKSHOP_VITE_PORT", "6100")
+    origins = inst.dev_origins()
+    assert "http://localhost:6100" in origins
+    assert "http://127.0.0.1:6100" in origins
+    assert "http://localhost:5173" in origins
+
+
+def test_an_unusable_vite_port_falls_back_to_the_standard_one(monkeypatch):
+    monkeypatch.setenv("WORKSHOP_VITE_PORT", "not-a-port")
+    assert inst.dev_origins() == (
+        "http://localhost:5173", "http://127.0.0.1:5173")

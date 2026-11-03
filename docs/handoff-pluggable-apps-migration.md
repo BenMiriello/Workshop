@@ -43,7 +43,7 @@ already-committed personal data (a separate force-push operation).
 
 _Original handoff (the flaw and the target model):_
 
-Deferred during the 2026-07-12 upstream merge from `simonsays-local` (queue item
+Deferred during the 2026-07-12 upstream merge from a downstream instance branch (queue item
 `f963c8e`, tagged "needs migration"). It is a fundamental architecture flaw, not a
 cleanup nicety.
 
@@ -52,13 +52,13 @@ cleanup nicety.
 The Workshop platform hardcodes one operator's specific apps, projects, and
 **real personal data** directly into the platform code and git-tracked files.
 The shell is not app-agnostic and there is no supported "fresh/blank instance"
-path. Consequences, confirmed by the 2026-07-12 incident
-(`simonsays-local:docs/simonsays-local-instance.md`, Incident §2):
+path. Consequences, confirmed by the 2026-07-12 incident (recorded in that
+instance's own notes):
 
 - A second operator who clones the repo inherits the service user's apps AND the service user's
-  real data, including **home/work street addresses in plaintext**
-  (`commute/schedule.json`), the actual commute route (`commute/legs.json`), and
-  the real projects/build-agent registries.
+  real data, including **home/work street addresses in plaintext** and a real
+  daily route in one app's tracked config files, and the real projects/build-agent
+  registries.
 - The platform code cannot host a different app set without editing core files.
 
 ## Where the hardcoding lives (inventory on `main`)
@@ -87,18 +87,17 @@ Git-tracked personal data / instance state (should not ship in a cloneable platf
 
 ## Target model (what to build)
 
-The `simonsays-local` redesign is the reference: a **manifest-driven launcher**
+The downstream instance's redesign is the reference: a **manifest-driven launcher**
 and an **app-agnostic shell**, where apps are *installed content* that register
 themselves (routes, launcher card, any MCP servers, auth policy), not code baked
-into the platform. See the design doc `simonsays-local:docs/apps-are-pluggable.md`
-(it was deleted on `main` and must be restored/adapted), and commits
-`simonsays-local` `f963c8e` (redesign) + `97e5e56` (removal of hardcoded lists).
+into the platform. See the design doc `docs/apps-are-pluggable.md` (it was
+deleted on `main` and must be restored/adapted), and that branch's commits
+`f963c8e` (redesign) + `97e5e56` (removal of hardcoded lists).
 
 ## The critical constraint (why this is NOT a cherry-pick)
 
-On `simonsays-local`, app-agnosticism was achieved by **deleting the service user's apps**
-(`97e5e56` removed birds/budget/commute/finance/health/owntracks and their
-services). That is correct for *that* instance but wrong for `main`: main must
+On the downstream branch, app-agnosticism was achieved by **deleting the service user's apps**
+(`97e5e56` removed them and their services). That is correct for *that* instance but wrong for `main`: main must
 **keep these apps working** while moving them into the installed-app model.
 
 So do NOT `git cherry-pick f963c8e`/`97e5e56` onto main — that strips the apps'
@@ -130,8 +129,7 @@ wiring. Instead:
 ## References
 
 - `docs/instances-and-forking.md` (the multi-instance policy).
-- `simonsays-local:docs/upstream-queue.md` (f963c8e "needs migration",
-  58e60af registry note).
-- `simonsays-local:docs/simonsays-local-instance.md` Incident §2 (the personal-
-  data-in-git writeup) and §1 (the proxy leak, already fixed on main = a85e901).
-- `simonsays-local:docs/apps-are-pluggable.md` (the design).
+- The downstream branch's upstream queue (f963c8e "needs migration", 58e60af
+  registry note) and its instance notes (the personal-data-in-git writeup, and
+  the proxy leak already fixed on main = a85e901).
+- `docs/apps-are-pluggable.md` (the design).
