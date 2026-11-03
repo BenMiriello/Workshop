@@ -64,7 +64,7 @@ Environment=DOCKER_HOST=unix://%t/docker.sock
 # SIGKILL -- 90 seconds of dead backend for a 3-second restart. The streams now
 # release themselves on shutdown (build_streaming.SHUTTING_DOWN); this is the
 # cap for any long-lived response that does not.
-ExecStart=@WORKSHOP_ROOT@/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 10
+ExecStart=@WORKSHOP_ROOT@/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port @WORKSHOP_BACKEND_PORT@ --timeout-graceful-shutdown 10
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20

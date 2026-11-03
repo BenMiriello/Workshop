@@ -12,9 +12,9 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=@WORKSHOP_ROOT@/backend
 EnvironmentFile=-%h/.config/workshop/secrets.env
-Environment=WORKSHOP_BACKEND=http://127.0.0.1:8000
+Environment=WORKSHOP_BACKEND=http://127.0.0.1:@WORKSHOP_BACKEND_PORT@
 Environment=WORKSHOP_DIST=@WORKSHOP_ROOT@/frontend/dist
-ExecStart=@WORKSHOP_ROOT@/backend/.venv/bin/uvicorn workshop_public_app:app --host 127.0.0.1 --port 8002
+ExecStart=@WORKSHOP_ROOT@/backend/.venv/bin/uvicorn workshop_public_app:app --host 127.0.0.1 --port @WORKSHOP_EDGE_PORT@
 Restart=on-failure
 RestartSec=5
 

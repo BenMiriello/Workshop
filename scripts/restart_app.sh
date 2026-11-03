@@ -24,7 +24,9 @@ set -euo pipefail
 slug="${1:?usage: restart_app.sh <slug> [service]}"
 svc="${2:-}"
 here="$(cd "$(dirname "$0")" && pwd)"
-base="http://127.0.0.1:8000/base-apps/run/${slug}"
+# shellcheck source=/dev/null
+[ -f "$here/lib/instance.sh" ] && source "$here/lib/instance.sh"
+base="http://127.0.0.1:${WORKSHOP_BACKEND_PORT:-8000}/base-apps/run/${slug}"
 
 repo_root="$(cd "${here}/.." && pwd)"
 

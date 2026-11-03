@@ -17,7 +17,7 @@
     "auth": {
       "mode": "cookie",
       "name": "workshop_session",
-      "token_command": "cd backend && ./.venv/bin/python3 -c \"import sys; sys.path.insert(0,'.'); from services import auth_store; print(auth_store.create_session(${WORKSHOP_PREVIEW_USER_ID:-6}, user_agent='agent-screenshot'))\""
+      "token_command": "cd backend && ./.venv/bin/python3 -c \"import sys; sys.path.insert(0,'.'); from services import auth_store; print(auth_store.create_session(${WORKSHOP_PREVIEW_USER_ID:-auth_store.operator_id()}, user_agent='agent-screenshot'))\""
     },
     "viewports": [[390, 800], [1440, 900]],
     "touch_below": 900

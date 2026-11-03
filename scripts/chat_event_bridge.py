@@ -35,7 +35,9 @@ try:
 except ImportError:  # pragma: no cover - import guard, not a stub
     websockets = None
 
-BUS_URL = os.environ.get("WORKSHOP_EVENT_BUS", "http://127.0.0.1:8000")
+BUS_URL = os.environ.get(
+    "WORKSHOP_EVENT_BUS",
+    f"http://127.0.0.1:{os.environ.get('WORKSHOP_BACKEND_PORT', '8000')}")
 DISCORD_ENV = Path(os.environ.get(
     "DISCORD_CHANNEL_ENV", str(Path.home() / ".claude" / "channels" / "discord" / ".env")))
 DISCORD_API = "https://discord.com/api/v10"

@@ -63,7 +63,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 HEALTH_URL = os.environ.get(
-    "WORKSHOP_BACKEND_URL", "http://127.0.0.1:8000").rstrip("/") + "/healthz"
+    "WORKSHOP_BACKEND_URL",
+    f"http://127.0.0.1:{os.environ.get('WORKSHOP_BACKEND_PORT', '8000')}").rstrip("/") + "/healthz"
 # Where THIS tree keeps its roster. Same default as
 # `backend/services/installed_apps.REGISTRY_PATH`, resolved from this file
 # instead of that one -- deliberately, because the point of the comparison is

@@ -825,6 +825,16 @@ _SELF_MSG = ("This project is Workshop itself, not a separate app you can start.
 # path so a running app is never interrupted mid-transition.
 
 def _use_containers() -> bool:
+    """Which backend start_app uses, from `WORKSHOP_APP_BACKEND`: `auto` (the
+    default) containerizes whenever docker is reachable; `subprocess` and
+    `container` pin one. An installation whose apps run straight off the host
+    filesystem must be able to say so, because "docker is reachable" is not
+    the same question as "these apps are built to run in a container"."""
+    mode = os.environ.get("WORKSHOP_APP_BACKEND", "auto").strip().lower()
+    if mode == "subprocess":
+        return False
+    if mode == "container":
+        return True
     return container_runtime.available()
 
 
