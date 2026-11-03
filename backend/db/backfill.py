@@ -431,6 +431,20 @@ def apply() -> dict:
     return stats
 
 
+def _scopes_holding_tickets(slugs: list[str]) -> list[str]:
+    """The scopes among `slugs` whose project already has ticket rows. Read on
+    the owner connection, like the write, so row security cannot make a
+    populated table read as empty."""
+    if not slugs:
+        return []
+    with owner_session() as s:
+        return sorted(s.scalars(
+            select(Project.slug).where(
+                Project.slug.in_(slugs),
+                select(Ticket.id).where(Ticket.project_id == Project.id).exists(),
+            )).all())
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--apply", action="store_true",
@@ -440,7 +454,8 @@ def main() -> int:
                          "JSON store (owner connection; see repair_derived_events)")
     ap.add_argument("--force", action="store_true",
                     help="run even though the JSON ticket stores are retired "
-                         "(they are a frozen backup, not the source)")
+                         "and the database already holds their tickets (the "
+                         "file is then a frozen backup, not the source)")
     args = ap.parse_args()
 
     # THE SOURCE THIS READS IS NO LONGER THE STORE. Since ADR 0019 stage 2 a
@@ -449,12 +464,19 @@ def main() -> int:
     # against it would push a frozen snapshot over live rows: every ticket
     # filed, closed or edited since would be reverted, silently and in one
     # command. The backfill was a one-time move and its own guard has to say so.
+    #
+    # BUT ONLY WHERE THE DATABASE ALREADY HOLDS THAT SCOPE'S TICKETS. An
+    # installation importing for the first time (it ran on the JSON store until
+    # it pulled the relational cutover) has an empty database, and there the
+    # file is not a backup, it is the only copy. Nothing can be reverted, so
+    # there is nothing to refuse.
     if args.apply and not args.force:
         import sys as _sys
         _sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from services import tasks as _tasks
-        retired = [slug for slug, _n, _k, store_dir in SCOPES
-                   if _tasks.is_relational_scope(store_dir)]
+        retired = _scopes_holding_tickets(
+            [slug for slug, _n, _k, store_dir in SCOPES
+             if _tasks.is_relational_scope(store_dir)])
         if retired:
             print("REFUSING: the JSON ticket store is retired for "
                   f"{', '.join(retired)} (ADR 0019 stage 2). The file on disk is "

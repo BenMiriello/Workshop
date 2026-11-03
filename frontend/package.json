@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prebuild": "bash ../scripts/stamp_build.sh --capture",
+    "prebuild": "node ../scripts/require_node.cjs && bash ../scripts/stamp_build.sh --capture",
     "build": "tsc -b && vite build",
     "postbuild": "bash ../scripts/stamp_build.sh --write",
     "preview": "vite preview",

@@ -1,5 +1,11 @@
 """Move the chat transcripts out of the per-thread JSONL logs (ADR 0020).
 
+Prints a plan by default; writes only with `--apply`, like `db/backfill.py` and
+`db/app_backfill.py`. `--plan` is accepted and means the default.
+
+    .venv/bin/python -m db.chat_backfill            # show what would happen
+    .venv/bin/python -m db.chat_backfill --apply
+
 Separate from `db/backfill.py` on purpose: that one carries the work model, and
 folding a second domain into it would make both unreviewable. Same properties
 though: idempotent, re-runnable, and verified by counting rows rather than by
@@ -25,9 +31,9 @@ they are; this reads them.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -631,9 +637,19 @@ def apply() -> dict:
 
 
 def main() -> int:
-    if "--plan" in sys.argv:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--apply", action="store_true",
+                    help="write to the database (default: print the plan only)")
+    ap.add_argument("--plan", action="store_true",
+                    help="print the plan only (the default; kept for old callers)")
+    args = ap.parse_args()
+
+    if not args.apply:
+        print("PLAN (nothing written). Source rows found:")
         for k, v in plan().items():
-            print(f"{k:32} {v}")
+            print(f"  {k:32} {v}")
+        print("\nRe-run with --apply to write.")
         return 0
     for k, v in apply().items():
         print(f"{k:22} {v}")

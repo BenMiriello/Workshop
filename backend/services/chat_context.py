@@ -2456,8 +2456,18 @@ class DevelopmentContextProvider(ProjectContextProvider):
     label = "Development"
 
     def __init__(self):
-        super().__init__(_self_project_slug() or "development")
+        slug = _self_project_slug()
+        super().__init__(slug or "development")
         self.key = "development"
+        if slug is None:
+            # NO `self: true` ROW, which is every installation that predates the
+            # row and every one that never registered a project. The scope still
+            # means this checkout, the same answer `task_scope` gives for
+            # `development` without consulting the registry; without this the
+            # provider pointed at `projects/development`, which does not exist,
+            # and a rescope to Development was refused as an unknown project.
+            self.dir = paths.workshop_root()
+            self.is_self = True
 
 
 # ---------------------------------------------------------------- agent providers
