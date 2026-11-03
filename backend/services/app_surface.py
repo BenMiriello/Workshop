@@ -58,7 +58,7 @@ import logging
 log = logging.getLogger("workshop.apps")
 
 __all__ = ["TAB_IDS", "RETIRED_TAB_IDS", "REQUIRES_LINKED_PROJECT", "declared_surface",
-           "available_tabs", "surface_for"]
+           "available_tabs", "app_screens", "surface_for"]
 
 # The seven generic tabs, in the platform's own order. `frontend/src/pages/
 # apps/tabs/appTabState.ts` holds the same order with the labels and the route
@@ -161,6 +161,33 @@ def available_tabs(slug: str) -> list[str]:
     return out
 
 
+def app_screens(slug: str) -> list[dict]:
+    """The screens this app serves: every service its manifest marks `expose`,
+    in manifest order, as `{"service", "label"}`.
+
+    DECLARED ONLY. A tree with no `workshop.app.json` gets an auto-detected
+    service from the runner, which is a guess about how to start it, not a
+    statement that it has a screen; a library would get a dead one. The
+    platform's own tree has none either: it is the page the screen would be
+    drawn in. See docs/platform-redesign/app-screens-2026-09-23.md.
+    """
+    project = _linked_project(slug)
+    if not project:
+        return []
+    try:
+        from services import app_runner
+
+        if app_runner.is_self_project(project):
+            return []
+        if app_runner._read_manifest_file(app_runner._project_dir(project)) is None:
+            return []
+        services = app_runner.resolve_manifest(project).services
+    except Exception:
+        return []
+    return [{"service": s.name, "label": s.label or s.name}
+            for s in services if s.expose and s.enabled]
+
+
 def _resolve_home(raw: object, base: str, tabs: list[str]) -> str:
     """A declared home as a concrete path, or the first tab the app has."""
     if isinstance(raw, str) and raw.strip():
@@ -226,14 +253,21 @@ def surface_for(slug: str, *, own_route: str | None = None) -> dict:
     else:
         tabs = available
 
+    screens = app_screens(slug)
     home = block.get("home")
     if not isinstance(home, str) or not home.strip():
         home = own_route if own_route else None
+    # AN APP THAT SERVES A SCREEN OPENS ON IT, including while it is still
+    # being built: what it serves is the first thing to see. Only a declared
+    # home or a bundled screen is more specific.
+    if home is None and screens:
+        home = f"{base}/ui/{screens[0]['service']}"
     resolved = _resolve_home(home, base, tabs)
 
     return {
         "home": resolved,
         "tabs": tabs,
+        "screens": screens,
         "declared": bool(block) or bool(own_route),
         "project_slug": _linked_project(slug),
         "files": "files" in available,

@@ -115,7 +115,8 @@ class ServiceSpec:
     build: str | None = None
     port_env: str = "PORT"
     health: str | None = None  # http path probed for readiness, e.g. "/health"
-    expose: bool = False     # the app's primary UI surface (reflected as the URL)
+    expose: bool = False     # a screen of the app (app_surface.app_screens)
+    label: str | None = None  # the screen's name in the app's sidebar
     enabled: bool = True
     disabled_reason: str | None = None  # why enabled=false, shown in the UI
     depends_on: list[str] = field(default_factory=list)
@@ -209,6 +210,7 @@ def _spec_from_raw(raw: dict, idx: int) -> ServiceSpec:
         port_env=str(raw.get("port_env") or "PORT"),
         health=(str(raw["health"]) if raw.get("health") else None),
         expose=bool(raw.get("expose", False)),
+        label=str(raw.get("label") or "").strip() or None,
         enabled=bool(raw.get("enabled", True)),
         disabled_reason=(str(raw["_disabled_reason"]).strip() if raw.get("_disabled_reason") else None),
         depends_on=[str(d) for d in (raw.get("depends_on") or []) if isinstance(d, str)],
@@ -1317,6 +1319,29 @@ def env_overview(slug: str) -> dict:
     missing_required = [r["key"] for r in requirements if r["required"] and not r["set"]]
     return {"slug": slug, "requirements": requirements,
             "undeclared_set": extra, "missing_required": missing_required}
+
+
+def restore_desired_running() -> list[str]:
+    """Start every process-mode app whose persisted desired state is `running`
+    and none of whose services is alive. Called once at backend startup: a
+    process-mode app dies with the process that spawned it, and without this it
+    stays down until someone presses Start. Containers are skipped, docker's
+    restart policy already brings them back. An app with some service still
+    alive is left alone rather than restarted underneath itself. Returns the
+    slugs it started."""
+    started: list[str] = []
+    for slug, app in list(_STATE.items()):
+        if app.get("desired") != "running" or app.get("backend") == "container":
+            continue
+        if any(_alive(s.get("pid")) for s in (app.get("services") or {}).values()):
+            continue
+        try:
+            start_app(slug)
+        except AppError as e:
+            log.warning("could not restore app %s: %s", slug, e)
+            continue
+        started.append(slug)
+    return started
 
 
 def list_apps() -> list[dict]:

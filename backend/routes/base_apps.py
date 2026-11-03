@@ -33,6 +33,13 @@ router = APIRouter()
 # that the ADR's migration posture says must land with its frontend edit.
 
 
+class AppScreen(BaseModel):
+    """One screen an app serves: an exposed service of its manifest."""
+
+    service: str
+    label: str
+
+
 class AppSurface(BaseModel):
     """Where an app opens and which per-app tabs it has
     (`services/app_surface.py`). Closed: every field is filled by the resolver.
@@ -44,6 +51,8 @@ class AppSurface(BaseModel):
 
     home: str
     tabs: list[str]
+    # The app's served screens, first in its sidebar (app_surface.app_screens).
+    screens: list[AppScreen] = []
     declared: bool
     project_slug: str | None = None
     files: bool

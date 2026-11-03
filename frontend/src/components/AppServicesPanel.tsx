@@ -293,7 +293,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
                       <span style={{ flex: "1 1 2rem" }} />
                       {running && (ms.expose || s?.healthy) && (
                         <>
-                          <Link to={`/projects/${slug}/run`} style={{ textDecoration: "none" }}>
+                          <Link to={`/apps/${slug}/ui/${ms.name}`} style={{ textDecoration: "none" }}>
                             <Button size="sm" variant="ghost"><Eye aria-hidden /> Preview</Button>
                           </Link>
                           <a href={proxyHref(slug, ms.name)} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>

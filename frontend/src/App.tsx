@@ -35,7 +35,13 @@ function ProjectSlugRedirect() {
   const { slug = "" } = useParams();
   return <Navigate to={`/apps/${encodeURIComponent(slug)}/overview`} replace />;
 }
-const AppPreview = lazyPage(() => import("./pages/AppPreview"));
+/** The old framed-preview address. An app's screens live inside it now
+ *  (app-screens-2026-09-23.md), and its bare path opens on the first. */
+function ProjectRunRedirect() {
+  const { slug = "" } = useParams();
+  return <Navigate to={`/apps/${encodeURIComponent(slug)}`} replace />;
+}
+const AppScreen = lazyPage(() => import("./pages/apps/tabs/AppScreen"));
 const Grants = lazyPage(() => import("./pages/settings/Grants"));
 // Trackers and McpServers are no longer routed: they are SECTIONS now, of
 // Settings > Apps and Settings > Tools and MCP respectively, and each is
@@ -257,7 +263,7 @@ export default function App() {
           <Route path="/projects" element={<Navigate to="/apps" replace />} />
           <Route path="/projects/new" element={<ProjectNew />} />
           <Route path="/projects/:slug" element={<ProjectSlugRedirect />} />
-          <Route path="/projects/:slug/run" element={<AppPreview />} />
+          <Route path="/projects/:slug/run" element={<ProjectRunRedirect />} />
           <Route path="/settings/grants" element={<Grants />} />
           <Route path="/settings/trackers" element={<Navigate to="/settings/connectors" replace />} />
           {/* Tools and MCP are one page now (places.ts). The routes stay as
@@ -280,6 +286,7 @@ export default function App() {
               app's static route above wins on specificity, so this never
               shadows one. */}
           <Route path="/apps/:appSlug" element={<AppHomeRedirect />} />
+          <Route path="/apps/:appSlug/ui/:service/*" element={<AppScreen />} />
           <Route path="/apps/:appSlug/work" element={<AppWorkTab />} />
           <Route path="/apps/:appSlug/overview" element={<AppOverviewTab />} />
           <Route path="/apps/:appSlug/chats" element={<AppChats />} />
