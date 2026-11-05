@@ -134,7 +134,13 @@ export function CopyRelay() {
   useEffect(watchLeaving, []);
   useEffect(() => {
     void copyPrefs.load();
-    return listenForCopyPrefs();
+    const onVisible = () => { if (!document.hidden) void copyPrefs.load(); };
+    document.addEventListener("visibilitychange", onVisible);
+    const stop = listenForCopyPrefs();
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      stop();
+    };
   }, []);
   return null;
 }
