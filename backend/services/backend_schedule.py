@@ -85,6 +85,19 @@ TRIGGER_TIMEOUT = 120.0
 RATCHET_INTERVAL = 21600.0
 RATCHET_TIMEOUT = 900.0
 
+# THE STORAGE RETENTION PASS (services/storage/expire.py). Daily is the
+# granularity its settings are stated in (days). Measured 2026-10-11 at about 3
+# seconds to plan on this installation; applying is renames on one filesystem
+# plus deleting what has outlived the trash window. It gets the same
+# `--if-older-than` receipt check as the ratchets, for the same reason, with one
+# exception: a disk under its keep-free floor runs it regardless. So it is ASKED
+# every STORAGE_CHECK, and a disk that fills in an afternoon (10-30 GB an hour
+# was measured here on 2026-11-02) is answered within that, not the next day.
+# An ask with room is a Python start and a free-space read.
+STORAGE_INTERVAL = 86400.0
+STORAGE_CHECK = 900.0
+STORAGE_TIMEOUT = 3600.0
+
 # How often the loop wakes to see whether any pass is due. Cheap by construction:
 # a wake with nothing due is a dict comparison. It bounds the jitter on every
 # interval above, which is why it is much smaller than the smallest of them.
@@ -101,10 +114,18 @@ def _ratchet_command() -> list[str]:
             "--if-older-than", str(int(RATCHET_INTERVAL))]
 
 
+def storage_command(*, gated: bool = True) -> list[str]:
+    """`gated` skips the run when the last applied pass is under a day old;
+    the Settings "clean up now" control runs it ungated."""
+    argv = [sys.executable, str(paths.workshop_root() / "scripts" / "storage_pass.py"), "--apply"]
+    return argv + ["--if-older-than", str(int(STORAGE_INTERVAL))] if gated else argv
+
+
 TRIGGERS = Pass("triggers", TRIGGER_INTERVAL, TRIGGER_TIMEOUT, _trigger_command)
 RATCHETS = Pass("ratchets", RATCHET_INTERVAL, RATCHET_TIMEOUT, _ratchet_command)
+STORAGE = Pass("storage", STORAGE_CHECK, STORAGE_TIMEOUT, storage_command)
 
-PASSES: tuple[Pass, ...] = (TRIGGERS, RATCHETS)
+PASSES: tuple[Pass, ...] = (TRIGGERS, RATCHETS, STORAGE)
 
 
 def _lock_path(name: str) -> Path:

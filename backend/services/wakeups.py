@@ -115,13 +115,19 @@ def _write(thread_id: str, items: list[dict]) -> None:
     chat_log._write_json_atomic(p, {"wakeups": items})
 
 
-def arm(thread_id: str, *, reason: str, due_at: datetime) -> dict:
+def arm(thread_id: str, *, reason: str, due_at: datetime,
+        seed: str | None = None, key: str | None = None) -> dict:
     """Arm one wake-up and return its record.
 
     `due_at` is stored in UTC whatever it arrives in, so a comparison never
     depends on the reader's zone, and rendered back in the local zone
     `services/clock` resolves -- the user's own setting where they made one,
     else the installation's -- wherever a person or a model reads it.
+
+    `seed` is for a wake-up the PLATFORM arms rather than the assistant: the
+    prompt the turn starts with, instead of `seed_text`, which tells the model
+    it armed this itself. `key` makes arming idempotent: a record with the same
+    key is replaced rather than joined by a second one.
     """
     reason = (reason or "").strip()
     if not reason:
@@ -134,7 +140,11 @@ def arm(thread_id: str, *, reason: str, due_at: datetime) -> dict:
         "reason": reason,
         "armed_at": _now().isoformat(timespec="seconds"),
     }
-    items = read(thread_id)
+    if seed:
+        record["seed"] = seed
+    if key:
+        record["key"] = key
+    items = [w for w in read(thread_id) if not key or w.get("key") != key]
     items.append(record)
     _write(thread_id, items)
     return record
@@ -313,7 +323,8 @@ def fire_due(*, now: datetime | None = None) -> int:
                 continue
             record = ready[0]
             chat_drain.request_continuation(
-                tid, seed=seed_text(record), dedupe_id=str(record["id"]))
+                tid, seed=record.get("seed") or seed_text(record),
+                dedupe_id=str(record["id"]))
             drop(tid, [record["id"]])
             fired += 1
             log.info("wake-up %s fired on %s", record["id"], tid)

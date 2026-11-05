@@ -62,10 +62,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
-from services import chat_log
+from services import chat_log, send_rules
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ def queue_path(thread_id: str) -> Path:
 
 
 def _empty() -> dict:
-    return {"entries": [], "held": False, "error": ""}
+    return {"entries": [], "held": False, "error": "", "waiting": None}
 
 
 def _read_raw(thread_id: str) -> dict:
@@ -111,10 +112,12 @@ def _read_raw(thread_id: str) -> dict:
             continue
         clean.append(e)
     err = data.get("error")
+    waiting = data.get("waiting")
     return {
         "entries": clean,
         "held": bool(data.get("held")),
         "error": err if isinstance(err, str) else "",
+        "waiting": waiting if isinstance(waiting, dict) else None,
     }
 
 
@@ -173,6 +176,7 @@ def state(thread_id: str) -> dict:
         "queued": sorted(raw["entries"], key=_order_key),
         "queue_held": bool(raw["held"]),
         "queue_error": raw["error"] or "",
+        "queue_waiting": raw["waiting"] if raw["entries"] else None,
     }
 
 
@@ -184,7 +188,15 @@ def is_command(text: str) -> bool:
     compacting, and a command joined to anything else is neither.
     """
     s = (text or "").strip()
-    return s.startswith("/") and "\n" not in s
+    return "\n" not in s and bool(_COMMAND.match(s))
+
+
+# A COMMAND IS A NAME, NOT A LEADING SLASH. "Starts with /" also matched a
+# pasted path ("/var/folders/.../App: not signed"), which was then held as a
+# command until the running turn ended, and the turn it started refused every
+# later message as a command turn would. The first word must be a bare name:
+# a second "/" or a "." in it makes it a path.
+_COMMAND = re.compile(r"/[A-Za-z][\w:-]*(?:\s|$)")
 
 
 def is_auto(entry: dict) -> bool:
@@ -209,7 +221,7 @@ def enqueue(thread_id: str, *, text: str, client_id: str, ts: str | None = None,
             model: str | None = None, effort: str | None = None,
             permission_mode: str | None = None,
             recorded: bool = False, auto: bool = False,
-            sender: str | None = None) -> dict:
+            sender: str | None = None, when: dict | None = None) -> dict:
     """Take responsibility for a message that cannot run yet.
 
     IDEMPOTENT ON `client_id`. A retry after a timeout, a second tab replaying
@@ -263,6 +275,9 @@ def enqueue(thread_id: str, *, text: str, client_id: str, ts: str | None = None,
         entry["recorded"] = True
     if attachments:
         entry["attachments"] = attachments
+    if when:
+        # WHEN IT MAY GO OUT, in the operator's words (services/send_rules).
+        entry["when"] = when
     for k, v in (("model", model), ("effort", effort), ("permission_mode", permission_mode)):
         if v:
             entry[k] = v
@@ -326,10 +341,47 @@ def set_held(thread_id: str, held: bool, *, error: str | None = None) -> dict:
     return state(thread_id)
 
 
+def set_waiting(thread_id: str, waiting: dict | None) -> None:
+    """Why the next turn is being held back by something outside this thread
+    (`turn_admission`), or None once it is not. Unlike `held`, nobody chose
+    this, so the drain clears it the moment the reason passes."""
+    raw = _read_raw(thread_id)
+    if raw["waiting"] == waiting:
+        return
+    raw["waiting"] = waiting
+    _write(thread_id, raw)
+
+
+def set_when(thread_id: str, client_id: str, when: dict | None) -> dict:
+    """Change or clear one entry's send rule. Clearing it is Send now for that
+    message alone; the caller drains."""
+    raw = _read_raw(thread_id)
+    for e in raw["entries"]:
+        if e.get("client_id") == client_id:
+            if when:
+                e["when"] = when
+            else:
+                e.pop("when", None)
+            break
+    else:
+        raise KeyError(client_id)
+    _write(thread_id, raw)
+    return state(thread_id)
+
+
+def needs_poll(thread_id: str) -> bool:
+    """Whether the resident loop has to keep asking this queue: it is waiting
+    on admission, or holds a rule that can come true on its own."""
+    raw = _read_raw(thread_id)
+    return bool(raw["waiting"]) or any(send_rules.needs_poll(e) for e in raw["entries"])
+
+
 def next_batch(thread_id: str) -> list[dict]:
     """The entries that make up the NEXT turn, or [] if the queue is empty,
     holding, or parked on a failed drain.
 
+    Only entries whose send rule allows it now are considered; one still
+    waiting on its rule keeps its place without holding up the rest.
     Everything consecutive goes together; a command is alone. This does not
     remove anything: the entries leave the queue when the turn that carries
     them has actually been recorded, so a crash between here and there leaves
@@ -338,7 +390,8 @@ def next_batch(thread_id: str) -> list[dict]:
     raw = _read_raw(thread_id)
     if raw["held"] or raw["error"]:
         return []
-    entries = sorted(raw["entries"], key=_order_key)
+    entries = [e for e in sorted(raw["entries"], key=_order_key)
+               if send_rules.is_ready(e, thread_id=thread_id)]
     if not entries:
         return []
     if _alone(entries[0]):

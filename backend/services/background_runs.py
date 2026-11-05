@@ -282,15 +282,19 @@ def _run_claude(prompt: str, cwd: Path, owner_id: int, scope: str) -> tuple[int,
 
     # bypassPermissions: a detached process with nobody to ask was ending every
     # run by requesting approval for file writes (measured 2026-08-28, job
-    # job_1787934884118_2f00). Destructive git ops are still denied by name.
+    # job_1787934884118_2f00). Pushing is still denied by name. Removing is not:
+    # its rm moves what it removes to the trash (`turn_trash`), so a job can
+    # clean up after itself and nothing it removes is lost.
     #
     # `--mcp-config` is variadic and keeps eating following non-flag tokens, so
     # the JSON is placed where a FLAG follows it. See tests/test_agentic_turn_gets_search.py.
+    from services import turn_trash
     cmd = [_claude_bin(), "-p", prompt, "--output-format", "json",
            "--max-turns", str(_MAX_TURNS),
            *mcp_flags,
+           "--settings", json.dumps({"hooks": {"SessionStart": [turn_trash.hook_entry()]}}),
            "--permission-mode", "bypassPermissions",
-           "--disallowedTools", "Bash(git push *),Bash(git push),Bash(rm -rf *)"]
+           "--disallowedTools", "Bash(git push *),Bash(git push)"]
     # THE SANDBOX IS THE FLOOR, not an extra. This runner is reachable from any
     # project chat through the `spawn_background` MCP tool, and it spawns a
     # bypassPermissions agent; un-sandboxed, that agent's filesystem view is the
@@ -328,6 +332,13 @@ def _run_claude(prompt: str, cwd: Path, owner_id: int, scope: str) -> tuple[int,
     except Exception:
         # A stray non-JSON line can land in stdout; keep whatever text there was.
         text = raw.strip()[:4000]
+    if out.returncode != 0 and not text:
+        # The only account of a run that died before the agent spoke (a sandbox
+        # that would not open printed one bwrap line here and was dropped).
+        err = (out.stderr or "").strip()[-2000:]
+        if err:
+            log.warning("background agent stderr: %s", err)
+            text = err
     return out.returncode, text, usage
 
 
@@ -393,6 +404,54 @@ def _deliver(*, thread_id: str, owner_id: int, job_id: str, label: str,
                 "so briefly and stop."
             )
         chat_drain.request_continuation(thread_id, seed=seed, dedupe_id=f"{job_id}-{thread_id}")
+    finally:
+        if prev is None:
+            ownership.clear_current_owner()
+        else:
+            ownership.set_current_owner(prev)
+
+
+def report_lost(job: dict, reason: str) -> bool:
+    """Tell the chat that launched a background run that its runner died without
+    delivering, and ask the chat to decide what to do about it.
+
+    The runner is the only thing that ever posts a result, so a runner killed by
+    a reboot or a crash leaves the chat waiting on a message that is never
+    coming. `jobs.reconcile_stuck` finds the dead Job and calls this. Returns
+    whether a message was posted. Idempotent on the job id, so a second
+    reconcile of the same Job posts nothing new."""
+    from services import chat_drain, chat_store, ownership, run_report
+    thread_id = str(job.get("chat_id") or "")
+    job_id = str(job.get("id") or "")
+    if not thread_id or not job_id:
+        return False
+    owner = run_report.owner_of_thread(thread_id)
+    if owner is None:
+        return False
+    binding = job.get("binding") if isinstance(job.get("binding"), dict) else {}
+    label = binding.get("label") or "background agent"
+    prev = ownership.owner_or_none()
+    ownership.set_current_owner(owner)
+    try:
+        chat_store.append_message(
+            thread_id, "assistant",
+            f"Background agent lost: {label}\n\n{reason}. It never reported a "
+            f"result, so nothing it may have done has been delivered.",
+            meta={"kind": "background_result", "asks": "notify",
+                  "sender": f"run:{job_id}", "job": job_id, "status": "failed"},
+            client_id=f"background-lost:{job_id}",
+        )
+        seed = (
+            "[AUTONOMOUS CONTINUATION - not a message from the operator]\n"
+            f"A background agent you started ({label!r}) was LOST before it "
+            f"finished ({reason}). It produced no result; the message directly "
+            "above says so. Decide and act: re-run it if the work still matters, "
+            "or do it yourself. Tell the operator in one line what happened, and "
+            "do not present its absence as an answer."
+        )
+        chat_drain.request_continuation(thread_id, seed=seed,
+                                        dedupe_id=f"{job_id}-{thread_id}")
+        return True
     finally:
         if prev is None:
             ownership.clear_current_owner()

@@ -207,3 +207,16 @@ def test_the_queue_is_not_in_the_transcript(tid):
     chat_queue.enqueue(tid, text="waiting", client_id="c1")
     events = chat_log.read_events(tid)
     assert not [e for e in events if e.get("kind") == "message"]
+
+
+def test_a_pasted_path_is_a_message_not_a_command():
+    """A first word with a second "/" or a "." in it is a path. On 2026-10-11
+    this exact error line, pasted from a Mac, was held as a command until the
+    running turn ended, and the turn it then started refused the next two
+    messages as a command turn would."""
+    pasted = ("/var/folders/21/18j_6nz51h7d806f91wmdzy80000gp/T/TemporaryItems/"
+              "Payload/Workshop.app/Workshop: code object is not signed at all")
+    assert not chat_queue.is_command(pasted)
+    assert not chat_queue.is_command("/Volumes/Secure_Storage/workshop.ipa")
+    assert not chat_queue.is_command("/home/notes.txt is empty")
+    assert chat_queue.is_command("/model opus")

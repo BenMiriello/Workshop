@@ -34,9 +34,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Awaitable, Callable
 
-from services import chat_queue
+from services import (chat_log, chat_queue, chat_schedule_sends, chat_schedules,
+                      chat_store, ownership, thread_ops, turn_admission)
 
 log = logging.getLogger(__name__)
 
@@ -61,12 +63,15 @@ def _lock_for(thread_id: str) -> asyncio.Lock:
     return lk
 
 
-async def drain(thread_id: str, *, reason: str = "") -> bool:
+async def drain(thread_id: str, *, reason: str = "", force: bool = False) -> bool:
     """Send the next batch if the thread is idle and something is waiting.
 
     Returns True if a turn was started. Never raises: every caller is a
     lifecycle hook on some other operation, and a queue that could break a turn
     commit would be worse than the queue this replaces.
+
+    `force` is the operator's Send now: it skips `turn_admission`, because the
+    operator may know better than the platform's reading of the usage window.
     """
     if _starter is None:  # pragma: no cover - set at import by routes/chat
         return False
@@ -83,14 +88,17 @@ async def drain(thread_id: str, *, reason: str = "") -> bool:
         # Asked last, and read fresh: a run can start between the queue read and
         # here (another device sending, an autonomous turn), and starting a
         # rival is the one outcome worse than waiting.
-        from services import chat_store
         if chat_store.active_turn_id(thread_id):
             return False
         # A pending fold/clear holds the queue the same way a live run does: a
         # turn started now would read the pre-operation prompt and race the
         # operation's writes. thread_ops.end() kicks this drain when it lands.
-        from services import thread_ops
         if thread_ops.pending(thread_id):
+            return False
+        wait = None if force else turn_admission.wait_reason(
+            chat_store.get_thread(thread_id) or {}, batch)
+        chat_queue.set_waiting(thread_id, wait)
+        if wait:
             return False
         ids = [e.get("client_id") for e in batch]
         try:
@@ -198,11 +206,13 @@ async def drain_continuation(thread_id: str, *, reason: str = "") -> bool:
         entry = chat_queue.read_continuation(thread_id)
         if not entry:
             return False
-        from services import chat_store
         if chat_store.active_turn_id(thread_id):
             return False
-        from services import thread_ops
         if thread_ops.pending(thread_id):
+            return False
+        # A continuation is a turn too: one started into an exhausted usage
+        # window is answered with the limit message and the seed is spent.
+        if turn_admission.wait_reason(chat_store.get_thread(thread_id) or {}):
             return False
         try:
             started = await _starter(thread_id, [entry])
@@ -212,6 +222,8 @@ async def drain_continuation(thread_id: str, *, reason: str = "") -> bool:
         if not started:
             return False
         chat_queue.clear_continuation(thread_id)
+        if str(entry.get("client_id") or "").startswith(_AUTO_RESUME_CLIENT_PREFIX):
+            _note_resume_turn(thread_id, chat_store.active_turn_id(thread_id))
         log.info("chat drain: continuation turn started on %s (%s)",
                  thread_id, reason or "drain")
         return True
@@ -235,13 +247,92 @@ async def _guarded_continuation(thread_id: str, reason: str) -> None:
         log.warning("continuation drain task failed for %s: %s", thread_id, e)
 
 
+# ---------------------------------------------------------------------------
+# Auto-resume of a turn a restart took
+# ---------------------------------------------------------------------------
+# The agent child survives a backend restart, but not a host reboot or a crash
+# that takes it down too, and until now the operator had to notice the lost
+# notice and type "continue". This does that for them, ONCE, through the same
+# continuation seed a finished background run uses: the seed starts an ordinary
+# turn on the thread's own session, which is what typing "continue" does.
+#
+# THE ONCE-ONLY RECORD is `meta.auto_resume` on the thread, written before the
+# seed is: {"lost_turn": <the turn that was lost>, "resume_turn": <the turn the
+# seed started>}. A turn named in either slot is never resumed again, so a
+# reboot loop cannot become a resume loop, and a resume that is itself lost
+# stays lost.
+AUTO_RESUME_MAX_AGE_S = 30 * 60
+AUTO_RESUME_SEED = ("continue\n\n(The previous turn was cut off by a backend "
+                    "restart before it finished. Pick up where it left off.)")
+_AUTO_RESUME_CLIENT_PREFIX = "auto-resume-"
+
+
+def may_auto_resume(thread_id: str, turn_id: str, started: float | None,
+                    *, now: float | None = None) -> bool:
+    """Should a turn lost to a restart be resumed without the operator?
+
+    The caller has already ruled out a stop and a real failure for the turn
+    itself. What is checked here is the thread: an old turn, one already
+    resumed, one that WAS a resume, a thread whose queue the operator held
+    (Stop holds it) or filled (their own message drives the next turn), and a
+    thread already armed with another continuation, which a resume seed would
+    overwrite."""
+
+    if started is None or (now or time.time()) - started > AUTO_RESUME_MAX_AGE_S:
+        return False
+    try:
+        meta = chat_log.read_meta(thread_id) or {}
+        if meta.get("archived_at"):
+            return False
+        marker = meta.get("auto_resume") or {}
+        if turn_id in (marker.get("lost_turn"), marker.get("resume_turn")):
+            return False
+        q = chat_queue.state(thread_id)
+        if q["queue_held"] or chat_queue.next_batch(thread_id):
+            return False
+        return chat_queue.read_continuation(thread_id) is None
+    except Exception as e:  # pragma: no cover - defensive: the notice still lands
+        log.warning("auto-resume check failed for %s: %s", thread_id, e)
+        return False
+
+
+def schedule_auto_resume(thread_id: str, turn_id: str) -> bool:
+    """Arm the one resume of a lost turn. Call after its lost notice commits.
+
+    The marker is written first: a crash between the two leaves a turn that is
+    not resumed, never one that is resumed twice."""
+
+    try:
+        chat_log.patch_meta_sync(thread_id, auto_resume={
+            "lost_turn": turn_id, "at": chat_log.now_iso()})
+    except Exception as e:
+        log.warning("auto-resume marker for %s could not be written: %s", thread_id, e)
+        return False
+    ok = request_continuation(thread_id, seed=AUTO_RESUME_SEED,
+                              dedupe_id=f"resume-{turn_id}")
+    if ok:
+        log.info("thread %s: turn %s was lost to a restart; resuming it", thread_id, turn_id)
+    return ok
+
+
+def _note_resume_turn(thread_id: str, resume_turn: str | None) -> None:
+
+    if not resume_turn:
+        return
+    try:
+        marker = dict((chat_log.read_meta(thread_id) or {}).get("auto_resume") or {})
+        marker["resume_turn"] = resume_turn
+        chat_log.patch_meta_sync(thread_id, auto_resume=marker)
+    except Exception as e:  # pragma: no cover - defensive
+        log.warning("auto-resume turn for %s could not be recorded: %s", thread_id, e)
+
+
 def _all_owner_ids() -> list[int]:
     """Every owner with a runtime store. The chat stores are per-owner and
     resolved through an `ownership` ContextVar, so a background loop that means
     to touch chats has to pin each owner in turn; nothing is pinned by default
     (ownership.current_owner() would raise). Same directory scan run_report uses
     to find a thread's owner."""
-    from services import ownership
     out: list[int] = []
     try:
         for d in (ownership._RUNTIME / "users").iterdir():
@@ -328,7 +419,7 @@ def seed_ready_ticket_threads() -> int:
     given a second reason to wake. Nothing here clears a seed -- the drain below
     does that when the turn it armed actually starts.
     """
-    from services import chat_store, task_scope, tasks
+    from services import task_scope, tasks
 
     seeded = 0
     try:
@@ -380,7 +471,6 @@ async def continuation_loop(*, interval: float = 5.0) -> None:
     before awaiting `drain` keeps it pinned through the drain and the turn spawn,
     because a ContextVar set on a task is held across that task's awaits.
     """
-    from services import ownership
     from services import wakeups as _wakeups
     while True:
         await asyncio.sleep(interval)
@@ -406,16 +496,25 @@ async def continuation_loop(*, interval: float = 5.0) -> None:
                         seed_ready_ticket_threads()
                     except Exception as e:  # pragma: no cover - defensive
                         log.warning("ready-ticket pass failed: %s", e)
+                    # A schedule whose time has come queues its message, which
+                    # then drains like any other.
+                    try:
+                        for tid in chat_schedule_sends.fire_due(chat_schedules.threads()):
+                            await drain(tid, reason="schedule")
+                    except Exception as e:  # pragma: no cover - defensive
+                        log.warning("schedule pass failed: %s", e)
                     for tid in chat_queue.threads_with_continuation():
                         try:
                             await drain_continuation(tid, reason="continuation")
                         except Exception as e:  # pragma: no cover - defensive
                             log.warning("continuation drain failed for %s: %s", tid, e)
-                    # Backward compat: threads with old queue-based auto entries
-                    # (written before this change; drain them the old way).
+                    # Queues parked by `turn_admission`, or holding a send rule
+                    # that comes true on its own (a time, another chat going
+                    # idle), are re-asked here. Old queue-based auto
+                    # entries (written before continuation.json) drain the same way.
                     for tid in chat_queue.threads_with_queues():
                         try:
-                            if chat_queue.has_auto(tid):
+                            if chat_queue.has_auto(tid) or chat_queue.needs_poll(tid):
                                 await drain(tid, reason="continuation")
                         except Exception as e:  # pragma: no cover - defensive
                             log.warning("continuation drain failed for %s: %s", tid, e)
@@ -439,7 +538,6 @@ async def drain_all(*, reason: str = "startup") -> int:
     until 2026-08-20 — the operator-queue drains that DO work all fire from
     already-owned contexts like turn-finalize, so the gap never showed.)
     """
-    from services import ownership
     from services import wakeups as _wakeups
     sent = 0
     for owner_id in _all_owner_ids():
@@ -452,6 +550,10 @@ async def drain_all(*, reason: str = "startup") -> int:
                 _wakeups.fire_due()
             except Exception as e:  # pragma: no cover - defensive
                 log.warning("startup wake-up pass failed: %s", e)
+            try:
+                chat_schedule_sends.fire_due(chat_schedules.threads())
+            except Exception as e:  # pragma: no cover - defensive
+                log.warning("startup schedule pass failed: %s", e)
             for tid in chat_queue.threads_with_continuation():
                 try:
                     if await drain_continuation(tid, reason=reason):

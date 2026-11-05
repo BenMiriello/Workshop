@@ -103,7 +103,23 @@ def test_arming_listing_and_cancelling_over_the_wire(bound):
 
     assert "Cancelled" in _call("cancel_wakeup", {"id": wake_id})
     assert wakeups.read(bound) == []
-    assert "No wake-ups are armed" in _call("list_wakeups")
+    assert "No wake-ups or schedules are armed" in _call("list_wakeups")
+
+
+def test_a_repeating_wake_up_is_a_schedule_this_chat_set_and_can_end(bound):
+    """10-25: a chat watching unattended work had only one-shot alarms, so its
+    watch ended with its turn; every_minutes makes a schedule, set by the chat."""
+    from services import chat_schedules
+    out = _call("wake_me", {"reason": "review what run 9 made since the last look",
+                            "every_minutes": 60, "times": 6})
+    sch = next(s for s in chat_schedules.read(bound))
+    assert sch["id"] in out and "every 60 min" in out
+    assert sch["set_by"] == {"kind": "chat"} and sch["repeat"] == "every"
+    assert sch["max_sends"] == 6 and sch["next_at"]
+    assert sch["id"] in _call("list_wakeups")
+    assert "Ended schedule" in _call("cancel_wakeup", {"id": sch["id"]})
+    assert chat_schedules.get(bound, sch["id"])["status"] == "done"
+    assert "set for yourself" in chat_schedules.heading_name(bound, f"schedule:{sch['id']}")
 
 
 def test_a_time_it_cannot_honour_comes_back_as_a_sentence_not_a_trace(bound):
@@ -137,14 +153,12 @@ def test_the_grant_is_computed_not_assumed_for_both_kinds_of_chat():
 
 
 # ---- and a grant is not a grant unless the server can START ---------------
-# Full agentic inheritance ATTACHES the workshop server; a confined turn still
-# has to exec it, and its launch spec is the backend's own interpreter, script
-# and PYTHONPATH. Those are inside the `development` scope, whose root IS the
-# platform checkout, and nowhere inside a `project:<slug>` scope. The CLI drops
-# a server it cannot launch without saying so, which is how a project chat came
-# to be handed an L1 manifest naming every `mcp__workshop__*` tool while holding
-# none of them. Measured 2026-09-17; the real fix (serve it over loopback) is
-# ticket `1e2b7f87`, and this half only stops the prompt lying in the meantime.
+# Over stdio the workshop server's launch spec is the backend's own interpreter,
+# script and PYTHONPATH, which only the `development` scope can see, so a
+# project chat was handed a map naming tools it did not have (measured
+# 2026-09-17). Served by the backend over HTTP (ticket `1e2b7f87`, built
+# 2026-11-04) every confined turn reaches it, so a project chat has them; the
+# stdio fallback still goes honestly silent.
 
 
 def test_a_development_chat_keeps_the_tools_its_scope_can_actually_launch(monkeypatch):
@@ -157,8 +171,22 @@ def test_a_development_chat_keeps_the_tools_its_scope_can_actually_launch(monkey
     assert "wake_me" in manifest and "spawn_background" in manifest
 
 
-def test_a_project_chat_is_not_told_about_a_server_it_cannot_reach(monkeypatch, tmp_path):
+def test_a_project_chat_has_the_server_served_over_http(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    monkeypatch.delenv("WORKSHOP_MCP_TRANSPORT", raising=False)
+    proj = cc.ProjectContextProvider("no-such-project")
+    proj.dir = tmp_path
+    assert cc.is_build_provider(proj)
+    assert cc._grants_wakeup(proj) is True
+    assert cc._grants_background(proj) is True
+    manifest = cc.orientation_manifest(proj)
+    assert "wake_me" in manifest and "spawn_background" in manifest
+
+
+def test_over_stdio_a_project_chat_is_not_told_about_a_server_it_cannot_reach(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    monkeypatch.setenv("WORKSHOP_MCP_TRANSPORT", "stdio")
     proj = cc.ProjectContextProvider("no-such-project")
     # A real project directory: outside the platform checkout, which is the
     # whole point. `tmp_path` makes that true on any host.
@@ -173,6 +201,7 @@ def test_the_map_goes_SILENT_rather_than_hedging_about_what_it_cannot_reach(
         monkeypatch, tmp_path):
     """Honest silence, not "wake_me may be available". The manifest's own rule."""
     monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    monkeypatch.setenv("WORKSHOP_MCP_TRANSPORT", "stdio")
     proj = cc.ProjectContextProvider("no-such-project")
     proj.dir = tmp_path
     manifest = cc.orientation_manifest(proj)

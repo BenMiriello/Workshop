@@ -227,12 +227,22 @@ def test_the_loop_is_actually_started_by_the_backend():
 
 def test_the_ratchet_report_rides_the_same_loop():
     names = [p.name for p in backend_schedule.PASSES]
-    assert names == ["triggers", "ratchets"], names
+    assert names == ["triggers", "ratchets", "storage"], names
     # Each pass carries its own cadence: a five-minute dispatch tick and a
     # six-hourly tree measurement are not the same job on the same timer.
     assert backend_schedule.TRIGGERS.interval < backend_schedule.RATCHETS.interval
     # And the loop wakes often enough that the shorter one is not distorted by it.
     assert backend_schedule.TICK < backend_schedule.TRIGGERS.interval
+
+
+def test_the_storage_pass_applies_and_honours_its_receipt():
+    argv = backend_schedule.STORAGE.command()
+    assert argv[1].endswith("scripts/storage_pass.py")
+    assert "--apply" in argv
+    assert argv[argv.index("--if-older-than") + 1] == str(int(backend_schedule.STORAGE_INTERVAL))
+    # Asked far more often than it runs, so a disk running short is answered
+    # within the check, not a day later.
+    assert backend_schedule.STORAGE.interval < backend_schedule.STORAGE_INTERVAL / 24
 
 
 
