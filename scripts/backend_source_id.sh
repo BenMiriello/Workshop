@@ -51,6 +51,8 @@ if [ ! -d backend ]; then
   exit 0
 fi
 
+# An app's backend is installed as a COPY (scripts/install_apps.py), so its
+# source counts too: the files an install copies, which a restart reinstalls.
 {
   find backend \
     -type d \( -name .venv -o -name __pycache__ -o -name .runtime -o -name node_modules \) -prune -o \
@@ -58,4 +60,5 @@ fi
     -type f \( -name '*.py' -o -name 'requirements*.txt' \) \
     ! -name 'workshop_public_app.py' \
     -print0 2>/dev/null
+  python3 scripts/install_apps.py --source-files 2>/dev/null || true
 } | LC_ALL=C sort -z | xargs -0 sha1sum 2>/dev/null | sha1sum | cut -c1-12

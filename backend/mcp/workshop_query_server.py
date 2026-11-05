@@ -41,6 +41,7 @@ import sys
 # path that every turn takes anyway, so deferring them buys nothing and costs
 # the backend's import graph a pair of function-local edges.
 from services import chat_log, operator_notify
+from mcp import access_tool, ops_tools, page_tools, turn_context
 
 SERVER_NAME = "workshop"
 SERVER_VERSION = "0.1.0"
@@ -92,11 +93,11 @@ SEARCH_TOOL_SCHEMA = {
         },
         "kinds": {
             "type": "array",
-            "items": {"type": "string", "enum": ["note", "doc", "chat", "ticket", "vault"]},
+            "items": {"type": "string"},
             "description": (
                 "Restrict to some sources. Default: note, doc, chat and ticket. "
-                "'vault' is an external personal-notes vault this installation "
-                "has connected, and is only searched when you ask for it by name."
+                "An installed app may add sources of its own; one it marks "
+                "opt-in is only searched when you ask for it by name."
             ),
         },
         "scope": {
@@ -292,7 +293,11 @@ WAKE_TOOL_DESC = (
     "measurement once enough of it has accumulated. Say when with EITHER "
     "in_minutes OR at, never both. Write the reason to your future self and "
     "make it self-contained: it is what that turn is handed, and it should say "
-    "what to check and what to do about each outcome. Returns the wake-up's id."
+    "what to check and what to do about each outcome. To come back again and "
+    "again (watching work that runs unattended), add every_minutes: it becomes "
+    "a schedule on this chat, shown in its Scheduled list as set by this chat, "
+    "that the operator can pause or end there; end it yourself with until or "
+    "times, or cancel_wakeup. Returns the id."
 )
 WAKE_TOOL_SCHEMA = {
     "type": "object",
@@ -308,6 +313,18 @@ WAKE_TOOL_SCHEMA = {
         "in_minutes": {
             "type": "number",
             "description": "Wake this many minutes from now. Use this OR `at`.",
+        },
+        "every_minutes": {
+            "type": "number",
+            "description": "Wake again every this many minutes after the first (at least 5).",
+        },
+        "until": {
+            "type": "string",
+            "description": "With every_minutes: stop at this time, read like `at`.",
+        },
+        "times": {
+            "type": "integer",
+            "description": "With every_minutes: stop after this many wake-ups.",
         },
         "at": {
             "type": "string",
@@ -327,8 +344,8 @@ WAKE_TOOL_SCHEMA = {
 
 LIST_WAKEUPS_TOOL_NAME = "list_wakeups"
 LIST_WAKEUPS_TOOL_DESC = (
-    "List the wake-ups currently armed on THIS chat: their id, when each fires, "
-    "and the reason it carries. Call it before arming another one to avoid "
+    "List the wake-ups and schedules currently armed on THIS chat: their id, when "
+    "each fires, and the reason it carries. Call it before arming another one to avoid "
     "stacking duplicates, and to get the id you need to cancel one. Takes no "
     "arguments."
 )
@@ -337,7 +354,7 @@ LIST_WAKEUPS_TOOL_SCHEMA = {"type": "object", "properties": {},
 
 CANCEL_WAKEUP_TOOL_NAME = "cancel_wakeup"
 CANCEL_WAKEUP_TOOL_DESC = (
-    "Cancel a wake-up armed on this chat, by its id (from list_wakeups). Use it "
+    "Cancel a wake-up or end a schedule on this chat, by its id (from list_wakeups). Use it "
     "when the thing it was going to check has already happened, or the operator "
     "has changed the plan, so a turn does not start for a reason that no longer "
     "holds."
@@ -452,7 +469,7 @@ def _pin_owner() -> None:
     """
     try:
         from services import auth_store, ownership
-        raw = os.environ.get("WORKSHOP_QUERY_OWNER", "").strip()
+        raw = turn_context.get("WORKSHOP_QUERY_OWNER", "").strip()
         oid = int(raw) if raw else auth_store.operator_id()
         if oid is not None:
             ownership.set_current_owner(oid)
@@ -461,7 +478,7 @@ def _pin_owner() -> None:
 
 
 def _build_digest() -> str:
-    scope = os.environ.get("WORKSHOP_QUERY_SCOPE", "workshop").strip() or "workshop"
+    scope = turn_context.get("WORKSHOP_QUERY_SCOPE", "workshop").strip() or "workshop"
     _pin_owner()
     parts: list[str] = []
     # Task + job digest (workspace-wide for general; own scope otherwise).
@@ -544,7 +561,7 @@ def _run_search(args: dict) -> str:
     # documentation-model-2026-08-14.md sec 4.2). An explicit `scope` argument
     # narrows further and is itself bounded by the caller's own reach, so a
     # workshop chat cannot ask its way into development just by naming it.
-    caller_raw = os.environ.get("WORKSHOP_QUERY_SCOPE", "workshop").strip() or "workshop"
+    caller_raw = turn_context.get("WORKSHOP_QUERY_SCOPE", "workshop").strip() or "workshop"
     my_reach = _reach_scopes(_caller_scope_key(caller_raw))
     requested = (args.get("scope") or "").strip()
     scopes = my_reach
@@ -559,6 +576,16 @@ def _run_search(args: dict) -> str:
     # of scopes I am allowed to see.
     from_scope = _caller_scope_key(caller_raw)
 
+    # A CONFINED chat searches its own scope's notes and chats and nothing else:
+    # not the tree below it, not the placeless docs, not tickets.
+    confined = _confined()
+    if confined:
+        scopes = {from_scope}
+        kinds = [k for k in kinds if k in CONFINED_KINDS]
+        if not kinds:
+            return ("This chat's search reaches only its own notes and past "
+                    "chats (kinds: " + ", ".join(CONFINED_KINDS) + ").")
+
     # COUNTING IS A DIFFERENT OPERATION FROM RANKING, and it rides the same
     # tool rather than a second one: a caller who wants "what came up
     # repeatedly" should not have to know it is a different subsystem.
@@ -567,7 +594,7 @@ def _run_search(args: dict) -> str:
 
     result = semantic_index.search(query, limit=limit, kinds=tuple(kinds),
                                    scope=scopes, since=since,
-                                   from_scope=from_scope)
+                                   from_scope=from_scope, confined=confined)
     hits, mode, rebuilding = result["hits"], result["mode"], result["rebuilding"]
     # ONE LINE PER CALL, so "does anyone use search" is a count and not an
     # argument. Recorded before the render, and never allowed to fail the call
@@ -744,7 +771,7 @@ def _render_repeats(query: str, since: str, limit: int,
 def _run_where_is() -> str:
     """The orientation map for this chat's scope. Single source of truth is
     services.orientation, shared with the injected L1 manifest."""
-    scope = os.environ.get("WORKSHOP_QUERY_SCOPE", "workshop").strip() or "workshop"
+    scope = turn_context.get("WORKSHOP_QUERY_SCOPE", "workshop").strip() or "workshop"
     from services import orientation
 
     # Computed from what THIS server will actually answer for, not defaulted.
@@ -757,11 +784,18 @@ def _run_where_is() -> str:
     # the prompt (chat_context.orientation_manifest); that one is computed from
     # the chat's real allowlist and is exact.
     offered = {t["name"] for t in _tool_list()}
+    confined = _confined()
     text = orientation.manifest_text(
         scope,
         background=SPAWN_TOOL_NAME in offered,
         wakeup=WAKE_TOOL_NAME in offered,
         notify=NOTIFY_TOOL_NAME in offered,
+        search=SEARCH_TOOL_NAME in offered,
+        query=TOOL_NAME in offered,
+        # The Agent tool is the CLI's, not this server's: a confined turn
+        # (an app's own assistant) runs without it.
+        subagent=not confined,
+        app_scoped=confined,
     )
     return f"{text}\n\n{_corpus_lines(scope)}"
 
@@ -785,9 +819,13 @@ def _corpus_lines(scope_raw: str) -> str:
     from services import semantic_index
 
     from_scope = _caller_scope_key(scope_raw)
+    confined = _confined()
     try:
-        m = semantic_index.corpus_map(scopes=_reach_scopes(from_scope),
-                                      from_scope=from_scope)
+        m = (semantic_index.corpus_map(kinds=CONFINED_KINDS, scopes={from_scope},
+                                       from_scope=from_scope, confined=True)
+             if confined else
+             semantic_index.corpus_map(scopes=_reach_scopes(from_scope),
+                                       from_scope=from_scope))
     except Exception as e:  # noqa: BLE001
         return f"=== WHAT IS IN THE RECORD ===\n(the corpus map is unavailable: {e})"
 
@@ -802,7 +840,7 @@ def _corpus_lines(scope_raw: str) -> str:
         f"({m['reachable_chunks']} of {m['chunks']} passages) are searchable "
         f"from this chat's scope, written between {m['oldest']} and {m['newest']}."
     )
-    for kind in ("note", "doc", "chat", "ticket", "vault"):
+    for kind in semantic_index.kinds():
         row = m["by_kind"].get(kind)
         if not row:
             continue
@@ -872,9 +910,30 @@ def _run_get_file(args: dict) -> str:
     return (
         f"{head}\n"
         f"This is a binary file with no text rendering. Its path on disk is:\n"
-        f"{blob}\n"
+        f"{_visible_path(blob)}\n"
         "Open it with your own tools (for a zip, unzip it; for an image, view it)."
     )
+
+
+def _visible_path(blob) -> str:
+    """Where the calling turn sees an attachment's bytes. Over stdio that is the
+    path as stored. Over HTTP the turn is confined to its scope, which may not
+    contain the attachment store at all, so the file is copied into the scope's
+    own `tmp/attachments/` and that path is given as the turn sees it."""
+    if not turn_context.over_http():
+        return str(blob)
+    import shutil
+    from pathlib import Path
+    from services import scoped_exec
+    root = turn_context.get("WORKSHOP_QUERY_ROOT")
+    if root and scoped_exec.host_path_visible(str(blob), root):
+        return scoped_exec.sandbox_path(str(blob), root)
+    if not root:
+        return str(blob)
+    dest = Path(root) / "tmp" / "attachments" / Path(str(blob)).name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(blob, dest)
+    return scoped_exec.sandbox_path(str(dest), root)
 
 
 def _render_text(head: str, text: str) -> str:
@@ -897,9 +956,10 @@ def _run_open_ref(args: dict) -> str:
     except (TypeError, ValueError):
         part = 1
 
-    caller_raw = os.environ.get("WORKSHOP_QUERY_SCOPE", "workshop").strip() or "workshop"
+    caller_raw = turn_context.get("WORKSHOP_QUERY_SCOPE", "workshop").strip() or "workshop"
     from_scope = _caller_scope_key(caller_raw)
-    scopes = _reach_scopes(from_scope)
+    confined = _confined()
+    scopes = {from_scope} if confined else _reach_scopes(from_scope)
 
     def _log(**fields) -> None:
         search_log.record(OPEN_REF_TOOL_NAME, ref=ref_str, scope=from_scope,
@@ -916,8 +976,10 @@ def _run_open_ref(args: dict) -> str:
     # is a way around the scope and share filters if it answers for a document
     # the searcher was never shown, so the decision is `_keep_mask`'s own, made
     # by the same function.
-    if not semantic_index.reachable_item(doc["kind"], doc["scope"], doc["item_ref"],
-                                         scopes=scopes, from_scope=from_scope):
+    if ((confined and doc["kind"] not in CONFINED_KINDS)
+            or not semantic_index.reachable_item(
+                doc["kind"], doc["scope"], doc["item_ref"], scopes=scopes,
+                from_scope=from_scope, confined=confined)):
         _log(refused="out_of_reach")
         return (f"{ref_str} is outside what this chat's scope reaches, so it is "
                 "not readable from here. This is the same boundary search "
@@ -952,7 +1014,7 @@ def _bound_thread() -> str | None:
     WORKSHOP_QUERY_THREAD (app_registry.set_current_query_thread). Absent for a
     background/CLI spawn with no chat behind it, which is why spawn_background is
     only offered when it is present."""
-    t = (os.environ.get("WORKSHOP_QUERY_THREAD") or "").strip()
+    t = (turn_context.get("WORKSHOP_QUERY_THREAD") or "").strip()
     return t or None
 
 
@@ -963,7 +1025,7 @@ def _project_slug() -> str | None:
     always literally "project:<slug>" (chat_context.py), so reading the raw
     env var needs no translation through scope_tree the way search's scope
     filter does."""
-    raw = (os.environ.get("WORKSHOP_QUERY_SCOPE") or "").strip()
+    raw = (turn_context.get("WORKSHOP_QUERY_SCOPE") or "").strip()
     if raw.startswith("project:"):
         return raw.split(":", 1)[1] or None
     return None
@@ -1006,7 +1068,7 @@ def _bound_turn() -> str | None:
     A retrieval log keyed only by chat cannot tell one turn's search from the
     next turn's, so it cannot answer whether the passage a turn found was the
     one it then read. That question is the whole reason the log exists."""
-    t = (os.environ.get("WORKSHOP_QUERY_TURN") or "").strip()
+    t = (turn_context.get("WORKSHOP_QUERY_TURN") or "").strip()
     return t or None
 
 
@@ -1036,7 +1098,8 @@ _BUILTIN_TOOL_NAMES = (
     TOOL_NAME, SEARCH_TOOL_NAME, OPEN_REF_TOOL_NAME, SPAWN_TOOL_NAME,
     WHERE_IS_TOOL_NAME, LIST_ATTACHMENTS_TOOL_NAME, GET_FILE_TOOL_NAME,
     WAKE_TOOL_NAME, LIST_WAKEUPS_TOOL_NAME, CANCEL_WAKEUP_TOOL_NAME,
-    NOTIFY_TOOL_NAME, SET_REPO_TOOL_NAME,
+    NOTIFY_TOOL_NAME, SET_REPO_TOOL_NAME, *page_tools.ALL_NAMES, access_tool.NAME,
+    *ops_tools.ALL_NAMES,
 )
 
 # The tools that only mean anything with a chat behind them, listed once so
@@ -1047,6 +1110,25 @@ _CHAT_BOUND_TOOLS = (
     (LIST_WAKEUPS_TOOL_NAME, LIST_WAKEUPS_TOOL_DESC, LIST_WAKEUPS_TOOL_SCHEMA),
     (CANCEL_WAKEUP_TOOL_NAME, CANCEL_WAKEUP_TOOL_DESC, CANCEL_WAKEUP_TOOL_SCHEMA),
 )
+
+
+# What a CONFINED turn reaches (an app's own assistant: WORKSHOP_QUERY_CONFINED,
+# pinned by app_registry.set_current_query_confinement). Its tool list is
+# exactly WORKSHOP_QUERY_TOOLS, and its search and open_ref reach only its own
+# scope's notes and chats: no docs, no tickets, no other scope.
+CONFINED_KINDS = ("note", "chat")
+
+
+def _confined() -> bool:
+    return (turn_context.get("WORKSHOP_QUERY_CONFINED") or "").strip() == "1"
+
+
+def _offered_names() -> set[str] | None:
+    """The tool names a confined turn may see, or None for no confinement."""
+    if not _confined():
+        return None
+    raw = turn_context.get("WORKSHOP_QUERY_TOOLS") or ""
+    return {n.strip() for n in raw.split(",") if n.strip()}
 
 
 def _can_notify() -> bool:
@@ -1079,12 +1161,19 @@ def _command_tools() -> list:
 
 
 def _scope_root() -> str:
-    """The directory a command tool runs in: this process's own cwd.
+    """The directory a command tool runs in: the calling turn's scope root.
 
-    The server is spawned as a child of the turn's `claude` process, so inside a
-    confined turn that cwd IS the scope root at `scoped_exec.MOUNTPOINT` -- a
-    command tool gets the same filesystem view as the turn that called it, never
-    a wider one."""
+    Over stdio the server is a child of the turn's `claude` process, so its cwd
+    IS the scope root at `scoped_exec.MOUNTPOINT`. Over HTTP it runs in the
+    backend, and the route resolves the claimed scope to its host root
+    (`WORKSHOP_QUERY_ROOT`), which `scoped_exec` then binds at the same
+    mountpoint. Either way a command tool gets the same filesystem view as the
+    turn that called it, never a wider one."""
+    if turn_context.over_http():
+        root = turn_context.get("WORKSHOP_QUERY_ROOT")
+        if not root:
+            raise ValueError("this chat has no scope directory to run a command tool in")
+        return root
     return os.getcwd()
 
 
@@ -1122,6 +1211,12 @@ def _tool_list() -> list:
         if _can_notify():
             tools.append({"name": NOTIFY_TOOL_NAME, "description": NOTIFY_TOOL_DESC,
                           "inputSchema": NOTIFY_TOOL_SCHEMA})
+    # Operating apps (mcp/ops_tools): served by the backend, which runs them.
+    if ops_tools.offered():
+        tools.extend(ops_tools.TOOLS)
+    # The page beside this chat, when the turn was handed one (mcp/page_tools).
+    tools.extend(page_tools.tool_list())
+    tools.extend(access_tool.tool_list())
     try:
         from services import command_tools
         for tool in _command_tools():
@@ -1132,6 +1227,9 @@ def _tool_list() -> list:
             })
     except Exception as e:  # noqa: BLE001
         print(f"workshop mcp: could not describe command tools: {e}", file=sys.stderr)
+    offered = _offered_names()
+    if offered is not None:
+        tools = [t for t in tools if t["name"] in offered]
     return tools
 
 
@@ -1151,12 +1249,12 @@ def _run_spawn(args: dict) -> str:
     thread = _bound_thread()
     if not thread:
         return "Cannot spawn a background agent: this tool is not bound to a chat."
-    owner_raw = (os.environ.get("WORKSHOP_QUERY_OWNER") or "").strip()
+    owner_raw = (turn_context.get("WORKSHOP_QUERY_OWNER") or "").strip()
     try:
         owner_id = int(owner_raw)
     except ValueError:
         return "Cannot spawn a background agent: no owner is bound to this chat."
-    scope = (os.environ.get("WORKSHOP_QUERY_SCOPE") or "workshop").strip() or "workshop"
+    scope = (turn_context.get("WORKSHOP_QUERY_SCOPE") or "workshop").strip() or "workshop"
     prompt = (args.get("prompt") or "").strip()
     if not prompt:
         return "A background agent needs a prompt describing what to do."
@@ -1182,8 +1280,13 @@ def _run_wake(args: dict) -> str:
     from services import clock, wakeups
 
     try:
+        if args.get("every_minutes") is not None and args.get("in_minutes") is None \
+                and not args.get("at"):
+            args = {**args, "in_minutes": args["every_minutes"]}
         when = wakeups.resolve_when(in_minutes=args.get("in_minutes"),
                                     at=args.get("at"))
+        if args.get("every_minutes") is not None:
+            return _arm_schedule(thread, args, when)
         record = wakeups.arm(thread, reason=(args.get("reason") or ""), due_at=when)
     except ValueError as e:
         # A refusal the model can act on, not a stack trace. The whole value of
@@ -1200,6 +1303,21 @@ def _run_wake(args: dict) -> str:
     )
 
 
+def _arm_schedule(thread: str, args: dict, first) -> str:
+    """`wake_me` with every_minutes: a schedule this chat set for itself."""
+    from services import chat_schedules, clock, wakeups
+    until = wakeups.resolve_when(at=args["until"]) if args.get("until") else None
+    sch = chat_schedules.for_self(thread, args.get("reason") or "", first,
+                                  float(args["every_minutes"]), until, args.get("times"))
+    local = first.astimezone(clock.tzinfo())
+    return (f"Schedule set (id {sch['id']}): first {local.strftime('%Y-%m-%d %H:%M %Z').strip()},"
+            f" then every {sch['every_min']} min"
+            + (f" until {until.astimezone(clock.tzinfo()).strftime('%H:%M')}" if until else "")
+            + (f", {sch['max_sends']} times at most" if sch.get("max_sends") else "")
+            + ". It shows in this chat's Scheduled list, where the operator can pause or end"
+            " it; end it yourself with cancel_wakeup and its id once it has done its job.")
+
+
 def _run_list_wakeups() -> str:
     thread = _bound_thread()
     if not thread:
@@ -1207,11 +1325,18 @@ def _run_list_wakeups() -> str:
     _pin_owner()
     from services import wakeups
 
+    from services import chat_schedules
     armed = wakeups.read(thread)
-    if not armed:
-        return "No wake-ups are armed on this chat."
-    return (f"{len(armed)} wake-up(s) armed on this chat:\n"
-            + "\n".join(wakeups.render(w) for w in armed)
+    own = [s for s in chat_schedules.read(thread) if s["status"] in ("active", "paused")]
+    if not armed and not own:
+        return "No wake-ups or schedules are armed on this chat."
+    lines = [wakeups.render(w) for w in armed] + [
+        f"{s['id']}: {s['status']}, every {s['every_min']} min, next {s.get('next_at') or '-'},"
+        f" set by {(s.get('set_by') or {}).get('kind')}: {s.get('label') or s['text'][:60]}"
+        if s["repeat"] == "every" else
+        f"{s['id']}: {s['status']}, {s['repeat']}, set by {(s.get('set_by') or {}).get('kind')}:"
+        f" {s.get('label') or s['text'][:60]}" for s in own]
+    return (f"{len(lines)} armed on this chat:\n" + "\n".join(lines)
             + "\nCancel one with cancel_wakeup, by its id.")
 
 
@@ -1225,6 +1350,16 @@ def _run_cancel_wakeup(args: dict) -> str:
     wake_id = (args.get("id") or "").strip()
     if not wake_id:
         return "error: a wake-up id is required (see list_wakeups)."
+    if wake_id.startswith("sch_"):
+        from services import chat_schedules
+        sch = chat_schedules.get(thread, wake_id)
+        if sch is None or sch.get("status") in ("done", "deleted"):
+            return f"No schedule with id {wake_id} is running on this chat."
+        if (sch.get("set_by") or {}).get("kind") != "chat":
+            return (f"{wake_id} was not set by this chat; the operator or the app that set it"
+                    " ends it, in the chat's Scheduled list.")
+        chat_schedules.change(thread, wake_id, {"status": "done", "why": "ended by this chat"})
+        return f"Ended schedule {wake_id}. It will not send again."
     record = wakeups.cancel(thread, wake_id)
     if record is None:
         return (f"No wake-up with id {wake_id} is armed on this chat. It may "
@@ -1295,9 +1430,33 @@ def _handle(msg: dict) -> dict | None:
         # same precedence `_tool_list` advertises.
         is_command_tool = name not in _BUILTIN_TOOL_NAMES and any(
             t.id == name for t in _command_tools())
-        if name not in _BUILTIN_TOOL_NAMES and not is_command_tool:
+        offered = _offered_names()
+        if ((name not in _BUILTIN_TOOL_NAMES and not is_command_tool)
+                or (offered is not None and name not in offered)):
             return {"jsonrpc": "2.0", "id": mid,
                     "error": {"code": -32602, "message": f"unknown tool: {name}"}}
+        if name == access_tool.NAME:
+            if not access_tool.offered():
+                return {"jsonrpc": "2.0", "id": mid,
+                        "error": {"code": -32602, "message": f"unknown tool: {name}"}}
+            text, failed = access_tool.run(params.get("arguments") or {})
+            return {"jsonrpc": "2.0", "id": mid,
+                    "result": {"content": [{"type": "text", "text": text}], "isError": failed}}
+        if name in ops_tools.ALL_NAMES:
+            if not ops_tools.offered():
+                return {"jsonrpc": "2.0", "id": mid,
+                        "error": {"code": -32602, "message": f"unknown tool: {name}"}}
+            out, failed = ops_tools.run(name, params.get("arguments") or {})
+            blocks = out if isinstance(out, list) else [{"type": "text", "text": out}]
+            return {"jsonrpc": "2.0", "id": mid,
+                    "result": {"content": blocks, "isError": failed}}
+        if name in page_tools.ALL_NAMES:
+            if not page_tools.offered(name):
+                return {"jsonrpc": "2.0", "id": mid,
+                        "error": {"code": -32602, "message": f"unknown tool: {name}"}}
+            blocks, failed = page_tools.run(name, params.get("arguments") or {})
+            return {"jsonrpc": "2.0", "id": mid,
+                    "result": {"content": blocks, "isError": failed}}
         try:
             if is_command_tool:
                 text = _run_command_tool(name, params.get("arguments") or {})

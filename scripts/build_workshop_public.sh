@@ -15,6 +15,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[ -f "$REPO_ROOT/scripts/lib/instance.sh" ] && source "$REPO_ROOT/scripts/lib/instance.sh"
+PUBLIC_UNIT="${WORKSHOP_PUBLIC_UNIT:-workshop-public.service}"
 
 restart_edge="${RESTART_EDGE:-0}"
 for arg in "$@"; do
@@ -39,8 +42,43 @@ if ! flock -w 300 9; then
   exit 1
 fi
 
-echo "Building frontend -> frontend/dist ..."
-(cd "$REPO_ROOT/frontend" && npm run build)
+# THE LIVE dist/ IS NEVER EMPTIED. vite empties its outDir before writing, which
+# on the live dir meant two things on every build: the edge answered "frontend
+# not built" to any load during the write, and every hashed chunk an open tab had
+# not fetched yet was gone for good, so its next navigation 404'd and forced a
+# full reload through the splash, often while apply.sh was restarting the backend.
+# So the build goes to a staging dir and is merged in: new hashed assets are added
+# beside the old ones (never rewritten in place, a tab may be reading one), every
+# other file is renamed into place with index.html last, and assets no build has
+# produced for a week are pruned.
+LIVE="$REPO_ROOT/frontend/dist"
+STAGE="$REPO_ROOT/tmp/dist-next"
+
+merge_into_live() {
+  mkdir -p "$LIVE/assets"
+  (cd "$STAGE/assets" && find . -type f -print0) | while IFS= read -r -d '' f; do
+    if [ -e "$LIVE/assets/$f" ]; then
+      touch "$LIVE/assets/$f"
+    else
+      mkdir -p "$(dirname "$LIVE/assets/$f")"
+      cp "$STAGE/assets/$f" "$LIVE/assets/$f.tmp" && mv -f "$LIVE/assets/$f.tmp" "$LIVE/assets/$f"
+    fi
+  done
+  for f in "$STAGE"/*; do
+    name="$(basename "$f")"
+    case "$name" in assets|index.html) continue ;; esac
+    if [ -d "$f" ]; then cp -r "$f" "$LIVE/"; continue; fi
+    cp "$f" "$LIVE/$name.tmp" && mv -f "$LIVE/$name.tmp" "$LIVE/$name"
+  done
+  cp "$STAGE/index.html" "$LIVE/index.html.tmp" && mv -f "$LIVE/index.html.tmp" "$LIVE/index.html"
+  find "$LIVE/assets" -type f -mtime +7 -delete
+}
+
+echo "Building frontend -> frontend/dist (staged in tmp/dist-next) ..."
+rm -rf "$STAGE"
+(cd "$REPO_ROOT/frontend" && WORKSHOP_DIST_OUT="$STAGE" npm run build -- --outDir "$STAGE" --emptyOutDir)
+merge_into_live
+rm -rf "$STAGE"
 
 if [ "$restart_edge" != "1" ]; then
   echo "Edge not restarted (serves dist from disk — change is already live)."
@@ -51,13 +89,25 @@ fi
 # `show -p LoadState` is a D-Bus query, unlike `cat` which reads the unit file
 # off disk client-side and fails inside a scoped-exec sandbox that does not
 # bind ~/.config/systemd (see restart_backend.sh have_unit()).
-if [ "$(systemctl --user show -p LoadState --value workshop-public.service 2>/dev/null)" = "loaded" ]; then
-  echo "Restarting workshop-public.service (edge code changed) ..."
-  systemctl --user restart workshop-public.service
+if [ "$(systemctl --user show -p LoadState --value "$PUBLIC_UNIT" 2>/dev/null)" = "loaded" ]; then
+  echo "Restarting $PUBLIC_UNIT (edge code changed) ..."
+  systemctl --user restart "$PUBLIC_UNIT"
   sleep 2
-  systemctl --user is-active --quiet workshop-public.service \
-    && echo "public edge active on :8002" \
-    || { echo "public edge failed to come up"; journalctl --user -u workshop-public.service -n 20 --no-pager; exit 1; }
+  systemctl --user is-active --quiet "$PUBLIC_UNIT" \
+    && echo "public edge active on :${WORKSHOP_PUBLIC_PORT:-8002}" \
+    || { echo "public edge failed to come up"; journalctl --user -u "$PUBLIC_UNIT" -n 20 --no-pager; exit 1; }
 else
-  echo "workshop-public.service not installed yet — run scripts/install_public_service.sh first."
+  # No systemd unit: launch the edge directly. Port is configurable; the edge's
+  # backend target and dist dir come from WORKSHOP_BACKEND / WORKSHOP_DIST (see
+  # workshop_public_app.py), inherited from this shell's environment.
+  PORT="${WORKSHOP_PUBLIC_PORT:-8002}"
+  echo "$PUBLIC_UNIT not installed; launching edge via nohup on :${PORT} ..."
+  cd "$REPO_ROOT/backend"
+  pkill -f "uvicorn workshop_public_app:app.*${PORT}" || true
+  sleep 1
+  nohup .venv/bin/uvicorn workshop_public_app:app --host 127.0.0.1 --port "${PORT}" \
+    >>/tmp/workshop-public.log 2>&1 &
+  disown || true
+  sleep 2
+  echo "public edge (nohup) on :${PORT}. Log: /tmp/workshop-public.log"
 fi

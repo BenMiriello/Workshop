@@ -6,9 +6,10 @@
 # previous bundle — so the fix is reported as shipped while the site is stale.
 # The drift is invisible from whichever origin you happen to be looking at.
 #
-# Three surfaces (docs/ui-origins.md), and they are NOT the same kind of thing:
-#   :5173  Vite, from SOURCE  — in sync by construction; there is nothing to compare
-#   :8002  the public edge    — serves frontend/dist, and is asked over HTTP
+# Three surfaces (docs/ui-origins.md), and they are NOT the same kind of thing.
+# The two ports are PER-DEPLOYMENT (resolved below), not fixed:
+#   vite   Vite, from SOURCE  — in sync by construction; there is nothing to compare
+#   public the public edge    — serves frontend/dist, and is asked over HTTP
 #   dist/  the artifact       — compared on disk, to tell "not built" from
 #                               "built, but the edge is pointed somewhere else"
 #
@@ -21,8 +22,30 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$REPO_ROOT/frontend/dist"
-PUBLIC_ORIGIN="${WORKSHOP_PUBLIC_ORIGIN:-http://127.0.0.1:8002}"
-VITE_ORIGIN="${WORKSHOP_VITE_ORIGIN:-http://127.0.0.1:5173}"
+
+# Which ports this deployment actually serves on. Read from the Control Panel
+# env file the services are launched with (same source dev_frontend.sh uses),
+# because a warning that probes ANOTHER instance's edge is worse than no
+# warning: it reports drift that isn't there, every run, until it's ignored.
+# Pull the one key rather than sourcing — these files carry a COMMAND= line with
+# embedded shell syntax.
+env_val() {
+  local key="$1" f
+  for f in "$HOME/.config/control-panel/env/workshop-public.env" \
+           "$HOME/.config/control-panel/env/workshop-backend.env"; do
+    [ -f "$f" ] || continue
+    grep -m1 "^${key}=" "$f" | cut -d= -f2- && return 0
+  done
+  return 1
+}
+
+PUBLIC_PORT="${WORKSHOP_PUBLIC_PORT:-$(env_val PORT || echo 8002)}"
+PUBLIC_ORIGIN="${WORKSHOP_PUBLIC_ORIGIN:-http://127.0.0.1:${PUBLIC_PORT}}"
+VITE_ORIGIN="${WORKSHOP_VITE_ORIGIN:-http://127.0.0.1:${WORKSHOP_DEV_PORT:-5173}}"
+# Labels name the port actually probed, so the status line can never read as
+# a different instance's surface.
+PUBLIC_LABEL=":${PUBLIC_ORIGIN##*:} public"
+VITE_LABEL=":${VITE_ORIGIN##*:} vite"
 
 mode="full"
 case "${1:-}" in
@@ -84,14 +107,14 @@ else
   printf '  %-16s %s %s\n' "frontend/dist" "$(fmt_id "")" "no build stamp"
 fi
 if [ -n "$SERVED_JSON" ]; then
-  printf '  %-16s %s %s\n' ":8002 public" "$(fmt_id "$SERVED_ID")" \
+  printf '  %-16s %s %s\n' "${PUBLIC_LABEL}" "$(fmt_id "$SERVED_ID")" \
     "$([ "$SERVED_ID" = "$SRC_ID" ] && echo 'in sync' || echo 'SERVING OLDER SOURCE')"
 elif [ "$PUBLIC_UP" = "1" ]; then
-  printf '  %-16s %s %s\n' ":8002 public" "$(fmt_id "")" "up, but serving an unstamped bundle — rebuild to stamp it"
+  printf '  %-16s %s %s\n' "${PUBLIC_LABEL}" "$(fmt_id "")" "up, but serving an unstamped bundle — rebuild to stamp it"
 else
-  printf '  %-16s %s %s\n' ":8002 public" "$(fmt_id "")" "unreachable (workshop-public.service down?)"
+  printf '  %-16s %s %s\n' "${PUBLIC_LABEL}" "$(fmt_id "")" "unreachable (workshop-public.service down?)"
 fi
-printf '  %-16s %s %s\n' ":5173 vite" "$(fmt_id "from source")" \
+printf '  %-16s %s %s\n' "${VITE_LABEL}" "$(fmt_id "from source")" \
   "$([ "$VITE_UP" = "1" ] && echo 'live — nothing to build' || echo 'not running')"
 
 if [ ${#problems[@]} -gt 0 ] && [ -n "${problems[0]:-}" ]; then

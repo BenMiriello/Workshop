@@ -1,12 +1,15 @@
 # Applying a change (development)
 
-**Finished a change? Run this:**
+**Finished a change? In a Workshop chat, call `app_apply` with app `workshop`.**
+From a shell without the workshop tools, run what it runs:
 
 ```bash
 bash scripts/apply.sh
 ```
 
-That is the whole instruction. It works out what is stale and fixes it. It is
+That is the whole instruction. (An app's change is made live the same way:
+`app_apply` with that app's slug, which builds and restarts what the app
+declares.) It works out what is stale and fixes it. It is
 safe to run at any time, from any agent, concurrently with any other agent, and
 running it when nothing changed does nothing.
 

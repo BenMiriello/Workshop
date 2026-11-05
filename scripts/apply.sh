@@ -47,6 +47,13 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
+# Ports and unit names are per-deployment (instance.env); the defaults are a
+# stock install's.
+# shellcheck source=/dev/null
+[ -f scripts/lib/instance.sh ] && source scripts/lib/instance.sh
+BACKEND_PORT="${WORKSHOP_BACKEND_PORT:-8000}"
+FRONTEND_UNIT="${WORKSHOP_FRONTEND_UNIT:-workshop-frontend.service}"
+PUBLIC_UNIT="${WORKSHOP_PUBLIC_UNIT:-workshop-public.service}"
 
 CHECK=0
 PUBLISH_WIP=0
@@ -267,11 +274,11 @@ esac
 #    is deferred rather than immediate.
 # ---------------------------------------------------------------------------
 BE_SRC="$(bash scripts/backend_source_id.sh 2>/dev/null || echo unknown)"
-BE_RUN="$(curl -sf --max-time 4 http://127.0.0.1:8000/healthz 2>/dev/null \
+BE_RUN="$(curl -sf --max-time 4 http://127.0.0.1:${BACKEND_PORT}/healthz 2>/dev/null \
   | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_id") or "unknown")' 2>/dev/null || echo unreachable)"
 
 if [ "$BE_RUN" = "unreachable" ]; then
-  warn "backend not answering on :8000; cannot tell what it is running"
+  warn "backend not answering on :${BACKEND_PORT}; cannot tell what it is running"
 elif [ "$BE_RUN" = "unknown" ] || [ "$BE_SRC" = "unknown" ]; then
   # Undecidable is NOT the same as in-sync and must never be reported as it.
   warn "backend does not report a source id (restart it once to pick this up: bash scripts/restart_backend.sh --deferred)"
@@ -323,6 +330,14 @@ else
   be_wip="$(git status --porcelain -uall -- backend 2>/dev/null | awk '{print $NF}' \
     | grep -E '(\.py|requirements[^/]*\.txt)$' | grep -v 'workshop_public_app\.py$' \
     | grep -v '^backend/tests/' || true)"
+  # An app's backend is part of what a restart starts (backend_source_id.sh), and
+  # each app is its own repo, so its uncommitted package files count as well.
+  app_src="$(python3 scripts/install_apps.py --source-files 2>/dev/null | tr '\0' '\n' || true)"
+  app_wip="$(for d in apps/*/; do
+      [ -e "${d}.git" ] || continue
+      git -C "$d" status --porcelain -uall 2>/dev/null | awk -v d="$d" '{print d $NF}'
+    done | grep -Fx -f <(printf '%s\n' "$app_src") || true)"
+  be_wip="$(printf '%s\n%s\n' "$be_wip" "$app_wip" | sed '/^$/d')"
   if [ -n "$be_wip" ] && [ "$PUBLISH_WIP" = 0 ]; then
     warn "not restarting: the backend is stale because of UNCOMMITTED work:"
     printf '            %s\n' $be_wip
@@ -367,7 +382,8 @@ APPS_STATE="unknown"
 APPS_MSG="apps: COULD NOT DETERMINE -- scripts/backend_apps_state.py did not run"
 APPS_FIX=""
 if [ -f scripts/backend_apps_state.py ]; then
-  apps_line="$(python3 scripts/backend_apps_state.py --tsv 2>/dev/null | tail -1)"
+  apps_line="$(WORKSHOP_BACKEND_URL="${WORKSHOP_BACKEND_URL:-http://127.0.0.1:${BACKEND_PORT}}" \
+    python3 scripts/backend_apps_state.py --tsv 2>/dev/null | tail -1)"
   if [ -n "$apps_line" ]; then
     APPS_STATE="${apps_line%%$'\t'*}"
     apps_rest="${apps_line#*$'\t'}"
@@ -448,11 +464,11 @@ stamped_surface() {  # <label> <file> <stamp> <unit> <restart-cmd...>
 }
 
 stamped_surface "vite env (frontend/.env)" \
-  "frontend/.env" ".runtime/applied-vite-env.sha" "workshop-frontend.service" \
-  systemctl --user restart workshop-frontend.service
+  "frontend/.env" ".runtime/applied-vite-env.sha" "$FRONTEND_UNIT" \
+  systemctl --user restart "$FRONTEND_UNIT"
 
 stamped_surface "public edge code" \
-  "backend/workshop_public_app.py" ".runtime/applied-edge.sha" "workshop-public.service" \
+  "backend/workshop_public_app.py" ".runtime/applied-edge.sha" "$PUBLIC_UNIT" \
   bash scripts/build_workshop_public.sh --restart-edge
 
 # ---------------------------------------------------------------------------

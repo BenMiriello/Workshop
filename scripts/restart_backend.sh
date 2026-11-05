@@ -8,8 +8,12 @@
 # this falls back to the legacy nohup launch on :8000.
 set -euo pipefail
 
-SERVICE=workshop-backend.service
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[ -f "$REPO_ROOT/scripts/lib/instance.sh" ] && source "$REPO_ROOT/scripts/lib/instance.sh"
+# Exported so the detached deferred waiter below, a separate bash, sees them.
+export SERVICE="${WORKSHOP_BACKEND_UNIT:-workshop-backend.service}"
+export PORT="${WORKSHOP_BACKEND_PORT:-8000}"
 
 have_unit() {
   # `systemctl --user cat` reads the unit FILE off disk client-side, which a
@@ -24,12 +28,148 @@ have_unit() {
     && [ "$(systemctl --user show -p LoadState --value "$SERVICE" 2>/dev/null)" = "loaded" ]
 }
 
+# THE COMMIT WINDOW, read off the thread metas: a thread names its turn in
+# `active_turn_id` from the claim until the reply is committed. Prints the first
+# meta that does and was written within STALE_HOLD_S, or nothing.
+#
+# Only a RECENT holder counts. A crashed run leaves the field set until the next
+# startup reconcile clears it, and reconcile only runs on a restart: honouring a
+# stale field would forbid the one action that fixes it. A long turn's meta also
+# sits untouched while it works, and that is the run wait's business, not this
+# one's. A commit takes seconds, so an old meta is not a commit in progress.
+#
+# The key was `active_run_id` until the run->turn rename, and nothing failed when
+# it changed: a grep for a key nobody writes finds nothing, so both waits on the
+# commit window silently became no-ops. backend/tests/test_restart_commit_window.py
+# pins the key to the one chat_log writes.
+STALE_HOLD_S=300
+commit_holder() {
+  local meta age
+  for meta in "$REPO_ROOT"/.runtime/users/*/chat/*/meta.json; do
+    [ -f "$meta" ] || continue
+    grep -q '"active_turn_id": *"[0-9a-f-]' "$meta" || continue
+    age=$(( $(date +%s) - $(stat -c %Y "$meta" 2>/dev/null || echo 0) ))
+    [ "$age" -lt "$STALE_HOLD_S" ] && { printf '%s\n' "$meta"; return 0; }
+  done
+  return 0
+}
+
 # Deferred mode: schedule the restart DETACHED and after a short delay, then exit
 # immediately. A builder agent editing the Workshop runs `restart_backend.sh
 # --deferred` as its final action so this backend — which is serving the agent's
 # own chat turn — only goes down AFTER the reply has been delivered. setsid
 # detaches the restarter from the agent's process tree so it survives the backend
 # dying. (See docs/app-platform-runner.md, "restart the server that hosts the agent".)
+# **Per-user, because /tmp/workshop-backend.log is owned by whichever
+# instance touched it first.** On this box that is another user, so every
+# redirect to it died with "Permission denied" - and for the deferred path
+# that redirect is on the `setsid` line itself, so the watcher never
+# started and the restart silently never happened. It reported
+# "Backend restart armed" and did nothing, which is the worst way for it
+# to fail: the caller believes the reload is coming.
+RESTART_LOG="${WORKSHOP_RESTART_LOG:-${REPO_ROOT}/.runtime/deploy-logs/backend-restart.log}"
+mkdir -p "$(dirname "$RESTART_LOG")" 2>/dev/null || RESTART_LOG=/dev/null
+: >>"$RESTART_LOG" 2>/dev/null || RESTART_LOG=/dev/null
+
+# The waiter itself: wait for the arming turn, briefly for anyone else, then for
+# the commit window, then restart and write the receipt. Started by --deferred
+# below, never by hand. Args: <arming turn pid|none> <max> <grace> <other cap>.
+if [ "${1:-}" = "--waiter" ]; then
+  mine="${2:-none}"; [ "$mine" = none ] && mine=""
+  max="${3:-21600}"; grace="${4:-180}"; ocap="${5:-180}"
+  turns="$REPO_ROOT/.runtime/turns"; root="$REPO_ROOT"
+  live() {  # live <pid-filter>: "" = any turn, else only that pid
+    [ -d "$turns" ] || return 1
+    for meta in "$turns"/*/meta.json; do
+      [ -f "$meta" ] || continue
+      grep -q "\"status\": *\"running\"" "$meta" || continue
+      pid="$(sed -n "s/.*\"pid\": *\([0-9]\+\).*/\1/p" "$meta" | head -1)"
+      [ -n "$pid" ] || continue
+      [ -n "$1" ] && [ "$pid" != "$1" ] && continue
+      kill -0 "$pid" 2>/dev/null && return 0
+    done
+    return 1
+  }
+  commit_pending() { [ -n "$(commit_holder)" ]; }
+  # 1. My own turn, generously: it is the reply this restart must not eat.
+  waited=0
+  if [ -n "$mine" ]; then
+    while live "$mine" && [ "$waited" -lt "$max" ]; do sleep 3; waited=$((waited+3)); done
+    [ "$waited" -ge "$max" ] && echo "warn: arming turn $mine still running after ${max}s; restarting anyway"
+  fi
+  # 2. Anyone else, briefly.
+  waited=0
+  while live "" && [ "$waited" -lt "$ocap" ]; do sleep 3; waited=$((waited+3)); done
+  [ "$waited" -ge "$ocap" ] && echo "warn: another turn was still running after ${ocap}s; restarting anyway"
+  # 3. The commit window: a thread holds active_turn_id until its reply lands.
+  settled=0
+  while commit_pending && [ "$settled" -lt "$grace" ]; do sleep 2; settled=$((settled+2)); done
+  [ "$settled" -ge "$grace" ] && echo "warn: a run still held its thread after ${grace}s; restarting anyway"
+  sleep 1
+  # --force IS THE POINT. The three waits above ARE the guard: this waiter has
+  # already served every condition the synchronous guard checks, and the warns
+  # above are it deliberately giving up after a bounded wait.
+  #
+  # Without --force this line re-invoked the script, the guard found the very
+  # turn the waiter had just decided to restart on top of, printed REFUSING and
+  # exited 2 -- while the caller had long since been told "restart armed" and
+  # exit 0. Measured in /tmp/workshop-backend.log before this fix: 61 restarts,
+  # 14 silent refusals. That is the third instance of the silent-no-op this
+  # file has been fixed for twice; both earlier fixes were right and both left
+  # this path open. A bounded wait that ends in a refusal is not a wait, it is
+  # a lie, and an agent cannot be instructed out of a tool that lies.
+  old_pid="$(systemctl --user show -p MainPID --value "$SERVICE" 2>/dev/null || echo 0)"
+  bash "$REPO_ROOT/scripts/restart_backend.sh" --force; code=$?
+  new_pid="$(systemctl --user show -p MainPID --value "$SERVICE" 2>/dev/null || echo 0)"
+  served="$(curl -sf --max-time 3 http://127.0.0.1:${PORT}/healthz 2>/dev/null \
+    | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"source_id\") or \"\")" 2>/dev/null || true)"
+  # VERIFY, do not assume. A zero exit that left the same pid running means the
+  # restart did not happen, which is precisely the failure this whole block
+  # exists to make impossible to report as success. Exit 3 is the preflight
+  # refusing a tree that does not import -- a correct, deliberate no-op, and it
+  # must NOT be recorded as a failure of the restart machinery.
+  if [ "$code" = 3 ]; then
+    outcome=refused-tree-broken
+  elif [ "$code" = 0 ] && [ -n "$new_pid" ] && [ "$new_pid" != "0" ] && [ "$new_pid" != "$old_pid" ]; then
+    outcome=restarted
+  elif [ "$code" = 0 ]; then
+    outcome=no-pid-change
+  else
+    outcome=failed
+  fi
+  echo "deferred restart: $outcome (pid $old_pid -> $new_pid, serving ${served:-unreachable})"
+  # The receipt. Until now the ONLY record of a deferred restart was this log
+  # under /tmp, which nothing reads and nothing surfaces, so a failure was
+  # invisible to the agent that armed it and to the operator. apply.sh --check
+  # and the chat runtime briefing both read this file.
+  mkdir -p "$root/.runtime" 2>/dev/null || true
+  printf "{\"when\": \"%s\", \"action\": \"backend-restart\", \"outcome\": \"%s\", \"old_pid\": %s, \"new_pid\": %s, \"serving\": \"%s\", \"arming_turn\": \"%s\"}\n" \
+    "$(date -Is)" "$outcome" "${old_pid:-0}" "${new_pid:-0}" "${served:-}" "${mine:-none}" \
+    > "$root/.runtime/apply-last.json" 2>/dev/null || true
+  # Clear the arming record LAST, so the window in which a second waiter could
+  # be armed is the window in which there is genuinely no waiter.
+  rm -f "$root/.runtime/restart-armed.pid" 2>/dev/null || true
+  exit 0
+fi
+
+# The host path of `path`. Inside a turn's sandbox the tree is bind-mounted
+# (`services/scoped_exec.py`, which exports the source as WORKSHOP_MOUNT_SOURCE);
+# outside one the path is already the host's.
+host_path() {
+  local mnt src
+  mnt="$(findmnt -no TARGET --target "$1" 2>/dev/null | head -1)"
+  src="${WORKSHOP_MOUNT_SOURCE:-}"
+  if [ -z "$src" ] && [ -n "$mnt" ]; then
+    src="$(findmnt -no FSROOT --mountpoint "$mnt" 2>/dev/null | head -1)"
+    [ "$src" = "/" ] && src=""
+  fi
+  if [ -n "$src" ] && [ -n "$mnt" ] && [ "$mnt" != "/" ]; then
+    printf '%s%s\n' "$src" "${1#"$mnt"}"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
 if [ "${1:-}" = "--deferred" ]; then
   # WAIT FOR THE TURN TO END, don't guess how long it will take.
   #
@@ -47,14 +187,13 @@ if [ "${1:-}" = "--deferred" ]; then
   # The cap was 30 minutes, and that became wrong when the turn time limit was
   # removed: an agentic turn now runs until the work is done, routinely past
   # half an hour. The old default reproduced the exact failure the polling was
-  # added to fix — /tmp/workshop-backend.log has "gave up waiting for turn to
+  # added to fix — "${RESTART_LOG}" has "gave up waiting for turn to
   # end" followed by hours of the backend serving code nobody shipped. Six
   # hours is longer than any turn that is still healthy, and a wedged one is a
   # problem the operator wants to see rather than have quietly restarted.
   max_wait="${2:-21600}"
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   turns="$REPO_ROOT/.runtime/turns"
-  chat="$REPO_ROOT/.runtime/users"
   # THE CHILD EXITING IS NOT THE REPLY LANDING.
   #
   # A turn's claude process writes its last line and exits; the BACKEND then
@@ -65,7 +204,7 @@ if [ "${1:-}" = "--deferred" ]; then
   # outright, and from the chat it read as the assistant never answering at all.
   #
   # So there are two waits. First for the process, then for the commit: a thread
-  # holds `active_run_id` in its meta from the moment a run is claimed until the
+  # holds `active_turn_id` in its meta from the moment a run is claimed until the
   # moment its reply is committed, which is exactly the window that must be
   # clear. The second wait is bounded, because a crashed run can leave the field
   # set until the next startup reconcile and must not park a restarter forever.
@@ -124,6 +263,9 @@ if [ "${1:-}" = "--deferred" ]; then
   # ignored rather than trusted.
   armed_file="$REPO_ROOT/.runtime/restart-armed.pid"
   mkdir -p "$REPO_ROOT/.runtime" 2>/dev/null || true
+  # Check and arm under one lock: two apply.sh runs in the same second each saw
+  # no waiter and each armed one (measured 2026-10-02, two units, adjacent pids).
+  exec 9>"$armed_file.lock" && flock 9 || true
   if [ -f "$armed_file" ]; then
     prev="$(cat "$armed_file" 2>/dev/null || true)"
     case "$prev" in
@@ -135,87 +277,38 @@ if [ "${1:-}" = "--deferred" ]; then
     esac
   fi
 
-  setsid bash -c '
-    self="$1"; turns="$2"; chat="$3"; max="$4"; grace="$5"; mine="$6"; ocap="$7"; root="$8"
-    live() {  # live <pid-filter>: "" = any turn, else only that pid
-      [ -d "$turns" ] || return 1
-      for meta in "$turns"/*/meta.json; do
-        [ -f "$meta" ] || continue
-        grep -q "\"status\": *\"running\"" "$meta" || continue
-        pid="$(sed -n "s/.*\"pid\": *\([0-9]\+\).*/\1/p" "$meta" | head -1)"
-        [ -n "$pid" ] || continue
-        [ -n "$1" ] && [ "$pid" != "$1" ] && continue
-        kill -0 "$pid" 2>/dev/null && return 0
-      done
-      return 1
-    }
-    commit_pending() {
-      [ -d "$chat" ] || return 1
-      grep -rlq "\"active_run_id\": *\"[0-9a-f-]" "$chat"/*/chat/*/meta.json 2>/dev/null
-    }
-    # 1. My own turn, generously: it is the reply this restart must not eat.
-    waited=0
-    if [ -n "$mine" ]; then
-      while live "$mine" && [ "$waited" -lt "$max" ]; do sleep 3; waited=$((waited+3)); done
-      [ "$waited" -ge "$max" ] && echo "warn: arming turn $mine still running after ${max}s; restarting anyway"
-    fi
-    # 2. Anyone else, briefly.
-    waited=0
-    while live "" && [ "$waited" -lt "$ocap" ]; do sleep 3; waited=$((waited+3)); done
-    [ "$waited" -ge "$ocap" ] && echo "warn: another turn was still running after ${ocap}s; restarting anyway"
-    # 3. The commit window: a thread holds active_run_id until its reply lands.
-    settled=0
-    while commit_pending && [ "$settled" -lt "$grace" ]; do sleep 2; settled=$((settled+2)); done
-    [ "$settled" -ge "$grace" ] && echo "warn: a run still held its thread after ${grace}s; restarting anyway"
+  # THE WAITER MUST OUTLIVE THE TURN THAT ARMS IT, and inside a turn's sandbox
+  # a setsid child does not: the sandbox is torn down when the turn ends and
+  # takes every process in it along. Measured 2026-10-02: no deferred restart
+  # had fired since 09-30, each arm printed "armed" and then died with its turn,
+  # and the backend served code from before a whole day of commits. A transient
+  # systemd unit belongs to the user manager instead, so it survives. It runs
+  # in the HOST's mount namespace, so it is given the tree's host path.
+  host_root="$(host_path "$REPO_ROOT")"
+  unit="workshop-restart-waiter-$$"
+  waiter_args=("${own_turn:-none}" "$max_wait" "$commit_grace" "$other_cap")
+  waiter_log="$host_root/.runtime/deploy-logs/backend-restart.log"
+  waiter_pid=""
+  if command -v systemd-run >/dev/null 2>&1 \
+     && systemd-run --user --quiet --collect --unit="$unit" \
+          -p WorkingDirectory="$host_root" \
+          -p StandardOutput="append:$waiter_log" -p StandardError="append:$waiter_log" \
+          --setenv=WORKSHOP_BACKEND_UNIT="$SERVICE" --setenv=WORKSHOP_BACKEND_PORT="$PORT" \
+          /bin/bash "$host_root/scripts/restart_backend.sh" --waiter "${waiter_args[@]}" \
+          2>/dev/null; then
     sleep 1
-    # --force IS THE POINT. The three waits above ARE the guard: this waiter has
-    # already served every condition the synchronous guard checks, and the warns
-    # above are it deliberately giving up after a bounded wait.
-    #
-    # Without --force this line re-invoked the script, the guard found the very
-    # turn the waiter had just decided to restart on top of, printed REFUSING and
-    # exited 2 -- while the caller had long since been told "restart armed" and
-    # exit 0. Measured in /tmp/workshop-backend.log before this fix: 61 restarts,
-    # 14 silent refusals. That is the third instance of the silent-no-op this
-    # file has been fixed for twice; both earlier fixes were right and both left
-    # this path open. A bounded wait that ends in a refusal is not a wait, it is
-    # a lie, and an agent cannot be instructed out of a tool that lies.
-    old_pid="$(systemctl --user show -p MainPID --value workshop-backend.service 2>/dev/null || echo 0)"
-    bash "$self" --force; code=$?
-    new_pid="$(systemctl --user show -p MainPID --value workshop-backend.service 2>/dev/null || echo 0)"
-    served="$(curl -sf --max-time 3 http://127.0.0.1:8000/healthz 2>/dev/null \
-      | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"source_id\") or \"\")" 2>/dev/null || true)"
-    # VERIFY, do not assume. A zero exit that left the same pid running means the
-    # restart did not happen, which is precisely the failure this whole block
-    # exists to make impossible to report as success. Exit 3 is the preflight
-    # refusing a tree that does not import -- a correct, deliberate no-op, and it
-    # must NOT be recorded as a failure of the restart machinery.
-    if [ "$code" = 3 ]; then
-      outcome=refused-tree-broken
-    elif [ "$code" = 0 ] && [ -n "$new_pid" ] && [ "$new_pid" != "0" ] && [ "$new_pid" != "$old_pid" ]; then
-      outcome=restarted
-    elif [ "$code" = 0 ]; then
-      outcome=no-pid-change
-    else
-      outcome=failed
-    fi
-    echo "deferred restart: $outcome (pid $old_pid -> $new_pid, serving ${served:-unreachable})"
-    # The receipt. Until now the ONLY record of a deferred restart was this log
-    # under /tmp, which nothing reads and nothing surfaces, so a failure was
-    # invisible to the agent that armed it and to the operator. apply.sh --check
-    # and the chat runtime briefing both read this file.
-    mkdir -p "$root/.runtime" 2>/dev/null || true
-    printf "{\"when\": \"%s\", \"action\": \"backend-restart\", \"outcome\": \"%s\", \"old_pid\": %s, \"new_pid\": %s, \"serving\": \"%s\", \"arming_turn\": \"%s\"}\n" \
-      "$(date -Is)" "$outcome" "${old_pid:-0}" "${new_pid:-0}" "${served:-}" "${mine:-none}" \
-      > "$root/.runtime/apply-last.json" 2>/dev/null || true
-    # Clear the arming record LAST, so the window in which a second waiter could
-    # be armed is the window in which there is genuinely no waiter.
-    rm -f "$root/.runtime/restart-armed.pid" 2>/dev/null || true
-  ' _ "$self" "$turns" "$chat" "$max_wait" "$commit_grace" "$own_turn" "$other_cap" "$REPO_ROOT" \
-    >>/tmp/workshop-backend.log 2>&1 </dev/null &
-  waiter_pid=$!
+    waiter_pid="$(systemctl --user show -p MainPID --value "$unit" 2>/dev/null || true)"
+    [ "${waiter_pid:-0}" = "0" ] && waiter_pid=""
+    [ -n "$waiter_pid" ] || systemctl --user reset-failed "$unit" 2>/dev/null || true
+  fi
+  if [ -z "$waiter_pid" ]; then
+    # No user manager, or the unit did not come up (a wrong host path fails at
+    # chdir): the in-process waiter, which survives anywhere but a sandbox.
+    setsid bash "$self" --waiter "${waiter_args[@]}" >>"${RESTART_LOG}" 2>&1 </dev/null 9>&- &
+    waiter_pid=$!
+    disown || true
+  fi
   printf '%s\n' "$waiter_pid" > "$armed_file" 2>/dev/null || true
-  disown || true
   if [ -n "$own_turn" ]; then
     echo "Backend restart armed: fires when this turn (pid $own_turn) ends, then within ${other_cap}s."
   else
@@ -263,19 +356,8 @@ if [ "${1:-}" != "--force" ] && [ -d "$turns_dir" ]; then
   # the child is gone, the backend is still assembling and appending the reply.
   # Restarting here loses the reply outright rather than rewinding it.
   #
-  # Only a RECENT holder counts. A crashed run leaves `active_run_id` set until
-  # the next startup reconcile clears it, and reconcile only runs on a restart:
-  # refusing on a stale field would mean the one action that fixes it is the one
-  # action forbidden, with --force as the only way out. A commit takes seconds,
-  # so a meta untouched for STALE_HOLD_S is not a commit in progress.
-  STALE_HOLD_S=300
-  holder=""
-  for meta in "$REPO_ROOT"/.runtime/users/*/chat/*/meta.json; do
-    [ -f "$meta" ] || continue
-    grep -q '"active_run_id": *"[0-9a-f-]' "$meta" || continue
-    age=$(( $(date +%s) - $(stat -c %Y "$meta" 2>/dev/null || echo 0) ))
-    [ "$age" -lt "$STALE_HOLD_S" ] && { holder="$meta"; break; }
-  done
+  # Only a recent holder counts; see commit_holder.
+  holder="$(commit_holder)"
   if [ -n "$holder" ]; then
     echo "REFUSING: a run still holds its thread, so its reply is not committed yet." >&2
     echo "  $holder" >&2
@@ -360,7 +442,7 @@ if have_unit; then
   # a source id, which proves the process is up AND which code it is running.
   served=""; ok=0
   for _ in $(seq 1 30); do
-    served="$(curl -sf --max-time 2 http://127.0.0.1:8000/healthz 2>/dev/null \
+    served="$(curl -sf --max-time 2 http://127.0.0.1:${PORT}/healthz 2>/dev/null \
       | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_id") or "")' 2>/dev/null || true)"
     [ -n "$served" ] && { ok=1; break; }
     sleep 1
@@ -391,7 +473,7 @@ echo "No systemd unit found; using legacy nohup path. (Run scripts/install_servi
 cd "$REPO_ROOT/backend"
 
 envv=()
-pid="$(pgrep -f 'uvicorn main:app.*8000' | head -1 || true)"
+pid="$(pgrep -f "uvicorn main:app.*${PORT}" | head -1 || true)"
 if [ -n "${pid:-}" ]; then
   while IFS= read -r -d '' line; do
     [ -n "$line" ] && envv+=("$line")
@@ -411,11 +493,11 @@ envv+=("WORKSHOP_PROJECTS_ROOT=${WORKSHOP_PROJECTS_ROOT:-$HOME}")
 envv+=("WORKSHOP_ROOT=${WORKSHOP_ROOT:-$REPO_ROOT}")
 envv+=("HOME=$HOME" "PATH=$PATH")
 
-pkill -f 'uvicorn main:app.*8000' || true
+pkill -f "uvicorn main:app.*${PORT}" || true
 sleep 1
-env -i "${envv[@]}" nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 \
-  >>/tmp/workshop-backend.log 2>&1 &
+env -i "${envv[@]}" nohup .venv/bin/uvicorn main:app --host 127.0.0.1 --port "${PORT}" \
+  >>"${RESTART_LOG}" 2>&1 &
 disown || true
 sleep 2
-newpid="$(pgrep -f 'uvicorn main:app.*8000' | head -1 || true)"
-echo "Backend restarted via nohup (new pid ${newpid:-unknown}). Log: /tmp/workshop-backend.log"
+newpid="$(pgrep -f "uvicorn main:app.*${PORT}" | head -1 || true)"
+echo "Backend restarted via nohup (new pid ${newpid:-unknown}). Log: ${RESTART_LOG}"

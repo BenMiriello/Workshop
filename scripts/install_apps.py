@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Make sure every app present in this checkout is installed into the backend venv.
+"""Make sure every app present in this checkout is installed into the backend venv,
+and that each installed copy is the app's current source.
 
 WHY THIS EXISTS, and it is a measured outage rather than a tidiness step.
 
@@ -28,12 +29,19 @@ IT NAMES NO APP. The roster is a glob over `apps/*/pyproject.toml` and the ids
 come from the entry points themselves, so an app appears by existing and
 disappears by being deleted, exactly as `app_registry` already requires.
 
-Idempotent and cheap: it installs only the apps whose entry point is absent from
-the venv, so the common case is one `importlib.metadata` read and no pip run.
+Idempotent and cheap: it installs the apps whose entry point is absent from the
+venv, and reinstalls those whose installed package files differ from the source
+(`stale`), so the common case is one `importlib.metadata` read and no pip run.
+The install is a COPY (see the `-e` note in main), so an edit to an app's backend
+is not what the backend runs until this has reinstalled it; on 2026-10-24 the
+running backend of one app was six days and two commits behind its source because
+only a missing app was ever installed. `backend_source_id.sh` hashes the same
+files (`--source-files`), so an app edit is a backend change to apply.sh.
 
 Usage:
     python3 scripts/install_apps.py            # install what is missing
-    python3 scripts/install_apps.py --check    # report, change nothing (exit 1 if any missing)
+    python3 scripts/install_apps.py --check    # report, change nothing (exit 1 if any missing or stale)
+    python3 scripts/install_apps.py --source-files   # the app source files an install copies, NUL-separated
 """
 from __future__ import annotations
 
@@ -41,6 +49,7 @@ import argparse
 import json
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -109,12 +118,84 @@ def missing(py: Path) -> list[Path]:
     return [d for d in app_dirs() if declared_id(d) not in have]
 
 
+def package_dirs(app_dir: Path) -> list[Path]:
+    """The package directories an install copies, as the app's pyproject names them."""
+    try:
+        conf = tomllib.loads((app_dir / "pyproject.toml").read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    names = conf.get("tool", {}).get("setuptools", {}).get("packages") or []
+    out = []
+    for name in names if isinstance(names, list) else []:
+        rel = Path(*str(name).split("."))
+        for base in (app_dir, app_dir / "src"):
+            if (base / rel).is_dir():
+                out.append(base / rel)
+                break
+    return out
+
+
+def source_files(app_dir: Path) -> dict[str, Path]:
+    """Each Python file an install of this app copies, keyed by its path inside
+    site-packages."""
+    files: dict[str, Path] = {}
+    for pkg in package_dirs(app_dir):
+        root = pkg.parent
+        for f in pkg.rglob("*.py"):
+            if "__pycache__" not in f.parts:
+                files[f.relative_to(root).as_posix()] = f
+    return files
+
+
+def installed_files(py: Path) -> dict[str, dict[str, str]]:
+    """Per entry-point name: each installed Python file of its distribution, keyed
+    like `source_files`, with where it is on disk."""
+    code = (
+        "import json\n"
+        "from importlib.metadata import entry_points\n"
+        "out = {}\n"
+        f"for e in entry_points(group={ENTRY_POINT_GROUP!r}):\n"
+        "    d = e.dist\n"
+        "    if d is None: continue\n"
+        "    out[e.name] = {str(f): str(d.locate_file(f)) for f in (d.files or [])\n"
+        "                   if str(f).endswith('.py') and not str(f).startswith('..')}\n"
+        "print(json.dumps(out))\n"
+    )
+    try:
+        out = subprocess.run([str(py), "-c", code], capture_output=True, text=True, timeout=120)
+        return json.loads(out.stdout or "{}")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return {}
+
+
+def stale(py: Path) -> list[Path]:
+    """Installed apps whose installed files are not their current source."""
+    have = installed_files(py)
+    out = []
+    for d in app_dirs():
+        inst = have.get(declared_id(d))
+        src = source_files(d)
+        if inst is None or not src:
+            continue
+        if set(inst) != set(src) or any(Path(inst[k]).read_bytes() != src[k].read_bytes() for k in src):
+            out.append(d)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
                     help="report what is missing and change nothing")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--source-files", action="store_true",
+                    help="print the app source files an install copies, NUL-separated, and exit")
     args = ap.parse_args()
+
+    if args.source_files:
+        for d in app_dirs():
+            for f in sorted(source_files(d).values()):
+                sys.stdout.write(f"{f.relative_to(REPO).as_posix()}\0")
+        return 0
 
     if not VENV_PY.exists():
         # No venv yet is not a failure here: bootstrap creates it and calls this
@@ -123,20 +204,27 @@ def main() -> int:
             print(f"install-apps: no backend venv at {VENV_PY}; nothing to do")
         return 0
 
-    todo = missing(VENV_PY)
+    absent = missing(VENV_PY)
+    old = [d for d in stale(VENV_PY) if d not in absent]
+    todo = absent + old
     if not todo:
         if not args.quiet:
-            print(f"install-apps: {len(app_dirs())} app(s) present, all installed")
+            print(f"install-apps: {len(app_dirs())} app(s) present, all installed and current")
         return 0
 
-    names = ", ".join(d.name for d in todo)
     if args.check:
-        print(f"install-apps: {len(todo)} app(s) NOT installed into the backend venv: {names}")
-        print("              their routes, personas, stores and edge blocks are all absent.")
+        if absent:
+            print(f"install-apps: {len(absent)} app(s) NOT installed into the backend venv: "
+                  + ", ".join(d.name for d in absent))
+            print("              their routes, personas, stores and edge blocks are all absent.")
+        if old:
+            print(f"install-apps: {len(old)} app(s) installed from older source: "
+                  + ", ".join(d.name for d in old))
+            print("              the backend runs the old copy until they are reinstalled.")
         print("              fix: python3 scripts/install_apps.py")
         return 1
 
-    print(f"install-apps: installing {len(todo)} app(s): {names}")
+    print(f"install-apps: installing {len(todo)} app(s): {', '.join(d.name for d in todo)}")
     # `python -m pip`, never the `pip` shim beside it. A console script carries a
     # shebang written at creation time, and this venv's says
     # `#!/home/user/...` -- the path the SERVICE sees. From an agent sandbox,
@@ -154,7 +242,7 @@ def main() -> int:
         #
         # NOT `-e`. An editable install writes THIS PROCESS'S absolute path into
         # a finder module in site-packages, e.g.
-        #     MAPPING = {'birds_app': '/workspace/apps/birds/birds_app'}
+        #     MAPPING = {'widgets_app': '/workspace/apps/widgets/widgets_app'}
         # and the process that runs the app is not this one. An agent installs
         # from a sandbox where the tree is bind-mounted at /workspace; the
         # backend service runs in the host namespace where that path does not
@@ -165,15 +253,18 @@ def main() -> int:
         # for two days. A copy into site-packages has no such path dependency
         # and is correct from any namespace. The cost is that editing an app's
         # backend needs a reinstall, which is what apply.sh is for.
-        r = subprocess.run([*pip, "install", str(d), "--no-deps", "--quiet"],
+        # `--force-reinstall` for a stale one: its version number has not moved,
+        # and the copy, not the version, is what is out of date.
+        again = ["--force-reinstall"] if d in old else []
+        r = subprocess.run([*pip, "install", str(d), "--no-deps", "--quiet", *again],
                            capture_output=True, text=True)
         if r.returncode != 0:
             failed.append(d.name)
             print(f"install-apps: FAILED {d.name}\n{r.stdout}{r.stderr}", file=sys.stderr)
 
-    still = missing(VENV_PY)
+    still = missing(VENV_PY) + stale(VENV_PY)
     if failed or still:
-        print("install-apps: still missing after install: "
+        print("install-apps: still missing or stale after install: "
               + (", ".join(d.name for d in still) or "(none, but pip reported an error)"),
               file=sys.stderr)
         return 1

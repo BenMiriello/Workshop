@@ -18,7 +18,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CAPTURE_FILE="$REPO_ROOT/tmp/ui-build-src-id"
-DIST="$REPO_ROOT/frontend/dist"
+# build_workshop_public.sh builds into a staging dir and merges it into the live
+# one, so the stamp is written where the build actually is.
+DIST="${WORKSHOP_DIST_OUT:-$REPO_ROOT/frontend/dist}"
 
 mode="${1:---write}"
 
@@ -29,7 +31,7 @@ if [ "$mode" = "--capture" ]; then
 fi
 
 if [ ! -d "$DIST" ]; then
-  echo "stamp_build: no frontend/dist to stamp (build first)" >&2
+  echo "stamp_build: no $DIST to stamp (build first)" >&2
   exit 1
 fi
 
