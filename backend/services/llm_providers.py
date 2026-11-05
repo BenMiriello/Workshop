@@ -130,7 +130,7 @@ class ClaudeCliProvider:
                     cache=True, thinking=True, tools=True, vision=True,
                     count_tokens=True, context_tokens=window,
                 ),
-                efforts=model_caps.efforts_for(model_id),
+                efforts=model_caps.first_party_efforts(model_id),
             ))
         return out
 
@@ -160,6 +160,7 @@ def _cli_model_order() -> tuple[str, ...]:
         llm_router.TIER_OPUS,
         llm_router.TIER_FABLE_5_1,
         llm_router.TIER_FABLE,
+        llm_router.TIER_SONNET_5_5,
         llm_router.TIER_SONNET_5,
         llm_router.TIER_SONNET,
         llm_router.TIER_HAIKU,
@@ -253,6 +254,44 @@ def provider_for_model(model_id: str | None) -> LlmProvider | None:
         return get(info.provider_id)
     except ValueError:
         return None
+
+
+def drives_cli_harness(provider: LlmProvider) -> bool:
+    """Can an AGENTIC turn (tools, permission modes, MCP) run on this provider?
+
+    Those are CLI flags on this platform, so the answer is whether the turn can
+    be the CLI: either the provider IS the CLI, or it declares `cli_harness` and
+    can redirect the CLI at itself through `cli_env(model, env)`. A capability,
+    never a provider id, so a third provider of either kind needs no edit here.
+    """
+    if provider.transport == TRANSPORT_CLI:
+        return True
+    return bool(getattr(provider, "cli_harness", False)) and callable(
+        getattr(provider, "cli_env", None))
+
+
+def redirects_cli(model_id: str | None) -> bool:
+    """Whether a turn on this model is the CLI pointed at another provider's
+    own server, rather than the CLI's own (`model_failures` bounds those)."""
+    provider = provider_for_model(model_id)
+    return (provider is not None and provider.transport != TRANSPORT_CLI
+            and drives_cli_harness(provider))
+
+
+def cli_turn_env(model_id: str, env: dict) -> dict:
+    """The env a CLI turn on `model_id` spawns with.
+
+    `env` unchanged for a model the CLI reaches natively, and for one nothing
+    configured reaches (the CLI then reports the unknown model itself, which
+    names the problem better than a guess made here would). For a model whose
+    provider drives the harness from outside, that provider's redirect.
+    """
+    provider = provider_for_model(model_id)
+    if provider is None or provider.transport == TRANSPORT_CLI:
+        return env
+    if not drives_cli_harness(provider):
+        return env
+    return provider.cli_env(model_id, env)
 
 
 def deployment_default() -> ModelInfo:

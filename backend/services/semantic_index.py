@@ -1381,7 +1381,7 @@ def owns_maintenance() -> bool:
     return _owns_maintenance
 
 
-async def maintenance_loop(interval: float = 300.0) -> None:
+async def maintenance_loop(interval: float = 300.0, first_after: float = 60.0) -> None:
     """Keep the index fresh from the long-lived process, forever.
 
     This is the whole reason a rebuild no longer has to happen on the request
@@ -1395,6 +1395,11 @@ async def maintenance_loop(interval: float = 300.0) -> None:
     enable_maintenance()
     pin_owner()
     log.info("semantic index maintenance loop started (interval=%ss)", interval)
+    # NOT AT BOOT. The first pass used to start the moment the backend did, and
+    # its pure-Python collection held the GIL through the reconnect rush every
+    # restart brings (every open tab, every adopted turn): caught 2026-10-04
+    # 09:09:56 as a >1s event-loop stall one second after a restart.
+    await asyncio.sleep(first_after)
     while True:
         try:
             await asyncio.to_thread(_maintenance_pass)
@@ -1722,7 +1727,7 @@ def _item_ref(kind: str, ref: str, resolved_scope: str) -> str | None:
 
 
 def _keep_mask(meta: list[dict], kinds, scopes: set[str] | None,
-               from_scope: str | None = None) -> np.ndarray:
+               from_scope: str | None = None, confined: bool = False) -> np.ndarray:
     """A boolean mask over the whole corpus, computed once and applied to the
     score vector rather than used to fancy-index `vecs` (design doc sec 7.2:
     `vecs[keep] @ q` allocates a submatrix per call; masking a precomputed
@@ -1754,8 +1759,12 @@ def _keep_mask(meta: list[dict], kinds, scopes: set[str] | None,
         else:
             resolved = ""
         # Unscoped chunks (docs) are placeless, not unreachable: they sit in no
-        # scope, so the tree has nothing to say about them and they stay in.
-        in_reach = True if (scopes is None or not resolved) else (resolved in scopes)
+        # scope, so the tree has nothing to say about them and they stay in,
+        # unless the caller is confined to its scope set (`confined`).
+        if not resolved:
+            in_reach = not confined
+        else:
+            in_reach = scopes is None or resolved in scopes
         if policy is None:
             mask[i] = in_reach
             continue
@@ -1763,12 +1772,16 @@ def _keep_mask(meta: list[dict], kinds, scopes: set[str] | None,
                                _item_ref(kind, m.get("ref") or "", resolved))
         mask[i] = policy.reachable(share=share, item_scope=resolved,
                                    from_scope=from_scope, in_reach=in_reach)
+        # A share setting can widen reach (`open`); for a confined caller
+        # nothing outside the scope set does.
+        if confined and not in_reach:
+            mask[i] = False
     return mask
 
 
 def reachable_item(kind: str, scope: str, item_ref: str | None, *,
                    scopes: str | tuple | list | set | frozenset | None = None,
-                   from_scope: str | None = None) -> bool:
+                   from_scope: str | None = None, confined: bool = False) -> bool:
     """`_keep_mask`'s decision, for ONE item that is not a chunk.
 
     Anything that hands a caller a piece of this corpus has to ask the same
@@ -1780,9 +1793,14 @@ def reachable_item(kind: str, scope: str, item_ref: str | None, *,
 
     `scope` is in the `scope_tree` namespace already (`resolve_chunk_scope`
     applied), and "" means placeless, which is reachable from anywhere for the
-    same reason an unscoped doc chunk is."""
+    same reason an unscoped doc chunk is, unless `confined` (see `search`)."""
     allowed = _scope_set(scopes)
-    in_reach = True if (allowed is None or not scope) else (scope in allowed)
+    if not scope:
+        in_reach = not confined
+    else:
+        in_reach = allowed is None or scope in allowed
+    if confined and not in_reach:
+        return False
     if not from_scope:
         return in_reach
     from services import memory_policy
@@ -1794,7 +1812,7 @@ def reachable_item(kind: str, scope: str, item_ref: str | None, *,
 
 def corpus_map(kinds: tuple[str, ...] | list[str] | None = None,
                scopes: str | tuple | list | set | frozenset | None = None,
-               from_scope: str | None = None) -> dict:
+               from_scope: str | None = None, confined: bool = False) -> dict:
     """How big the corpus is, and how much of it this caller can reach.
 
     `status()` answers "is there an index"; this answers "how much is there",
@@ -1814,7 +1832,7 @@ def corpus_map(kinds: tuple[str, ...] | list[str] | None = None,
     """
     meta, _vecs = load()
     keep = _keep_mask(meta, tuple(kinds) if kinds else None,
-                      _scope_set(scopes), from_scope)
+                      _scope_set(scopes), from_scope, confined)
     by_kind: dict[str, dict] = {}
     docs: set[tuple[str, str]] = set()
     reachable_docs: set[tuple[str, str]] = set()
@@ -1869,7 +1887,8 @@ def search(query: str, *, limit: int = 8,
            scope: str | tuple | list | set | frozenset | None = None,
            from_scope: str | None = None,
            since: str | None = None,
-           min_score: float = MIN_SCORE) -> dict:
+           min_score: float = MIN_SCORE,
+           confined: bool = False) -> dict:
     """Ranked passages for a query, hybrid: vector when the embedder answers,
     BM25 lexical always available so a search degrades instead of raising.
 
@@ -1890,6 +1909,10 @@ def search(query: str, *, limit: int = 8,
     separate argument because the `share` field (Phase 5) needs it: `private`
     means "found only from inside its own scope", which a set of allowed scopes
     cannot express. Omitting it skips the policy layer entirely.
+
+    `confined` makes `scope` the whole reach: chunks that sit in no scope
+    (docs) are dropped, and no `share` setting widens it. For a caller whose
+    reach is its own scope and nothing else.
 
     A hit's BODY is returned, not a title. Being unable to read what was found
     is the defect this module exists to remove."""
@@ -1915,7 +1938,7 @@ def search(query: str, *, limit: int = 8,
                 "searched": 0, "corpus": 0}
 
     scopes = _scope_set(scope)
-    mask = _keep_mask(meta, kinds, scopes, from_scope)
+    mask = _keep_mask(meta, kinds, scopes, from_scope, confined)
 
     # RECENCY IS A FILTER, NEVER A RANKING TERM, and it stayed that way when
     # authority and kind became ranking terms on 2026-09-01. The original

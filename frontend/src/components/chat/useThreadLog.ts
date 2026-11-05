@@ -90,6 +90,9 @@ export type ThreadLog = {
   /** Pull everything since the cursor. Safe to call at any time, any number of
    *  times; call it after every write. */
   sync: () => Promise<void>;
+  /** `sync`, resolving false when the read failed, for a caller that needs it
+   *  to land and will ask again. */
+  syncLanded: () => Promise<boolean>;
   /** Is a run in flight on this thread, per the server. */
   turnActive: boolean;
   /** Is the live run's block actually rendered — i.e. does `turnActive` have
@@ -132,9 +135,13 @@ export type ThreadLog = {
 export function useThreadLog({
   threadId,
   onError,
+  onReconnect,
 }: {
   threadId: string | null;
   onError: (problem: ChatProblem | null) => void;
+  /** The change stream came BACK after a drop: the backend is reachable again.
+   *  Not called for the first open of a thread. */
+  onReconnect?: () => void;
 }): ThreadLog {
   const [state, dispatch] = useReducer(threadReducer, null, () => initialThreadState(null));
   const stateRef = useRef(state);
@@ -145,6 +152,8 @@ export function useThreadLog({
   const threadIdRef = useRef<string | null>(threadId);
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
+  const onReconnectRef = useRef(onReconnect);
+  onReconnectRef.current = onReconnect;
 
   // Which thread's first page has landed. DERIVED, not a flag flipped in an
   // effect: comparing it to the current thread makes `hydrated` false from the
@@ -237,9 +246,9 @@ export function useThreadLog({
     }
   }, []);
 
-  const sync = useCallback(async () => {
+  const syncLanded = useCallback(async (): Promise<boolean> => {
     const id = threadIdRef.current;
-    if (!id) return;
+    if (!id) return true;
     // A BRANCH CHANGE IS A RE-READ FROM ZERO, not a merge. This is a cursor
     // sync: the store keeps what it already holds and adds what it is given, so
     // after going back to an earlier point a cursor fetch would return nothing
@@ -265,7 +274,7 @@ export function useThreadLog({
     try {
       const page = await chatApi.threadEvents(
         id, after, isFreshRead ? { tail: INITIAL_TAIL } : undefined);
-      if (threadIdRef.current !== id) return;
+      if (threadIdRef.current !== id) return true;
       const nextBranch = page.branch?.id ?? null;
       if (branchRef.current.id !== nextBranch) {
         const first = branchRef.current.id === undefined;
@@ -310,7 +319,7 @@ export function useThreadLog({
           // separate step that renders.
           branchRef.current.pending = true;
           void sync();
-          return;
+          return true;
         }
       } else if (branchRef.current.count !== (page.branch_count ?? 0)
                  || branchRef.current.head !== (page.branch?.head ?? null)) {
@@ -331,6 +340,7 @@ export function useThreadLog({
         queued: page.queued,
         queueHeld: page.queue_held,
         queueError: page.queue_error,
+        queueWaiting: page.queue_waiting ?? null,
         pendingOperation: page.pending_operation,
         clearedThrough: page.cleared_through,
         cutMode: page.cut_mode,
@@ -352,6 +362,7 @@ export function useThreadLog({
       // that had been working again for minutes -- the stuck warning the
       // operator reported on 2026-09-04.
       onErrorRef.current(null);
+      return true;
     } catch (e) {
       // Transient by nature (this runs on a timer), and ONE failure says
       // nothing: a hiccup between two polls is not worth a word.
@@ -377,8 +388,10 @@ export function useThreadLog({
           retry: () => { void sync(); },
         });
       }
+      return false;
     }
   }, []);
+  const sync = useCallback(async () => { await syncLanded(); }, [syncLanded]);
 
   // Opening a thread: drop everything and read the log from the start — UNLESS
   // this tab already holds a finished snapshot of this exact thread, in which
@@ -481,6 +494,7 @@ export function useThreadLog({
           queued: page.queued,
           queueHeld: page.queue_held,
           queueError: page.queue_error,
+          queueWaiting: page.queue_waiting ?? null,
           pendingOperation: page.pending_operation,
           clearedThrough: page.cleared_through,
           cutMode: page.cut_mode,
@@ -574,6 +588,10 @@ export function useThreadLog({
     // the socket. See that file for the three things the hand-rolled version
     // got wrong, all of which only show up during a blip.
     let health = NEW_STREAM;
+    // The browser's own retry leaves `health` at "connecting" with attempt 0,
+    // which is also what a first open looks like, so that alone cannot tell a
+    // socket that came back from one opening for the first time.
+    let everOpened = false;
 
     const open = () => {
       if (closed) return;
@@ -589,9 +607,13 @@ export function useThreadLog({
         // above has just read this thread, and `stateRef` may not even carry
         // its id yet, so a sync here would compute `after = 0` and re-read the
         // whole tail. Only a socket that came BACK can have missed anything.
-        const reconnect = health.phase !== "connecting" || health.attempt > 0;
+        const reconnect = everOpened || health.phase !== "connecting" || health.attempt > 0;
+        everOpened = true;
         health = streamOpened();
-        if (reconnect) void syncRef.current();
+        if (reconnect) {
+          void syncRef.current();
+          onReconnectRef.current?.();
+        }
       };
       es.addEventListener("changed", () => { void syncRef.current(); });
       es.onerror = () => {
@@ -641,7 +663,7 @@ export function useThreadLog({
     [committed, state.activeTurn, state.pending],
   );
 
-  return { state, stateRef, dispatch, transcript, sync, turnActive: !!state.activeTurn,
+  return { state, stateRef, dispatch, transcript, sync, syncLanded, turnActive: !!state.activeTurn,
            liveShown: isLiveShown(committed, state),
            hydrated, stale, branch, loadOlder, loadingOlder, olderError };
 }

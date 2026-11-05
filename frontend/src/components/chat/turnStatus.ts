@@ -34,7 +34,6 @@
 // while apparently still saying it. The fold announces itself at the foot of the
 // log instead, for as long as it runs. See FoldingNote.
 import type { ChatSegment } from "../../lib/chat";
-import { isRunning } from "./grouping";
 
 // ONE WORD FOR A RUNNING TURN. There is no per-tool verb table any more.
 //
@@ -57,8 +56,10 @@ import { isRunning } from "./grouping";
 // list directly underneath already names every tool exactly, in order, with its
 // own duration, so the indicator was a second, blurrier copy of information that
 // was already on screen, and the only thing its churn communicated was churn.
-// One steady word plus the elapsed clock is what every mature chat UI shows, and
-// it is what `indicatorElapsed` below is already built for.
+// One steady word plus the turn's elapsed clock is what every mature chat UI
+// shows. The clock is the WHOLE turn, never the current step: each step's chip
+// already carries its own seconds, and a per-step clock beside a single word
+// reads as a turn that keeps restarting.
 //
 // TWO STATES SURVIVE, and neither is a tool verb:
 //   "Waiting"  the turn is blocked on the operator answering an approval. That
@@ -94,26 +95,4 @@ export function currentActivity(segments: ChatSegment[]): string {
 export function elapsedSeconds(startedMs: number | null | undefined, nowMs: number): number {
   if (!startedMs || !Number.isFinite(startedMs)) return 0;
   return Math.max(0, Math.floor((nowMs - startedMs) / 1000));
-}
-
-/** Elapsed seconds for the in-flight indicator.
- *
- *  When a specific step is running, counts from when THAT STEP started so the
- *  counter resets at each step boundary and the reader sees how long the current
- *  activity has been going, not how long the whole turn has run. Falls back to
- *  turn elapsed when the model is thinking between steps. */
-export function indicatorElapsed(
-  segments: ChatSegment[] | undefined,
-  startedMs: number | null | undefined,
-  nowMs: number,
-): number {
-  if (segments) {
-    for (let i = segments.length - 1; i >= 0; i--) {
-      const seg = segments[i];
-      if (seg.t === "tool" && isRunning(seg) && typeof seg.at === "number") {
-        return Math.max(0, Math.floor((nowMs - seg.at * 1000) / 1000));
-      }
-    }
-  }
-  return elapsedSeconds(startedMs, nowMs);
 }

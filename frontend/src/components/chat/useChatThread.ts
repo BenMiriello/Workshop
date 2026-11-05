@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { chatApi, type CardState, type Thread, type ThreadSummary } from "../../lib/chat";
 import { withTransientRetry } from "@workshop/ui";
 import { threadIsGone } from "./threadGone";
+import { pickFallbackThread } from "./fallbackThread";
 import {
   NEW_CHAT, forgetThread, readSelection, writeSelection,
 } from "../../lib/chatSelection";
@@ -38,6 +39,7 @@ const threadListEndpoint = () => "/api/chat/threads";
 //     ?thread=<id>  → that conversation
 //   Persisted state (what to do when the URL says nothing):
 //     the thread we're already on → stay, never snap to newest
+//     (an embedded frame only) a turn running in this scope → open it
 //     NEW_CHAT recorded           → stay blank across reloads
 //     the last thread in scope    → restore it
 //     otherwise                   → the most recent thread
@@ -84,7 +86,7 @@ export function useChatThread({
   scope, providersReady, variant, outboxRef,
   startNewRef, linkedThreadRef, linkIntent,
   stripNewParam, setSelectedModel, setSelectedEffort, setSelectedPermissionMode,
-  onError, onLeaveForList,
+  onError, onLeaveForList, preferRunning = false,
 }: {
   scope: string;
   providersReady: boolean;
@@ -104,8 +106,12 @@ export function useChatThread({
   setSelectedEffort: (level: string) => void;
   setSelectedPermissionMode: (mode: string) => void;
   onError: (problem: ChatProblem | null) => void;
-  /** The focused route has nothing left to show once its thread is deleted. */
-  onLeaveForList: () => void;
+  /** The focused route has nothing left to show once its thread is deleted.
+   *  Null where the chat stays put and starts blank instead (an embed). */
+  onLeaveForList: (() => void) | null;
+  /** An app's chat frame: with no thread asked for, open the scope's running
+   *  turn before the recorded selection. See chat/fallbackThread. */
+  preferRunning?: boolean;
 }): ChatThread {
   // THE PICKER'S LIST LIVES IN THE QUERY CACHE, NOT IN THIS HOOK. It was a
   // `useState` here, and `GET /api/chat/threads` has three other readers: the
@@ -357,7 +363,9 @@ export function useChatThread({
         // list, and (when a thread is linked) that thread's settings document.
         // The list no longer sits IN FRONT OF the switch; it fills the picker and
         // supplies the fallback if the linked thread turns out to be gone.
-        const listP = chatApi.listThreads();
+        // Ridden through a restart on the kit's schedule, like the thread read
+        // below: one 502 here used to end in "Couldn't open this conversation".
+        const listP = withTransientRetry(() => chatApi.listThreads());
 
         // A linked thread is fetched by id, not looked up in `list`: the chat
         // list spans every context, so the thread the operator clicked need not
@@ -400,21 +408,15 @@ export function useChatThread({
         // was empty. A linked thread is exempt by design: it is fetched by id,
         // above, precisely because a picked chat can live anywhere.
         const inScope = list.filter((x) => x.context_key === scope);
-        const has = (id: string | null | undefined): boolean =>
-          !!id && inScope.some((x) => x.id === id);
 
         // Either nothing was linked (a scope change, or first load), or the
         // linked thread is gone: pick a target from the freshly-loaded list and
         // adopt it the ordinary (non-optimistic) way.
         if (!t) {
-          const stored = readSelection(scope);
-          const target = startingNew ? null : (() => {
-            const current = activeIdRef.current;
-            if (has(current)) return current;
-            if (stored === NEW_CHAT) return null;
-            if (has(stored)) return stored;
-            return inScope.length ? inScope[0].id : null;
-          })();
+          const target = startingNew ? null : pickFallbackThread({
+            current: activeIdRef.current, stored: readSelection(scope), inScope,
+            preferRunning, newChat: NEW_CHAT,
+          });
           t = target ? await readThread(target) : null;
           if (cancelled) return;
           if (t) {
@@ -539,7 +541,7 @@ export function useChatThread({
     // page addressing a chat that is no longer in any list.
     if (id === activeIdRef.current) {
       writeSelection(scope, NEW_CHAT);
-      if (variant === "full") { onLeaveForList(); return; }
+      if (variant === "full" && onLeaveForList) { onLeaveForList(); return; }
       newChat();
     }
     void refreshThreads();

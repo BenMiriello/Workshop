@@ -129,11 +129,22 @@ export default function ContextMeter({
   // 20s because this is a progress reading, not a control: it costs one small
   // request that answers from the live snapshot without assembling a prompt,
   // and it is well under the rate at which the number visibly moves.
-  useEffect(() => {
-    if (!activeId || !streaming) return;
-    const id = window.setInterval(() => { void refetchCtx(); }, 20_000);
-    return () => window.clearInterval(id);
-  }, [activeId, streaming, refetchCtx]);
+  //
+  // A second observer of the same entry rather than a hand-rolled timer, so the
+  // interval lives on the query layer: it is enabled only while a turn runs,
+  // never fetches just for being mounted (the trigger effect above already read
+  // at the turn's start, and a concurrent read of one key is shared), and
+  // otherwise carries the same no-focus, no-reconnect, no-retry rules.
+  useQuery({
+    queryKey: queryKeys.chat.context(activeId),
+    queryFn: () => chatApi.threadContext(activeId!),
+    enabled: Boolean(activeId) && streaming,
+    refetchInterval: 20_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: false,
+  });
 
   // The reading on screen IS the cache entry. No copy, so there is nothing to
   // keep in step with it.

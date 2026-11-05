@@ -79,10 +79,14 @@ prevent, and one whose attended verification belongs to the operator.
 """
 from __future__ import annotations
 
+import json
 import os
 import pwd
+import re
 import shutil
 import subprocess
+import threading
+from pathlib import Path
 
 # Where the scope root is mounted inside the sandbox. Fixed on purpose: it is the
 # managed path the agent sees and prints, independent of where the scope really
@@ -186,6 +190,18 @@ def enabled() -> bool:
     if v == "1":
         return True
     return functional()
+
+
+def agent_root() -> str:
+    """Where a turn's scope root is, spelled the way the turn's own tools spell it.
+
+    `spawn_argv` is fail-closed: a turn runs inside `wrap()`'s namespace with its
+    scope bound at MOUNTPOINT, or it is refused and never spawned. No spawned
+    turn can see its scope's host path, so this is the only answer a prompt may
+    give, whatever `enabled()` reports while the prompt is rendered -- a prompt
+    rendered with confinement off belongs to a turn that will be refused.
+    """
+    return MOUNTPOINT
 
 
 def tree_lease_mounts() -> bool:
@@ -311,7 +327,115 @@ def _grants(root: str | None = None) -> list[tuple[str, str, str]]:
     cli_root = _cli_root()
     if cli_root and not any(cli_root == r or cli_root.startswith(r + "/") for r in _RO_SYSTEM):
         candidates.append(("ro", cli_root, cli_root))
-    return [(mode, s, d) for mode, s, d in candidates if s and os.path.exists(s)]
+    candidates += _configured_binds()
+    candidates += declared_folders(root)
+    network = _network_mounts()
+    return [(mode, s, d) for mode, s, d in candidates if s and _present(s, network)]
+
+
+# Filesystems whose stat waits on another machine. A grant on a CIFS share served
+# by a laptop that had gone to sleep was checked with a bare `os.path.exists`
+# while the backend built a turn's sandbox, on the event loop: the whole backend
+# froze until the kernel gave up on the server (26s measured, up to 180s).
+_NETWORK_FS = frozenset({"cifs", "smb3", "nfs", "nfs4", "9p", "fuse.sshfs", "afs", "ceph"})
+_NETWORK_PROBE_S = 0.5
+
+
+def _network_mounts() -> list[str]:
+    """Mount points of network filesystems, from the kernel's mount table, which
+    is read without touching any of the filesystems it lists."""
+    try:
+        with open("/proc/self/mountinfo") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        left, sep, right = line.partition(" - ")
+        fields = left.split(" ")
+        if sep and len(fields) > 4 and right.split(" ", 1)[0] in _NETWORK_FS:
+            out.append(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), fields[4]))
+    return out
+
+
+def _present(path: str, network: list[str]) -> bool:
+    """Whether a grant's source exists. A path on a network filesystem gets
+    `_NETWORK_PROBE_S` to answer and counts as absent if it does not, so a share
+    that is down is left out of the turn instead of waited on. The probe thread
+    is left to finish on its own when the server never answers, and while it is
+    still waiting the share is known to be down: the next turn is answered at
+    once and no second probe joins it.
+
+    A file with no links left counts as absent. Inside a confined turn a
+    single-file grant (`~/.claude.json`) is a bind of the inode the host had
+    when the turn started; the CLI replaces that file by rename, so the turn's
+    copy soon has no name on the host and bwrap cannot bind it again. Every
+    sandbox a turn opened in turn (`spawn_background`'s agent) failed on it
+    with exit 1 before running anything."""
+    if not any(path == m or path.startswith(m.rstrip("/") + "/") for m in network):
+        return _linked(path)
+    name = f"grant-probe:{path}"
+    if any(t.name == name and t.is_alive() for t in threading.enumerate()):
+        return False
+    answer: list[bool] = []
+    probe = threading.Thread(target=lambda: answer.append(os.path.exists(path)),
+                             name=name, daemon=True)
+    probe.start()
+    probe.join(_NETWORK_PROBE_S)
+    return bool(answer and answer[0])
+
+
+def _linked(path: str) -> bool:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    return st.st_nlink > 0
+
+
+def _configured_binds() -> list[tuple[str, str, str]]:
+    """Extra paths this installation grants to every confined turn, from
+    `WORKSHOP_SCOPED_EXEC_BINDS`: comma-separated entries, each `ro:<path>` or
+    `rw:<path>` (a bare path is read-only), bound at their real locations. For
+    work whose inputs live outside any one scope. Unset means none."""
+    out: list[tuple[str, str, str]] = []
+    for entry in (os.environ.get("WORKSHOP_SCOPED_EXEC_BINDS") or "").split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        mode, path = "ro", entry
+        if entry[:3] in ("ro:", "rw:"):
+            mode, path = entry[:2], entry[3:]
+        path = os.path.expanduser(path)
+        out.append((mode, path, path))
+    return out
+
+
+def declared_folders(root: str | None) -> list[tuple[str, str, str]]:
+    """Folders outside its own tree that an app says its work needs, from the
+    `folders` list in the scope root's `workshop.app.json`: each `ro:<path>` or
+    `rw:<path>` (a bare path is read-only), with `~` and `${VAR}` expanded from
+    this installation's environment so no machine path is written into the app.
+    Bound for that app's turns only, unlike `WORKSHOP_SCOPED_EXEC_BINDS`, which
+    every turn gets."""
+    if not root:
+        return []
+    try:
+        raw = json.loads((Path(root) / "workshop.app.json").read_text())
+    except (OSError, ValueError):
+        return []
+    out: list[tuple[str, str, str]] = []
+    for entry in (raw.get("folders") or []) if isinstance(raw, dict) else []:
+        if not isinstance(entry, str) or not entry.strip():
+            continue
+        mode, path = "ro", entry.strip()
+        if path[:3] in ("ro:", "rw:"):
+            mode, path = path[:2], path[3:]
+        path = os.path.expanduser(os.path.expandvars(path))
+        if "$" in path or not os.path.isabs(path):
+            continue
+        out.append((mode, path, path))
+    return out
 
 
 def _remap(arg: str, root: str) -> str:
@@ -329,6 +453,15 @@ def _remap(arg: str, root: str) -> str:
 
 def _under(path: str, base: str) -> bool:
     return path == base or path.startswith(base.rstrip("/") + "/")
+
+
+def sandbox_path(path: str, root: str) -> str:
+    """The spelling under which a turn confined to `root` sees a HOST path: under
+    the scope root it is moved to the mountpoint, anywhere else it is unchanged
+    (granted and system paths are bound at their real locations)."""
+    if not enabled():
+        return path
+    return _remap(os.path.realpath(path), os.path.realpath(root))
 
 
 def host_path_visible(path: str | None, root: str | None) -> bool:
@@ -684,6 +817,11 @@ def turn_env(env: dict, workdir: str | None = None) -> dict:
     root = os.path.realpath(workdir) if workdir else None
     if root and enabled():
         env = {k: (_remap(v, root) if isinstance(v, str) else v) for k, v in env.items()}
+        # What MOUNTPOINT is on the host, for the one kind of work that has to
+        # outlive the sandbox: a transient systemd unit runs in the host's
+        # mount namespace, where MOUNTPOINT does not exist. The deferred backend
+        # restart is that work (scripts/restart_backend.sh).
+        env["WORKSHOP_MOUNT_SOURCE"] = root
     user = turn_user(root)
     if user is None:
         return env

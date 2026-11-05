@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isTransientSendFailure, sendFailureText } from "./sendFailure";
 import { shortHttpError } from "@workshop/ui";
+import { requestTimeout } from "../../lib/requestTimeout";
 
 // The bug this pins: `setErr(String(e))` put "TypeError: Failed to fetch" on
 // screen as the app's explanation of what happened to a message.
@@ -25,6 +26,12 @@ describe("a message that did not send", () => {
     // "restarting" describes our process mechanics, not what the operator sees:
     // a user-facing app should not narrate its own backend's lifecycle.
     expect(s).not.toMatch(/restart/);
+  });
+
+  it("treats a send the server did not answer in time as transient, and says so plainly", () => {
+    const e = requestTimeout(20_000);
+    expect(isTransientSendFailure(e)).toBe(true);
+    expect(sendFailureText(e)).toBe("Not sent: the server did not answer in time. Press Retry in a moment.");
   });
 
   it("distinguishes the server failing from the server refusing", () => {

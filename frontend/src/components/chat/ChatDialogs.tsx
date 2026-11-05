@@ -19,7 +19,6 @@ export default function ChatDialogs({
   ticketsOpen, onCloseTickets,
   renameOpen, renameBusy, onCancelRename, onSaveRename,
   confirmNew, onCancelNew, onConfirmNew,
-  confirmCompact, onCancelCompact, onConfirmCompact,
   confirmClear, onCancelClear, onConfirmClear,
 }: {
   scope: string;
@@ -32,9 +31,6 @@ export default function ChatDialogs({
   onCancelRename: () => void;
   onSaveRename: (title: string) => void;
   confirmNew: boolean;
-  confirmCompact: boolean;
-  onCancelCompact: () => void;
-  onConfirmCompact: () => void;
   confirmClear: boolean;
   onCancelClear: () => void;
   onConfirmClear: () => void;
@@ -76,23 +72,8 @@ export default function ChatDialogs({
         danger={false}
       />
 
-      {/* COMPACT AND CLEAR ASK FIRST. Both are one click from the primary in
-          the context modal and neither is obvious from its name: compact
-          summarizes, clear drops. One line each, said where it matters. */}
-      <ConfirmDialog
-        open={confirmCompact}
-        onCancel={onCancelCompact}
-        onConfirm={onConfirmCompact}
-        title="Compact this conversation?"
-        body={
-          <span>
-            Replace chat history with a context summary.
-          </span>
-        }
-        confirmLabel="Compact"
-        danger={false}
-      />
-
+      {/* CLEAR ASKS FIRST: it drops the live session's context, which the
+          name alone does not say. Compact does not ask; it deletes nothing. */}
       <ConfirmDialog
         open={confirmClear}
         onCancel={onCancelClear}

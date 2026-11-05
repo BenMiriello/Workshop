@@ -3,7 +3,7 @@ import type { ChatSegment } from "../../lib/chat";
 import {
   buildTurnBlocks, groupLabel, groupCount, groupTools, groupIsRunning, turnWorkSummary,
   isRunning, hadErrorResult, stepAlert, blockedLabel, stepDuration,
-  runningSeconds, turnDuration, workNarrationPreview, type TurnItem, type TurnBlock,
+  runningSeconds, turnDuration, workNarrationPreview, workThinkingPreview, type TurnItem, type TurnBlock,
 } from "./grouping";
 
 const read = (path: string, extra: Partial<Extract<ChatSegment, { t: "tool" }>> = {}): ChatSegment =>
@@ -472,5 +472,18 @@ describe("workNarrationPreview", () => {
 
   it("trims and collapses surrounding whitespace", () => {
     expect(workNarrationPreview([text("  spaced out  ")])).toBe("spaced out");
+  });
+});
+
+describe("workThinkingPreview", () => {
+  const think = (t: string): ChatSegment => ({ t: "thinking", text: t });
+
+  it("is the first non-blank line of the first reasoning", () => {
+    expect(workThinkingPreview([think("\n  Look at the file.\nThen edit."), think("Later.")]))
+      .toBe("Look at the file.");
+  });
+
+  it("is empty when the turn did not reason", () => {
+    expect(workThinkingPreview([text("said"), think("   ")])).toBe("");
   });
 });

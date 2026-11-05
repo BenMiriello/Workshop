@@ -14,7 +14,8 @@ THE ORDER, most specific first. Each rung is named on the way out, in
   1 SOURCE_REQUEST     the explicit ask — a composer click, an API `model`
   2 SOURCE_PIN         the thread's stored model, or a Job's recorded choice
   3 SOURCE_AGENT       the agent definition's own `model:`
-  4 SOURCE_SCOPE       the app or project default, declared by that scope
+  4 SOURCE_SCOPE       the app or project default: the operator's choice for
+                       that scope first, then what the scope itself declares
   5 SOURCE_PRINCIPAL   "which model do my chats use", the operator's own default
   6 SOURCE_DEPLOYMENT  what this installation runs when nobody said
 
@@ -93,7 +94,9 @@ class ModelRequest:
     agent_model: str | None = None
     agent_effort: str | None = None
     agent_permission_mode: str | None = None
-    # Rung 4. The scope's DECLARED default, None when it merely inherits.
+    # Rung 4. The operator's own default for this scope, consulted before the
+    # scope's DECLARED default (None when it merely inherits).
+    operator_scope_model: str | None = None
     scope_model: str | None = None
     # Does this turn need the agentic harness (tools, permission modes)? A
     # provider whose transport cannot supply one must not be handed such a turn;
@@ -219,10 +222,10 @@ def _runnable(info: llm_providers.ModelInfo, request: ModelRequest) -> str:
     """"" if this model can serve this turn, else why not.
 
     The one condition today is the agentic harness: tools and permission modes
-    on this platform are CLI FLAGS, so a turn that needs them cannot run on a
-    provider whose transport is plain HTTP. Stated as a capability question
-    rather than a provider-id check, so a second CLI-transport provider would
-    need no edit here.
+    on this platform are CLI FLAGS, so a turn that needs them can run only on a
+    provider the CLI can be pointed at (`llm_providers.drives_cli_harness`).
+    Stated as a capability question rather than a provider-id check, so a
+    further provider of either kind would need no edit here.
     """
     if not request.agentic:
         return ""
@@ -230,7 +233,7 @@ def _runnable(info: llm_providers.ModelInfo, request: ModelRequest) -> str:
         provider = llm_providers.get(info.provider_id)
     except ValueError:
         return f"provider {info.provider_id!r} is not configured"
-    if provider.transport != llm_providers.TRANSPORT_CLI:
+    if not llm_providers.drives_cli_harness(provider):
         return (f"provider {info.provider_id!r} has no tool harness, and this "
                 "turn needs one")
     return ""
@@ -254,6 +257,7 @@ def _model(request: ModelRequest, principal_default: str | None,
     ladder = (
         (SOURCE_PIN, request.pinned_model),
         (SOURCE_AGENT, request.agent_model),
+        (SOURCE_SCOPE, request.operator_scope_model),
         (SOURCE_SCOPE, request.scope_model),
         (SOURCE_PRINCIPAL, principal_default),
     )
@@ -278,7 +282,7 @@ def _model(request: ModelRequest, principal_default: str | None,
 
 
 def _effort(request: ModelRequest, model_id: str, principal_default: str | None,
-            trace: _Trace) -> str | None:
+            trace: _Trace, scope: str | None = None) -> str | None:
     """The effort level, resolved against the model that will ACTUALLY run.
 
     Same order as before this moved: the agent's declaration, then the explicit
@@ -292,10 +296,22 @@ def _effort(request: ModelRequest, model_id: str, principal_default: str | None,
     it is skipped and the next rung down is consulted, because a thread carrying
     `xhigh` from when it was on Opus should not blank out an operator default of
     `max` just because this model has no `xhigh` rung.
+
+    A SCOPE THAT DECLARES ITS OWN LADDER (an app gateway's `efforts`) is judged
+    against that ladder, and its default is sent explicitly instead of None:
+    with no `--effort` the CLI fills the level in from its own settings, so the
+    gateway would read a level the composer never showed.
     """
+    level = _chosen_effort(request, model_id, principal_default, trace, scope)
+    return level or model_caps.scope_default_effort(model_id, scope)
+
+
+def _chosen_effort(request: ModelRequest, model_id: str,
+                   principal_default: str | None, trace: _Trace,
+                   scope: str | None) -> str | None:
     if request.agent_effort:
         try:
-            level = model_caps.normalize_effort(request.agent_effort, model_id)
+            level = model_caps.normalize_effort(request.agent_effort, model_id, scope)
         except ValueError:
             trace.skipped(SOURCE_AGENT, str(request.agent_effort),
                           "that is not an effort level")
@@ -305,7 +321,7 @@ def _effort(request: ModelRequest, model_id: str, principal_default: str | None,
 
     # The explicit ask. Raises for a value that is not a level at all, which is
     # a 400 at the route; a level this model lacks is a silent None.
-    explicit = model_caps.normalize_effort(request.effort, model_id)
+    explicit = model_caps.normalize_effort(request.effort, model_id, scope)
     if explicit:
         return explicit
     if (request.effort or "").strip():
@@ -316,7 +332,7 @@ def _effort(request: ModelRequest, model_id: str, principal_default: str | None,
         if not candidate:
             continue
         try:
-            level = model_caps.normalize_effort(candidate, model_id)
+            level = model_caps.normalize_effort(candidate, model_id, scope)
         except ValueError:
             trace.skipped(rung, str(candidate), "that is not an effort level")
             continue
@@ -379,24 +395,51 @@ def resolve_model(principal_id: int | None, scope: str | None,
     """THE resolver. Chats, agents and background runs all settle here.
 
     `scope` is the chat's context key ("general", "project:x", "agent:x"). It is
-    read for one thing only: rung 4, the scope's DECLARED default model. A
-    caller that already holds the scope provider passes `request.scope_model`
-    instead and this argument is ignored.
+    read for one thing only: rung 4, the operator's default for that scope and
+    then the scope's DECLARED default model. A caller that already holds the
+    settled rung 4 passes `request.scope_model` instead and this argument is
+    ignored: an agent's turn passes the chat's own settled model there, which
+    already took the operator's scope default into account.
     """
     trace = _Trace()
     if request.scope_model is None and scope:
-        request = dataclasses.replace(request, scope_model=declared_model_for(scope))
+        request = dataclasses.replace(
+            request, operator_scope_model=operator_model_for(scope),
+            scope_model=declared_model_for(scope))
     pref_model, pref_effort, pref_mode = _principal_defaults(principal_id)
     info, source = _model(request, pref_model, trace)
     return ModelChoice(
         provider_id=info.provider_id,
         model_id=info.id,
         wire=info.wire,
-        effort=_effort(request, info.id, pref_effort, trace),
+        effort=_effort(request, info.id, pref_effort, trace, scope),
+        # The mode the chat ASKED for. What the CLI is given is derived at spawn
+        # (`model_caps.mode_for_model`); storing that instead would save `auto`
+        # back onto the chat as the mode it runs underneath.
         permission_mode=_permission_mode(request, pref_mode),
         source=source,
         notes=tuple(trace.notes),
     )
+
+
+def operator_model_for(scope: str | None) -> str | None:
+    """Rung 4, first half: the model the operator chose for this scope."""
+    from services import chat_store
+
+    return chat_store.get_scope_model(scope) if scope else None
+
+
+def default_for(scope: str | None, declared: str | None,
+                agentic: bool = True) -> tuple[str, str]:
+    """(model id, the rung that won) for a turn in `scope` when nobody picked
+    and nothing is pinned: rungs 4 to 6. The composer preselects this, so it has
+    to be the resolver's answer rather than the scope's declaration alone. A
+    None `scope` leaves out the operator's scope default, which is how Settings
+    shows what a scope falls back to without it."""
+    request = ModelRequest(operator_scope_model=operator_model_for(scope),
+                           scope_model=declared, agentic=agentic)
+    info, source = _model(request, _principal_defaults(None)[0], _Trace())
+    return info.id, source
 
 
 def declared_model_for(scope: str | None) -> str | None:

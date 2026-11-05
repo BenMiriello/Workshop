@@ -2,12 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { PERMISSION_MODE_IDS, permissionModeDef } from "./permissionModes";
 
-// The hint is the only thing that tells the operator where a mode stops to ask,
-// and it was wrong for the mode every chat runs at by default. `auto` said "acts
-// without asking" while the backend launches every mode but `bypassPermissions`
-// with an approval channel (`model_caps.NEEDS_APPROVAL_CHANNEL`), so an auto
-// turn does stop when the safety check gates a call. Reported 2026-09-17: "it
-// should not be asking me for permissions when it is in auto mode."
+// The hint is the only thing that tells the operator where a mode stops to ask.
+// Every mode but `bypassPermissions` is launched with an approval channel
+// (`model_caps.NEEDS_APPROVAL_CHANNEL`), and `auto` still asks before a delete.
 describe("permission mode hints", () => {
   it("does not promise the absence of a prompt except in the one mode that has none", () => {
     for (const id of PERMISSION_MODE_IDS) {
@@ -17,9 +14,9 @@ describe("permission mode hints", () => {
     }
   });
 
-  it("says what auto stops for, not only what it runs", () => {
+  it("says what auto asks about, not only what it runs", () => {
     const { hint } = permissionModeDef("auto");
-    expect(hint.toLowerCase()).toContain("stops");
+    expect(hint.toLowerCase()).toContain("deleting");
   });
 
   it("never hedges, in either direction", () => {

@@ -128,7 +128,7 @@ export default function BranchPill({ threadId }: { threadId: string }) {
             aria-label={`Branch: ${branchLabel(tree)}`}
           >
             {tree?.branch_slug
-              ? <GitBranch size={14} aria-hidden />
+              ? <GitBranch size={12} aria-hidden />
               : <GitMerge size={14} aria-hidden />}
             <span className="chat-tb__picker-val">{branchLabel(tree)}</span>
             {showsHolder(status) && (
@@ -143,7 +143,7 @@ export default function BranchPill({ threadId }: { threadId: string }) {
         <MenuItem
           disabled
           icon={tree?.branch_slug
-            ? <GitBranch size={14} aria-hidden />
+            ? <GitBranch size={12} aria-hidden />
             : <GitMerge size={14} aria-hidden />}
           onSelect={() => {}}
         >

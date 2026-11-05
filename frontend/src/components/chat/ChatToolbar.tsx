@@ -1,8 +1,8 @@
 import {
-  Archive, ChevronLeft, Maximize2, MessagesSquare,
-  FolderTree, MoreVertical, Plus, Share2, Ticket,
+  Archive, ChevronLeft, List, Maximize2, MessagesSquare,
+  FolderTree, MoreVertical, Plus, Share2, Ticket, X,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@workshop/ui";
 import type { Provider, ThreadSummary } from "../../lib/chat";
 import {
@@ -12,6 +12,7 @@ import {
 import type { ChatDrawer } from "./drawers";
 import { getPolicy, type MemoryPolicy } from "../../lib/memoryPolicy";
 import { keepFocusOnTap } from "./keepFocus";
+import { nameSqueezed, useRowFit } from "./rowFit";
 import { ChatShareDialog } from "./ChatShare";
 import RecentChatsMenu from "./RecentChatsMenu";
 import ScopeIcon from "./ScopeIcon";
@@ -73,8 +74,9 @@ export default function ChatToolbar({
   activeId, activeThreadTitle, branchPicker, branchPill,
   showProviderPicker, providers, activeProvider, onChooseProvider, turnActive,
   drawer, workCount, needsYouCount, onWorkClick,
-  onBack, onOpenFiles, onEditTitle, onOpenThread,
+  onBack, backLabel, onOpenFiles, onEditTitle, onOpenThread,
   onNewChat, onArchive, onPopOut, onNavigate,
+  allChatsPath = "/chats", recentScope = null, access = null, onClose, onShowChats,
 }: {
   variant: ChatVariant;
   mode: ChatMode;
@@ -115,7 +117,10 @@ export default function ChatToolbar({
   /** Opens the sheet panel. Passed through rather than held here so Chat.tsx
    *  can apply requestAnimationFrame to avoid layout thrash on tap. */
   onWorkClick?: () => void;
-  onBack: () => void;
+  /** Null drops the button: an embedded chat has nowhere to go back to. */
+  onBack: (() => void) | null;
+  /** Names where back goes when it is a page the chat was opened from. */
+  backLabel?: string;
   onOpenFiles: (() => void) | null;
   onEditTitle: () => void;
   /** Switch to another conversation from the name menu. It may live under a
@@ -138,6 +143,17 @@ export default function ChatToolbar({
   onArchive: (id: string) => void;
   onPopOut: () => void;
   onNavigate: (to: string) => void;
+  /** Where "All chats" goes. */
+  allChatsPath?: string;
+  /** The context key the recent-chats menu lists, or null for every scope. */
+  recentScope?: string | null;
+  /** What this chat may reach: the page beside it and other apps (AccessMenu). */
+  access?: ReactNode;
+  /** Set when the chat is in a drawer that can be closed. */
+  onClose?: () => void;
+  /** Set in the drawer beside a page: shows every chat there, and is what the
+   *  "All chats" entries do instead of leaving for the Chats page. */
+  onShowChats?: () => void;
 }) {
   const workOpen = drawer === "work";
   // The sharing dialog, and the policy it edits. Fetched on FIRST OPEN and not
@@ -146,6 +162,11 @@ export default function ChatToolbar({
   // dialog almost nobody opens. Failing to load is not surfaced, because the
   // dialog still works without it: an absent policy resolves to the stored
   // default, which is what the backend would apply anyway.
+  const rowRef = useRef<HTMLDivElement>(null);
+  useRowFit(rowRef, [
+    variant, !!onBack, showProviderPicker, providers.length > 1, !!branchPicker, !!branchPill,
+    !!onWorkClick, !!access, !!onClose, !!onOpenFiles, !!onShowChats,
+  ].join("|"), { last: 3, squeezed: nameSqueezed });
   const [sharing, setSharing] = useState(false);
   const [policy, setPolicy] = useState<MemoryPolicy | null>(null);
   useEffect(() => {
@@ -158,11 +179,24 @@ export default function ChatToolbar({
   return (
     // Same rule as the composer's action row: with the keyboard up, a tap here
     // presses the button instead of spending itself closing the keyboard.
-    <div className="chat-toolbar" onPointerDown={keepFocusOnTap}>
-      {variant === "full" && (
-        <button className="chat-tb__btn" onClick={onBack} title="Back" aria-label="Back">
-          <ChevronLeft size={16} aria-hidden />
+    <div ref={rowRef} className="chat-toolbar" onPointerDown={keepFocusOnTap}>
+      {onShowChats && (
+        <button className="chat-tb__btn" onClick={onShowChats} title="All chats" aria-label="All chats">
+          <List size={16} aria-hidden />
         </button>
+      )}
+      {variant === "full" && onBack && (
+        backLabel ? (
+          <button className="chat-tb__back" onClick={onBack} title={`Back to ${backLabel}`}
+            aria-label={`Back to ${backLabel}, with this chat beside it`}>
+            <ChevronLeft size={16} aria-hidden />
+            <span>{backLabel}</span>
+          </button>
+        ) : (
+          <button className="chat-tb__btn" onClick={onBack} title="Back" aria-label="Back">
+            <ChevronLeft size={16} aria-hidden />
+          </button>
+        )
       )}
       {/* The working tree this chat writes in, in the app that owns it. There
           used to be a second chat surface here (a "workbench" wrapping the same
@@ -240,7 +274,10 @@ export default function ChatToolbar({
           button doing the rename, which put the rarer of the two verbs on the
           bigger target and left switching chats to a round trip through /chats.
           Two controls, the common one first. */}
-      {activeThreadTitle && (
+      {/* ALWAYS SHOWN. On a blank chat the name reads "New chat" and still
+          opens the recent list: a blank chat is exactly where you are when
+          you want to get back to the one you were in. */}
+      {(
         // ONE CLUSTER, so the toolbar's own gap spaces the PAIR against its
         // neighbours instead of spacing the pencil away from the name it acts
         // on. The pencil was a `chat-tb__btn` sitting a full --space-2 from the
@@ -250,10 +287,11 @@ export default function ChatToolbar({
         // the note on .chat-tb__title records why that was the wrong tool.
         <span className="chat-tb__namegroup">
           <RecentChatsMenu
-            title={activeThreadTitle}
+            title={activeThreadTitle || "New chat"}
             activeId={activeId}
             onOpenThread={onOpenThread}
-            onSeeAll={() => onNavigate("/chats")}
+            scope={recentScope}
+            onSeeAll={onShowChats ?? (() => onNavigate(allChatsPath))}
             onEditTitle={onEditTitle}
           />
         </span>
@@ -270,71 +308,80 @@ export default function ChatToolbar({
           says "line" and wears a different one. The two used to be the same
           word and the same icon, six pixels apart. */}
       {branchPill}
-      {/* Pushes the actions right on desktop; on a narrow viewport the title
-          just left of it has already given up the room instead. */}
-      <span className="chat-tb__spacer" />
+      {/* The actions are one cluster that takes the row's spare room on its
+          left (`margin-left: auto`), so nothing sits between the last thing on
+          the left and the first action but the bar's own gap. A flexible spacer
+          element did that job and added a second gap beside it. */}
+      <span className="chat-tb__actions">
 
-      {/* ONE work button. `data-chat-workpanel-trigger` is how the sheet finds
-          its way back here on Escape. ALWAYS SHOWN, including on a blank chat
-          with no thread and no queue: the panel also holds the policy (where the
-          first message's work goes), so gating it on thread existence hides it
-          until after that decision has been made. */}
-      {onWorkClick && (
-        <button
-          data-chat-workpanel-trigger=""
-          className={`chat-tb__btn${workOpen ? " is-active" : ""}`}
-          title={workTitle(workCount, needsYouCount)}
-          aria-label="Tickets"
-          aria-haspopup="dialog"
-          aria-expanded={workOpen}
-          onClick={onWorkClick}
-        >
-          <Ticket size={16} aria-hidden />
-          {workCount > 0 && <span className="chat-tb__badge">{workCount}</span>}
-        </button>
-      )}
-      <Menu
-        label="Chat actions"
-        trigger={
-          <button className="chat-tb__btn" title="More" aria-label="More chat actions">
-            <MoreVertical size={16} aria-hidden />
+        {/* ONE work button. `data-chat-workpanel-trigger` is how the sheet finds
+            its way back here on Escape. ALWAYS SHOWN, including on a blank chat
+            with no thread and no queue: the panel also holds the policy (where the
+            first message's work goes), so gating it on thread existence hides it
+            until after that decision has been made. */}
+        {onWorkClick && (
+          <button
+            data-chat-workpanel-trigger=""
+            className={`chat-tb__btn${workOpen ? " is-active" : ""}`}
+            title={workTitle(workCount, needsYouCount)}
+            aria-label="Tickets"
+            aria-haspopup="dialog"
+            aria-expanded={workOpen}
+            onClick={onWorkClick}
+          >
+            <Ticket size={16} aria-hidden />
+            {workCount > 0 && <span className="chat-tb__badge">{workCount}</span>}
           </button>
-        }
-      >
-        <MenuItem icon={<Plus size={14} />} onSelect={onNewChat}>
-          New chat
-        </MenuItem>
-        <MenuSeparator />
-        <MenuItem icon={<MessagesSquare size={14} />} onSelect={() => onNavigate("/chats")}>
-          All chats
-        </MenuItem>
-        {variant !== "full" && (
-          <MenuItem icon={<Maximize2 size={14} />} onSelect={onPopOut}>
-            Open full screen
+        )}
+        {access}
+        <Menu
+          label="Chat actions"
+          trigger={
+            <button className="chat-tb__btn" title="More" aria-label="More chat actions">
+              <MoreVertical size={16} aria-hidden />
+            </button>
+          }
+        >
+          <MenuItem icon={<Plus size={14} />} onSelect={onNewChat}>
+            New chat
           </MenuItem>
-        )}
-        {activeId && (
-          <>
-            <MenuSeparator />
-            {/* WHO ELSE FINDS THIS CHAT. A property of the conversation, so it
-                is filed with the rest of what you can do to one. It arrived here
-                on 2026-08-27 from a badge overlaid on a card in the Memory
-                page's Chats tab, which went with that tab; see
-                components/chat/ChatShare.tsx for the whole history. */}
-            <MenuItem icon={<Share2 size={14} />} onSelect={() => setSharing(true)}>
-              Sharing
+          <MenuSeparator />
+          <MenuItem icon={<MessagesSquare size={14} />} onSelect={onShowChats ?? (() => onNavigate(allChatsPath))}>
+            All chats
+          </MenuItem>
+          {variant !== "full" && (
+            <MenuItem icon={<Maximize2 size={14} />} onSelect={onPopOut}>
+              Open full screen
             </MenuItem>
-            {/* ARCHIVE, NOT DELETE, and no confirmation. Closing a chat is a
-                thing the operator does constantly; destroying one is rare. The
-                common gesture is the reversible one, and a reversible action
-                that stops to ask is just friction. The delete lives in the
-                archive, behind a dialog, where it belongs. */}
-            <MenuItem icon={<Archive size={14} />} onSelect={() => onArchive(activeId)}>
-              Archive chat
-            </MenuItem>
-          </>
+          )}
+          {activeId && (
+            <>
+              <MenuSeparator />
+              {/* WHO ELSE FINDS THIS CHAT. A property of the conversation, so it
+                  is filed with the rest of what you can do to one. It arrived here
+                  on 2026-08-27 from a badge overlaid on a card in the Memory
+                  page's Chats tab, which went with that tab; see
+                  components/chat/ChatShare.tsx for the whole history. */}
+              <MenuItem icon={<Share2 size={14} />} onSelect={() => setSharing(true)}>
+                Sharing
+              </MenuItem>
+              {/* ARCHIVE, NOT DELETE, and no confirmation. Closing a chat is a
+                  thing the operator does constantly; destroying one is rare. The
+                  common gesture is the reversible one, and a reversible action
+                  that stops to ask is just friction. The delete lives in the
+                  archive, behind a dialog, where it belongs. */}
+              <MenuItem icon={<Archive size={14} />} onSelect={() => onArchive(activeId)}>
+                Archive chat
+              </MenuItem>
+            </>
+          )}
+        </Menu>
+        {onClose && (
+          <button className="chat-tb__btn" onClick={onClose} title="Close chat" aria-label="Close chat">
+            <X size={16} aria-hidden />
+          </button>
         )}
-      </Menu>
+      </span>
 
       {/* OUTSIDE the Menu: selecting an item closes it, which would unmount a
           dialog rendered as its child before it ever painted. The policy is

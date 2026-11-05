@@ -135,12 +135,22 @@ _V_2026_09_22 = {
     "claude-sonnet-5": Price(2.0, 10.0),
 }
 
+# Source: platform.claude.com/docs/en/models/overview, read 2026-09-30. Adds
+# Sonnet 5.5, which ships in the Sonnet line at Sonnet 5's rates. No other row
+# moves, so this is a new version only so that a row written before today keeps
+# resolving against a table that never named this model.
+_V_2026_09_30 = {
+    **_V_2026_09_22,
+    "claude-sonnet-5-5": Price(2.0, 10.0),
+}
+
 # Keyed by the date the version took effect, newest LAST. `price_for` picks the
 # newest version whose date is <= the row's own version, so adding a table here
 # never changes what an already-written row costs.
 _TABLES: dict[str, dict[str, Price]] = {
     "2026-09-04": _V_2026_09_04,
     "2026-09-22": _V_2026_09_22,
+    "2026-09-30": _V_2026_09_30,
 }
 
 CURRENT_VERSION = max(_TABLES)

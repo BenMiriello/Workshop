@@ -1,168 +1,211 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type UIEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { MessagesSquare, Pencil } from "lucide-react";
-import { Menu, MenuItem, MenuSeparator } from "@workshop/ui";
+import { MessagesSquare, Pencil, Search } from "lucide-react";
+import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@workshop/ui";
 import { chatApi, type ThreadSummary } from "../../lib/chat";
+import { queryKeys } from "../../lib/queryKeys";
+import {
+  PAGE_SIZE, firstOfGroups, groupByDate, newestFirst, searchGroups, type ChatGroup, type SearchRow,
+} from "../../pages/chatList";
 import { scopeKind } from "./chatScope";
 import ScopeIcon from "./ScopeIcon";
-import { queryKeys } from "../../lib/queryKeys";
+import { RunningDot } from "./ChatRow";
+import { useChatSearch } from "./useChatSearch";
+import { useRoomBelow } from "./useRoomBelow";
 
-// Trim a full cross-scope list to the recent few this menu shows, newest first.
-const recentSlice = (list: ThreadSummary[]): ThreadSummary[] =>
-  [...list]
-    .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""))
-    .slice(0, RECENT_LIMIT);
+// The chat's name in the toolbar, and behind it every other conversation.
+//
+// The name was already the one word on the bar identifying the conversation, so
+// making it the way back to the others costs no room (operator, 2026-08-12).
+// Renaming is the pencil on the current chat's row.
+//
+// CROSS-SCOPE, not this scope's threads, which is why each row carries a scope
+// icon. Newest first under the same date headings as the Chats page, and the
+// same search (`useChatSearch`): title matches, then message matches.
+//
+// THE LIST LOADS AS IT SCROLLS. It mounts a page (`PAGE_SIZE`, the Chats page's
+// own) and mounts the next one as the scroll nears the bottom, the same as
+// pressing that page's Show more. The search sits pinned above the rows and
+// All chats pinned below them; the rows scroll between.
+//
+// FETCHED WHEN OPENED, not on mount: `enabled: false` still reads and paints
+// the shared cache entry (the dashboard writes the same key), and the trigger's
+// onClick revalidates it. Menu calls that before its own toggle, so one tap
+// does both.
 
-// The chat's name in the toolbar, and behind it the conversations you were in
-// most recently.
-//
-// The toolbar used to say a conversation picker was DELIBERATELY not here,
-// because it duplicated the /chats list. The operator reversed that on
-// 2026-08-12: the name was already the one word on the bar identifying the
-// conversation, so making it the way back to the others costs no room at all,
-// and the list you actually want is the last few, not all of them. Renaming
-// moved to the pencil beside it, which is where every app puts it.
-//
-// CROSS-SCOPE, not this scope's threads. That is why each row carries a scope
-// icon: a list of the last few chats is only useful if the one you left in
-// another project is in it. Ordering is `updated_at` descending, the same sort
-// the /chats page applies, so "recent" means one thing in both places.
-//
-// FETCHED WHEN OPENED, not on mount. Every chat in the app would otherwise pay
-// for a full cross-scope thread list it may never show. The trigger's own
-// onClick loads it; Menu calls that before its own toggle, so one tap does both.
-//
-// THE CACHE IS THE QUERY CACHE NOW. This used to seed from a module singleton
-// (`recentChatsCache`) whose only job was painting the last-known list on a
-// remount instead of the "Loading" row, and the shared key `["chat", "threads",
-// <scope>]` does that for nothing: the dashboard's own threads read writes the
-// same entry, so opening the menu on a chat reached from the dashboard is
-// already warm. `enabled: false` is what keeps "on open, not on mount" true --
-// a disabled query still reads the cache and never fetches on its own.
-//
-// ONE THING THE SINGLETON DID THAT THIS DOES NOT: it lived for the life of the
-// tab. The entry lives for `gcTime` (5 minutes) past the last component holding
-// it, so leaving the chat for longer than that and coming back shows "Loading"
-// for one request. Every remount the old comment named -- reopening the menu, a
-// scope switch rebuilding the toolbar -- is inside that window and unaffected.
+// How close to the bottom of the rows the next page is mounted.
+const LOAD_AHEAD_PX = 160;
 
-const RECENT_LIMIT = 8;
+type Row = SearchRow<ThreadSummary>;
 
 export default function RecentChatsMenu({
-  title, activeId, onOpenThread, onSeeAll, onEditTitle,
+  title, activeId, scope = null, onOpenThread, onSeeAll, onEditTitle,
 }: {
   /** The open chat's name, which is the trigger. */
   title: string;
   activeId: string | null;
+  /** One context key to list, or null for the cross-scope list. An embedded
+   *  chat lists only its own scope's conversations. */
+  scope?: string | null;
   /** Switch to that conversation. The caller owns how (it is a route change,
    *  since the thread may live under a different scope than this chat). */
   onOpenThread: (t: ThreadSummary) => void;
-  /** The overflow path: more chats exist than this menu shows. */
+  /** The Chats page. */
   onSeeAll: () => void;
   /** Opens the rename flow for the current chat (pencil on the active row). */
   onEditTitle: () => void;
 }) {
-  const q = useQuery({
-    // The shared key. The scope slot is null because this list is deliberately
-    // cross-scope, which is the same list the dashboard reads.
-    queryKey: queryKeys.chat.threads(null),
-    queryFn: () => chatApi.listThreads(),
-    // On open, not on mount. The cached list is still read and painted.
+  const { data, isFetching, isError, error, refetch } = useQuery({
+    queryKey: queryKeys.chat.threads(scope),
+    queryFn: () => chatApi.listThreads(scope ?? undefined),
     enabled: false,
-    // The read this replaces did not retry, and a menu that has already drawn
-    // its last-known rows must not sit on a spinner through a backoff.
+    // A menu that has already drawn its last-known rows must not sit on a
+    // spinner through a backoff.
     retry: false,
   });
+  const [query, setQuery] = useState("");
+  const [shown, setShown] = useState(PAGE_SIZE);
+  const { ref: triggerRef, room, measure } = useRoomBelow<HTMLButtonElement>();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const search = useChatSearch(query, scope);
 
-  const { data, isFetching, isError, error, refetch } = q;
-  // Revalidates on every open: the list is a handful of rows, and a "recent"
-  // list an hour of conversation out of date is worse than one that costs a
-  // request. The cached rows stay on screen while it runs (never cleared to
-  // null), so revalidation refreshes in place rather than flashing "Loading". A
-  // second open while one is in flight is ignored -- `cancelRefetch: false` is
-  // that guard; the default would abandon the request in flight and start
-  // another.
-  const load = useCallback(() => { void refetch({ cancelRefetch: false }); }, [refetch]);
+  // Revalidates on every open. `cancelRefetch: false` ignores a second open
+  // while one read is in flight instead of abandoning it for another.
+  const load = useCallback(() => {
+    setQuery("");
+    setShown(PAGE_SIZE);
+    measure();
+    void refetch({ cancelRefetch: false });
+    // A pointer that can hover has a keyboard to type with; a phone would pop
+    // its keyboard over the list it just opened. After Menu focuses its list.
+    if (window.matchMedia("(pointer: fine)").matches) {
+      requestAnimationFrame(() => searchRef.current?.focus());
+    }
+  }, [refetch, measure]);
 
-  const threads = useMemo(() => (data ? recentSlice(data) : null), [data]);
+  useEffect(() => {
+    setShown(PAGE_SIZE);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [search.active, search.hits]);
+
+  const sorted = useMemo(() => (data ? newestFirst(data) : null), [data]);
   const total = data?.length ?? 0;
-  const loading = isFetching;
-  // Set on a failed read and cleared at the START of the next attempt, which is
-  // what the `setErr(null)` at the top of the old `load` did: reopening the menu
-  // after a failure shows the loading row, not the stale failure.
+  const all: ChatGroup<Row>[] | null = useMemo(() => {
+    if (search.active) return search.hits && sorted ? searchGroups(sorted, search.hits) : null;
+    if (!sorted) return null;
+    return groupByDate(sorted).map((g) => ({
+      ...g, items: g.items.map((thread) => ({ thread, snippet: null })),
+    }));
+  }, [search.active, search.hits, sorted]);
+  const count = all?.reduce((n, g) => n + g.items.length, 0) ?? 0;
+  const groups = useMemo(() => (all ? firstOfGroups(all, shown) : null), [all, shown]);
+  const runningOrdinal = useMemo(() => {
+    const order = new Map<string, number>();
+    groups?.forEach((g) => g.items.forEach(({ thread: t }) => {
+      if (t.running) order.set(t.id, order.size);
+    }));
+    return order;
+  }, [groups]);
+
+  const onScroll = (e: UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < LOAD_AHEAD_PX) {
+      setShown((n) => (n < count ? n + PAGE_SIZE : n));
+    }
+  };
+
   const err = !isFetching && isError ? String(error) : null;
+  const note = (text: string, hint?: string) => (
+    <MenuItem disabled onSelect={() => {}} title={hint}>{text}</MenuItem>
+  );
+
+  const row = ({ thread: t, snippet }: Row) => {
+    const isActive = t.id === activeId;
+    const item = (
+      <MenuItem
+        key={t.id}
+        icon={<ScopeIcon kind={scopeKind(t.context_key)} />}
+        checked={isActive}
+        onSelect={() => onOpenThread(t)}
+      >
+        <span className="rcm-row">
+          {t.running && <RunningDot running ordinal={runningOrdinal.get(t.id) ?? 0} />}
+          <span className="rcm-row__text">
+            <span className="rcm-row__name">{t.title || "Untitled chat"}</span>
+            {snippet && <span className="rcm-row__snip">{snippet}</span>}
+          </span>
+        </span>
+      </MenuItem>
+    );
+    if (!isActive) return item;
+    return (
+      <div key={t.id} className="rcm-title-row">
+        {item}
+        <button
+          className="rcm-title-row__pencil"
+          role="menuitem"
+          onClick={onEditTitle}
+          title="Rename chat"
+          aria-label="Rename chat"
+        >
+          <Pencil size={12} aria-hidden />
+        </button>
+      </div>
+    );
+  };
 
   return (
     <Menu
-      label="Recent chats"
-      // The wrapper is what sits in the toolbar's flex row now, so it carries
-      // the shrink the bare title button used to. `.ws-menu` is flex: 0 0 auto,
-      // and without this the name would push the toolbar wide instead of
-      // ellipsising, which is the whole reason the bar fits one row on a phone.
+      label="Chats"
+      // The wrapper is the toolbar's flex item, so it carries the shrink that
+      // lets the name ellipsise instead of pushing the bar wide.
       className="chat-tb__titlemenu"
       trigger={
-        <button className="chat-tb__title" onClick={load} title="Recent chats">
+        <button ref={triggerRef} className="chat-tb__title" onClick={load} title="Chats">
           {title}
         </button>
       }
     >
-      {/* The states a list owes, at menu scale: a row each, none of them
-          selectable, so the menu never opens onto nothing with no explanation. */}
-      {loading && threads === null && (
-        <MenuItem disabled onSelect={() => {}}>Loading</MenuItem>
-      )}
-      {err && (
-        <MenuItem disabled onSelect={() => {}} title={`GET /api/chat/threads: ${err}`}>
-          Couldn't load recent chats
-        </MenuItem>
-      )}
-      {threads?.length === 0 && (
-        <MenuItem disabled onSelect={() => {}}>No other chats yet</MenuItem>
-      )}
-      {threads?.map((t) => {
-        const isActive = t.id === activeId;
-        if (!isActive) {
-          return (
-            <MenuItem
-              key={t.id}
-              icon={<ScopeIcon kind={scopeKind(t.context_key)} />}
-              onSelect={() => onOpenThread(t)}
-            >
-              {t.title || "Untitled chat"}
+      <div
+        className="rcm-body"
+        style={room != null ? ({ "--rcm-room": `${room}px` } as CSSProperties) : undefined}
+      >
+        <label className="ws-searchfield rcm-search">
+          <Search aria-hidden />
+          <input
+            ref={searchRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search chats"
+            aria-label="Search chats"
+            spellCheck={false}
+          />
+        </label>
+        <div className="rcm-scroll" ref={scrollRef} onScroll={onScroll}>
+          {/* The states a list owes, at menu scale: a row each, none of them
+              selectable, so the menu never opens onto nothing unexplained. */}
+          {!search.active && isFetching && sorted === null && note("Loading")}
+          {err && note("Couldn't load chats", `GET /api/chat/threads: ${err}`)}
+          {search.error && note("Couldn't search chats", `GET /api/chat/threads/search: ${search.error}`)}
+          {search.active && groups === null && !search.error && note("Searching")}
+          {groups?.length === 0 && note(search.active ? "No chats match" : "No other chats yet")}
+          {groups?.map((g) => (
+            <div key={g.key}>
+              <MenuLabel>{g.label}</MenuLabel>
+              {g.items.map(row)}
+            </div>
+          ))}
+        </div>
+        {total > 0 && (
+          <>
+            <MenuSeparator />
+            <MenuItem icon={<MessagesSquare size={14} aria-hidden />} onSelect={onSeeAll}>
+              All {total} chats
             </MenuItem>
-          );
-        }
-        return (
-          <div key={t.id} className="rcm-title-row">
-            <MenuItem
-              icon={<ScopeIcon kind={scopeKind(t.context_key)} />}
-              checked
-              onSelect={() => onOpenThread(t)}
-            >
-              {t.title || "Untitled chat"}
-            </MenuItem>
-            <button
-              className="rcm-title-row__pencil"
-              role="menuitem"
-              onClick={onEditTitle}
-              title="Rename chat"
-              aria-label="Rename chat"
-            >
-              <Pencil size={12} aria-hidden />
-            </button>
-          </div>
-        );
-      })}
-      {/* Overflow, stated rather than silently truncated: this menu shows the
-          last few, and says so by handing off to the page that has them all. */}
-      {total > RECENT_LIMIT && (
-        <>
-          <MenuSeparator />
-          <MenuItem icon={<MessagesSquare size={14} aria-hidden />} onSelect={onSeeAll}>
-            All {total} chats
-          </MenuItem>
-        </>
-      )}
+          </>
+        )}
+      </div>
     </Menu>
   );
 }

@@ -91,3 +91,9 @@ export function onLive(d: Disclosure, live: boolean, now = 0): Disclosure {
 export function onToggle(d: Disclosure, now = 0): Disclosure {
   return { ...d, open: !d.open, byUser: true, animate: true, since: now };
 }
+
+/** Find is showing a match inside. Opens it, at once, so the match is in place
+ *  to be scrolled to, and it stays open the way a click would leave it. */
+export function onFound(d: Disclosure, now = 0): Disclosure {
+  return d.open ? d : { ...d, open: true, byUser: true, animate: false, since: now };
+}

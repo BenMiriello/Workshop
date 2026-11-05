@@ -28,7 +28,7 @@ import asyncio
 
 import pytest
 
-from services import chat_context, chat_store, knowledge, ownership
+from services import chat_context, chat_store, knowledge, ownership, working_state
 
 
 STRUCTURED = """## Objective
@@ -94,20 +94,17 @@ def _chatty(context_key: str = "general") -> str:
 
 
 def _stub_summarizer(monkeypatch, text: str = STRUCTURED):
-    from routes import chat as chat_routes
-    monkeypatch.setattr(chat_routes, "_summarize_sync", lambda prev, msgs: text)
-    return chat_routes
+    monkeypatch.setattr(working_state, "_summarize_sync", lambda prev, msgs: text)
 
 
 def _compact_now(tid: str) -> None:
     """What pressing Compact does to the NOTE, run inline.
 
-    The route fires this off the request path (`_spawn_working_state`) and does
+    The route fires this off the request path (`working_state.spawn`) and does
     not wait for it; nothing here is about that scheduling, so it runs straight
     through. Compaction itself is the provider's `/compact` and touches nothing
     this file asserts on."""
-    from routes import chat as chat_routes
-    chat_routes._write_working_state_now(tid, chat_store.get_thread(tid))
+    working_state.write_now(tid, chat_store.get_thread(tid))
 
 
 def _prompt(tid: str) -> str:
@@ -122,36 +119,31 @@ class TestTheSummarizerIsAskedForAShape:
     """A structured prompt is the only thing standing between this and prose."""
 
     def test_the_prompt_names_all_six_headings_verbatim(self):
-        from routes import chat as chat_routes
-        p = chat_routes._summary_prompt("", [{"role": "user", "content": "hi"}])
+        p = working_state._summary_prompt("", [{"role": "user", "content": "hi"}])
         for heading in knowledge.WORKING_STATE_SECTIONS:
             assert f"## {heading}" in p, heading
 
     def test_the_prompt_asks_for_the_reason_behind_each_decision(self):
         """The highest-value section, and the one a summarizer drops first: a
         decision without its reason gets re-litigated or silently reversed."""
-        from routes import chat as chat_routes
-        p = chat_routes._summary_prompt("", [{"role": "user", "content": "hi"}])
+        p = working_state._summary_prompt("", [{"role": "user", "content": "hi"}])
         assert "THE MOST IMPORTANT SECTION" in p
         assert "re-litigated" in p
 
     def test_the_prompt_keeps_the_instructions_that_already_worked(self):
-        from routes import chat as chat_routes
-        p = chat_routes._summary_prompt("", [{"role": "user", "content": "hi"}])
+        p = working_state._summary_prompt("", [{"role": "user", "content": "hi"}])
         assert "no em-dashes" in p and "no emojis" in p
         assert "identifiers" in p
         assert "operator's preferences" in p or "operator's stated preferences" in p
 
     def test_the_earlier_state_is_fed_back_in_so_a_fold_updates_it(self):
-        from routes import chat as chat_routes
-        p = chat_routes._summary_prompt("PREVIOUS STATE", [{"role": "user", "content": "hi"}])
+        p = working_state._summary_prompt("PREVIOUS STATE", [{"role": "user", "content": "hi"}])
         assert "PREVIOUS STATE" in p
         assert "UPDATED working state" in p
 
     def test_it_stays_one_haiku_call_with_no_tools(self, monkeypatch):
         """Compaction runs on a live thread while the operator waits. Two calls,
         or an agentic one, is what made /compact look hung."""
-        from routes import chat as chat_routes
         from services import llm_router
         seen = []
 
@@ -160,7 +152,7 @@ class TestTheSummarizerIsAskedForAShape:
             return {"text": STRUCTURED}
 
         monkeypatch.setattr(llm_router, "call_cloud", fake_call)
-        out = chat_routes._summarize_sync("", [{"role": "user", "content": "hi"}])
+        out = working_state._summarize_sync("", [{"role": "user", "content": "hi"}])
         assert out.startswith("## Objective")
         assert len(seen) == 1
         assert seen[0]["tools_disabled"] is True
@@ -262,12 +254,11 @@ class TestNothingHereMayFailAnythingElse:
     def test_a_failing_summarizer_does_not_fail_the_turn(self, scoped, monkeypatch):
         """The summarizer is a model call and it can fail. Nothing is written,
         nothing raises, and the next prompt still assembles."""
-        from routes import chat as chat_routes
 
         def boom(prev, msgs):
             raise RuntimeError("the summarizer fell over")
 
-        monkeypatch.setattr(chat_routes, "_summarize_sync", boom)
+        monkeypatch.setattr(working_state, "_summarize_sync", boom)
         tid = _chatty()
         _compact_now(tid)  # must not raise
         assert knowledge.get_note("workshop", knowledge.WORKING_STATE_NOTE_ID) is None

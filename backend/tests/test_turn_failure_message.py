@@ -7,6 +7,8 @@ sentence explaining it sat on disk. These tests assert the sentence gets out.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from services import build_streaming as bs
@@ -150,3 +152,39 @@ def test_the_exit_code_is_still_reported(rc):
 
 def test_whitespace_only_detail_is_treated_as_nothing():
     assert bs._failure_text(1, "   ", "\n\t ") == "Ended unexpectedly (exit 1)."
+
+
+LOCAL_TURN_NOTICES = (
+    "⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another "
+    "auth source is set and takes precedence over your claude.ai login · Unset "
+    "it to load your organization's connectors\n"
+    '[claude-code:unrecognized_model] {"model":"qwen3.8-flash-next","query_source":"sdk"}\n')
+
+
+def test_local_turn_start_notices_are_not_a_failure_reason(journal):
+    """Every local-model turn prints these two lines; one says "login", which
+    made an app gateway's ended turn read as a credentials problem."""
+    journal("t6", LOCAL_TURN_NOTICES)
+    assert bs._stderr_tail("t6") == ""
+
+
+def test_a_real_error_after_the_notices_still_comes_back(journal):
+    journal("t7", LOCAL_TURN_NOTICES + "Error: socket hang up\n")
+    assert bs._stderr_tail("t7") == "Error: socket hang up"
+
+
+def test_a_result_that_gave_up_on_the_model_keeps_its_reason():
+    ev = {"type": "result", "subtype": "success", "is_error": True,
+          "terminal_reason": "api_error", "api_error_status": 410,
+          "result": "API Error: 410 this chat turn has ended"}
+    kind, payload = bs._parse_stream_event(json.dumps(ev))
+    assert kind == "result"
+    assert payload["api_error"] is True
+    assert payload["api_error_text"] == "API Error: 410 this chat turn has ended"
+
+
+def test_an_ordinary_result_carries_no_error_text():
+    ev = {"type": "result", "subtype": "success", "is_error": False,
+          "terminal_reason": "completed", "result": "Done, the page is saved."}
+    _, payload = bs._parse_stream_event(json.dumps(ev))
+    assert payload["api_error_text"] == ""

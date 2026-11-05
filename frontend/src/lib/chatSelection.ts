@@ -83,8 +83,11 @@ export function resolveScope(input: {
   linkedThreadHome: string | null;
   startNew: boolean;
   remembered: string | null;
+  /** A frame that shows its own scope and no other (`/embed/chat/<scope>`). */
+  fixed?: boolean;
 }, devMode: boolean = DEV_MODE): string {
   const { contextKey, knownScopes, linkedThreadHome, startNew, remembered } = input;
+  if (input.fixed) return contextKey;
   const known = (k: string | null): boolean => !!k && knownScopes.includes(k);
   const devDefault =
     devMode && known(DEVELOPMENT_SCOPE) ? DEVELOPMENT_SCOPE : DEFAULT_SCOPE;
@@ -153,41 +156,20 @@ export type OutboxSend = {
   duringActiveTurn: boolean;
 };
 
-/** How long a send that never landed stays offered as a Retry.
- *
- *  There was no bound at all until 2026-08-14, and `SendOutbox.forget()` (the
- *  one function that clears a key outright) has never had a caller. So a send
- *  that failed once sat in localStorage forever: the operator reported opening
- *  a chat and seeing a single old failed message, alone on screen, every time.
- *
- *  Why a bound rather than an auto-resend. Every consumer messenger with a
- *  stated position on this (iMessage, WhatsApp, Signal) requires an explicit
- *  tap; auto-retry-on-reconnect is standard only for idempotent infrastructure
- *  writes, like the Background Sync API. And this chat is not a person: a
- *  resend here POSTs a turn that can start an agentic run and spend money, on a
- *  conversation whose context has moved on. So retry stays explicit, and the
- *  offer simply stops being made once it is stale.
- *
- *  It also stops a windowing bug. The transcript now loads only its newest
- *  slice (useThreadLog INITIAL_TAIL), and `committedClientIds` is what hides
- *  this durable copy once the log carries the same send. A send that actually
- *  LANDED, long enough ago to fall outside that window, would find no committed
- *  twin and draw again as a failure. Bounding the age keeps every surviving
- *  entry recent enough to sit inside the window. */
-const OUTBOX_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
-function outboxExpired(ts: string, now: number): boolean {
-  // `ts` and NOT `at`: `at` is a monotonic counter used to order two sends made
-  // in the same millisecond, not a clock (see PendingSend in threadStore). It
-  // is meaningless as an age and reading it as one would expire everything.
-  if (!ts) return false;
-  const at = Date.parse(ts);
-  // An unparseable stamp cannot be shown to be old, and dropping it would throw
-  // away text the operator wrote. Keep it: the reported failure mode is real
-  // sends piling up, and those always carry an ISO `ts`.
-  if (!Number.isFinite(at)) return false;
-  return now - at > OUTBOX_MAX_AGE_MS;
-}
+// AN UNSENT MESSAGE IS KEPT UNTIL IT IS SENT OR THE OPERATOR CANCELS IT.
+//
+// Entries used to expire after 24h, silently, on read. That was answering a
+// real report (2026-08-14: one old failed message shown alone on screen every
+// time a chat opened, because nothing ever cleared it), but it answered it by
+// deleting text the operator had written and believed was sent, with nothing
+// on screen saying so. What clears an entry now is the thing that was missing
+// then: useAutoResend sends it again, under the same client id, as soon as the
+// connection comes back, and Cancel on the bubble drops it deliberately.
+//
+// The windowing case the bound also covered (a send that DID land, long enough
+// ago to fall outside the loaded tail, so no committed twin hides this copy)
+// resolves the same way: re-sending it is deduped by the server on its client
+// id, and the answer retires the entry.
 
 export function readOutbox(key: string): OutboxSend[] {
   try {
@@ -195,17 +177,11 @@ export function readOutbox(key: string): OutboxSend[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    const now = Date.now();
     const out: OutboxSend[] = [];
     for (const x of parsed) {
       if (!x || typeof x.text !== "string" || typeof x.clientId !== "string" || !x.clientId) {
         continue;
       }
-      // Filtered on READ, so every caller is covered by one check and nothing
-      // here writes as a side effect of reading. The expired entries leave
-      // storage on the next write for this key, which useSendOutbox does
-      // whenever the set changes.
-      if (outboxExpired(typeof x.ts === "string" ? x.ts : "", now)) continue;
       out.push({
         clientId: x.clientId,
         text: x.text,

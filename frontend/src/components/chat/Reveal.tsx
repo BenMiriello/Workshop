@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useFinding } from "../shell/find/FindProvider";
+import { useOnFound } from "../shell/find/useOnFound";
 
 // ONE WAY TO OPEN AND CLOSE THINGS, so every disclosure in the chat moves the
 // same way. Before this they all snapped: a tool call's output, a group's
@@ -102,8 +104,13 @@ export function useReveal(
 }
 
 /** A collapsible region. The caller keeps owning the open state; this owns only
- *  how it gets there. */
-export function Reveal({ open, id, className, animate, children }: {
+ *  how it gets there.
+ *
+ *  FOUND BY FIND, given `onFound`. While the page is searched, a collapsed
+ *  region's children are in the DOM after all, kept `hidden="until-found"`, so
+ *  find counts what is in them; showing a match there calls `onFound`, which is
+ *  the caller opening it. Off again when the search ends. */
+export function Reveal({ open, id, className, animate, onFound, children }: {
   open: boolean;
   /** For the trigger's `aria-controls`. The wrapper stays mounted so this
    *  always resolves, even collapsed. */
@@ -112,12 +119,24 @@ export function Reveal({ open, id, className, animate, children }: {
   /** Default true, for a disclosure only the operator ever opens. Pass the
    *  provenance flag for one the machine also opens. See the note above. */
   animate?: boolean;
+  /** Open it: a search's match inside is about to be shown. */
+  onFound?: () => void;
   children: ReactNode;
 }) {
   // The element is state, not a ref read, because `useReveal` has to attach a
   // listener to it in an effect and must re-run when it first exists.
   const [el, setEl] = useState<HTMLDivElement | null>(null);
+  const [inner, setInner] = useState<HTMLDivElement | null>(null);
   const { mounted, shown } = useReveal(open, animate, el);
+  const finding = useFinding();
+  const kept = finding && !mounted && !!onFound;
+  useOnFound(inner, onFound);
+  // React 18 writes `hidden` as a boolean, so the value is set here, before
+  // paint and before find reads the page.
+  useLayoutEffect(() => {
+    if (kept) inner?.setAttribute("hidden", "until-found");
+    else inner?.removeAttribute("hidden");
+  }, [kept, inner]);
   return (
     // `is-instant` kills the CSS transition too. Setting the open state without
     // frames is not enough on its own: grid-template-rows would still animate
@@ -135,8 +154,8 @@ export function Reveal({ open, id, className, animate, children }: {
           the line should not be there, and it should not be hidden, it should
           not be rendered. The wrapper itself has no paint of its own, so an
           empty one is genuinely invisible while still anchoring aria-controls. */}
-      {mounted ? (
-        <div className={`chat-reveal__inner${className ? ` ${className}` : ""}`}>
+      {mounted || kept ? (
+        <div ref={setInner} className={`chat-reveal__inner${className ? ` ${className}` : ""}`}>
           {children}
         </div>
       ) : null}

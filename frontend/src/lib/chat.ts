@@ -42,6 +42,7 @@ import type { ChatModeId } from "../components/chat/chatModes";
 // not narrowed is the schema verbatim; do not re-widen or re-declare one here.
 import type { components } from "../api/schema.gen";
 import { HttpError, shortHttpError } from "@workshop/ui";
+import { SEND_TIMEOUT_MS, withDeadline } from "./requestTimeout";
 
 type CutAfter = { cut_after?: string[] };
 
@@ -55,8 +56,7 @@ export type ChatSegment =
   // The model's REASONING, captured from the partial-message stream
   // (build_streaming --include-partial-messages). It is its own kind, never
   // `text`, so it is never part of the answer and never reaches AnswerBody: it
-  // renders as a foldable "Thought" disclosure inside the work section, the same
-  // channel ChatGPT and Claude fold reasoning into. `sealed` behaves as it does
+  // renders as muted reasoning inside the work section. `sealed` behaves as it does
   // for text (a mid-turn message closes the run). Coalesced like text while it
   // streams. Absent on every turn recorded before this shipped, which reads as a
   // turn that simply showed no reasoning.
@@ -93,7 +93,8 @@ export type ChatSegment =
       // this is what "allow and stop asking" applies.
       suggestions: { type?: string; mode?: string; destination?: string }[];
       // stale = the turn ended without an answer, so answering can do nothing.
-      state: "pending" | "allowed" | "denied" | "stale";
+      // unanswered = nobody answered in time, so the turn went on without it.
+      state: "pending" | "allowed" | "denied" | "stale" | "unanswered";
     } & CutAfter)
   | ({
       t: "agent";
@@ -270,6 +271,11 @@ export type ChatMsg = {
     // line on a notify. Anything that is not the operator is a sender like any
     // other; there is no separate tier for "the platform".
     sender?: string;
+    // Set by the transcript, never stored (components/chat/schedules.shownAs):
+    // the sender's name and link, and a scheduled message's schedule name.
+    sender_name?: string;
+    sender_href?: string;
+    scheduled?: string;
     // What this write WAS: "run_report" | "ticket_question" | "background_result".
     // Read for the sender's display name, and to place messages stored before
     // `asks` existed (see asksOf in MessageList).
@@ -295,6 +301,7 @@ export type ChatMsg = {
  *  by nobody, so it cannot go stale after a rescope. `last_user_at` is when the
  *  OPERATOR last spoke, which is what the list orders by. */
 export type ThreadSummary = components["schemas"]["ThreadSummary"];
+export type ThreadSearchHit = components["schemas"]["ThreadSearchHit"];
 
 /** What advances a thread without a person.
  *
@@ -366,6 +373,7 @@ export type CardState = components["schemas"]["StoredCardState"];
  *  the server no longer sends. Measured 2026-08-14, the worst thread's
  *  `messages` was 4.77 MB of a 4.79 MB response no client read. */
 export type Thread = components["schemas"]["ThreadWithQueue"];
+export type UnsendResult = components["schemas"]["UnsendResult"];
 
 // ---- The event log (the wire shapes) ---------------------------------------
 // A thread IS an append-only, sequence-numbered event log; everything else about
@@ -471,6 +479,12 @@ export type CutState = Pick<
 /** The queue, as every read of a thread reports it. */
 export type QueueState = components["schemas"]["QueueState"];
 
+/** Why the platform is holding a chat's next turn back (the usage limit). */
+export type QueueWaiting = components["schemas"]["QueueWaiting"];
+
+/** When a queued message may go out (backend services/send_rules). */
+export type SendRule = components["schemas"]["SendRule"];
+
 /** One line of the conversation this chat could be on (ADR 0020).
  *
  *  A branch is a named pointer to a message. Going back to an earlier point
@@ -547,6 +561,12 @@ export type ChatPrefsPatch = components["schemas"]["ChatPrefs"];
 
 export type Provider = components["schemas"]["Provider"];
 
+// Which model a chat runs on when it picked none (GET/POST
+// /api/chat/model-defaults): the global default, one per scope, and the local
+// model compactions are sent to. Same write rules as `ChatPrefsPatch`.
+export type ModelDefaults = components["schemas"]["ModelDefaultsOut"];
+export type ModelDefaultsPatch = components["schemas"]["ModelDefaultsIn"];
+
 export const chatApi = {
   // ONE FILE PER REQUEST, and the request happens on drop rather than on send.
   // A 12MB screenshot uploading inside the send would make Send feel broken for
@@ -590,6 +610,14 @@ export const chatApi = {
     return fetch(`/api/chat/threads${qs ? `?${qs}` : ""}`).then(j<ThreadSummary[]>);
   },
 
+  // Title matches first, then chats whose messages hold every word. The ranking
+  // is the server's (services/chat_search); the rows come from the list.
+  searchThreads: (q: string, contextKey?: string) => {
+    const p = new URLSearchParams({ q });
+    if (contextKey) p.set("context", contextKey);
+    return fetch(`/api/chat/threads/search?${p}`).then(j<ThreadSearchHit[]>);
+  },
+
   // `mode` is sent only when the operator chose one on the blank chat before
   // sending; omitted, the server applies their default for new chats.
   createThread: (contextKey: string, title = "", mode?: ChatModeId) =>
@@ -619,6 +647,15 @@ export const chatApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     }).then(j<ChatPrefs>),
+
+  getModelDefaults: () => fetch(`/api/chat/model-defaults`).then(j<ModelDefaults>),
+
+  setModelDefaults: (patch: ModelDefaultsPatch) =>
+    fetch(`/api/chat/model-defaults`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then(j<ModelDefaults>),
 
   // The thread's SETTINGS: title, model, mode, card states, scope. Called once
   // when a chat opens and after a write that changes one of them.
@@ -665,6 +702,15 @@ export const chatApi = {
       body: JSON.stringify({ anchor, mode }),
     }).then(j<{ branch: { id: string }; branches: Branch[] }>),
 
+  // Take one of your messages back out: the line ends just before it again and
+  // it is removed with its reply, unless another line still reaches it.
+  unsendMessage: (id: string, message: string) =>
+    fetch(`/api/chat/threads/${encodeURIComponent(id)}/unsend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    }).then(j<UnsendResult>),
+
   // Show a different branch. One pointer moves; nothing else does.
   switchBranch: (id: string, branchId: string) =>
     fetch(`/api/chat/threads/${encodeURIComponent(id)}/branches/${encodeURIComponent(branchId)}`,
@@ -699,6 +745,25 @@ export const chatApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode }),
     }).then(j<{ id: string; mode: string }>),
+
+  // How much the chat asks before it acts. Saved on change and carried into a
+  // turn already running, so a switch applies to its next call.
+  setPermissionMode: (id: string, mode: string) =>
+    fetch(`/api/chat/threads/${id}/permission-mode`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    }).then(j<{ id: string; mode: string | null }>),
+
+  // Model and effort, saved on change. They used to reach the thread only with a
+  // message, so a pick left unsent was gone on the next load. An omitted field is
+  // left alone; a blank effort clears the chat's own choice.
+  setThreadModel: (id: string, pick: { model?: string; effort?: string }) =>
+    fetch(`/api/chat/threads/${id}/model`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(pick),
+    }).then(j<components["schemas"]["ThreadModelSet"]>),
 
   rescopeThread: (id: string, contextKey: string) =>
     fetch(`/api/chat/threads/${id}/rescope`, {
@@ -797,8 +862,11 @@ export const chatApi = {
                        attachments?: { id: string; name: string; kind: string }[];
                        draftKey?: string;
                      }) =>
-    fetch(`/api/chat/threads/${threadId}/inject`, {
+    // A deadline, because a mid-turn message waiting on a stalled backend
+    // otherwise sits "sending" for as long as the edge holds the request.
+    withDeadline((signal) => fetch(`/api/chat/threads/${threadId}/inject`, {
       method: "POST",
+      signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         content,
@@ -812,7 +880,7 @@ export const chatApi = {
         ...(opts?.sentAt ? { sent_at: opts.sentAt } : {}),
         ...(opts?.draftKey ? { draft_key: opts.draftKey } : {}),
       }),
-    }).then(j<{
+    }), SEND_TIMEOUT_MS).then(j<{
       delivered: boolean; injected?: boolean; queued_for_turn?: boolean;
       // The chat is running something that reads no input (a slash command, a
       // voice turn). TAKEN AND DURABLE: the server recorded it on the thread's
@@ -842,6 +910,23 @@ export const chatApi = {
   releaseQueue: (threadId: string) =>
     fetch(`/api/chat/threads/${threadId}/queued/release`, { method: "POST" })
       .then(j<QueueState>),
+
+  // Change when one queued message goes out. `null` is Send now.
+  setQueuedRule: (threadId: string, clientId: string, when: SendRule | null) =>
+    fetch(`/api/chat/threads/${threadId}/queued/${encodeURIComponent(clientId)}/when`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ when }),
+    }).then(j<QueueState>),
+
+  // What this chat's model runs on and who else holds it. `needs` empty means
+  // it runs elsewhere and never waits for the machine.
+  threadResources: (threadId: string) =>
+    fetch(`/api/resources/threads/${threadId}`)
+      .then(j<components["schemas"]["ThreadResources"]>),
+
+  usageLimits: () =>
+    fetch(`/api/usage/limits`).then(j<components["schemas"]["UsageLimits"]>),
 
   // Stop a running turn. Not "stop watching it": the run's process group is
   // signalled, whatever it produced is committed as the reply, and the thread

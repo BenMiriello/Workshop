@@ -40,6 +40,9 @@ async def _run_guarded(turn, meta, coro) -> None:
     await task
 
 
+_LOST_NOTICES = (chat_store.LOST_TURN_TEXT, chat_store.LOST_TURN_RESUMING_TEXT)
+
+
 def _live(turn_id: str, thread_id: str, *, spawned: bool = True) -> build_streaming.Turn:
     t = build_streaming.Turn(id=turn_id, thread_id=thread_id, agent_slug="a")
     t.spawned = spawned
@@ -377,7 +380,9 @@ class TestStartupReconcile:
         assert [e["state"] for e in events if e["kind"] == "turn"] == ["started", "lost"]
         last = chat_store.get_thread(tid)["messages"][-1]
         assert last["role"] == "assistant"
-        assert last["content"] == chat_store.LOST_TURN_TEXT
+        # A fresh turn with nothing queued behind it is resumed automatically;
+        # the auto-resume guards are pinned in test_chat_auto_resume.py.
+        assert last["content"] == chat_store.LOST_TURN_RESUMING_TEXT
         assert "restarted mid-turn" in last["content"]
 
     def test_a_run_this_process_is_driving_is_left_alone(self, thread):
@@ -387,7 +392,7 @@ class TestStartupReconcile:
         build_streaming.reconcile_threads()
         assert chat_store.active_turn_id(tid) == "run-live"
         assert not [m for m in chat_store.get_thread(tid)["messages"]
-                    if m["content"] == chat_store.LOST_TURN_TEXT]
+                    if m["content"] in _LOST_NOTICES]
 
     def test_an_idle_thread_is_untouched(self, thread):
         tid = thread["id"]
@@ -402,7 +407,7 @@ class TestStartupReconcile:
         build_streaming.reconcile_threads()
         build_streaming.reconcile_threads()
         lost = [m for m in chat_store.get_thread(tid)["messages"]
-                if m["content"] == chat_store.LOST_TURN_TEXT]
+                if m["content"] in _LOST_NOTICES]
         assert len(lost) == 1
 
 

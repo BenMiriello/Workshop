@@ -210,3 +210,20 @@ export function dragHasFiles(dt: DataTransfer | null): boolean {
   if (!dt) return false;
   return Array.from(dt.types || []).includes("Files");
 }
+
+/** Upload files for a message of their own, past the same checks the box
+ *  applies, without putting them in the box. What fails is left out. */
+export async function uploadRefs(
+  files: File[], where: { scope: string; threadId: string | null },
+): Promise<AttachmentRef[]> {
+  const { accepted } = admit([], files);
+  const refs = await Promise.all(accepted.map(async ({ file, kind }) => {
+    try {
+      const rec = await chatApi.uploadAttachment(file, where);
+      return { id: rec.id, name: rec.name || file.name, kind };
+    } catch {
+      return null;
+    }
+  }));
+  return refs.filter((r): r is AttachmentRef => !!r);
+}

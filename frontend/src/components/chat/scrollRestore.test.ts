@@ -53,3 +53,17 @@ describe("restoresToBottom", () => {
     expect(restoresToBottom(at(0), 400, V)).toBe(true);
   });
 });
+
+describe("a thread opened on a running turn", () => {
+  // The working line carries Stop. On 2026-10-03 it opened 4000px below the
+  // fold of an embedded chat, under a wall of reasoning.
+  it("lands at the bottom, where the working line is, over a saved mid-thread spot", () => {
+    expect(restoresToBottom(at(1000), H, V, true)).toBe(true);
+    expect(restoresToBottom(at(0), H, V, true)).toBe(true);
+  });
+
+  it("changes nothing for an idle thread", () => {
+    expect(restoresToBottom(at(1000), H, V, false)).toBe(false);
+    expect(restoresToBottom(at(1000), H, V)).toBe(false);
+  });
+});

@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { Check, Copy } from "lucide-react";
+import { copyText } from "@workshop/ui";
 
 // Copy one message's raw text.
 //
@@ -15,12 +16,10 @@ import { Check, Copy } from "lucide-react";
 export default function CopyMessage({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   const copy = useCallback(() => {
-    const done = () => {
+    void copyText(value).then(() => {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1100);
-    };
-    if (navigator.clipboard) navigator.clipboard.writeText(value).then(done, done);
-    else done();
+    });
   }, [value]);
   return (
     <button

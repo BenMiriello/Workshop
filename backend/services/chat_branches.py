@@ -125,8 +125,91 @@ def _sync_fork(org_id, thread_ref: str, anchor: str, mode: str = "after") -> dic
             raise chat_repo.BranchError(
                 "this is the first message in the chat, so there is no point "
                 "before it to go back to")
+        rewind = _rewind_point(s, msg_id)
         branch = chat_repo.branch_from(s, t["id"], msg_id)
-        return {"branch": branch, "branches": chat_repo.list_branches(s, t["id"])}
+        return {"branch": branch, "branches": chat_repo.list_branches(s, t["id"]),
+                "rewind": rewind}
+
+
+def _sync_unsend(org_id, thread_ref: str, message: str) -> dict:
+    """Take one of the operator's messages back out of the conversation: the
+    current line ends just before it again, and the message and everything
+    after it are removed (soft-deleted), so no second line is left behind.
+
+    Removal is only safe for rows no other line reaches. When another line
+    does, this is an ordinary go-back instead and says so (`branched`)."""
+    from sqlalchemy import text
+
+    from db import chat_repo
+    from db.engine import tenant_session
+    with tenant_session(org_id) as s:
+        t = chat_repo.thread_by_ref(s, thread_ref)
+        if t is None:
+            raise chat_repo.BranchError(f"no such thread: {thread_ref}")
+        row = s.execute(text(
+            "SELECT id, parent_id, role FROM chat_message "
+            " WHERE thread_id = :t AND deleted_at IS NULL "
+            "   AND (external_id = :ref OR CAST(id AS text) = :ref) "
+            " ORDER BY seq LIMIT 1"), {"t": str(t["id"]), "ref": message}).one_or_none()
+        if row is None:
+            raise chat_repo.MessageNotFound(f"no message {message} in thread {thread_ref}")
+        if row.role != "user":
+            raise chat_repo.BranchError("only a message you sent can be taken back")
+        if row.parent_id is None:
+            raise chat_repo.BranchError(
+                "this is the first message in the chat, so there is no point "
+                "before it to go back to")
+        point = str(row.parent_id)
+        path = chat_repo.path_ids(s, t["id"])
+        if str(row.id) not in path:
+            raise chat_repo.BranchError("that message is not on the line you are on")
+        rewind = _rewind_point(s, point)
+        dropped = set(path[path.index(str(row.id)):])
+        cur = chat_repo.current_branch(s, t["id"])
+        others = s.execute(text(
+            "SELECT id FROM chat_branch WHERE thread_id = :t AND deleted_at IS NULL "
+            "   AND id <> :b"), {"t": str(t["id"]), "b": cur["id"]}).all()
+        shared = any(dropped.intersection(chat_repo.path_ids(s, t["id"], o.id))
+                     for o in others)
+        if shared:
+            branch = chat_repo.branch_from(s, t["id"], point)
+            return {"branch": branch, "branched": True, "rewind": rewind}
+        s.execute(text("UPDATE chat_branch SET head_message_id = :m WHERE id = :b"),
+                  {"m": point, "b": cur["id"]})
+        s.execute(text(
+            "UPDATE chat_message SET deleted_at = now() "
+            " WHERE id = ANY(CAST(:ids AS uuid[]))"), {"ids": "{" + ",".join(dropped) + "}"})
+        return {"branch": chat_repo.current_branch(s, t["id"]), "branched": False,
+                "rewind": rewind}
+
+
+async def unsend(thread_ref: str, message: str) -> dict:
+    org_id, _ = tenancy.org_and_user()
+    return await run_in_threadpool(_sync_unsend, org_id, thread_ref, message)
+
+
+def _rewind_point(s, msg_id: str) -> dict | None:
+    """Where the CLI session stood at message `msg_id`, when going back to it
+    can be a resume at that point rather than a new session.
+
+    Only a reply stretch records one (`meta.cli`, written at commit), so going
+    back to just after a reply rewinds and going back to just after one of the
+    operator's own messages does not: the session has no point at which it had
+    read that message and not yet answered it. A /compact or /clear in what is
+    being left does not rule it out, since the session that holds the point is
+    kept whole either way; what the CLI can still find is measured against its
+    own file when the next turn starts (`build_streaming.session_reaches`)."""
+    from sqlalchemy import text
+
+    row = s.execute(text(
+        "SELECT role, kind, meta FROM chat_message WHERE id = :m"),
+        {"m": str(msg_id)}).one_or_none()
+    if row is None or row.role != "assistant" or row.kind != "message":
+        return None
+    cli = (row.meta or {}).get("cli") or {}
+    if not cli.get("session") or not cli.get("at"):
+        return None
+    return {"session": cli["session"], "at": cli["at"]}
 
 
 async def fork(thread_ref: str, anchor: str, mode: str = "after") -> dict:
@@ -142,7 +225,9 @@ def _sync_switch(org_id, thread_ref: str, branch_id: str) -> dict:
         if t is None:
             raise chat_repo.BranchError(f"no such thread: {thread_ref}")
         branch = chat_repo.switch_branch(s, t["id"], branch_id)
-        return {"branch": branch, "branches": chat_repo.list_branches(s, t["id"])}
+        head = branch.get("head_message_id")
+        return {"branch": branch, "branches": chat_repo.list_branches(s, t["id"]),
+                "rewind": _rewind_point(s, head) if head else None}
 
 
 async def switch(thread_ref: str, branch_id: str) -> dict:
@@ -201,17 +286,20 @@ def _sync_state(org_id, thread_ref: str) -> dict:
         # NEVER BRANCHED means never filtered. One branch is the state every
         # thread starts in and stays in until the operator uses the feature, so
         # this is the answer for almost every read, and it makes the whole
-        # mechanism inert until it is asked for.
-        if n < 2:
+        # mechanism inert until it is asked for. A message taken back (`unsend`)
+        # is the one way to leave the path without a second branch.
+        if n < 2 and not s.scalar(text(
+                "SELECT EXISTS (SELECT 1 FROM chat_message WHERE thread_id = :t "
+                "AND deleted_at IS NOT NULL)"), {"t": t["id"]}):
             return {"branch": branch, "count": n, "hidden": None}
         ids = chat_repo.path_ids(s, t["id"])
         # Everything in this conversation that is NOT on the current path. Asked
         # this way round because it is the set the filter needs and because it
-        # is the smaller one: a thread is mostly the line you are on.
+        # is the smaller one: a thread is mostly the line you are on. Removed
+        # rows count: their events are still in the file log.
         rows = s.execute(text(
             "SELECT external_id FROM chat_message "
             " WHERE thread_id = :t AND external_id IS NOT NULL "
-            "   AND deleted_at IS NULL "
             "   AND NOT (id = ANY(CAST(:ids AS uuid[])))"),
             {"t": t["id"], "ids": "{" + ",".join(ids) + "}"}).all()
         return {"branch": branch, "count": n, "hidden": {r[0] for r in rows}}
@@ -362,9 +450,13 @@ def _close_turn(s, thread_uuid, ev: dict, ev_meta: dict) -> None:
     # the only wrong answer is to lose the text with it. Whatever cannot be
     # placed in an opened row goes into the final one, so the split comes out
     # coarser than it should and nothing is missing.
+    session = (ev_meta.get("cli") or {}).get("session")
     for i, row in enumerate(opened):
         piece = pieces[i] if i < len(pieces) - 1 else []
-        chat_repo.fill_message(s, row, content=_text_of(piece), segments=piece)
+        at = piece[-1].get("cli_at") if piece else None
+        chat_repo.fill_message(s, row, content=_text_of(piece), segments=piece,
+                               meta={"cli": {"session": session, "at": at}}
+                               if session and at else None)
     rest = pieces[len(opened):] if len(opened) < len(pieces) else [pieces[-1]]
     tail = [seg for piece in rest for seg in piece]
     if len(opened) > len(pieces) - 1:

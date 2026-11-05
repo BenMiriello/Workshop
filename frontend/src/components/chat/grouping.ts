@@ -194,8 +194,8 @@ export type TurnItem =
 
 export type TurnBlock =
   | { t: "prose"; text: string }
-  // The model's reasoning, folded away by default. Its own block so it renders
-  // as a "Thought" disclosure and never joins the prose or the step count.
+  // The model's reasoning. Its own block so it renders muted and never joins
+  // the prose or the step count.
   | { t: "thinking"; text: string }
   // A contiguous stretch of machine work between two prose blocks.
   | { t: "run"; items: TurnItem[] };
@@ -426,6 +426,17 @@ export function workNarrationPreview(work: ChatSegment[]): string {
   // itself must not wrap, so CSS ellipsis cuts it at the reader's real width
   // instead of a guessed character count.
   return last ? last.text.replace(/\s+/g, " ").trim() : "";
+}
+
+/** The first line of the turn's reasoning, for the collapsed work row when the
+ *  turn narrated nothing. One line only: the row ellipsises it in CSS. */
+export function workThinkingPreview(work: ChatSegment[]): string {
+  for (const s of work) {
+    if (s.t !== "thinking") continue;
+    const line = s.text.split("\n").find((l) => l.trim());
+    if (line) return line.trim();
+  }
+  return "";
 }
 
 /** How long a whole turn took, for the line that summarises its work.

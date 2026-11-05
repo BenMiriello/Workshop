@@ -17,7 +17,7 @@ a new app's assistant never edits this file. Adding chat to a fresh app = write
 one provider (in the app) + register it + drop the <ChatDock contextKey="..."> in.
 
 Per-provider context is bounded — Plaid balances + last-30d-summary + computed
-budget go in for budget chat; latest commute decision for commute chat; etc.
+state go in for an app's chat; etc.
 We never dump raw transaction lists (too large + redundant); the engine has
 already categorized them into actuals per bucket.
 """
@@ -29,7 +29,25 @@ import os
 import re
 from typing import Any
 
+from services import app_chat, app_scope_turn
+
 log = logging.getLogger("workshop.chat_context")
+
+
+# ENABLE_CHAT_TOOLS gates chat tools. The MCP-startup race that kept this off has been
+# resolved (2026-06-15): the `claude -p` CLI starts --mcp-config servers fully
+# async by default and fires the first model turn ~176ms BEFORE the stdio
+# handshake completes, so the model saw `tools: []` (init event: server
+# `pending`, tools_count=0) and either admitted no-tools or fabricated a tool
+# call as literal text. The fix lives in llm_router.call_cloud's narrow-tool
+# path: it sets MCP_CONNECTION_NONBLOCKING=false in the subprocess env, which
+# flips the CLI's internal gate to AWAIT the MCP connection before the first
+# turn (bounded by the CLI's own 30s connect timeout). Verified end to end and
+# reproducibly: with it set the init event shows the server `connected`,
+# tools_count=7, and the model emits a real tool_use + consumes a real
+# tool_result (e.g. budget chat searching Plaid transactions). See
+# llm_router._MCP_BLOCK_STARTUP_ENV for the full mechanism.
+ENABLE_CHAT_TOOLS = True
 
 
 def operator_name() -> str:
@@ -138,14 +156,15 @@ def agent_cwd(scope_dir) -> str:
     real host path does not exist inside the sandbox for the scope, so it
     cannot be echoed. The prompt echoed it anyway, from two places that each
     resolved the question on their own, and only `runtime_briefing` got it
-    right. One function so the briefing, the capabilities block and the build
-    personas cannot disagree about where the reader is.
+    right. One function so the briefing, the capabilities block, the agent
+    self-preamble and the build personas cannot disagree about where the reader
+    is.
 
-    An unconfined turn is a real configuration (`WORKSHOP_SCOPED_EXEC=0`, or a
-    host that cannot namespace) and gets the real answer, because there the real
-    directory IS where the agent is standing."""
+    The answer is the spawn path's, not a second reading of the flag:
+    `scoped_exec.spawn_argv` refuses any turn it cannot confine, so there is no
+    unconfined turn to describe, and `scope_dir` is never echoed."""
     from services import scoped_exec
-    return scoped_exec.MOUNTPOINT if scoped_exec.enabled() else str(scope_dir)
+    return scoped_exec.agent_root()
 
 # The three pickable models surfaced in the composer's model selector, full ids.
 # Sourced from llm_router so they never drift from the actual call tiers.
@@ -217,8 +236,9 @@ def normalize_model(value: str | None) -> str | None:
 # the operator edits the fields and clicks a registered client action. This string
 # is appended platform-wide via role_preamble so every provider knows the FORMAT;
 # each per-provider persona decides WHEN (and which `kind`) to emit.
-UI_CARD_PROTOCOL = (
-    "=== INTERACTIVE UI CARDS (ui-card) ===\n"
+_UI_CARD_HEAD = "=== INTERACTIVE UI CARDS (ui-card) ===\n"
+
+_UI_CARD_FORMAT = (
     "You can render an interactive widget inline in your reply by emitting a "
     "fenced block tagged `ui-card` whose body is JSON. The client renders it as "
     "an editable form (fields + buttons) using the app design system; it is NOT "
@@ -251,6 +271,9 @@ UI_CARD_PROTOCOL = (
     "to take the action it represents, never unprompted and never as decoration. "
     "Explain the action in plain words next to the card, and emit at most one "
     "card per reply.\n\n"
+)
+
+_PROMPT_CARD_RULE = (
     "ASKING THE OPERATOR A QUESTION (the `prompt` card).\n"
     "When you need the operator to answer something before you can continue "
     "(choose between options, confirm a name, pick a value), emit a `prompt` "
@@ -276,6 +299,18 @@ UI_CARD_PROTOCOL = (
     "no question tool here, so a `prompt` card is how you ask and actually get "
     "an answer back. A question written as plain prose also works, but the card "
     "is what gives the operator options to tap."
+)
+
+UI_CARD_PROTOCOL = _UI_CARD_HEAD + _UI_CARD_FORMAT + _PROMPT_CARD_RULE
+
+# An app's own assistant has one card it can use, the question, so it is told
+# that one and not the general format, whose field types and handlers belong to
+# the platform's own cards.
+APP_UI_CARD_PROTOCOL = (
+    _UI_CARD_HEAD
+    + "A fenced block tagged `ui-card` with a JSON body renders as a form, not "
+    "as code. This chat has one kind, and at most one goes in a reply.\n\n"
+    + _PROMPT_CARD_RULE
 )
 
 # The `task-proposal` ui-card: how a chat scopes work into a TRACKED ticket
@@ -506,15 +541,34 @@ NOTE_PROTOCOL = (
 _RULES_FILES = ("AGENTS.md", "CLAUDE.md", ".cursorrules",
                 ".github/copilot-instructions.md")
 
+# An installation's own rules for a scope, kept untracked beside the tracked
+# ones: `CLAUDE.local.md` is the Claude Code convention, `AGENTS.local.md` its
+# cross-vendor spelling. They carry what is true of one installation and must
+# never be committed, so they are appended rather than chosen between.
+_LOCAL_RULES_FILES = ("AGENTS.local.md", "CLAUDE.local.md")
 
-def _agent_rules(read) -> str:
-    """The scope's agent-instructions text, AGENTS.md preferred, common aliases
-    after it. `read` is a provider's own `_read(name)->str`."""
-    for name in _RULES_FILES:
+_LOCAL_RULES_HEADER = "--- Local rules for this installation (untracked) ---"
+
+
+def _first_nonempty(read, names) -> str:
+    for name in names:
         text = read(name)
         if text and text.strip():
             return text
     return ""
+
+
+def _agent_rules(read) -> str:
+    """The scope's agent-instructions text, AGENTS.md preferred, common aliases
+    after it, followed by the installation's local rules file when one exists.
+    `read` is a provider's own `_read(name)->str`."""
+    tracked = _first_nonempty(read, _RULES_FILES)
+    local = _first_nonempty(read, _LOCAL_RULES_FILES)
+    if not local:
+        return tracked
+    parts = [tracked.rstrip()] if tracked.strip() else []
+    parts.append(f"{_LOCAL_RULES_HEADER}\n\n{local.strip()}")
+    return "\n\n".join(parts)
 
 # Git worktree / branch-philosophy pointer (Phase G3). Points agents at the
 # git-worktree-workflow skill and states the canonical-branch rule inline, so the
@@ -619,28 +673,35 @@ def strip_use_skill(text: str) -> str:
 # the work -- is the LAST sentence below and must not be dropped again; what was
 # wrong was making it the whole test. Do not re-add a second copy of this
 # decision anywhere; two rules for one decision is the defect.
+# The longest one foreground command may run in a turn, enforced by the CLI
+# (`build_streaming._turn_env` sets BASH_MAX_TIMEOUT_MS from it). The operator's
+# messages are read only between steps, so this is also the longest they can go
+# unread. Prompt text alone did not stop agents waiting ten minutes in a polling
+# loop (2026-10-11, several times in one chat); a command killed at the cap does.
+FOREGROUND_COMMAND_CAP_S = 90
+
+
 DELEGATION_RULE = (
     "=== SUBAGENTS (delegating inside this chat) ===\n"
     "You can launch a subagent with the Agent tool. It runs in its own clean "
     "context and returns a summary into THIS reply; its intermediate steps never "
     "enter this conversation's window. Launch several in one turn when the pieces "
     "are independent.\n\n"
-    "A SUBAGENT BELONGS TO THIS TURN. It runs in this turn's process group, so "
-    "the turn stays open until it reports and you fold its result into the reply. "
-    "You do not have to do anything to keep it alive: a turn does not end while a "
-    "subagent it launched is still working.\n\n"
-    "FOREGROUND AND BACKGROUND BOTH WORK, and they answer different questions. "
-    "Foreground is the simple case: the call returns the subagent's summary. "
-    "Several foreground calls issued in ONE message run at the same time, which "
-    "is the right shape for a fan-out where you need every answer before you can "
-    "continue. Background (run_in_background: true) returns immediately with "
-    "\"Async agent launched successfully\" and reports later in the SAME turn, "
-    "which is the right shape when you want to start something slow and keep "
-    "working while it runs. Neither is a trap and neither is forbidden.\n\n"
-    "WHAT IS STILL NOT TRUE is ending the turn on a promise. A background "
-    "subagent reports into THIS reply, not a later one, so \"I will report back "
-    "when it is done\" is never true of a subagent. Launch it, carry on or wait, "
-    "and answer with its result when it lands.\n\n"
+    "A SUBAGENT BELONGS TO THIS TURN. It runs in this turn's process group, and "
+    "the turn stays open until every background subagent you launched has "
+    "reported. You do not have to do anything to keep one alive.\n\n"
+    "NEVER BLOCK WHILE ONE RUNS. You read the operator's new messages only "
+    "between steps, so any call that blocks for minutes leaves them unread for "
+    "that long: a foreground subagent doing long work, a sleep or polling loop, "
+    "a wait for a commit or a file. Start long work with run_in_background: "
+    "true, say in one line what is running, and END YOUR MESSAGE THERE. While a "
+    "background subagent is outstanding, a text-only message does not end the "
+    "turn: you are woken by the operator's next message and again by each "
+    "subagent's report, and you fold its result in then. Use foreground only "
+    "for a short lookup whose answer your very next step needs.\n\n"
+    "WHAT IS STILL NOT TRUE is ending the turn on a promise. A subagent reports "
+    "into THIS turn, not a later one, so \"I will report back in a later turn\" "
+    "is never true of a subagent. Answer with its result when it lands.\n\n"
     "=== WHERE WORK GOES: FOUR DESTINATIONS. Ask in order, stop at the first "
     "yes ===\n"
     "- Does the result need a reviewable diff, a retry if it fails, and a record "
@@ -775,18 +836,21 @@ _NOTIFY_RULE = (
 
 # ...and the other way where no channel exists, so nothing promises to reach a
 # person it has no way of reaching.
-_NO_NOTIFY_RULE = (
+_NO_NOTIFY_CORE = (
     "YOU CANNOT REACH THE OPERATOR OUTSIDE THIS CHAT. Anything you write waits "
     "here until they open it, and nothing you can call will get their attention "
     "sooner. So do not say you will let them know, or that you have notified "
     "them: finish what you can, and leave the result here where it will be "
-    "found. Work that must reach someone later leaves as a Ticket."
+    "found."
 )
+
+_NO_NOTIFY_RULE = _NO_NOTIFY_CORE + " Work that must reach someone later leaves as a Ticket."
 
 
 def delegation_block(tools_active: bool, is_build: bool = False,
                      background: bool = False, wakeup: bool = False,
-                     notify: bool = False) -> str:
+                     notify: bool = False, subagents: bool = True,
+                     tickets: bool = True) -> str:
     """The subagent rule plus the named delegates this instance can call.
 
     Named subagents come from the same registry the Agents page reads
@@ -800,6 +864,15 @@ def delegation_block(tools_active: bool, is_build: bool = False,
     """
     if not tools_active:
         return ""
+    tail = ("\n\n" + _BACKGROUND_RULE) if background else ""
+    tail += ("\n\n" + _WAITING_RULE) if is_build else ""
+    tail += "\n\n" + (_WAKEUP_RULE if wakeup else _NO_WAKEUP_RULE)
+    tail += "\n\n" + (_NOTIFY_RULE if notify else
+                       _NO_NOTIFY_RULE if tickets else _NO_NOTIFY_CORE)
+    if not subagents:
+        # No Agent tool (an app's assistant), so neither the subagent rule nor
+        # the four-destination decision built around it is true of this chat.
+        return tail.lstrip("\n")
     lines: list[str] = []
     try:
         from services import agents_registry
@@ -819,10 +892,6 @@ def delegation_block(tools_active: bool, is_build: bool = False,
         "\n\nNo named subagents are installed; the general-purpose worker is the "
         "only delegate."
     )
-    tail = ("\n\n" + _BACKGROUND_RULE) if background else ""
-    tail += ("\n\n" + _WAITING_RULE) if is_build else ""
-    tail += "\n\n" + (_WAKEUP_RULE if wakeup else _NO_WAKEUP_RULE)
-    tail += "\n\n" + (_NOTIFY_RULE if notify else _NO_NOTIFY_RULE)
     return DELEGATION_RULE + named + tail
 
 
@@ -911,9 +980,11 @@ def _grants_workshop_tool(provider: "ContextProvider", tool_id: str) -> bool:
     launch without saying so, so this answered True for a project chat while the
     chat had ZERO `mcp__workshop__*` tools -- L1 naming every one of them, which
     is precisely the told-but-absent error `services/orientation` exists to
-    prevent. Measured 2026-09-17. Serving the server over loopback instead is
-    ticket `1e2b7f87`; until then the grant answers what is true, so the map
-    goes honestly silent rather than confidently wrong.
+    prevent. Measured 2026-09-17. The server is now served by the backend over
+    HTTP (ticket `1e2b7f87`), which every confined turn reaches, so this answers
+    True there; under the stdio fallback (`WORKSHOP_MCP_TRANSPORT=stdio`) it
+    still answers what is true, and the map goes honestly silent rather than
+    confidently wrong.
     """
     try:
         if is_build_provider(provider):
@@ -944,6 +1015,12 @@ def _mcp_server_reachable(tool_id: str, scope_dir) -> bool:
 
     return app_registry.mcp_server_reachable(
         server, str(scope_dir) if scope_dir else None)
+
+
+def grants_search(provider: "ContextProvider") -> bool:
+    """Does this chat actually have `search`? Read by every block that tells a
+    chat its older messages can be searched."""
+    return _grants_workshop_tool(provider, SEARCH_TOOL)
 
 
 def _grants_background(provider: "ContextProvider") -> bool:
@@ -995,6 +1072,7 @@ def role_preamble(
     background: bool = False,
     wakeup: bool = False,
     notify: bool = False,
+    app_scoped: bool = False,
 ) -> str:
     """Platform-owned layer-1 system facts, generated from the ACTUAL run config
     (tools_active is computed in routes/chat.py from the same branch that decides
@@ -1007,7 +1085,8 @@ def role_preamble(
     platform), instead of the strict data-context "egress blocked" text.
     background / wakeup / notify -> this chat's REAL grant of the three
     chat-scope write tools, so each paragraph is present exactly where its tool
-    is.
+    is. app_scoped -> an app's own assistant: told the tools it has and
+    nothing about files, a shell, egress or delegating, none of which it has.
     """
     if not tools_active:
         return (
@@ -1018,6 +1097,17 @@ def role_preamble(
             "context only; if an action is needed, tell the operator the exact "
             "steps to take or offer to draft the text for them."
             + "\n\n" + UI_CARD_PROTOCOL
+            + "\n\n" + _STYLE_RULE
+        )
+    if app_scoped:
+        return (
+            "=== YOUR CAPABILITIES (read this first) ===\n"
+            f"You have {tool_summary or 'the tools this app gives you'}. You have "
+            "no files, shell or code tools: work through these tools and the "
+            "conversation.\n\n"
+            + delegation_block(True, False, background, wakeup, notify,
+                               subagents=False, tickets=False)
+            + "\n\n" + APP_UI_CARD_PROTOCOL
             + "\n\n" + _STYLE_RULE
         )
     from services import installation as _inst
@@ -1140,7 +1230,7 @@ def agent_self_preamble(
     lines = [
         f"You are {name} (@{slug}), a {role} agent in {operator_name()}'s Workshop.",
         f"SCOPE: {scope}. Where you work and the corpus you can see.",
-        f"WORKSPACE: {cwd}",
+        f"WORKSPACE: {agent_cwd(cwd) if cwd else 'none'}",
     ]
     lines.append(
         f"TOOLS: {', '.join(granted)}. In your workspace, and nothing else "
@@ -1258,7 +1348,7 @@ def _detect_stack(dir_path) -> tuple[list[str], bool]:
             labels.append("docker-compose")
         # A real source tree means an actual FILE somewhere that isn't a scaffold
         # doc or dotfile — an empty `src/` dir does NOT count (that is exactly the
-        # commute-shadow scaffold case). Bounded walk; only reached when no
+        # scaffold-shadowing-an-app case). Bounded walk; only reached when no
         # package.json/pyproject/etc marker already proved source above.
         if not has_source:
             scaffold_docs = {"PROJECT.md", "TODO.md", "AGENTS.md", "README.md", ".gitignore"}
@@ -1350,7 +1440,7 @@ def chat_mode_block(mode: str | None) -> str:
     )
 
 
-def turn_contract(timeout_s: float | int = 0) -> str:
+def turn_contract(timeout_s: float | int = 0, app_scoped: bool = False) -> str:
     """The rule that decides when a turn ends. Re-sent on EVERY turn.
 
     Why this exists: an agent in this chat has no way to observe the stop
@@ -1373,7 +1463,7 @@ def turn_contract(timeout_s: float | int = 0) -> str:
     # false constraint on a turn's length is exactly what makes an agent wrap up
     # work it should be finishing.
     budget = float(timeout_s or 0)
-    bound = (
+    bound = _APP_WAIT_RULE if app_scoped else (
         "There is NO cap on this turn: no step limit and no time limit. It runs "
         "until the work is done. Running long is fine and expected; stopping "
         "early is the failure mode."
@@ -1382,6 +1472,7 @@ def turn_contract(timeout_s: float | int = 0) -> str:
         f"{max(1, round(budget / 60))}-minute wall clock. Running long is fine "
         "and expected; stopping early is the failure mode."
     )
+    background = _APP_NO_BACKGROUND if app_scoped else _TURN_BACKGROUND
     return (
         "=== HOW THIS TURN ENDS (re-read every turn) ===\n"
         "This turn ends the moment you emit a message that is ONLY text, with no "
@@ -1389,7 +1480,10 @@ def turn_contract(timeout_s: float | int = 0) -> str:
         "and the operator sees a finished turn. A closing summary IS the stop "
         "signal.\n"
         "\n"
+        + background + "\n"
+        "\n"
         "Therefore:\n"
+
         "- While work remains, keep calling tools. Narrate progress as text "
         "ALONGSIDE tool calls; the chat streams those segments live, so the "
         "operator sees what you are doing without the turn ending.\n"
@@ -1406,6 +1500,38 @@ def turn_contract(timeout_s: float | int = 0) -> str:
         + REALTIME_CHANNEL + "\n\n"
         + clock_line()
     )
+
+
+_TURN_BACKGROUND = (
+    "The one exception is background work you launched that has not "
+    "reported yet: a subagent or a command run with run_in_background. Then a "
+    "text-only message does NOT end the turn: you are woken by the operator's "
+    "next message and when each one finishes. So wait for one by ending your "
+    "message, never with a sleep or polling loop or a long foreground call, "
+    "which leaves the operator's messages unread until it returns. "
+    f"A foreground command is stopped after {FOREGROUND_COMMAND_CAP_S} "
+    "seconds, so start anything longer in the background. Never wait for "
+    "the operator to try something: say what to try and end your message."
+)
+
+# An app's assistant has no subagents and no shell, so nothing it starts keeps
+# a turn open.
+_APP_NO_BACKGROUND = (
+    "Nothing you start keeps this turn open: you have no subagents or "
+    "background commands. Never wait for the operator to try something: say "
+    "what to try and end your message."
+)
+
+
+# What an app's assistant is told in place of the no-cap rule above, which is
+# builder doctrine: an app chat's long work is usually something it queued (a
+# render, a job) rather than more of its own steps, and polling for it is how a
+# turn circles.
+_APP_WAIT_RULE = (
+    "WAITING ON LONG WORK. Wait on a render or job with this app's own tool for "
+    "that if it has one; otherwise end the turn saying what is queued and where "
+    "it will appear. Never poll in a loop."
+)
 
 
 def clock_line() -> str:
@@ -1721,10 +1847,8 @@ def runtime_briefing(provider: "ContextProvider") -> str:
             lines.append("App services (the runner owns these; ports are allocated centrally):")
             lines.extend(svc_lines)
         lines.append(
-            f"To RUN it: start from the project's App panel, or POST "
-            f"/base-apps/run/{project_slug}/start. To SEE it: open "
-            f"/projects/{project_slug}/run in Workshop (framed, with a nav overlay). "
-            f"Logs: GET /base-apps/run/{project_slug}/logs?service=<name>."
+            f"To SEE it: open /projects/{project_slug}/run in Workshop (framed, "
+            f"with a nav overlay)."
         )
     except Exception:
         # No resolvable app manifest (e.g. a freestanding build agent) — skip
@@ -1759,16 +1883,21 @@ def runtime_briefing(provider: "ContextProvider") -> str:
         pass
 
     lines.append(
-        "PLATFORM OWNS THE RUNTIME: do NOT pick ports or hand-start/stop the dev "
-        "servers. The app runner allocates ports centrally, spawns each service, "
-        "and auto-restarts crashes.\n"
-        "APPLYING A CHANGE (do this when a change is FINISHED; the "
-        "operator wants the running app updated): a Vite/dev-server service "
-        "hot-reloads on save (nothing to do); for a backend service that does NOT "
-        "hot-reload, make it live by restarting just that service: "
-        f"`bash scripts/restart_app.sh {project_slug} <service>` (re-spawns it on "
-        "your new code, in a separate process). Don't leave the running app on "
-        "stale backend code after you've finished a change."
+        "PLATFORM OWNS THE RUNTIME: do NOT pick ports, start servers or kill "
+        "processes by hand. The app runner allocates ports, spawns each service "
+        "and restarts crashes, and the app_* tools operate it: app_status and "
+        "app_logs to see what it is doing, app_control to start, stop or restart, "
+        "app_build, app_test and app_check to run what this app declares, app_env "
+        "for its settings.\n"
+        "APPLYING A CHANGE (do this when a change is FINISHED; the operator wants "
+        "the running app updated): app_apply builds what the app declares and "
+        "restarts what is running, waits for it to be healthy and reports what "
+        "happened. Don't leave the running app on stale code after you've "
+        "finished a change. Something this app does again and again (an import, "
+        "an eval, a setup step) belongs in its workshop.app.json, as a command "
+        "the tools run, not in a new script that only one chat knows about.\n"
+        "Say what you did in the operator's terms (restarted the api, healthy in "
+        "4 s), not which tool or script ran."
     )
     return "\n".join(lines)
 
@@ -1780,6 +1909,22 @@ def runtime_briefing(provider: "ContextProvider") -> str:
 # learning extends the tail and leaves the cached prefix bytes stable. Best-effort
 # and self-contained (mirrors runtime_briefing's shape) so a missing store never
 # breaks the chat path.
+
+
+def knowledge_layers(provider: "ContextProvider") -> list[str] | None:
+    """The note layers this chat reads, or None for the ordinary read-union.
+
+    An app's own assistant reads its own layer only. The wider `workshop` layer
+    is where every chat's captured preferences land, and notes carry no kind
+    that would tell a builder rule ("finishing a change means merging it") from
+    one about the app, so the layer is the only line there is to draw.
+    """
+    if not is_app_scoped(provider):
+        return None
+    try:
+        return [provider.knowledge_scope()]
+    except Exception:
+        return None
 
 
 def learnings_context(provider: "ContextProvider") -> str:
@@ -1814,7 +1959,7 @@ def learnings_context(provider: "ContextProvider") -> str:
     except Exception:
         scope = "workshop"
     try:
-        block = standing.block(scope)
+        block = standing.block(scope, layers=knowledge_layers(provider))
     except Exception:
         return ""
     if not block:
@@ -1830,7 +1975,7 @@ def orientation_manifest(provider: "ContextProvider") -> str:
     missing store never breaks the chat path. Injected only when tools are
     active, since it points at tools the chat would not otherwise have."""
     try:
-        from services import orientation
+        from services import app_registry, orientation
         # Only claim a chat-scope write tool when this chat is actually granted
         # it. Both answers come from the one grant function the preamble uses,
         # so the map and the capability paragraph cannot disagree about the same
@@ -1840,6 +1985,12 @@ def orientation_manifest(provider: "ContextProvider") -> str:
             background=_grants_background(provider),
             wakeup=_grants_wakeup(provider),
             notify=_grants_notify(provider),
+            app_scoped=is_app_scoped(provider),
+            search=grants_search(provider),
+            query=_grants_workshop_tool(provider, QUERY_TOOL),
+            subagent=_grants_workshop_tool(provider, SUBAGENT_TOOL),
+            operate=(_grants_workshop_tool(provider, OPERATE_TOOL)
+                     and app_registry.workshop_over_http()),
         )
     except Exception:
         return ""
@@ -1851,7 +2002,12 @@ def ambient_digest(provider: "ContextProvider") -> str:
     general chat sees a workspace-wide roll-up. Scope-correct, not a permission
     wall (single-operator). Empty string when there is nothing to inject. Same
     best-effort, self-contained shape as learnings_context so a missing store
-    never breaks the chat path."""
+    never breaks the chat path.
+
+    Nothing for an app's own assistant: the open work in an app's scope is the
+    work of BUILDING the app, which is not the assistant's to act on."""
+    if is_app_scoped(provider):
+        return ""
     try:
         from services import workspace_digest
         body = workspace_digest.digest_for_provider(provider)
@@ -1862,11 +2018,18 @@ def ambient_digest(provider: "ContextProvider") -> str:
     return "=== ONGOING WORK (ambient, across chats) ===\n" + body
 
 
-def working_state_block(provider: "ContextProvider") -> str:
+def working_state_block(provider: "ContextProvider", thread_id: str = "") -> str:
     """This SCOPE's working state: what the last session here was doing, the
     decisions it made and why, what it finished, what it owes.
 
-    Written by compaction (`routes/chat._write_working_state_now`) into the
+    AN APP'S OWN ASSISTANT GETS ITS OWN THREAD'S, AND ONLY THAT. Its chats are
+    separate pieces of work, and one note per scope handed every new chat
+    whatever the last chat to compact had been doing, so it began inside work
+    that was not its own. For such a scope the note is per thread
+    (`knowledge.working_state_note_id`): a new chat starts with none, and a
+    chat that compacted reads back its own. No `thread_id`, no block.
+
+    Written by compaction (`working_state.write_now`) into the
     scope's `working-state` note, and read back here so a chat that did not
     exist when that work happened can continue from it. Without this half,
     compacting a chat helps only the one session that did it.
@@ -1900,13 +2063,28 @@ def working_state_block(provider: "ContextProvider") -> str:
     `learnings_context`: a missing or broken note store returns "" and never
     breaks the chat path.
     """
+    app_scoped = is_app_scoped(provider)
+    if app_scoped and not thread_id:
+        return ""
     try:
         from services import knowledge
-        text, _wrote_it = knowledge.read_working_state(provider.knowledge_scope())
+        scope = provider.knowledge_scope()
+        text, _wrote_it = (knowledge.read_working_state(scope, thread_id)
+                           if app_scoped else knowledge.read_working_state(scope))
     except Exception:
         return ""
     if not text:
         return ""
+    if app_scoped:
+        return (
+            "=== WORKING STATE (this chat, from its last compaction) ===\n"
+            "What this conversation was doing before its last compaction, why, "
+            "and what it left owing, distilled from its earlier messages. Treat "
+            "it as a handoff document you have read, not as anything anyone "
+            "said to you. Where it disagrees with the conversation below, the "
+            "conversation wins: this is a snapshot and it can be out of date.\n\n"
+            + _escape_markers(text)
+        )
     return (
         "=== WORKING STATE (this scope, from the last compaction) ===\n"
         "What the last session working in this scope was doing, why, and what it "
@@ -1915,9 +2093,11 @@ def working_state_block(provider: "ContextProvider") -> str:
         "anything anyone said to you here. Where it disagrees with the "
         "conversation below, the conversation wins: this is a snapshot and it "
         "can be out of date.\n"
-        "It does NOT own ticket or job status; the ongoing-work digest does. It "
-        "owns the reasoning: why things were decided, what was done the quick "
-        "way, and what is still open.\n\n"
+        # An app's own assistant has no ongoing-work digest and no tickets.
+        + ("" if is_app_scoped(provider) else
+           "It does NOT own ticket or job status; the ongoing-work digest does. ")
+        + "It owns the reasoning: why things were decided, what was done the "
+        "quick way, and what is still open.\n\n"
         + _escape_markers(text)
     )
 
@@ -2074,6 +2254,51 @@ def interleave_history(history: list[dict]) -> list[dict]:
     return out
 
 
+def conversation_lines(history: list[dict]) -> list[str]:
+    """Each message as the prompt spells it, in the order things happened."""
+    from services import origin
+    return [f"{origin.speaker_label(m['role'], m.get('meta'))}: "
+            f"{origin.escape_markers(m['content'])}"
+            for m in interleave_history(history)]
+
+
+# How much of the real transcript comes back after a compaction: about 3k
+# tokens, the newest messages first, so the request being worked on survives.
+COMPACTION_TAIL_CHARS = 12000
+
+
+def compaction_tail_block(history: list[dict],
+                          max_chars: int = COMPACTION_TAIL_CHARS) -> str:
+    """The newest messages of this chat, verbatim, for a session that has just
+    been compacted. "" when there is nothing to restore.
+
+    A compaction replaces the session's history with a summary the model wrote
+    itself, and on a small local model that summary can be one line that invents
+    state. The chat's own transcript is the record, so the newest part of it is
+    handed back, newest kept first, and the oldest message that fits is cut
+    rather than dropped.
+    """
+    kept: list[str] = []
+    used = 0
+    for line in reversed(conversation_lines(history)):
+        room = max_chars - used
+        if room <= 0:
+            break
+        if len(line) > room:
+            line = line[:room] + " [...]"
+        kept.append(line)
+        used += len(line)
+    if not kept:
+        return ""
+    return (
+        "=== CONVERSATION SO FAR (restored after compaction) ===\n"
+        "The context was just compacted. These are the latest messages of this "
+        "chat, verbatim from its transcript. Where the compaction summary "
+        "disagrees with them, they are right.\n\n"
+        + "\n\n".join(reversed(kept))
+    )
+
+
 # ---------------------------------------------------------------- base / general
 
 
@@ -2107,6 +2332,10 @@ class ContextProvider:
     # scope would have "declared" something above it. A subclass or an app that
     # genuinely picks a model sets this; everything else falls through.
     declared_model: str | None = None
+    # An app's own assistant, as opposed to a workshop, build or agent chat.
+    # Read through `is_app_scoped`; see `services/app_scope_turn` for what it
+    # switches off.
+    app_scoped: bool = False
 
     @property
     def default_model(self) -> str:
@@ -2185,7 +2414,7 @@ class ContextProvider:
         # cross-cutting questions ("how much in savings", "next train", etc.)
         # without the operator having to switch tabs. The snapshots come from the
         # INSTALLED apps that register one (app_registry) — no app is hardcoded
-        # here, so an instance that doesn't install finance/commute/… simply omits
+        # here, so an instance that doesn't install a given app simply omits
         # that section.
         from services import app_registry
 
@@ -2200,6 +2429,12 @@ class ContextProvider:
     def apply_actions(self, reply: str) -> tuple[str, list[str]]:
         """Returns (cleaned_reply, notes). Default: nothing to apply."""
         return reply, []
+
+    def mcp_specs(self) -> dict[str, dict]:
+        """Launch specs for servers in `mcp_servers` that no installed app
+        registers, resolved at turn start. Empty for every scope whose servers
+        are all registered, which is every scope but a runner app's."""
+        return {}
 
     def custom_prompt(self) -> str:
         """L3: the operator's own free-text system prompt for this chat's scope,
@@ -2216,8 +2451,7 @@ class ContextProvider:
             return ""
 
     # The app id this provider's chat is bound to, for permissions resolution.
-    # Data/app assistants whose `key` matches an apps.json manifest id (budget,
-    # finance, commute, location, ...) bind to that app. The `general` provider
+    # Data/app assistants whose `key` matches an apps.json manifest id bind to that app. The `general` provider
     # and build providers return None (no single app boundary). Subclasses may
     # override if their key differs from their app id.
     def permission_app_id(self) -> str | None:
@@ -2288,6 +2522,18 @@ def _projects_root() -> _Path:
     return paths.projects_root()
 
 
+def _extra_project_roots() -> list[_Path]:
+    """Directories outside `projects/` that a project symlink may point into.
+
+    An installation that keeps some project trees on another disk links them
+    under `projects/`; the containment check below would refuse every one. The
+    operator names those disks in `WORKSHOP_PROJECTS_EXTRA_ROOTS` (os.pathsep
+    separated). Unset means none, which is the check exactly as before.
+    """
+    raw = os.environ.get("WORKSHOP_PROJECTS_EXTRA_ROOTS", "")
+    return [_Path(p).expanduser().resolve() for p in raw.split(os.pathsep) if p.strip()]
+
+
 class ProjectOutsideRoot(ValueError):
     """A project slug resolved to a directory outside `projects/`."""
 
@@ -2311,7 +2557,8 @@ def contained_project_dir(slug: str) -> _Path:
     """
     root = _projects_root().resolve()
     candidate = (root / slug).resolve()
-    if candidate != root and not candidate.is_relative_to(root):
+    if candidate != root and not candidate.is_relative_to(root) \
+            and not any(candidate.is_relative_to(r) for r in _extra_project_roots()):
         raise ProjectOutsideRoot(
             f"project slug {slug!r} resolves outside {root} (to {candidate})")
     return candidate
@@ -2456,8 +2703,18 @@ class DevelopmentContextProvider(ProjectContextProvider):
     label = "Development"
 
     def __init__(self):
-        super().__init__(_self_project_slug() or "development")
+        slug = _self_project_slug()
+        super().__init__(slug or "development")
         self.key = "development"
+        if slug is None:
+            # NO `self: true` ROW, which is every installation that predates the
+            # row and every one that never registered a project. The scope still
+            # means this checkout, the same answer `task_scope` gives for
+            # `development` without consulting the registry; without this the
+            # provider pointed at `projects/development`, which does not exist,
+            # and a rescope to Development was refused as an unknown project.
+            self.dir = paths.workshop_root()
+            self.is_self = True
 
 
 # ---------------------------------------------------------------- agent providers
@@ -2620,8 +2877,8 @@ def agent_provider(slug: str, record: dict) -> ContextProvider:
 
 # EVERY data/assistant provider gets web access — the route + capability_for add
 # WebSearch/WebFetch centrally via effective_allowed_tools(), so providers no
-# longer need to opt in per-instance. (budget/finance keep their Plaid tools and
-# gain web; commute/location gain web; build/project agents run the full toolset.)
+# longer need to opt in per-instance. (apps keep their declared tools and
+# gain web; build/project agents run the full toolset.)
 _general = ContextProvider()
 # Stage 7 (2e): the general chat gets a scoped, read-only workshop-query tool
 # (platform MCP server, always available) so it can answer "what is going on /
@@ -2634,7 +2891,7 @@ _general = ContextProvider()
 # which several OTHER providers (app personas) also fall back to and
 # legitimately use Bash/Edit/Write in. That fallback is not a sandbox scoped to
 # "this operator's own workshop projects" — unset, it is the account's real
-# home directory, carrying `.config/clawdbot`, `.claude`, and every other
+# home directory, carrying `.config/`, `.claude`, and every other
 # credential this box holds; set (as this deployment's secrets.env does), it
 # was the platform repo itself. Once Read/Grep/Glob rode alongside the query
 # tool (2026-07-18, "Widen general chat's tool surface") plus Edit/Write/Bash,
@@ -2659,6 +2916,9 @@ _general = ContextProvider()
 # Build/project/agent chats get these for free (full toolset, no allowlist);
 # they must be named here for the narrow general chat.
 WORKSHOP_TOOLKIT = list(_tool_registry.WORKSHOP_TOOLKIT_IDS)
+APP_TOOLKIT = list(_tool_registry.APP_TOOLKIT_IDS)
+SEARCH_TOOL = _tool_registry.WORKSHOP_SEARCH_TOOL_ID
+QUERY_TOOL = _tool_registry.WORKSHOP_QUERY_TOOL_ID
 _general.allowed_tools = list(_tool_registry.GENERAL_ALLOWLIST_IDS)
 _general.mcp_servers = ["workshop"]
 
@@ -2761,6 +3021,12 @@ def is_build_provider(provider: ContextProvider) -> bool:
     return isinstance(provider, (ProjectContextProvider, MakerAgentContextProvider))
 
 
+def is_app_scoped(provider: ContextProvider) -> bool:
+    """An app's own assistant: no subagent tool, and a turn that inherits none
+    of the account's coding context (`services/app_scope_turn`)."""
+    return bool(getattr(provider, "app_scoped", False)) and not is_build_provider(provider)
+
+
 # Built-in web tools every data/assistant chat gets (no MCP server needed).
 # Operator rule: ALL agents can search + fetch the web, on top of whatever MCP
 # tools the provider declares. Build/project agents already run the full toolset.
@@ -2780,6 +3046,7 @@ SUBAGENT_TOOL = _tool_registry.SUBAGENT_TOOL_ID
 # carries rather than a substring of it.
 BACKGROUND_TOOL = _tool_registry.SPAWN_TOOL_ID
 WAKEUP_TOOL = _tool_registry.WAKEUP_TOOL_IDS[0]
+OPERATE_TOOL = "mcp__workshop__app_control"
 WAKEUP_TOOLS = list(_tool_registry.WAKEUP_TOOL_IDS)
 
 # ...and the third: reaching the operator when they are not looking at the app.
@@ -2802,11 +3069,14 @@ def effective_allowed_tools(provider: ContextProvider) -> list[str]:
     tools = [*provider.allowed_tools, *WEB_TOOLS, SUBAGENT_TOOL]
     if not _can_reach_operator():
         tools = [t for t in tools if t != NOTIFY_TOOL]
+    if is_app_scoped(provider):
+        tools = app_scope_turn.without_subagents(tools)
     return list(dict.fromkeys(tools))
 
 
 def capability_for(
-    provider: ContextProvider, *, enable_chat_tools: bool
+    provider: ContextProvider, *, enable_chat_tools: bool,
+    without: tuple[str, ...] = (),
 ) -> tuple[bool, str]:
     """SINGLE SOURCE OF TRUTH for "does this provider get tools in the actual
     run?" — used both to build the role preamble (so it can't drift) and to
@@ -2830,7 +3100,12 @@ def capability_for(
     if enable_chat_tools:
         # Every data/assistant agent is tools-active: web search + fetch, plus any
         # MCP tools it declares (e.g. Plaid for budget/finance).
-        return True, ("tools: " + ", ".join(effective_allowed_tools(provider)))
+        # The page tools are left to the PAGE AND APPS block, which knows
+        # whether this chat may read a page and whether one is beside it.
+        from services import tool_registry as _tr
+        listed = [t for t in effective_allowed_tools(provider)
+                  if t not in _tr.PAGE_ONLY_TOOL_IDS and t not in without]
+        return True, ("tools: " + ", ".join(listed))
     return False, ""
 
 
@@ -2846,6 +3121,61 @@ def dev_scope_refused(context_key: str | None) -> bool:
         return False
     from wsplatform import dev_mode
     return not dev_mode.dev_mode_on()
+
+
+class AppChatProvider(ContextProvider):
+    """The chat of `app:<slug>`, built from the app's `chat` block
+    (`services/app_chat` reads it)."""
+
+    app_scoped = True
+
+    def __init__(self, decl: app_chat.ChatDeclaration) -> None:
+        self.decl = decl
+        self.key = f"app:{decl.app_slug}"
+        self.slug = decl.app_slug
+        self.label = decl.label
+        self.declared_model = decl.model
+        own = [decl.server_name] if decl.mcp_service else []
+        self.mcp_servers = [*own, "workshop"]
+        # Every tool the app's server lists, by the CLI's server-level rule,
+        # then the toolkit every app chat gets.
+        self.allowed_tools = list(dict.fromkeys([
+            *(f"mcp__{name}__*" for name in own),
+            *APP_TOOLKIT,
+        ]))
+
+    def persona(self) -> str:
+        path = self.decl.persona_file
+        if path is not None:
+            try:
+                text = path.read_text(encoding="utf-8").strip()
+            except OSError as e:
+                log.warning("app chat: persona for %s unreadable: %s", self.key, e)
+                text = ""
+            if text:
+                return text
+        return (f"You are the assistant inside the {self.label} app. Use its "
+                "tools to answer from its data. Be direct and brief.")
+
+    def live_context(self) -> str:
+        return ""
+
+    def mcp_specs(self) -> dict[str, dict]:
+        if not self.decl.mcp_service:
+            return {}
+        port = app_chat.service_port(self.decl.project, self.decl.mcp_service)
+        if port is None:
+            log.warning("app chat: %s declares service %r, which has no port; "
+                        "this turn runs without it", self.key, self.decl.mcp_service)
+            return {}
+        spec = {"type": "http",
+                "url": f"http://127.0.0.1:{port}{self.decl.mcp_path}"}
+        # The CLI's per-server limit on one tool call, in milliseconds. It also
+        # lifts the CLI's one-minute wait for a call's first byte (measured
+        # against CLI 2.1.287 with a 75 s tool).
+        if self.decl.tool_timeout_s:
+            spec["timeout"] = int(self.decl.tool_timeout_s * 1000)
+        return {self.decl.server_name: spec}
 
 
 def get_provider(context_key: str | None) -> ContextProvider:
@@ -2908,6 +3238,12 @@ def get_provider(context_key: str | None) -> ContextProvider:
                             context_key)
         # An invalid slug falls through to `general`, same as any other unknown
         # key — not a 500, not a provider built from an unchecked path.
+    elif context_key and context_key.startswith("app:"):
+        # A RUNNER APP THAT DECLARES A CHAT in its own manifest. An app that
+        # declares none falls through to the map below like any other key.
+        decl = app_chat.declaration(context_key.split(":", 1)[1])
+        if decl is not None:
+            return AppChatProvider(decl)
     elif context_key and context_key.startswith("agent:"):
         # THE AGENT THIS CHAT IS WITH. One branch, because there is one agent
         # context kind: `build:<slug>` is deleted, and the split between an agent
@@ -2937,7 +3273,6 @@ def _provider_entry(provider: ContextProvider, label: str | None = None) -> dict
     composer already makes this one fetch to populate the model picker, and the
     effort ladder has to change in the same paint as the model that determines
     its length."""
-    from routes.chat import ENABLE_CHAT_TOOLS
     from services import chat_store, model_caps
 
     tools_active, _summary = capability_for(provider, enable_chat_tools=ENABLE_CHAT_TOOLS)
@@ -2950,18 +3285,41 @@ def _provider_entry(provider: ContextProvider, label: str | None = None) -> dict
     pref_effort = chat_store.get_default_effort()
     pref_mode = chat_store.get_default_permission_mode()
     models = pickable_models()
+    from services import model_resolution
     return {
         "key": provider.key,
         "label": label if label is not None else provider.label,
         "models": models,
-        "default_model": provider.default_model,
+        # What the composer preselects, so it is the resolver's answer for a
+        # chat that has picked nothing: the operator's choice for this scope,
+        # the scope's declaration, then the operator's global default.
+        "default_model": model_resolution.default_for(
+            provider.key, provider.declared_model)[0],
         "tools_active": tools_active,
-        "model_caps": {m: model_caps.caps_for(m, pref_effort) for m in models},
+        # Per SCOPE as well as per model: an app whose gateway declares the
+        # levels it honours offers that ladder for the models it serves.
+        "model_caps": {m: model_caps.caps_for(m, pref_effort, provider.key,
+                                               pref_mode)
+                       for m in models},
         # Vendor-level, so it sits beside the models rather than inside each one:
         # a permission mode is a property of the CLI running the turn, not of the
         # model answering it.
         "modes": model_caps.modes_payload(pref_mode),
     }
+
+
+def place_providers() -> list[ContextProvider]:
+    """Every scope a chat can be bound to other than an agent: the platform's
+    own, each installed app's, each project's, and each app that declares its
+    own chat (under the `app:<slug>` key that declaration answers)."""
+    out = list(provider_map().values())
+    for slug in _project_slugs():
+        try:
+            out.append(ProjectContextProvider(slug))
+        except ProjectOutsideRoot as e:  # one unreachable project must not sink the list
+            log.warning("project chat provider skipped for %s: %s", slug, e)
+    out.extend(AppChatProvider(d) for d in app_chat.declarations())
+    return out
 
 
 def list_providers(scope: str | None = None) -> list[dict]:
@@ -2993,11 +3351,9 @@ def list_providers(scope: str | None = None) -> list[dict]:
                  if scope.startswith("project:") else None)
         return [_provider_entry(provider, label)]
 
-    out = [_provider_entry(p) for p in provider_map().values()]
-    for slug in _project_slugs():
-        out.append(_provider_entry(
-            ProjectContextProvider(slug), f"Build · project · {slug}"
-        ))
+    out = [_provider_entry(p, f"Build · project · {p.key.split(':', 1)[1]}"
+                           if p.key.startswith("project:") else None)
+           for p in place_providers()]
     # EVERY AGENT IS A PLACE YOU CAN TYPE. This is the entry that makes "chat
     # with an agent" appear in the scope picker at all; it was a list of build
     # agents whose keys the store then rewrote on first send.
@@ -3037,7 +3393,8 @@ def list_providers(scope: str | None = None) -> list[dict]:
 # and emits nothing, which is the common case on every turn of every chat.
 
 
-def instruction_contract(provider: ContextProvider, *, enable_chat_tools: bool) -> str:
+def instruction_contract(provider: ContextProvider, *, enable_chat_tools: bool,
+                         without: tuple[str, ...] = ()) -> str:
     """The instruction surface a session is handed at spawn: the platform role
     preamble (capabilities, the ui-card protocol, the style rule) plus the
     provider's persona (the task-proposal contract, the note protocols).
@@ -3047,7 +3404,7 @@ def instruction_contract(provider: ContextProvider, *, enable_chat_tools: bool) 
     other would differ forever and every turn would re-send the contract.
     """
     tools_active, tool_summary = capability_for(
-        provider, enable_chat_tools=enable_chat_tools)
+        provider, enable_chat_tools=enable_chat_tools, without=without)
     is_build = is_build_provider(provider)
     return (
         role_preamble(
@@ -3071,10 +3428,25 @@ def instruction_contract(provider: ContextProvider, *, enable_chat_tools: bool) 
             # additionally requires that this installation have a channel to
             # reach them on -- see `_grants_notify`.
             notify=_grants_notify(provider),
+            app_scoped=is_app_scoped(provider),
         )
         + "\n\n"
         + provider.persona()
     )
+
+
+def app_system_prompt(provider: ContextProvider, *, enable_chat_tools: bool,
+                      without: tuple[str, ...] = ()) -> str:
+    """The whole system prompt of an app's own assistant: the kernel and the
+    instruction contract, which its first message then does not repeat.
+
+    In the system prompt rather than the first message, a compaction cannot
+    fold the contract into a summary, and nothing of the CLI's coding-agent
+    prompt rides along (`app_scope_turn.system_prompt_flags`).
+    """
+    return (platform_kernel() + "\n\n"
+            + instruction_contract(provider, enable_chat_tools=enable_chat_tools,
+                                   without=without))
 
 
 def contract_digest(contract: str) -> str:

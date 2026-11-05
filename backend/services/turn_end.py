@@ -67,9 +67,19 @@ STUCK_GRACE_S = 60.0
 # stream while it works: measured 2026-09-01, a background agent writing a short
 # essay went 29 seconds between the parent's result and its own first output, and
 # a real research task runs for minutes. 60s would kill exactly the case this
-# exists to support. Ten minutes of COMPLETE silence still bounds a task that
-# died without reporting, and Stop still ends the turn instantly.
-BACKGROUND_GRACE_S = 600.0
+# exists to support. COMPLETE silence still bounds a task that died without
+# reporting, and Stop still ends the turn instantly.
+#
+# An hour, not ten minutes, since foreground commands are capped
+# (`chat_context.FOREGROUND_COMMAND_CAP_S`): a long build or test run now goes
+# to the background as a command, which reports nothing while it runs, and ten
+# minutes of that retired the turn and killed the build with it.
+BACKGROUND_GRACE_S = 3600.0
+
+# The same backstop while the CLI is COMPACTING. It announces the start and then
+# says nothing until the boundary: measured 74-76s on ~550k-token sessions
+# (2026-09-23..26), past STUCK_GRACE_S.
+COMPACT_GRACE_S = 600.0
 
 
 @dataclass(frozen=True)
@@ -110,6 +120,9 @@ class TurnProgress:
     # exactly the sense the other three counts mean. Defaults 0, so a caller that
     # does not track it behaves as before.
     background_pending: int = 0
+    # The CLI reported `status: compacting` and has not yet finished. Killing
+    # the process here loses the compaction.
+    compacting: bool = False
     # REPORTS ANNOUNCED BUT NOT YET HANDED TO THE MODEL.
     #
     # A task the turn itself backgrounded reports in two steps: the CLI writes
@@ -166,6 +179,8 @@ def turn_is_over(p: TurnProgress) -> bool:
     # task that dies without reporting.
     if p.background_pending > 0:
         return p.idle_s >= BACKGROUND_GRACE_S
+    if p.compacting:
+        return p.idle_s >= COMPACT_GRACE_S
     # A REPORT THE MODEL HAS NOT BEEN GIVEN YET IS A PROMPT STILL OWED.
     #
     # The case `background_pending` cannot see: the last background task

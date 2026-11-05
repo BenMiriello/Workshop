@@ -31,6 +31,12 @@ describe("orderModels", () => {
     ).toEqual(["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"]);
   });
 
+  it("sorts newest first within Sonnet too, three deep", () => {
+    expect(
+      orderModels(["claude-sonnet-4-6", "claude-sonnet-5", "claude-sonnet-5-5"]),
+    ).toEqual(["claude-sonnet-5-5", "claude-sonnet-5", "claude-sonnet-4-6"]);
+  });
+
   it("puts an unlisted future release of a known family into that family's block", () => {
     // A new Haiku the picker's never seen still belongs in the Haiku block
     // (now the last one), not at the very end with every other unrecognized id.

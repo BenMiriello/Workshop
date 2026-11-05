@@ -78,6 +78,7 @@ corrupting; such a caller must use `asyncio.run_coroutine_threadsafe`.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import logging
 import os
@@ -1086,12 +1087,118 @@ def patch_meta_sync(thread_id: str, **fields: object) -> dict | None:
 # atomic rename is still required, because a reader must never see half a file.
 #
 # If you are tempted to fold this back into meta.json, read the numbers above.
+#
+# THE DISK HALF OF THE WRITE IS NOT DONE ON THE EVENT LOOP. Dropping the fsync
+# was not enough. ext4 flushes a file's data when it is renamed over another
+# (auto_da_alloc), so under disk pressure the rename itself waits for the disk,
+# and it waited on the one thread every request is served from. Measured
+# 2026-10-04: of the 108 event-loop stalls over 1s that the stall catcher dumped
+# from 10-03 12:33 on, 88 were inside this write and 82 of them on the rename
+# line; they came in the hours the host's io_full pressure ran 6-10%, at up to
+# 144 an hour, each one freezing every page and every chat.
+#
+# So while a loop is running, the loop only serialises the draft and hands the
+# text to one writer thread. The newest draft for a file replaces one not yet
+# written, because only the last one is ever read. Until it is on disk, a reader
+# in this process is answered from the hand-off, so nothing can read an older
+# draft than the one last written; a clear goes through the same hand-off, so a
+# late write can never bring back a draft its turn has already dropped. With no
+# loop (a script, a test) nothing can be frozen and the write is done in place.
+
+def _loop_running() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+class _DraftWriter:
+    """The newest handed-off draft per file, and the one thread that writes them.
+
+    Per process by design, and safe under more than one worker: it only holds
+    this process's own writes until they reach the disk, and a process that does
+    not hold a pending draft reads the file, which is the record either way.
+    """
+
+    def __init__(self) -> None:
+        self._cv = threading.Condition()
+        self._pending: dict[Path, str | None] = {}
+        self._thread: threading.Thread | None = None
+
+    def has(self, path: Path) -> bool:
+        with self._cv:
+            return path in self._pending
+
+    def get(self, path: Path, default):
+        with self._cv:
+            return self._pending.get(path, default)
+
+    def hand_off(self, path: Path, text: str | None) -> None:
+        with self._cv:
+            self._pending[path] = text
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(
+                    target=self._run, name="chat-live-writer", daemon=True)
+                self._thread.start()
+            self._cv.notify_all()
+
+    def _run(self) -> None:
+        while True:
+            with self._cv:
+                while not self._pending:
+                    self._cv.wait()
+                batch = dict(self._pending)
+            for path, text in batch.items():
+                _apply_live(path, text)
+                with self._cv:
+                    if path in self._pending and self._pending[path] is text:
+                        del self._pending[path]
+                    self._cv.notify_all()
+
+    def flush(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        with self._cv:
+            while self._pending:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return False
+                self._cv.wait(left)
+        return True
+
+
+_DRAFTS = _DraftWriter()
+
+
+def _apply_live(path: Path, text: str | None) -> None:
+    """One handed-off draft onto disk. A thread deleted meanwhile is left deleted."""
+    try:
+        if text is None:
+            path.unlink(missing_ok=True)
+        elif path.parent.is_dir():
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(text)
+            tmp.replace(path)
+    except OSError as e:
+        log.warning("live draft %s not written: %s", path, e)
+
+
+def flush_live(timeout: float = 5.0) -> bool:
+    """Wait until every handed-off draft is on disk. False if it took longer."""
+    return _DRAFTS.flush(timeout)
+
+
+atexit.register(flush_live, 3.0)
 
 
 def write_live_sync(thread_id: str, live: dict) -> None:
-    """Overwrite the running turn's draft. Cheap by construction; see above."""
+    """Overwrite the running turn's draft. The disk write happens off the loop."""
     _assert_on_loop()
-    _write_json_fast(live_path(thread_id), live)
+    path = live_path(thread_id)
+    if _loop_running() or _DRAFTS.has(path):
+        _DRAFTS.hand_off(path, json.dumps(live, separators=(",", ":")))
+    else:
+        _write_json_fast(path, live)
 
 
 def read_live(thread_id: str) -> dict | None:
@@ -1101,8 +1208,12 @@ def read_live(thread_id: str) -> dict | None:
     file (see `active_turn`, which falls back to the copy in meta.json), or the
     draft was cleared at commit.
     """
+    path = live_path(thread_id)
+    handed = _DRAFTS.get(path, path)
     try:
-        data = json.loads(live_path(thread_id).read_text())
+        if handed is None:
+            return None
+        data = json.loads(path.read_text() if handed is path else handed)
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
@@ -1110,8 +1221,12 @@ def read_live(thread_id: str) -> dict | None:
 
 def clear_live(thread_id: str) -> None:
     """Drop the draft. Called when a turn ends, however it ends."""
+    path = live_path(thread_id)
+    if _loop_running() or _DRAFTS.has(path):
+        _DRAFTS.hand_off(path, None)
+        return
     try:
-        live_path(thread_id).unlink()
+        path.unlink()
     except OSError:
         pass
 

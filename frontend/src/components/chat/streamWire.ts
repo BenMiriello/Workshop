@@ -52,6 +52,10 @@ export const WIRE_KINDS = {
    *  turn commits, so without this frame the live view has no recorded position
    *  to split on at all. See docs/decisions/0018 and transcriptBlocks.ts. */
   cut: "delta",
+  /** The view a turn adopted after a backend restart already had, as the first
+   *  frame of its stream: that process resumed the journal past it, so no
+   *  delta in the replay carries it. Replaces the live segments. */
+  snapshot: "delta",
   /** The model's report of how full its context window is. */
   context: "meter",
   /** The turn is committing; the socket settles and retires. */

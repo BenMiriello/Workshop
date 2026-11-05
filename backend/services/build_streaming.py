@@ -25,11 +25,16 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import (agent_slots, attachment_carry, build_agents,
-                      chat_attachments, chat_drain,
-                      chat_log, chat_queue, chat_store, chat_worktree, leases,
-                      llm_router, model_caps, ownership, reply_guard, turn_end,
-                      usage_ledger, worktrees)
+from services import (agent_slots, app_chat_gateway, app_chat_turns, app_scope_turn,
+                      attachment_carry,
+                      build_agents,
+                      chat_attachments, chat_context, chat_drain,
+                      chat_log, chat_queue, chat_store, chat_worktree,
+                      compaction_context, leases,
+                      llm_providers, llm_router, local_turn, model_caps, model_failures,
+                      ownership,
+                      reply_guard, resources, scope_tree, tool_policy, turn_end, turn_progress,
+                      turn_sandbox, turn_trash, usage_ledger, working_state, worktrees)
 
 log = logging.getLogger("workshop.build_streaming")
 
@@ -139,7 +144,8 @@ def _write_line(turn_id: str, line: str) -> bool:
 
 def answer_permission(turn_id: str, request_id: str, allow: bool,
                       updated_input: dict | None = None,
-                      message: str | None = None) -> bool:
+                      message: str | None = None,
+                      updated_permissions: list[dict] | None = None) -> bool:
     """Answer one `can_use_tool` request. True if the frame reached the process.
 
     The turn is BLOCKED until this lands: the CLI is waiting on stdin and there
@@ -150,6 +156,8 @@ def answer_permission(turn_id: str, request_id: str, allow: bool,
         if allow else
         {"behavior": "deny", "message": message or "Denied by the operator."}
     )
+    if allow and updated_permissions:
+        response["updatedPermissions"] = updated_permissions
     line = json.dumps({
         "type": "control_response",
         "response": {"subtype": "success", "request_id": request_id, "response": response},
@@ -214,14 +222,66 @@ def session_alive(session_id: str | None, cwd: str) -> bool:
     longer exists, and `--resume` on it fails the whole turn with "No
     conversation found with session ID". Checking the file lets callers start a
     fresh session instead of failing."""
-    if not session_id:
+    return session_file(session_id, cwd) is not None
+
+
+def session_reaches(session_id: str | None, cwd: str, point: str) -> bool:
+    """Whether `--resume <session> --resume-session-at <point>` can find
+    `point`, measured against the CLI's own file.
+
+    The CLI looks for the point only on the line it would resume, the chain
+    of parents back from the last entry it wrote, and only after the last
+    compact boundary in the file (that boundary's own parent still counts).
+    Measured on CLI 2.1.311: an entry on a line a truncating resume left, or
+    one further back than a compaction, fails the turn with "No message found
+    with message.uuid". Asking first lets the caller fall back to the
+    transcript instead of failing the operator's message."""
+    path = session_file(session_id, cwd)
+    return bool(path and point) and transcript_reaches(path, point)
+
+
+def transcript_reaches(path: str, point: str) -> bool:
+    """`session_reaches` for a session file already found."""
+    parents: dict[str, str | None] = {}
+    order: dict[str, int] = {}
+    leaf, cut, cut_parent = None, -1, None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f):
+                if '"uuid"' not in line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                uid = ev.get("uuid")
+                if not isinstance(uid, str):
+                    continue
+                parents[uid], order[uid] = ev.get("parentUuid"), i
+                if ev.get("subtype") == "compact_boundary":
+                    cut, cut_parent = i, ev.get("logicalParentUuid")
+                elif ev.get("type") in ("user", "assistant") and not ev.get("isSidechain"):
+                    leaf = uid
+    except OSError:
         return False
+    seen: set[str] = set()
+    while leaf and leaf not in seen:
+        if leaf == point:
+            return order[leaf] > cut or leaf == cut_parent
+        seen.add(leaf)
+        leaf = parents.get(leaf)
+    return False
+
+
+def session_file(session_id: str | None, cwd: str) -> str | None:
+    """Where the CLI keeps this session, or None when it has no copy."""
+    if not session_id:
+        return None
     # The CLI keys the session dir on the cwd IT sees. Under scoped exec that is
     # the mountpoint (/workspace), not the real path, so a session must be found
-    # in that dir for --resume to succeed. Checking the real-cwd dir (or globbing
-    # every dir) would find a session the CLI, chdir'd to /workspace, cannot then
-    # resume, and the turn would fail. So when scoped, look only where the CLI
-    # will look; the failed-resume self-heal is the backstop, not the norm.
+    # in that dir for --resume to succeed. Finding it in the real-cwd dir (or any
+    # other) is not enough on its own: the CLI, chdir'd to /workspace, cannot
+    # resume it from there, so it is adopted into the dir the CLI looks in.
     from services import scoped_exec
     # Under the uid layer the CLI runs (and writes its session files) as the
     # turn-user, HOME'd at its own directory (turn_env()), not the host user's -- and
@@ -239,16 +299,42 @@ def session_alive(session_id: str | None, cwd: str) -> bool:
     encoded = eff_cwd.rstrip("/").replace("/", "-")
     primary = os.path.join(home, ".claude", "projects", encoded, f"{session_id}.jsonl")
     if os.path.exists(primary):
-        return True
-    if scoped:
-        # A session minted before the flip lives under the old real-cwd dir the
-        # CLI can no longer reach. Treat it as gone so the next turn mints a fresh
-        # one and re-sends the assembled history, seamlessly, instead of a doomed
-        # --resume.
+        return primary
+    # A session minted under a different cwd (before turns moved to their own
+    # chat dir, or before scoped exec mounted them at /workspace) sits in a dir
+    # the CLI will not look in, and `--resume` from here fails with "No
+    # conversation found". The id is a unique uuid, so a copy of that file in
+    # the dir the CLI WILL look in resumes the same conversation instead of
+    # starting over from the re-assembled history.
+    return primary if _adopt_session(home, encoded, session_id) else None
+
+
+def _adopt_session(home: str, encoded: str, session_id: str) -> bool:
+    """Copy `session_id` from whichever `~/.claude/projects/*` dir holds it into
+    `encoded`'s dir. The original is left in place. False when no dir holds it
+    or the copy cannot be written (the fresh-session path then takes over)."""
+    projects = os.path.join(home, ".claude", "projects")
+    found = glob.glob(os.path.join(projects, "*", f"{session_id}.jsonl"))
+    if not found:
         return False
-    # Un-scoped: encoding could shift across CLI versions; the id is a unique
-    # uuid, so a glob across all projects is a safe fallback.
-    return bool(glob.glob(os.path.join(home, ".claude", "projects", "*", f"{session_id}.jsonl")))
+    src = found[0]
+    dest_dir = os.path.join(projects, encoded)
+    dest = os.path.join(dest_dir, f"{session_id}.jsonl")
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        tmp = f"{dest}.adopt-{os.getpid()}"
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dest)
+        # The CLI keeps a session's subagent transcripts and spilled tool
+        # results in a sibling dir named for the session.
+        side = os.path.join(os.path.dirname(src), session_id)
+        if os.path.isdir(side):
+            shutil.copytree(side, os.path.join(dest_dir, session_id), dirs_exist_ok=True)
+    except OSError as e:
+        log.warning("session %s: could not adopt it from %s: %s", session_id, src, e)
+        return os.path.exists(dest)
+    log.info("session %s: adopted from %s for resume under %s", session_id, src, encoded)
+    return True
 
 
 @dataclass
@@ -275,6 +361,12 @@ class Turn:
     # name of its own rather than the integer 0 standing in for it. See
     # docs/decisions/0018.
     cut_head: list[str] = field(default_factory=list)
+    # The CLI's id for the last top-level assistant entry this turn streamed:
+    # the point in the session the reply has reached. Stamped on each stretch
+    # as it is cut, and on the reply at commit, so going back to a point in
+    # the transcript can resume the session at the same point
+    # (`--resume-session-at`) instead of starting a new one.
+    cli_leaf: str = ""
     # The prompt size the model last reported for THIS turn, so the composer's
     # meter can move while the turn runs instead of showing the previous turn's
     # number for however long it takes. Pushed on the wire as a `context` event
@@ -560,6 +652,7 @@ async def claim_turn(thread_id: str, turn_id: str, *, model: str | None = None,
                 return active
             if active not in TURNS:
                 chat_store.lose_turn(thread_id, active)
+                app_chat_turns.announce(_thread_brief(thread_id), active, "lost")
         chat_store.begin_turn(thread_id, turn_id, model=model, agent=agent,
                               announce=announce, command=command)
         # Register the turn BEFORE returning. Prompt assembly awaits, and until
@@ -568,6 +661,19 @@ async def claim_turn(thread_id: str, turn_id: str, *, model: str | None = None,
         # over — starting the rival turn the claim exists to prevent.
         _make_turn(thread_id, "", turn_id=turn_id, accepts_input=accepts_input)
         return None
+
+
+def _thread_brief(thread_id: str) -> dict | None:
+    """The thread's id, scope and title from its meta alone, without folding its
+    log: what an app gateway is told about the chat a turn belonged to."""
+    try:
+        meta = chat_log.read_meta(thread_id) or {}
+    except Exception as e:  # noqa: BLE001 - a missing thread has no gateway
+        log.debug("thread %s: meta unreadable: %s", thread_id, e)
+        return None
+    return {"id": thread_id,
+            "scope": scope_tree.scope_for_context(meta.get("context_key")),
+            "title": meta.get("title") or ""}
 
 
 def release_external_turn(thread_id: str, turn_id: str) -> None:
@@ -594,6 +700,26 @@ def release_external_turn(thread_id: str, turn_id: str) -> None:
 def _push(turn: Turn, kind: str, payload: dict) -> None:
     turn.events.append(TurnEvent(kind=kind, payload=payload))
     turn.new_event.set()
+
+
+def _push_snapshot(turn: Turn) -> None:
+    """Open an adopted turn's stream with the view it already has.
+
+    A client attaching to a turn rewinds its live view and rebuilds it from the
+    stream's events, from the first. A turn adopted after a restart resumes its
+    journal where the stored draft ends (`_resume_from`), so its event list
+    starts empty and only ever holds what came after: every client watching it
+    showed "working" over nothing, the thinking and tool calls that came before
+    the restart gone until the turn committed.
+
+    One frame carrying the restored segments and head cuts, pushed before any
+    new output, is the part of the replay this process never saw. Copied, not
+    shared: the drive loop keeps appending to `turn.segments`, and a payload
+    holding the same list would replay those later deltas twice."""
+    _push(turn, "snapshot", {
+        "segments": json.loads(json.dumps(turn.segments)),
+        "cut_head": list(turn.cut_head),
+    })
 
 
 # The CLI's subagent tool. `Agent` is the name it emits (CLI 2.1.143); `Task`
@@ -736,7 +862,6 @@ def _auto_create_worktree_for_chat(thread_id: str) -> dict | None:
         #
         # Same rule fixed in two places, re-broken in the second, which is what
         # re-deriving instead of asking costs.
-        from services import chat_context, chat_worktree
         provider = chat_context.get_provider(thread.get("context_key"))
         project_slug = chat_worktree.project_of(provider)
         if not project_slug:
@@ -888,6 +1013,63 @@ def _rewrite_cli_copy(text: str) -> str:
     return _CLI_COPY.get(text.strip(), text)
 
 
+def session_point(line: str) -> str | None:
+    """The session entry id of a top-level assistant line: a point the session
+    can later be resumed at. A subagent's lines are its own transcript's."""
+    if '"assistant"' not in line or '"uuid"' not in line:
+        return None
+    try:
+        ev = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if ev.get("type") != "assistant" or ev.get("parent_tool_use_id"):
+        return None
+    uid = ev.get("uuid")
+    return uid if isinstance(uid, str) and uid else None
+
+
+def forked_session(line: str) -> str | None:
+    """The session id a turn's `init` line reports."""
+    if '"init"' not in line or '"session_id"' not in line:
+        return None
+    try:
+        ev = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if ev.get("type") != "system" or ev.get("subtype") != "init":
+        return None
+    sid = ev.get("session_id")
+    return sid if isinstance(sid, str) and sid else None
+
+
+def _adopt_fork(turn: "Turn", meta: dict, sid: str | None) -> None:
+    """Point the chat at the session a rewound turn forked into.
+
+    The thread, or the maker agent whose session it is, moves from the session
+    it went back in to the copy, and the rewind is spent. Written to the
+    turn's meta as well, so a turn re-attached after a restart commits under
+    the copy and never forks a second time."""
+    old = meta.get("session_id")
+    if not sid or sid == old:
+        return
+    try:
+        thread = chat_store.get_thread(turn.thread_id) or {}
+        if thread.get("claude_session") == old:
+            chat_store.adopt_thread_session(turn.thread_id, sid)
+        else:
+            build_agents.adopt_session(turn.agent_slug, old, sid)
+        chat_store.clear_rewind(turn.thread_id)
+    except Exception as e:  # noqa: BLE001 - the turn runs either way
+        log.warning("turn %s: adopting forked session %s failed: %s", turn.id, sid, e)
+        return
+    meta.update(session_id=sid, resume_at=None, forked_from=old)
+    try:
+        _write_meta(meta)
+    except OSError as e:
+        log.debug("turn %s: meta write after fork failed: %s", turn.id, e)
+    log.info("turn %s: resumed %s at the point gone back to, as %s", turn.id, old, sid)
+
+
 def _parse_stream_event(line: str) -> tuple[str, dict] | None:
     """Map a single stream-json line into (kind, payload) for the SSE channel.
 
@@ -977,7 +1159,10 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
             # size (input + cached input tokens) of the latest model call — the
             # honest "how full is the window" signal that also drops after an
             # in-session /compact, unlike counting the stored transcript.
-            return ("_multi", {"events": out, "usage": msg.get("usage"), "parent": parent})
+            # `stop_reason` is set only on a message that arrived whole (the
+            # CLI's non-streamed request); a streamed one's blocks carry None.
+            return ("_multi", {"events": out, "usage": msg.get("usage"), "parent": parent,
+                               "stop_reason": msg.get("stop_reason")})
         return ("meta", ev)
     if t == "user":
         # Two different things arrive as `user`:
@@ -1024,6 +1209,18 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
             # that "error_max_turns" can no longer occur: we pass no step cap.
             "subtype": ev.get("subtype"),
             "is_error": bool(ev.get("is_error")),
+            # The CLI gave up on a failed model request and wrote its "API
+            # Error: ..." line as the reply. It exits 0 and the subtype says
+            # "success", so this is the only field that tells (measured on CLI
+            # 2.1.302 against a server answering 500: `is_error` true,
+            # `terminal_reason` "api_error", `api_error_status` 500).
+            "api_error": ev.get("terminal_reason") == "api_error",
+            # That "API Error: ..." line itself, the turn's real reason when it
+            # wrote nothing else (an app gateway's `410 this chat turn has
+            # ended`, a server's 500). Without it the reply fell back to the
+            # CLI's stderr, which then held only its routine start-up notices.
+            "api_error_text": (str(ev.get("result") or "").strip()
+                               if ev.get("terminal_reason") == "api_error" else ""),
             "duration_ms": ev.get("duration_ms"),
             "total_cost_usd": ev.get("total_cost_usd"),
             "usage": ev.get("usage"),
@@ -1041,6 +1238,18 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
             return ("meta", {"subtype": ev.get("subtype"), "task_id": ev.get("task_id"),
                              "backgrounded": bool(ev.get("is_backgrounded")),
                              "subagent_owned": bool(ev.get("owned_by_subagent"))})
+        if ev.get("subtype") == "status":
+            return ("meta", {"subtype": "status", "status": ev.get("status")})
+        if ev.get("subtype") == "api_retry":
+            # A model request failed and the CLI is retrying it. What failed is
+            # kept, because a turn on a local model ends on a run of these with
+            # the reason (`model_failures`).
+            return ("meta", {k: ev.get(k) for k in (
+                "subtype", "attempt", "max_retries", "error_status", "error",
+                "no_response")})
+        if ev.get("subtype") == "compact_boundary":
+            return ("meta", {"subtype": "compact_boundary",
+                             "compact_metadata": ev.get("compact_metadata")})
         return ("meta", {"subtype": ev.get("subtype")})
     # A PARTIAL-MESSAGE FRAME (from --include-partial-messages). The whole reason
     # we ask for these is the model's reasoning: the final `assistant` message
@@ -1058,6 +1267,13 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
                 txt = d.get("thinking") or ""
                 if txt:
                     return ("thinking", {"content": txt, "parent": parent})
+        if se.get("type") == "message_stop":
+            # A request's end, and whether it came whole: the CLI closes a
+            # response it gave up on (stream cut, stalled, interrupted) with its
+            # own `message_stop` carrying `abandoned_blocks` (`model_failures`).
+            return ("meta", {"type": t, "event": "message_stop",
+                             "abandoned": bool(ev.get("abandoned_blocks")),
+                             "parent": parent})
         return ("meta", {"type": t})
     return ("meta", {"type": t})
 
@@ -1137,6 +1353,8 @@ def cut_here(turn: "Turn", ref: str) -> int:
     seal_open_text(turn)
     if turn.segments:
         turn.segments[-1].setdefault("cut_after", []).append(ref)
+        if turn.cli_leaf:
+            turn.segments[-1]["cli_at"] = turn.cli_leaf
     else:
         turn.cut_head.append(ref)
     # AND ON THE WIRE, because the tab that is streaming builds its own copy of
@@ -1364,6 +1582,28 @@ def content_from_segments(segments: list[dict]) -> str:
     return reply_guard.scrub(joined)
 
 
+def narration_from_segments(segments: list[dict]) -> str:
+    """Everything a turn said at the top level, in order: the reply of a turn
+    that was cut short (stopped, timed out, ended by an error) and so has no
+    answer, only its account of where it got to.
+
+    Adjacent text segments are one passage that a mid-turn message split
+    (`seal_open_text`), so they join as written; passages with work between
+    them are separated by a blank line. A subagent's text stays in its own
+    segment, as in `content_from_segments`."""
+    passages, run = [], ""
+    for seg in segments:
+        if seg.get("t") == "text":
+            run += seg.get("text") or ""
+            continue
+        if run.strip():
+            passages.append(run.strip())
+        run = ""
+    if run.strip():
+        passages.append(run.strip())
+    return reply_guard.scrub("\n\n".join(passages))
+
+
 def _turn_content(turn: "Turn") -> str:
     """The operator-visible answer: the TRAILING run of top-level text.
 
@@ -1437,6 +1677,11 @@ def _segment_ingest(turn: "Turn", kind: str, payload: dict) -> bool:
         for seg in turn.segments:
             if seg.get("t") == "approval" and seg.get("id") == rid:
                 return True          # re-read of the journal, not a second ask
+        # Settled by the chat's current mode: nobody was asked, so nothing shows.
+        if turn.answers.get(rid) == "settled" or (
+                rid not in turn.answers and _settle_by_policy(
+                    turn, rid, payload.get("tool") or "", payload.get("input") or {})):
+            return True
         turn.segments.append({
             "t": "approval",
             "id": rid,
@@ -1447,6 +1692,8 @@ def _segment_ingest(turn: "Turn", kind: str, payload: dict) -> bool:
             "suggestions": payload.get("suggestions") or [],
             "state": turn.answers.get(rid, "pending"),
         })
+        if turn.segments[-1]["state"] == "pending":
+            _expire_when_unanswered(turn.id, rid)
         return True
     if kind == "tool_result":
         # The Agent tool's own result closes its segment. A nested result's TEXT
@@ -1635,6 +1882,53 @@ def _tool_detail(inp: dict, tool_name: str | None = None) -> str | None:
 
 
 # ==========================================================================
+#: Badness bias for a build turn and everything it spawns: above the backend
+#: (control-panel's `standard` role, 100, in `src/core/memory.py`) and below
+#: any process holding most of the memory. The killer ranks by this plus the
+#: process's share of RAM and swap in thousandths, so at 300 a 200 MB turn
+#: scores ~302, the backend ~108, and a 47 GB model server ~752. It was 900,
+#: the `expendable` role for re-runnable batch work, and a turn is not that: on
+#: 2026-10-25 earlyoom killed five chat turns in 44 s, each freeing ~200 MB,
+#: before it reached the 47 GB process that was the pressure. A runaway inside
+#: a turn still goes first once it is the big one (40 GB scores ~767).
+AGENT_OOM_SCORE_ADJ = 300
+
+
+def _volunteer_for_oom(argv: list[str]) -> list[str]:
+    """`argv` run as a likelier victim than the backend, never ahead of a
+    process that holds most of the memory (`AGENT_OOM_SCORE_ADJ`).
+
+    A turn is detached but NOT in its own cgroup: `start_new_session` breaks the
+    session, not the cgroup, so the agent and every command it runs live inside
+    `control-panel@workshop-backend.service` alongside the serving path. On
+    2026-08-05 one turn ran one app's test suite, which leaks monotonically,
+    and reached 44GB. The global OOM killer picks by badness, which tracks RSS,
+    so the runaway's own growth nominated the API that spawned it — and before
+    it got there the box spent an hour thrashing swap with SSH and Tailscale
+    unreachable.
+
+    `oom_score_adj` is inherited across fork and exec, so setting it in the
+    leader BEFORE it starts anything covers the whole tree the turn creates: the
+    agent, its shells, its test runs, its builds. That is the point — the leak
+    was never in the sandbox wrapper. Until 2026-10-25 it was written from the
+    parent after the spawn, which reached only the wrapper (bwrap, ~1 MB) once
+    the agent had forked: a low-memory killer then took the wrapper of every
+    running turn in turn, freeing nothing, and left each agent orphaned.
+
+    A killed turn is recoverable: it is journalled and re-drivable. A killed
+    backend takes every project's chat with it.
+
+    Written by a shell that then execs the turn (same pid, so the group and the
+    journal's pid are the turn's) rather than a `preexec_fn`, because this is a
+    threaded async server, where forking into arbitrary Python risks a lock the
+    child can never see released. Failing to set it is not worth failing the
+    turn over, so the exec runs either way.
+    """
+    return ["/bin/sh", "-c",
+            f'echo {AGENT_OOM_SCORE_ADJ} > /proc/self/oom_score_adj 2>/dev/null; exec "$@"',
+            "turn", *argv]
+
+
 # Crash/restart resilience — detached, journal-backed turns.
 #
 # A build turn's claude subprocess is DETACHED (start_new_session) and streams
@@ -1673,6 +1967,12 @@ _STDERR_NOISE = (
     "(use `node ",
     "debugger attached",
     "waiting for the debugger",
+    # Printed at the start of every turn whose model is reached through a key
+    # rather than a claude.ai login (every local-model turn); its "login" also
+    # made a crash read as a credentials problem.
+    "⚠ claude.ai connectors are disabled",
+    # The CLI noting a model name it has no metadata for, on every local turn.
+    "[claude-code:unrecognized_model]",
 )
 
 # How much of the tail to show. Long enough for a stack-ish message, short
@@ -1767,6 +2067,7 @@ _RESUME_MISS_HINTS = (
     "failed to resume",
     "session not found",
     "no such session",
+    "no message found with message.uuid",
 )
 
 # Signatures of a TRANSIENT failure: a rate limit, an overloaded upstream, an
@@ -2452,6 +2753,7 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
                      disallowed_tools: list[str] | None = None,
                      mcp_servers: list[str] | None = None,
                      mcp_selection: list[str] | None = None,
+                     mcp_specs: dict[str, dict] | None = None,
                      tools_disabled: bool = False,
                      speaker: str | None = None,
                      turn_id: str | None = None,
@@ -2459,7 +2761,9 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
                      permission_mode: str | None = None,
                      attachments: list[dict] | None = None,
                      tree: dict | None = None,
-                     origin: list[dict] | None = None) -> Turn:
+                     origin: list[dict] | None = None,
+                     app_scoped: bool = False,
+                     system_prompt: str | None = None) -> Turn:
     """Kick off a streaming turn. The claude subprocess is detached and streams
     to a disk journal so it survives a backend restart; the returned Turn is
     driven by tailing that journal. Returns immediately.
@@ -2520,6 +2824,9 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
     meta = {
         "turn_id": turn.id, "thread_id": thread_id, "agent_slug": agent_slug,
         "cwd": cwd, "model": model, "session_id": session_id, "resume": bool(resume),
+        # Where in the session this turn resumes, when the operator went back
+        # to an earlier point (chat_store.set_rewind). None resumes the end.
+        "resume_at": chat_store.rewind_for(thread_id, session_id) if resume else None,
         "speaker": speaker,
         "owner_id": owner_id, "prompt": prompt,
         # The operator send(s) this prompt was assembled from: text, client id,
@@ -2543,6 +2850,11 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
         # "never chosen" (inherit), `[]` is "chosen: none". An older journal
         # entry has no key at all, which reads as None: today's behavior.
         "mcp_selection": mcp_selection,
+        # Launch specs the SCOPE brings with it, for servers no installed app
+        # registers (a runner app's own server, at the port it runs on now).
+        # Named in `mcp_servers` like any other; this only says how to reach
+        # them. In meta so a respawned turn reaches the same servers.
+        "mcp_specs": mcp_specs or None,
         "tools_disabled": bool(tools_disabled),
         # THE WORKTREE THIS TURN HOLDS, when it holds one
         # (`services/chat_worktree.enter`, connection C-3 of the leases design).
@@ -2559,6 +2871,13 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
         # How much this turn asks before acting. None = the platform default
         # (bypassPermissions), which is what every chat has always run at.
         "permission_mode": permission_mode,
+        # An app's own assistant: no CLAUDE.md, no auto-memory, no settings
+        # hooks (`services/app_scope_turn`). In meta so a turn respawned after
+        # a restart comes back just as isolated.
+        "app_scoped": bool(app_scoped),
+        # Its whole system prompt, in place of the CLI's own; read only for an
+        # app-scoped turn (`app_scope_turn.system_prompt_flags`).
+        "system_prompt": system_prompt if app_scoped else None,
     }
     _write_meta(meta)
     _drive_task(turn, meta, _spawn_and_drive(turn, meta))
@@ -2624,9 +2943,10 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
     # omitted and the subprocess falls back to `workshop`, never `development`.
     from services import app_registry, chat_store
     try:
-        ctx_key = (chat_store.get_thread(meta.get("thread_id")) or {}).get("context_key")
+        thread_row = chat_store.get_thread(meta.get("thread_id")) or {}
     except Exception:
-        ctx_key = None
+        thread_row = {}
+    ctx_key = thread_row.get("context_key")
     app_registry.set_current_query_scope(ctx_key)
     # And WHICH chat, so the workshop MCP server can offer this thread a
     # background agent (spawn_background) bound to it. Same seam, same reason.
@@ -2634,12 +2954,44 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
     # And WHICH TURN, so the retrieval log can pair a search with the read that
     # followed it in the same turn. Same seam, same reason.
     app_registry.set_current_query_turn(meta.get("turn_id"))
+    # And WHICH workshop tools an app's own assistant sees: exactly its
+    # allowlist, with search and open_ref kept to its own scope. Every other
+    # turn is unconfined, so the server offers what it always has.
+    app_registry.set_current_query_confinement(
+        app_registry.confined_workshop_tools(meta.get("allowed_tools"))
+        if meta.get("app_scoped") else None)
     # Effort is validated by the CLI against one fixed list for EVERY model, so a
     # level the model doesn't honour is accepted and quietly does nothing. The
     # caller resolves against services/model_caps before this point; by here a
-    # value is already known-good for this model.
-    if meta.get("effort"):
-        cmd.extend(["--effort", meta["effort"]])
+    # value is already known-good for this model. A scope whose app gateway
+    # declares its own ladder never runs without one: the CLI would send a level
+    # of its own choosing.
+    effort = meta.get("effort") or model_caps.scope_default_effort(meta["model"], ctx_key)
+    if effort:
+        cmd.extend(["--effort", effort])
+    posture = _tool_posture(meta, thread_row)
+    local = llm_providers.redirects_cli(meta["model"])
+    if meta.get("app_scoped"):
+        cmd.extend(app_scope_turn.CLI_FLAGS)
+        cmd.extend(app_scope_turn.system_prompt_flags(meta.get("system_prompt")))
+    if local and meta.get("app_scoped"):
+        # An app's own assistant on a local model loops the same way a coding
+        # turn does, so it carries the same guard; its tools stay the app's.
+        cmd.extend(["--settings", local_turn.settings(posture)])
+    elif local:
+        cmd.extend(local_turn.cli_flags(
+            tools_narrowed=meta.get("allowed_tools") is not None
+            or bool(meta.get("tools_disabled")), posture=posture, shell=_has_shell(meta)))
+    elif posture or _has_shell(meta):
+        hooks: dict = {}
+        if posture:
+            hooks["PreToolUse"] = [tool_policy.hook_entry(posture)]
+        if _has_shell(meta):
+            hooks["SessionStart"] = [turn_trash.hook_entry()]
+        doc: dict = {"hooks": hooks}
+        if (box := turn_sandbox.settings(posture)):
+            doc["sandbox"] = box
+        cmd.extend(["--settings", json.dumps(doc)])
     # Tool surface. Data/assistant turns (allowed_tools set) and tools-off turns
     # get their narrow flags from the SAME helper llm_router.call_cloud uses, so
     # a streamed data turn and a blocking one expose identical capabilities. Full
@@ -2655,7 +3007,9 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
     # selected. The per-thread MCP picker was therefore honored on the narrow
     # path and silently ignored on exactly the path with the widest tools.
     tool_env: dict = {}
-    mode = meta.get("permission_mode") or model_caps.DEFAULT_PERMISSION_MODE
+    mode = model_caps.mode_for_model(
+        meta.get("permission_mode") or model_caps.DEFAULT_PERMISSION_MODE,
+        meta["model"])
     if (meta.get("allowed_tools") is not None or meta.get("tools_disabled")
             or meta.get("mcp_selection") is not None):
         _tflags, tool_env, _block = llm_router.tool_flags(
@@ -2666,6 +3020,7 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
             permission_mode=mode,
             mcp_selection=meta.get("mcp_selection"),
             cwd=meta.get("cwd") or "",
+            mcp_specs=meta.get("mcp_specs"),
         )
         cmd.extend(_tflags)
         # tool_flags' full-agentic branch returns the strict MCP flags ONLY — it
@@ -2715,8 +3070,15 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
             log.debug("no owner pinned for this turn; not attaching the workshop server")
         else:
             try:
-                cmd.extend(["--mcp-config", llm_router.mcp_config_json(
-                    ["workshop"], owner_id=_owner, context_key=ctx_key)])
+                config = llm_router.mcp_config_json(
+                    ["workshop"], owner_id=_owner, context_key=ctx_key)
+                # Apps the operator gave this chat (services/chat_apps) join
+                # the same additive document.
+                if meta.get("mcp_specs"):
+                    doc = json.loads(config)
+                    doc.setdefault("mcpServers", {}).update(meta["mcp_specs"])
+                    config = json.dumps(doc)
+                cmd.extend(["--mcp-config", config])
             except Exception as e:  # noqa: BLE001 - a search tool is not worth a dead turn
                 log.warning("workshop MCP config unavailable for this turn: %s", e)
         cmd.extend(["--permission-mode", mode])
@@ -2735,6 +3097,12 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
         cmd.extend(["--permission-prompt-tool", "stdio"])
     if meta["session_id"] and meta["resume"]:
         cmd.extend(["--resume", meta["session_id"]])
+        # A FORK, never a truncation. Resuming at a point in place moves the
+        # session's own line there, and the CLI then cannot find any point on
+        # the line it left, so switching back to that line would start over.
+        # The fork leaves the session as it was and the turn adopts the copy.
+        if meta.get("resume_at"):
+            cmd.extend(["--resume-session-at", meta["resume_at"], "--fork-session"])
     elif meta["session_id"]:
         cmd.extend(["--session-id", meta["session_id"]])
     return cmd, tool_env
@@ -2835,6 +3203,100 @@ def _drive_task(turn: Turn, meta: dict, coro) -> "asyncio.Task":
     return task
 
 
+def _spawn_working_state_after_auto_compact(turn: Turn) -> None:
+    """Schedule the working-state write the Compact button does, for a turn the
+    CLI compacted mid-turn. Never blocks or fails the turn."""
+    try:
+        thread = chat_store.get_thread(turn.thread_id)
+        if thread is None:
+            return
+        working_state.spawn(turn.thread_id, thread)
+    except Exception as e:  # noqa: BLE001 - a handoff note never fails a turn
+        log.warning("turn %s: working state after auto-compact not scheduled: %s",
+                    turn.id, e)
+
+
+def _restore_after_compaction(turn: Turn, meta: dict) -> bool:
+    """Hand a just-compacted app turn the newest part of its real transcript,
+    and what this turn itself has done so far.
+
+    An app's assistant often runs on a small local model whose compaction
+    summary is a line or two and invents state, and the turn then circles. The
+    chat's own transcript is the record, so its tail goes back in through the
+    turn's input channel and lands at the next step. In a long single-request
+    turn that tail is only the request, so the turn's own tool calls, read from
+    its journal (`services/turn_progress`), go with it: without them every id
+    the turn found is gone. True if it was written. A command turn
+    (`/compact`) reads nothing more, so it gets nothing.
+    """
+    if not turn.accepts_input:
+        return False
+    try:
+        thread = chat_store.get_thread(meta.get("thread_id") or "") or {}
+        history = thread.get("messages") or []
+        cut = int(thread.get("cleared_through", 0) or 0)
+        if 0 < cut <= len(history):
+            history = history[cut:]
+        tail = chat_context.compaction_tail_block(history)
+    except Exception as e:  # noqa: BLE001 - the turn goes on without it
+        log.warning("turn %s: transcript tail unavailable after compaction: %s",
+                    turn.id, e)
+        tail = ""
+    progress = turn_progress.progress_block(_journal_dir(turn.id) / "stream.jsonl")
+    block = "\n\n".join(b for b in (tail, progress) if b)
+    return bool(block) and write_to_turn(turn.id, block)
+
+
+def turn_chat_env(thread: dict | None) -> dict[str, str]:
+    """The chat a turn runs for, as its environment names it to the programs
+    it starts: `WORKSHOP_THREAD`, `WORKSHOP_THREAD_TITLE`, `WORKSHOP_CHAT_SCOPE`."""
+    if not thread or not thread.get("id"):
+        return {}
+    return {"WORKSHOP_THREAD": str(thread["id"]),
+            "WORKSHOP_THREAD_TITLE": str(thread.get("title") or ""),
+            "WORKSHOP_CHAT_SCOPE": str(thread.get("scope") or "")}
+
+
+def _turn_env(meta: dict, tool_env: dict) -> dict:
+    """The environment one turn's CLI process is spawned with."""
+    env = llm_router._claude_env()
+    # MCP-startup blocking for narrow-tool turns that spawn a server (else the
+    # model fires before the handshake and sees no tools). tool_flags() returns
+    # the env delta; empty for tools-off / no-server / full-agentic turns.
+    if tool_env:
+        env.update(tool_env)
+    # WHERE THE CLI SENDS ITS REQUESTS. Unchanged for a model the CLI reaches
+    # itself; redirected for one served by a provider that drives this same
+    # harness from outside (a local model server). Same argv, same tools.
+    env = llm_providers.cli_turn_env(meta["model"], env)
+    thread = (chat_store.get_thread(meta.get("thread_id") or "")
+              if meta.get("thread_id") else None)
+    # And through the app's own gateway, when its chat declares one, so the
+    # app can queue those requests with the rest of its work (`app_chat_gateway`).
+    env = app_chat_gateway.gateway_env(thread, env, str(meta.get("turn_id") or ""))
+    # WHOSE WORK A PROGRAM THE TURN STARTS IS. A script the turn runs inherits
+    # these, so what it asks of an app (a model call through its gateway) can
+    # name the chat behind it, and the app can show that chat and open it.
+    env.update(turn_chat_env(thread))
+    if llm_providers.redirects_cli(meta["model"]):
+        env = local_turn.cli_env(env, str(meta.get("turn_id") or ""))
+    elif meta.get("app_scoped"):
+        env = app_scope_turn.cli_env(env)
+    # NO FOREGROUND COMMAND OUTLIVES THE CAP, whatever timeout the model asks
+    # for: it is killed with "Command timed out", so long work has to go to the
+    # background, where it holds the turn open without holding the operator off.
+    cap_ms = str(chat_context.FOREGROUND_COMMAND_CAP_S * 1000)
+    env["BASH_MAX_TIMEOUT_MS"] = env["BASH_DEFAULT_TIMEOUT_MS"] = cap_ms
+    # What the operator said to stop asking about in this chat (`tool_policy`).
+    try:
+        rules = chat_store.get_thread_allow_rules(meta.get("thread_id") or "")
+    except Exception:
+        rules = []
+    if rules:
+        env["WORKSHOP_ALLOW_RULES"] = json.dumps(rules)
+    return env
+
+
 async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
     """Spawn the turn's CLI process and drive it to completion.
 
@@ -2864,12 +3326,10 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
     # had not read them.
     jd = _journal_dir(turn.id)
     jd.mkdir(parents=True, exist_ok=True)
-    env = llm_router._claude_env()
-    # MCP-startup blocking for narrow-tool turns that spawn a server (else the
-    # model fires before the handshake and sees no tools). tool_flags() returns
-    # the env delta; empty for tools-off / no-server / full-agentic turns.
-    if tool_env:
-        env.update(tool_env)
+    env = _turn_env(meta, tool_env)
+    # How many times the CLI retries a request, so the failure streak never
+    # ends the turn inside a budget given on purpose. In meta for a re-attach.
+    meta["cli_retries"] = env.get("CLAUDE_CODE_MAX_RETRIES")
     # stdout/stderr go STRAIGHT to files (not pipes) so the detached child keeps
     # writing even after the parent backend exits. The child dup's these fds at
     # exec, so the parent closes its own copies right after spawn.
@@ -2928,7 +3388,7 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
     env = scoped_exec.turn_env(env, meta.get("cwd"))
     try:
         proc = await asyncio.create_subprocess_exec(
-            *spawn_cmd, cwd=meta["cwd"], env=env,
+            *_volunteer_for_oom(spawn_cmd), cwd=meta["cwd"], env=env,
             stdin=in_fd, stdout=out_f, stderr=err_f,
             start_new_session=True,  # detach: survive a backend restart / pkill uvicorn
         )
@@ -2947,6 +3407,11 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
     # and nothing else, and reading the pid back off disk to signal it would be a
     # second source of truth for something this process is holding.
     turn.proc, turn.pid = proc, proc.pid
+    # A model served on this machine is recorded as holding what it runs on for
+    # as long as this process lives, so other chats and other work can see it.
+    _brief = _thread_brief(turn.thread_id) or {}
+    resources.take_for_turn(turn.thread_id, turn.id, proc.pid, meta.get("model"),
+                            label=_brief.get("title") or "", scope=_brief.get("scope"))
     # The control-protocol handshake goes FIRST, before the prompt, so the
     # channel is live before the model can reach a tool that needs it.
     if model_caps.needs_approval_channel(meta.get("permission_mode")):
@@ -3050,7 +3515,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     # behind `len(turn.segments)` the model has produced something since that
     # result, which means it is answering and must not be retired. -1 until the
     # first result, where the count is not yet meaningful.
-    state = {"compacted": False, "saw_result": False, "last_ctx": 0,
+    state = {"compacted": False, "compacting": False, "saw_result": False, "last_ctx": 0,
              "replays": 0, "results": 0, "foreign_results": 0,
              "seg_at_result": -1,
              # Ids of the tasks this process started and has not heard back
@@ -3064,7 +3529,13 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
              # when it took the lease, so the first renewal is due one window
              # from the start of the turn rather than on the first loop pass.
              "tree_beat_at": time.time(),
-             "activity_at": time.time(), "seg_count": 0}
+             "activity_at": time.time(), "seg_count": 0,
+             # Failed model requests since the model last said anything, kept
+             # only for a turn on a local model server (`model_failures`).
+             "model_failures": (model_failures.Streak(
+                                    limit=model_failures.limit_for(meta.get("cli_retries")))
+                                if llm_providers.redirects_cli(meta.get("model"))
+                                else None)}
     buf = ""
     # RESUME THE JOURNAL, DO NOT REPLAY IT.
     #
@@ -3081,8 +3552,11 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     # consistent. Anything after that offset is re-read and appended, which is
     # exactly right because the segments stop there.
     offset = _resume_from(turn)
+    if offset:
+        _push_snapshot(turn)
     state["bg_live"] = _bg_tasks_before(path, offset, state["wake"])
     last_persist = 0.0
+    persisted_mark: tuple | None = None
 
     # RESUMED PAST A FINISHED TURN. A turn that wrote its `result` before a
     # restart is adopted here with `proc is None`, and if the draft resumed us to
@@ -3110,6 +3584,9 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                          "committing the finished reply without re-driving", turn.id)
                 state["saw_result"] = True
                 state["result_subtype"] = term.get("subtype") or ""
+                state["model_failed"] = term.get("terminal_reason") == "api_error"
+                if state["model_failed"]:
+                    state["api_error_text"] = str(term.get("result") or "").strip()
                 state["spend_result"] = _spend_tokens_from_usage(term.get("usage"))
                 if not state["last_ctx"]:
                     _ctx = _ctx_tokens_from_usage(term.get("usage"))
@@ -3133,11 +3610,25 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             log.debug("turn %s: incremental persist failed: %s", turn.id, e)
 
     def _ingest(line: str) -> bool:
+        # The account's usage windows ride the stream; a turn that hit one
+        # arms its thread to carry on once it resets (services/turn_admission).
+        from services import turn_admission, usage_limits
+        limit_hit = usage_limits.observe_line(line)
+        if limit_hit:
+            turn_admission.carry_on_after_limit(turn.thread_id, limit_hit)
+        point = session_point(line)
+        if point:
+            turn.cli_leaf = point
+        elif meta.get("resume_at"):
+            _adopt_fork(turn, meta, forked_session(line))
         parsed = _parse_stream_event(line)
         if not parsed:
             return False
         kind, payload = parsed
         saw_tool = False
+        streak = state["model_failures"]
+        if streak is not None:
+            streak.observe(kind, payload, time.time())
         if kind == "_multi":
             saw_tool = _segment_ingest(turn, kind, payload)
             for k2, p2 in payload.get("events", []):
@@ -3155,6 +3646,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             # included, because a delegate's tokens are really spent.
             if payload.get("parent") is None:
                 ctx = _ctx_tokens_from_usage(payload.get("usage"))
+                if ctx:
+                    compaction_context.on_reading(turn.thread_id, state, ctx)
                 if ctx and ctx != state["last_ctx"]:
                     state["last_ctx"] = ctx
                     turn.context_tokens = ctx
@@ -3193,6 +3686,10 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             state["seg_at_result"] = len(turn.segments)
             state["activity_at"] = time.time()
             state["result_subtype"] = payload.get("subtype") or ""
+            # The latest result decides: an earlier prompt's failed request
+            # answered by a later one is not how the turn ended.
+            state["model_failed"] = bool(payload.get("api_error"))
+            state["api_error_text"] = payload.get("api_error_text") or ""
             # The result envelope's usage is the turn TOTAL across tool rounds.
             # That overcounts the context window (hence the fallback-only use
             # below) but it is exactly right for spend, so prefer it when present.
@@ -3220,10 +3717,31 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                 saw_tool = _segment_ingest(turn, kind, payload)
                 if kind == "tool_result" and payload.get("is_error"):
                     _maybe_write_blocked(turn, meta, payload)
+                # Settled by the chat's mode: nobody is asked, so no card is sent.
+                if kind == "permission" and turn.answers.get(payload.get("id") or "") == "settled":
+                    return saw_tool
             elif kind == "meta" and payload.get("subtype") == "compact_boundary":
                 state["compacted"] = True
+                state["compacting"] = False
+                _estimate = compaction_context.on_boundary(turn, meta, state, payload)
+                if _estimate:
+                    state["last_ctx"] = _estimate
+                    turn.context_tokens = _estimate
+                    state["thread_ctx_written_at"] = None
+                    _push(turn, "context", {"tokens": _estimate})
+                if meta.get("app_scoped"):
+                    _restore_after_compaction(turn, meta)
             elif kind == "meta" and payload.get("subtype") == "init":
                 _track_wake(state["wake"], kind, payload)
+            elif kind == "meta" and payload.get("subtype") == "status":
+                # The CLI says "compacting" when it starts and nothing else until
+                # the boundary, ~75s later on a large session. A resumed turn can
+                # already hold a foreign result by then, so without this the
+                # silence bound retired it mid-compaction (turns 71a6a962,
+                # b440dc1a), and the chat got the local-command fallback instead
+                # of a compaction.
+                state["compacting"] = payload.get("status") == "compacting"
+                state["activity_at"] = time.time()
             elif kind == "meta" and payload.get("subtype") in _BG_TASK_EVENTS:
                 # A BACKGROUND SUBAGENT IS WORK THIS TURN IS STILL OWED, and
                 # these are the CLI's own words for its lifecycle. Verified
@@ -3243,6 +3761,24 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                 _track_wake(state["wake"], kind, payload)
                 # A notification is real activity, so it resets the silence clock
                 # the background bound measures.
+                state["activity_at"] = time.time()
+            elif kind == "meta" and payload.get("subtype") == "task_progress":
+                # A BACKGROUND SUBAGENT'S OWN STEPS ARE ACTIVITY. They nest into
+                # its agent segment rather than growing `turn.segments`, so the
+                # segment count below never sees them, and a parent that went
+                # idle while a builder worked for longer than
+                # BACKGROUND_GRACE_S had the builder killed mid-run. The CLI
+                # emits one of these per subagent step; that is the heartbeat.
+                state["activity_at"] = time.time()
+            elif kind == "meta" and (payload.get("subtype") == "thinking_tokens"
+                                     or payload.get("type") == "stream_event"):
+                # A MODEL THAT IS THINKING IS NOT SILENT. Reasoning text is
+                # redacted, so a long think produces no segment at all, only
+                # these frames. Without counting them the silence bound read a
+                # 60-second think on a resumed turn as a wedge and retired the
+                # process mid-thought: turn 75c5370c (2026-10-16) was cut at
+                # 62s with 5,200 thinking tokens written and no result, and
+                # committed "Ended without a reply".
                 state["activity_at"] = time.time()
             elif kind == "user_echo":
                 # THE RECEIPT THAT THE CLI READ ONE OF OUR MESSAGES. Nothing is
@@ -3280,6 +3816,10 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     def _drain(final: bool = False) -> bool:
         nonlocal buf, offset
         try:
+            # One stat instead of open/seek/read/close on a journal that has not
+            # grown: this runs every 0.15s per running turn, on the event loop.
+            if not final and os.path.getsize(path) == offset:
+                return False
             with open(path, "r", errors="replace") as f:
                 f.seek(offset)
                 chunk = f.read()
@@ -3301,7 +3841,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         return saw_tool
 
     timed_out = False
-    over_memory = False
+    # This loop ended the turn itself, for the reason it put in `turn.error`.
+    halted = False
     last_mem_check = time.time()
     while True:
         saw_tool = _drain()
@@ -3312,9 +3853,11 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             last_mem_check = now
             group_pid = meta.get("pid") or (proc.pid if proc is not None else 0)
             if group_pid:
-                used = _pgid_rss_mb(int(group_pid))
+                # A read of every /proc/<pid>/stat: seconds under contention,
+                # so not on the loop.
+                used = await asyncio.to_thread(_pgid_rss_mb, int(group_pid))
                 if used > _TURN_MEMORY_MAX_MB:
-                    over_memory = True
+                    halted = True
                     turn.error = (
                         f"Stopped: this turn's processes reached "
                         f"{used / 1024:.1f} GB of memory, over the "
@@ -3327,14 +3870,31 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                                     starttime=meta.get("pid_starttime"))
                     _drain(final=True)
                     break
+        streak = state["model_failures"]
+        failing = streak.verdict(now) if streak is not None else None
+        if failing:
+            halted = True
+            state["model_failed"] = True
+            turn.error = failing
+            log.warning("turn %s stopped: %s", turn.id, failing)
+            _kill_turn_proc(meta.get("pid"), proc, user=meta.get("turn_user"),
+                            starttime=meta.get("pid_starttime"))
+            _drain(final=True)
+            break
         # A tool event still gets a fast snapshot, because a tool chip appearing
         # is the most visible sign a turn is moving. It just gets a FLOOR now:
         # `saw_tool` alone was unthrottled, so a burst of tool events wrote the
         # draft on every pass of this loop. The floor is under the drain
         # interval, so a tool lands in the very next snapshot either way.
+        # And NOT AT ALL when nothing changed. A turn waiting on a long tool
+        # rewrote the same draft every 0.4s; every visible change is an event
+        # (`_push`) or new journal bytes, so the draft only moves when one of
+        # those does. The 5s floor covers anything that changes without either.
         gap = now - last_persist
-        if (saw_tool and gap > 0.1) or (turn.segments and gap > 0.4):
-            _persist(); last_persist = now
+        mark = (offset, len(turn.events), turn.context_tokens)
+        due = (saw_tool and gap > 0.1) or (turn.segments and gap > 0.4)
+        if due and (mark != persisted_mark or gap > 5.0):
+            _persist(); last_persist = now; persisted_mark = mark
         if len(turn.segments) != state["seg_count"]:
             # NEW output, not "has output": the stuck-bound below measures
             # SILENCE, and reading `turn.segments` as a truthy value would reset
@@ -3348,13 +3908,14 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                 replayed=int(state["replays"]),
                 results=int(state["results"]),
                 produced=bool(turn.segments),
-                is_command=(meta.get("prompt") or "").strip().startswith("/") or turn.injected_command,
+                is_command=chat_queue.is_command(meta.get("prompt") or "") or turn.injected_command,
                 idle_s=now - float(state["activity_at"]),
                 stopped=turn.stop_requested,
                 produced_since_result=(
                     int(state["seg_at_result"]) >= 0
                     and len(turn.segments) > int(state["seg_at_result"])),
                 background_pending=len(state["bg_live"]),
+                compacting=bool(state["compacting"]),
                 wakes_owed=len(state["wake"]["owed"]))):
             # THE FIRST RESULT IS NOT THE END OF THE TURN, only the end of one
             # request. Retiring on it killed whatever the CLI had started for a
@@ -3377,6 +3938,15 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         if not alive:
             _drain(final=True)
             _persist()
+            # The leader is gone, but what it started may not be (a killed
+            # sandbox wrapper leaves the agent running, reparented, holding its
+            # input open forever): the group goes with it. Its id is the
+            # leader's pid (`start_new_session`), never looked up from that pid,
+            # which may already be another process's.
+            pgid = meta.get("pid")
+            if pgid and _pgid_alive(pgid):
+                _kill_turn_proc(pgid, proc, user=meta.get("turn_user"),
+                                starttime=meta.get("pid_starttime"), pgid=pgid)
             break
         if deadline is not None and time.time() > deadline:
             timed_out = True
@@ -3417,7 +3987,9 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                          model_usage=state.get("model_usage"),
                          vendor_cost_usd=state.get("vendor_cost_usd"),
                          subtype=str(state.get("result_subtype") or ""), lost=lost,
-                         stopped=stopped, over_memory=over_memory,
+                         stopped=stopped, halted=halted,
+                         model_failed=bool(state.get("model_failed")),
+                         api_error_text=str(state.get("api_error_text") or ""),
                          # A message the CLI never echoed back is one it never
                          # read. The reply says so rather than reporting it as
                          # the model having nothing to say.
@@ -3521,9 +4093,162 @@ def _close_open_agents(turn: Turn, *, stopped: bool, lost: bool) -> None:
             seg["result"] = said
 
 
+def _has_shell(meta: dict) -> bool:
+    """Whether the turn has Bash, and so gets the trash-moving rm (`turn_trash`)."""
+    if meta.get("app_scoped") or meta.get("tools_disabled"):
+        return False
+    allowed = meta.get("allowed_tools")
+    return allowed is None or any(t == "Bash" or str(t).startswith("Bash(") for t in allowed)
+
+
+def _tool_posture(meta: dict, thread: dict) -> str | None:
+    """The `tool_policy` posture for this turn, from the mode the chat asked for
+    (its own, else the turn's, else the operator's default)."""
+    requested = (thread.get("permission_mode") or meta.get("permission_mode")
+                 or chat_store.get_default_permission_mode())
+    return tool_policy.posture(requested)
+
+
+# Asks that are questions to the operator rather than permission for a call:
+# no mode answers them.
+_ALWAYS_ASKS = frozenset({"ExitPlanMode", "AskUserQuestion"})
+
+
+def _policy_allows(turn: Turn, tool: str, tool_input: dict) -> bool:
+    """Whether the chat's mode AS IT IS NOW, and the rules it keeps, allow this
+    call. The hook decided by the mode the turn started at; this is what lets a
+    mode picked mid-turn answer the asks the old one raised."""
+    if tool in _ALWAYS_ASKS:
+        return False
+    try:
+        if chat_store.take_approved_ask(turn.thread_id, tool, tool_input):
+            return True
+        thread = chat_store.get_thread(turn.thread_id) or {}
+        meta = _read_meta(_journal_dir(turn.id)) or {}
+        requested = (thread.get("permission_mode") or meta.get("permission_mode")
+                     or chat_store.get_default_permission_mode())
+        verdict, _ = tool_policy.decision(
+            tool_policy.posture(requested) or tool_policy.OPEN, tool, tool_input,
+            chat_store.get_thread_allow_rules(turn.thread_id), meta.get("cwd") or None)
+    except Exception as e:  # pragma: no cover — undecided, so the operator is asked
+        log.debug("turn %s: policy check failed: %s", turn.id, e)
+        return False
+    return verdict == "allow"
+
+
+def _settle_by_policy(turn: Turn, request_id: str, tool: str, tool_input: dict) -> bool:
+    """Answer an ask the chat's current mode allows, with no card. True if it was."""
+    if not _policy_allows(turn, tool, tool_input):
+        return False
+    if not answer_permission(turn.id, request_id, True, tool_input):
+        return False
+    turn.answers[request_id] = "settled"
+    _record_answer(turn.id, request_id, "settled")
+    return True
+
+
+def apply_mode_now(turn_id: str, thread_id: str) -> None:
+    """Carry a mode picked mid-turn into the running turn: the CLI moves to it
+    (its own `set_permission_mode` control request), and every waiting card the
+    new mode allows is answered."""
+    turn = TURNS.get(turn_id)
+    if turn is None:
+        return
+    thread = chat_store.get_thread(thread_id) or {}
+    requested = (thread.get("permission_mode") or chat_store.get_default_permission_mode()
+                 or model_caps.DEFAULT_PERMISSION_MODE)
+    mode = model_caps.mode_for_model(requested, None)
+    if mode != "bypassPermissions":
+        _write_line(turn_id, json.dumps({
+            "type": "control_request", "request_id": f"mode-{uuid.uuid4().hex[:8]}",
+            "request": {"subtype": "set_permission_mode", "mode": mode},
+        }) + "\n")
+    for seg in list(turn.segments):
+        if (seg.get("t") == "approval" and seg.get("state") == "pending"
+                and _policy_allows(turn, seg.get("tool") or "", seg.get("input") or {})):
+            resolve_permission(turn_id, seg["id"], True)
+
+
+def stop_asking_rules(turn_id: str, request_id: str) -> list[str]:
+    """The allow rules "Allow and stop asking" means for a request that offers no
+    mode change: the CLI's own `addRules` suggestions, else the call itself (the
+    MCP tool, or this exact command). In the CLI's rule syntax."""
+    turn = TURNS.get(turn_id)
+    seg = next((x for x in (turn.segments if turn else [])
+                if x.get("t") == "approval" and x.get("id") == request_id), None)
+    if seg is None:
+        return []
+    rules: list[str] = []
+    for sug in seg.get("suggestions") or []:
+        if sug.get("type") != "addRules" or sug.get("behavior", "allow") != "allow":
+            continue
+        for r in sug.get("rules") or []:
+            name, content = r.get("toolName"), r.get("ruleContent")
+            if name:
+                rules.append(f"{name}({content})" if content else name)
+    if rules:
+        return rules
+    tool, inp = str(seg.get("tool") or ""), seg.get("input") or {}
+    if tool == "Bash" and inp.get("command"):
+        return [f"Bash({inp['command']})"]
+    return [tool] if tool and tool != "?" else []
+
+
+def session_rules(rules: list[str]) -> list[dict]:
+    """`rules` as the CLI's `updatedPermissions`, for this session only: a
+    project settings file is the repo's, not a chat's."""
+    out = []
+    for rule in rules:
+        name, _, rest = rule.partition("(")
+        entry = {"toolName": name}
+        if rest:
+            entry["ruleContent"] = rest[:-1]
+        out.append({"type": "addRules", "rules": [entry], "behavior": "allow",
+                    "destination": "session"})
+    return out
+
+
+# How long a card holds the turn. The CLI waits on an answer with no clock of
+# its own, so a card nobody is looking at used to stop the turn until it ended.
+# After this the call is refused as unanswered and the turn carries on without
+# it; the card records that, and the operator's yes comes in the next message.
+APPROVAL_WAIT_S = 60.0
+UNANSWERED_MESSAGE = (
+    "Not run: the operator has not answered yet. Do not wait for an answer and "
+    "do not stop. Carry on with the rest of the work, and at the end of your "
+    "reply say in one line what did not run. The operator's next message "
+    "approves it: if that message says yes, run the same call again exactly as "
+    "it was, and it runs without asking.")
+
+
+def _record_answer(turn_id: str, request_id: str, state: str) -> None:
+    """On disk as well as in memory: the drive loop re-reads the journal from the
+    start after a restart, and would otherwise rebuild the ask as pending."""
+    try:
+        meta = _read_meta(_journal_dir(turn_id)) or {}
+        if meta.get("turn_id"):
+            answers = dict(meta.get("answers") or {})
+            answers[request_id] = state
+            meta["answers"] = answers
+            _write_meta(meta)
+    except Exception as e:  # pragma: no cover — the answer already landed
+        log.debug("turn %s: could not record answer %s: %s", turn_id, request_id, e)
+
+
+def _expire_when_unanswered(turn_id: str, request_id: str) -> None:
+    timer = threading.Timer(APPROVAL_WAIT_S, resolve_permission,
+                            args=(turn_id, request_id, False, UNANSWERED_MESSAGE),
+                            kwargs={"unanswered": True})
+    timer.daemon = True
+    timer.start()
+
+
 def resolve_permission(turn_id: str, request_id: str, allow: bool,
-                       message: str | None = None) -> tuple[bool, str]:
-    """Answer a pending approval. Returns (ok, detail).
+                       message: str | None = None,
+                       allow_rules: list[str] | None = None,
+                       unanswered: bool = False) -> tuple[bool, str]:
+    """Answer a pending approval. Returns (ok, detail). `unanswered`: the
+    answer is the wait running out, not the operator's.
 
     Order matters: the frame goes to the process FIRST, because that is the part
     that unblocks the turn, and only a write that landed is recorded as a
@@ -3540,25 +4265,21 @@ def resolve_permission(turn_id: str, request_id: str, allow: bool,
             return False, "no such permission request on this turn"
         if seg.get("state") == "stale":
             return False, "that turn has ended; the request can no longer be answered"
-        if seg.get("state") in ("allowed", "denied"):
+        if seg.get("state") in ("allowed", "denied", "unanswered"):
             # Answering twice is a no-op, not an error: a double-click or a
             # retried request must not read as a failure.
             return True, seg["state"]
     updated_input = (seg or {}).get("input") if allow else None
-    if not answer_permission(turn_id, request_id, allow, updated_input, message):
+    if not answer_permission(turn_id, request_id, allow, updated_input, message,
+                             session_rules(allow_rules or []) if allow else None):
         return False, "the turn's input channel is gone; it can no longer be answered"
-    state = "allowed" if allow else "denied"
-    # Recorded on disk as well as in memory: the drive loop re-reads the journal
-    # from the start after a restart, and would otherwise rebuild this as pending.
-    try:
-        meta = _read_meta(_journal_dir(turn_id)) or {}
-        if meta.get("turn_id"):
-            answers = dict(meta.get("answers") or {})
-            answers[request_id] = state
-            meta["answers"] = answers
-            _write_meta(meta)
-    except Exception as e:  # pragma: no cover — the answer already landed
-        log.debug("turn %s: could not record answer %s: %s", turn_id, request_id, e)
+    state = "allowed" if allow else ("unanswered" if unanswered else "denied")
+    _record_answer(turn_id, request_id, state)
+    if unanswered and turn is not None and seg is not None:
+        try:
+            chat_store.hold_ask(turn.thread_id, str(seg.get("tool") or ""), seg.get("input") or {})
+        except Exception as e:  # pragma: no cover — the refusal already landed
+            log.warning("turn %s: could not hold the unanswered call: %s", turn_id, e)
     if turn is not None and seg is not None:
         turn.answers[request_id] = state
         seg["state"] = state
@@ -3636,6 +4357,16 @@ async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
     # the orphaned worktree this whole design exists to remove, and the commit
     # below is the part with failure modes.
     _release_tree(meta)
+    resources.release_for_turn(turn.id, meta.get("model"))
+    # The app whose gateway carried this turn's requests is told it ended, so
+    # what it holds for the turn is let go now rather than after its idle timer.
+    model_failed = bool(kw.pop("model_failed", False))
+    app_chat_turns.announce(_thread_brief(turn.thread_id), turn.id, app_chat_turns.outcome(
+        rc=int(kw.get("rc") or 0),
+        stopped=bool(kw.get("stopped")) or turn.stop_requested,
+        lost=bool(kw.get("lost")), halted=bool(kw.get("halted")),
+        timed_out=bool(kw.get("timed_out")), model_failed=model_failed),
+        model_failed=model_failed)
     _stale_pending_approvals(turn)
     _close_open_tools(turn)
     _close_open_agents(turn, stopped=bool(kw.get("stopped")), lost=bool(kw.get("lost")))
@@ -3656,16 +4387,24 @@ async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
         # the turn actually ends. Fire-and-forget: assembling the next turn's
         # prompt must not sit inside the commit that whoever is blocked on
         # `turn.finished` is waiting for. See services/chat_drain.
+        # A schedule that sends after each reply queues its next message first,
+        # so this drain sends it; the operator's Stop pauses it instead.
+        try:
+            from services import chat_schedule_sends
+            chat_schedule_sends.on_turn_end(turn.thread_id, stopped=bool(kw.get("stopped")))
+        except Exception as e:  # pragma: no cover - a schedule never fails a commit
+            log.warning("schedules after turn on %s failed: %s", turn.thread_id, e)
         chat_drain.drain_soon(turn.thread_id, reason="turn finished")
 
 
 async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, compacted: bool,
                        context_tokens: int = 0, spend_tokens: int = 0,
                        subtype: str = "", lost: bool = False,
-                       stopped: bool = False, over_memory: bool = False,
+                       stopped: bool = False, halted: bool = False,
                        unread: bool = False,
                        model_usage: dict | None = None,
-                       vendor_cost_usd: float | None = None) -> None:
+                       vendor_cost_usd: float | None = None,
+                       api_error_text: str = "") -> None:
     prompt = meta.get("prompt", "") or ""
     cwd = meta.get("cwd", "") or ""
     timeout_s = float(meta.get("timeout_s", 0) or 0)
@@ -3679,7 +4418,7 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     # The turn's own prompt, OR a slash command injected into it after it began.
     # Without the second half a mid-turn `/context` (which the CLI runs locally
     # and answers without the model) commits as "Nothing ran this turn".
-    is_command = prompt.strip().startswith("/") or turn.injected_command
+    is_command = chat_queue.is_command(prompt) or turn.injected_command
     minutes = max(1, round(timeout_s / 60)) if timeout_s > 0 else 0
     # Neither cap is passed to the CLI any more (see start_turn): no step cap,
     # and by default no wall clock either. A turn ends when the model is done,
@@ -3720,10 +4459,23 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     # it, from the segments the transcript draws AND from the text it falls back
     # to. Scoped to turns where the CLI answered locally (a compaction happened,
     # or the prompt was a slash command) so an ordinary reply is never touched.
+    # A turn the restart took is resumed once, unless it was a command (which
+    # "continue" would not re-run) or had already failed for its own reasons.
+    resume = (lost and not stopped and not timed_out and not halted
+              and not is_command and not turn.error
+              and chat_drain.may_auto_resume(turn.thread_id, turn.id, turn.started))
     if compacted or is_command:
         turn.segments = _drop_context_report(turn.segments, turn.cut_head)
         if _is_context_report(turn.final_text):
             turn.final_text = ""
+    # A TURN CUT SHORT NEVER ANSWERED, so everything it said on the way is its
+    # reply, not the last line of it (`narration_from_segments`). Two turns the
+    # operator stopped on 2026-10-22 stored 148 characters of a 606-character
+    # account of where they had got to.
+    told = bool((stopped or halted or timed_out or api_error_text)
+                and not is_command and turn.final_text)
+    if told:
+        turn.final_text = narration_from_segments(turn.segments) or turn.final_text
     # ONLY the explicit command turn. `compacted` alone is not enough: the CLI
     # also auto-compacts mid-turn when the window fills, and that turn is real
     # work whose reply must never be replaced by this line.
@@ -3733,13 +4485,14 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         # The dump lives in the SEGMENTS too, and segments are what the
         # transcript draws. Replacing `text` alone left it fully on screen.
         turn.segments = _drop_text_segments(turn.segments, turn.cut_head)
-    elif over_memory:
-        # ABOVE final_text on purpose. A turn killed at the memory ceiling may
-        # already have written a perfectly ordinary-looking reply, and showing
-        # only that would hide the fact that the rest of the work was cut off.
-        # Whatever it did write is kept, with the reason under it.
+    elif halted:
+        # ABOVE final_text on purpose. A turn the drive loop ended (the memory
+        # ceiling, a model that kept failing) may already have written a
+        # perfectly ordinary-looking reply, and showing only that would hide
+        # the fact that the rest of the work was cut off. Whatever it did
+        # write is kept, with the reason under it.
         text = (f"{turn.final_text}\n\n{turn.error}".strip()
-                if turn.final_text else (turn.error or "Stopped at the memory ceiling."))
+                if turn.final_text else (turn.error or "Stopped."))
         is_error = True
     elif turn.final_text:
         text = turn.final_text
@@ -3782,7 +4535,7 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         # /compact and /clear no longer come through here — they are
         # server-side now (routes/chat.py:compact_thread). This handles every
         # other slash the operator can still type.
-        injected_only = turn.injected_command and not prompt.strip().startswith("/")
+        injected_only = turn.injected_command and not chat_queue.is_command(prompt)
         if turn.segments or injected_only:
             text = "Command ran."
         else:
@@ -3798,8 +4551,13 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         # The operator saw "ended unexpectedly (exit -1)" over and over without
         # ever being told what it meant. This is that case, named: the backend
         # was restarted while the turn was in flight and the turn did not survive.
-        text = chat_store.LOST_TURN_TEXT
+        text = chat_store.LOST_TURN_RESUMING_TEXT if resume else chat_store.LOST_TURN_TEXT
         is_error = False
+    elif api_error_text:
+        # The CLI gave up on a failed model request and said why; the exit code
+        # is the driver retiring the process after that result (SIGTERM, -15).
+        text = _scrub_paths(api_error_text)
+        is_error = True
     else:
         # The CLI's own stderr, which until now was captured and never read: a
         # turn that died of a bad credential said so on disk while the chat said
@@ -3815,7 +4573,6 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     turn_receipts: list[dict] | None = None
     if not is_error and text:
         try:
-            from services import chat_context
             thread = chat_store.get_thread(turn.thread_id)
             provider = chat_context.get_provider((thread or {}).get("context_key"))
             ctx_key = (thread or {}).get("context_key")
@@ -3961,17 +4718,20 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
                 notes = applied_notes or None
                 turn_receipts = receipts or None
                 # Replace the trailing text run with the cleaned answer so the
-                # rendered segments match the applied result.
+                # rendered segments match the applied result. Not for a reply
+                # that is the whole narration: its text is already in the
+                # segments, and a tail holding all of it would show it twice.
                 cut = len(turn.segments)
                 while cut > 0 and turn.segments[cut - 1].get("t") == "text":
                     cut -= 1
                 kept = turn.segments[:cut]
                 tail = [{"t": "text", "text": text}] if text else []
-                # The dropped text may have been the anchor for a message that
-                # arrived while it was being written. Move the position rather
-                # than losing it; see carry_cuts.
-                carry_cuts(turn.segments[cut:], kept + tail, turn.cut_head)
-                turn.segments = kept + tail
+                if not told:
+                    # The dropped text may have been the anchor for a message
+                    # that arrived while it was being written. Move the
+                    # position rather than losing it; see carry_cuts.
+                    carry_cuts(turn.segments[cut:], kept + tail, turn.cut_head)
+                    turn.segments = kept + tail
         except Exception as e:
             log.warning("turn %s: provider apply_actions failed: %s", turn.id, e)
     # THE COMMIT. One message, appended at the tail, whether or not a client is
@@ -3988,9 +4748,17 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
             # and nothing is coming later. `stopped` is what tells the operator
             # apart from a restart in the transcript.
             stopped=(chat_store.STOPPED_BY_OPERATOR if stopped else None),
+            cli=({"session": meta["session_id"], "at": turn.cli_leaf}
+                 if meta.get("session_id") and turn.cli_leaf else None),
         )
     except Exception as e:
         log.warning("turn %s: chat_store commit failed: %s", turn.id, e)
+    # The rewind this turn resumed at is spent once the session has moved on
+    # from it; a turn that produced nothing leaves it for the next one.
+    if meta.get("resume_at") and turn.cli_leaf:
+        chat_store.clear_rewind(turn.thread_id)
+    if resume and turn.committed:
+        chat_drain.schedule_auto_resume(turn.thread_id, turn.id)
     # A native compact seen mid-turn (`compact_boundary`, above) gets the same
     # divider a manual compact gets -- see chat_store.note_auto_compact. Only
     # once the commit above confirms the thread still exists, and best-effort:
@@ -4000,6 +4768,15 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
             chat_store.note_auto_compact(turn.thread_id)
         except Exception as e:
             log.warning("turn %s: auto-compact marker failed: %s", turn.id, e)
+        # AND THE SAME WORKING-STATE NOTE THE COMPACT BUTTON WRITES, for a
+        # compaction the CLI did on its own. That note is what a chat carries
+        # across compactions and into its next turn; without it an
+        # auto-compacted chat keeps only the CLI's own summary. Not for the
+        # explicit `/compact` turn: the button that sent it already wrote one.
+        # Here rather than at the boundary so the note includes this turn's
+        # reply, and the chat's model is free again to write it.
+        if prompt.strip().lower() != "/compact":
+            _spawn_working_state_after_auto_compact(turn)
     # Self-heal a bad resume, but ONLY when the session is actually the fault.
     # A turn resuming this thread's session that fails is not proof the session
     # is broken: a rate limit, an overloaded upstream, an expired token, or a
@@ -4021,6 +4798,11 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
                     chat_store.clear_thread_session(turn.thread_id)
                     log.info("turn %s: detached failed session %s (session fault)",
                              turn.id, meta["session_id"])
+                # A point that could not be resumed at must not be retried, and
+                # the session it was in ends on the line gone back from.
+                if meta.get("resume_at"):
+                    chat_store.clear_rewind(turn.thread_id)
+                    build_agents.adopt_session(turn.agent_slug, meta["session_id"], None)
             except Exception as e:
                 log.debug("turn %s: session detach failed: %s", turn.id, e)
         else:
@@ -4376,12 +5158,13 @@ def reattach_running_turns() -> None:
                     shutil.rmtree(d, ignore_errors=True)
                     continue
             except Exception:
+                log.exception("turn %s: could not be checked for re-attach; skipping it", tid)
                 continue
             turn = Turn(id=tid, thread_id=meta["thread_id"], agent_slug=meta.get("agent_slug", ""))
             turn.started = meta.get("started", time.time())
             # Re-derived from the journal, not carried in memory: a turn adopted
             # after a restart must still refuse messages it will never read.
-            turn.accepts_input = not (meta.get("prompt") or "").strip().startswith("/")
+            turn.accepts_input = not chat_queue.is_command(meta.get("prompt") or "")
             # This process did not spawn it, but the process it belongs to did:
             # its input channel is either on disk or gone for good, which is the
             # distinction `turn_is_ending` needs to make. The pid comes off the
@@ -4399,8 +5182,8 @@ def reattach_running_turns() -> None:
                     meta["pid"] = found
                     try:
                         _write_meta(meta)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.warning("turn %s: recovered pid could not be journalled: %s", tid, e)
             turn.pid = meta.get("pid")
             turn.turn_user = meta.get("turn_user")
             turn.pid_starttime = meta.get("pid_starttime")
@@ -4408,8 +5191,8 @@ def reattach_running_turns() -> None:
             alive = _proc_alive(meta.get("pid"), starttime=meta.get("pid_starttime"))
             log.info("re-attaching build turn %s (pid=%s alive=%s)", tid, meta.get("pid"), alive)
             _drive_task(turn, meta, _drive_turn(turn, meta, proc=None))
-    except Exception as e:  # pragma: no cover — never block startup
-        log.warning("reattach_running_turns failed: %s", e)
+    except Exception:  # pragma: no cover — never block startup
+        log.exception("reattach_running_turns failed")
 
 
 def reconcile_threads() -> None:
@@ -4439,14 +5222,21 @@ def reconcile_threads() -> None:
                         continue
                     log.info("thread %s: turn %s did not survive; recording it as lost",
                              thread_id, turn_id)
-                    chat_store.lose_turn(thread_id, turn_id)
+                    # No journal is left to say how it ended, so it is treated as
+                    # a restart casualty; the thread-level guards still apply.
+                    resume = chat_drain.may_auto_resume(
+                        thread_id, turn_id, chat_store.turn_started_at(thread_id, turn_id))
+                    lost = chat_store.lose_turn(thread_id, turn_id, resuming=resume)
+                    app_chat_turns.announce(_thread_brief(thread_id), turn_id, "lost")
+                    if lost and resume:
+                        chat_drain.schedule_auto_resume(thread_id, turn_id)
         finally:
             if prior is None:
                 ownership.clear_current_owner()
             else:
                 ownership.set_current_owner(prior)
-    except Exception as e:  # pragma: no cover — never block startup
-        log.warning("reconcile_threads failed: %s", e)
+    except Exception:  # pragma: no cover — never block startup
+        log.exception("reconcile_threads failed")
 
 
 def get_turn(turn_id: str) -> Turn | None:
@@ -4554,7 +5344,7 @@ def inject(turn_id: str, text: str, attachments: list[dict] | None = None,
     # Remember that a command went in, so a turn whose only work was a locally
     # run slash command is not reported as having done nothing. Only on a
     # successful write: a refused injection never reached the CLI.
-    if ok and t is not None and text.startswith("/"):
+    if ok and t is not None and chat_queue.is_command(text):
         t.injected_command = True
     return ok
 
@@ -4582,7 +5372,7 @@ async def iter_events(turn: Turn, after: int = 0):
             # chat open, which is most of the time.
             #
             # Ending here is safe and invisible: the client reconnects (see
-            # useTurnStream's handleDrop, 1.2s backoff) and the turn itself is
+            # useTurnStream's reconnect backoff) and the turn itself is
             # untouched -- its child is still running and the next process adopts
             # it. The stream is a view of the turn, not the turn.
             return

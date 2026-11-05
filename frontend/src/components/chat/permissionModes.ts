@@ -62,14 +62,10 @@ const DEFS: Record<string, PermissionModeDef> = {
   auto: {
     id: "auto",
     label: "Auto",
-    // NOT "acts without asking", which is what this said until 2026-09-17 and
-    // is false here: `model_caps.NEEDS_APPROVAL_CHANNEL` covers every mode but
-    // bypass, so an auto turn is launched WITH an approval channel and does
-    // stop when the safety check gates a call. The operator reported exactly
-    // that promise being broken ("it should not be asking me for permissions
-    // when it is in auto mode"), and the honest fix for a hint is to describe
-    // the mode that exists rather than to offer the one that never asks.
-    hint: "Acts on its own. Stops for a call the safety check gates.",
+    // Auto is the backend's tool policy, not the CLI's checker: everything but
+    // a delete runs, and a delete waits a minute for an answer before the turn
+    // goes on without it (`model_caps.AUTO_RUNS_AS`, `tool_policy`).
+    hint: "Acts on its own. Asks before deleting.",
     Icon: Zap,
   },
   bypassPermissions: {

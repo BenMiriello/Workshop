@@ -60,12 +60,15 @@ export type ChatScope = {
 };
 
 export function useChatScope({
-  contextKey, effectiveMode, scoped, initialThreadId, startNew,
+  contextKey, effectiveMode, scoped, fixed, initialThreadId, startNew,
   onError,
 }: {
   contextKey: string;
   effectiveMode: ChatMode;
   scoped?: boolean;
+  // A frame that shows its own scope and no other (`/embed/chat/<scope>`): the
+  // scope is `contextKey`, whatever was remembered or linked.
+  fixed?: boolean;
   // The two URL intents, read straight from the PROPS. They used to be read
   // from the one-shot refs (startNewRef / linkedThreadRef) that the thread
   // loader consumes and nulls synchronously in the same effect flush, before
@@ -180,8 +183,14 @@ export function useChatScope({
           if (cancelled) return;
           if (t) linkedThreadHome = String(t.context_key || DEFAULT_SCOPE);
         }
+        // NOT WRITTEN BACK. The remembered scope is the operator's own pick
+        // (`chooseProvider`); a resolution written there made one opening of a
+        // conversation filed elsewhere stick to this surface's key, which every
+        // surface on that key then opened. The drawer beside an app opening a
+        // development chat turned the app's own chat frame into development.
         const next = resolveScope({
           contextKey,
+          fixed,
           knownScopes: list.map((p) => p.key),
           linkedThreadHome,
           // The URL prop, not startNewRef.current, for the same anti-race reason.
@@ -189,7 +198,6 @@ export function useChatScope({
           remembered: readProvider(contextKey),
         });
         setActiveProvider(next);
-        writeProvider(contextKey, next);
       }
       if (!cancelled) setProvidersReady(true);
     })();
@@ -199,7 +207,7 @@ export function useChatScope({
     // pick and never races the loader consuming their refs. onError is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providersSettled, providerList, isError, error,
-      contextKey, effectiveMode, scoped, initialThreadId, startNew]);
+      contextKey, effectiveMode, scoped, fixed, initialThreadId, startNew]);
 
   const chooseProvider = useCallback((key: string) => {
     setActiveProvider(key);
@@ -218,10 +226,14 @@ export function useChatScope({
 
   useEffect(() => {
     if (selectedModel && modelOptions.includes(selectedModel)) return;
+    // No pick before the scope's own provider has answered: the fallback list
+    // would hand the first hardcoded model a selection that the real list then
+    // keeps, and the scope's declared default would never be offered.
+    if (!activeProviderObj && !isError) return;
     const def = activeProviderObj?.default_model;
     if (def && modelOptions.includes(def)) setSelectedModel(def);
     else if (modelOptions.length) setSelectedModel(modelOptions[0]);
-  }, [activeProviderObj, modelOptions, selectedModel]);
+  }, [activeProviderObj, isError, modelOptions, selectedModel]);
 
   // The effort ladder belongs to the MODEL, so it changes in the same paint the
   // model does. No caps (an older backend, or a model it does not know) means no
@@ -244,13 +256,15 @@ export function useChatScope({
   }, [effortLevels, selectedEffort]);
 
   // Which modes exist is a RUNTIME fact: `auto` is account-gated and can be
-  // switched off by managed settings, so the list is served, never assumed.
-  const modeOptions = useMemo(
-    () => activeProviderObj?.modes?.options ?? [],
-    [activeProviderObj],
-  );
+  // switched off by managed settings, so the list is served, never assumed. A
+  // model served by a local server narrows it (no `auto`), so the model's own
+  // list wins over the provider's. A stored choice the list no longer offers
+  // shows the default, which is the mode that actually runs.
+  const modes = caps?.modes ?? activeProviderObj?.modes;
+  const modeOptions = useMemo(() => modes?.options ?? [], [modes]);
   const effectivePermissionMode =
-    selectedPermissionMode || activeProviderObj?.modes?.default || "";
+    (modeOptions.includes(selectedPermissionMode) ? selectedPermissionMode : "") ||
+    modes?.default || "";
 
   return {
     providers, providersReady, activeProvider, chooseProvider, scope,

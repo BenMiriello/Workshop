@@ -143,6 +143,9 @@ export function useLogScroll({
   // blocks reflowed as they clamped, so the view jumped repeatedly while the
   // history filled in above it. See Chat.tsx.
   onNearTop,
+  // A turn is running in the thread as it opens: the restore lands at the
+  // bottom, where its working line and Stop are. See scrollRestore.
+  turnLive = false,
 }: {
   input: string;
   inputFocused: boolean;
@@ -152,8 +155,11 @@ export function useLogScroll({
   expanded?: boolean;
   oldestSeq?: number | null;
   onNearTop?: () => void;
+  turnLive?: boolean;
 }): LogScroll {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const turnLiveRef = useRef(turnLive);
+  turnLiveRef.current = turnLive;
   const composerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Whether the log is scrolled to (near) the bottom, so focus/keyboard/viewport
@@ -373,7 +379,7 @@ export function useLogScroll({
     // let the answer flip frame to frame.
     const el0 = scrollRef.current;
     const toBottom = !el0
-      || restoresToBottom(targetRef.current, el0.scrollHeight, el0.clientHeight);
+      || restoresToBottom(targetRef.current, el0.scrollHeight, el0.clientHeight, turnLiveRef.current);
     const step = () => {
       const el = scrollRef.current;
       if (!el) { restoringRef.current = false; return; }

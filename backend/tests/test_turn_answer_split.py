@@ -101,3 +101,15 @@ def test_the_live_path_and_the_importable_one_agree():
         segments = [narr(), tool(), ANSWER]
 
     assert _turn_content(FakeTurn()) == content_from_segments(FakeTurn.segments)
+
+
+def test_a_turn_cut_short_keeps_everything_it_said():
+    # Its reply is its account of where it got to (2026-10-22: a stopped turn
+    # stored 148 of the 606 characters it had written).
+    from services.build_streaming import narration_from_segments
+    segs = [narr("Reading the plan."), tool(), {"t": "thinking", "text": "x"},
+            narr("Page two is "), narr("half done."), tool(),
+            {"t": "agent", "steps": [narr("a delegate's own words")]}]
+    assert narration_from_segments(segs) == (
+        "Reading the plan.\n\nPage two is half done.")
+    assert narration_from_segments([tool()]) == ""

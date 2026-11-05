@@ -29,10 +29,12 @@ from pydantic import BaseModel
 from routes import chat_models as cm
 from routes import chat_resource_models as crm
 from routes.api_models import DeletedOut
+from services import chat_apps, connections_prompt, llm_providers, local_turn
 from services import chat_attachments
 from services import context_window
 from services import chat_branches
 from services import chat_drain
+from services import send_rules, turn_admission
 from services import chat_worktree
 from services import worktrees
 from services import build_agents
@@ -40,7 +42,7 @@ from services import chat_events
 from services import tenancy
 from services import chat_queue
 from services import wakeups
-from services import chat_store, chat_context, chat_log
+from services import chat_search, chat_store, chat_context, chat_log
 from services import clock
 from services import user_prefs
 from services import tasks
@@ -50,6 +52,7 @@ from services import context_report
 from services import mcp_health
 from services import mcp_registry
 from services import model_caps
+from services import model_defaults
 from services import model_resolution
 from services import task_scope
 from services import scope_version
@@ -62,6 +65,7 @@ from services import knowledge
 from services import origin
 from services import skills
 from services import llm_router
+from services import working_state
 from services import build_streaming
 from services import draft_store
 
@@ -85,20 +89,8 @@ DEFAULT_CHAT_MODEL = llm_router.TIER_HAIKU
 # everywhere; only the named MCP tools are surfaced. Providers with empty
 # allowed_tools fall through to tools_disabled (single-turn text).
 #
-# Gated by ENABLE_CHAT_TOOLS. The MCP-startup race that kept this off has been
-# resolved (2026-06-15): the `claude -p` CLI starts --mcp-config servers fully
-# async by default and fires the first model turn ~176ms BEFORE the stdio
-# handshake completes, so the model saw `tools: []` (init event: server
-# `pending`, tools_count=0) and either admitted no-tools or fabricated a tool
-# call as literal text. The fix lives in llm_router.call_cloud's narrow-tool
-# path: it sets MCP_CONNECTION_NONBLOCKING=false in the subprocess env, which
-# flips the CLI's internal gate to AWAIT the MCP connection before the first
-# turn (bounded by the CLI's own 30s connect timeout). Verified end to end and
-# reproducibly: with it set the init event shows the server `connected`,
-# tools_count=7, and the model emits a real tool_use + consumes a real
-# tool_result (e.g. budget chat searching Plaid transactions). See
-# llm_router._MCP_BLOCK_STARTUP_ENV for the full mechanism.
-ENABLE_CHAT_TOOLS = True
+# Gated by ENABLE_CHAT_TOOLS, defined in services.chat_context with its history.
+from services.chat_context import ENABLE_CHAT_TOOLS  # noqa: E402
 # Timeout: 300s comfortably covers cold-start + Sonnet on prompt-heavy budget
 # turns + one optional Plaid roundtrip + synthesis.
 # There is deliberately NO budget on a chat turn: no step cap and no wall clock.
@@ -198,6 +190,11 @@ class ForkThread(BaseModel):
     anchor becomes its parent)."""
     anchor: str
     mode: str = "after"
+
+
+class UnsendMessage(BaseModel):
+    """`message` is the file-event id of one of the operator's messages."""
+    message: str
 
 
 class RenameBranch(BaseModel):
@@ -323,6 +320,10 @@ async def threads(context: str | None = None, archived: bool = False):
     agree. Flip the flag once the two scratch rows are gone and the preview
     rule is settled. `db/chat_list_parity.py` is the check to re-run.
     """
+    return await _thread_rows(context, archived)
+
+
+async def _thread_rows(context: str | None, archived: bool) -> list[dict]:
     from services import chat_list_pg
     rows: list[dict] | None = None
     if os.environ.get("WORKSHOP_CHAT_LIST_PG", "").strip().lower() in {"1", "true", "yes"}:
@@ -332,6 +333,14 @@ async def threads(context: str | None = None, archived: bool = False):
     # WHICH OF THESE IS LIVE, stamped over whichever source answered so the two
     # cannot disagree about it. See chat_store.stamp_running.
     return chat_store.stamp_running(rows)
+
+
+@router.get("/threads/search", response_model=list[cm.ThreadSearchHit], response_model_exclude_unset=True)
+async def search_threads(q: str = "", context: str | None = None):
+    """The live chats matching `q`, title matches first. Declared before
+    `/threads/{thread_id}` so "search" is never read as a thread id."""
+    rows = await _thread_rows(context, False)
+    return await asyncio.to_thread(chat_search.search, rows, q)
 
 
 # ---- Composer drafts -------------------------------------------------------
@@ -358,22 +367,24 @@ class DraftPut(BaseModel):
     # drop); this is the association, which used to live only in React state and
     # so was lost by any reload that kept the text.
     attachments: list[AttachmentRefIn] | None = None
+    settings: cm.DraftSettings | None = None
 
 
 @router.get("/drafts/{key:path}", response_model=cm.Draft, response_model_exclude_unset=True)
-async def read_draft(key: str):
+def read_draft(key: str):
     return draft_store.get_draft(key)
 
 
 @router.put("/drafts/{key:path}", response_model=cm.Draft, response_model_exclude_unset=True)
-async def write_draft(key: str, body: DraftPut):
+def write_draft(key: str, body: DraftPut):
     return draft_store.put_draft(
         key, body.text, body.ts, body.client_id,
-        [a.model_dump() for a in (body.attachments or [])])
+        [a.model_dump() for a in (body.attachments or [])],
+        body.settings.model_dump(exclude_none=True) if body.settings else None)
 
 
 @router.delete("/drafts/{key:path}", response_model=DeletedOut, response_model_exclude_unset=True)
-async def remove_draft(key: str):
+def remove_draft(key: str):
     draft_store.clear_draft(key)
     return {"deleted": True}
 
@@ -462,6 +473,33 @@ async def set_chat_prefs(body: ChatPrefs):
         except ValueError as e:
             raise HTTPException(400, str(e))
     return _prefs_payload()
+
+
+class ModelDefaultsIn(BaseModel):
+    """Only what is SENT is written, and "" clears, as for `ChatPrefs`.
+    `scope_models` maps a scope's context key to a model id, "" to clear it."""
+    default_model: str | None = None
+    scope_models: dict[str, str] | None = None
+    compaction_model: str | None = None
+    scope_compaction_models: dict[str, str] | None = None
+
+
+@router.get("/model-defaults", response_model=cm.ModelDefaultsOut)
+async def get_model_defaults():
+    """Which model a chat runs on when it has picked none: the global default,
+    a default per scope, and the local model compactions are sent to."""
+    return model_defaults.payload()
+
+
+@router.post("/model-defaults", response_model=cm.ModelDefaultsOut)
+async def set_model_defaults(body: ModelDefaultsIn):
+    try:
+        model_defaults.apply(body.default_model, body.scope_models,
+                             body.compaction_model,
+                             body.scope_compaction_models)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return model_defaults.payload()
 
 
 def _without_messages(t: dict) -> dict:
@@ -888,23 +926,23 @@ async def fork_thread(thread_id: str, body: ForkThread):
         raise HTTPException(409, str(e))
     except tenancy.TenantUnresolved as e:
         raise HTTPException(503, str(e))
-    # THE MODEL'S COPY OF THE CONVERSATION HAS TO GO, or the fork is a no-op for
-    # everything except the screen.
+    # THE MODEL'S COPY OF THE CONVERSATION HAS TO GO BACK TOO, or the fork is a
+    # no-op for everything except the screen.
     #
     # A turn resumes the thread's live CLI session when it has one, and a resumed
     # turn sends ONLY the new message: the history the model reasons over is the
     # session's own, private to the CLI, and it still holds every message on the
-    # line just abandoned. So going back to an earlier point changed what the
-    # operator saw and nothing about what the model read. Dropping the session
-    # forces the next turn to mint a fresh one and re-assemble the prompt from
-    # the transcript, which _fold now filters to the current branch.
+    # line just abandoned. `_session_goes_back` either resumes the session at the
+    # point gone back to or, when the session cannot say where that is, drops it
+    # so the next turn re-assembles the prompt from the transcript.
     #
-    # This is also what makes going back past a /compact behave the way it reads.
-    # The summary lives on the boundary row (chat_store._fold), so a fork to
-    # before that boundary leaves it off the path and the prompt is the full
-    # earlier history again, with no summary of a line that no longer exists.
-    # Without the detach the CLI would have kept the compacted session regardless
-    # and none of that would have been visible.
+    # Going back past a /compact reads the same way either road. A rewind
+    # resumes the session that held the point, as it stood there, whenever the
+    # CLI can still find it (it cannot past a compaction inside that session,
+    # and then the turn drops instead). A drop re-assembles from the transcript,
+    # where the summary lives on the boundary row (chat_store._fold), so a fork
+    # to before that boundary leaves it off the path and the prompt is the full
+    # earlier history again.
     # THE CACHED CUT IS RE-DERIVED, because it is the one piece of cut state that
     # is not branch-aware. `_fold` reads the log through the branch filter, but
     # `cut_state` answers the sync endpoint from `meta.cut_through` alone (that is
@@ -914,12 +952,103 @@ async def fork_thread(thread_id: str, body: ForkThread):
     # would be answering about different conversations. Re-resolving costs one
     # log read here, at an action the operator took, instead of one per poll.
     chat_store.resolve_cut(thread_id)
-    t = chat_store.get_thread(thread_id)
-    if t is not None:
-        _detach_live_session(
-            thread_id, t, chat_context.get_provider(t.get("context_key")))
+    rewound = _session_goes_back(thread_id, out.pop("rewind", None))
     chat_events.bump(thread_id)
-    return {**out, "queued_held": held}
+    return {**out, "queued_held": held, "rewound": rewound}
+
+
+@router.post("/threads/{thread_id}/unsend", response_model=cm.UnsendResult, response_model_exclude_unset=True)
+async def unsend_message(thread_id: str, body: UnsendMessage):
+    """Take a message back: the line ends just before it again and the message
+    and its reply are removed, with no second line left behind. What a spoken
+    "cancel" after "send message" does once its turn has been stopped.
+
+    The stop that preceded this was the cancel's, not a Stop the operator
+    pressed, so the queue hold that stop set is released: anything typed ahead
+    goes out as it would have."""
+    from db import chat_repo
+    _require_quiet_for_branching(thread_id, "taking a message back")
+    try:
+        out = await chat_branches.unsend(thread_id, body.message)
+    except chat_repo.MessageNotFound as e:
+        raise HTTPException(404, str(e))
+    except chat_repo.BranchError as e:
+        raise HTTPException(409, str(e))
+    except tenancy.TenantUnresolved as e:
+        raise HTTPException(503, str(e))
+    chat_store.resolve_cut(thread_id)
+    rewound = _session_goes_back(thread_id, out.pop("rewind", None))
+    chat_queue.set_held(thread_id, False)
+    chat_events.bump(thread_id)
+    await chat_drain.drain(thread_id, reason="a message was taken back")
+    return {**out, "rewound": rewound}
+
+
+def _adopt_live_session(thread_id: str, t: dict, provider, session: str) -> None:
+    """Make `session` the one the next turn resumes: the agent's own for a
+    maker agent's chat, else the thread's."""
+    if isinstance(provider, chat_context.MakerAgentContextProvider):
+        from services import build_agents as _ba
+        try:
+            live = (_ba.get_agent(provider.slug) or {}).get("claude_session")
+        except KeyError:
+            return
+        _ba.adopt_session(provider.slug, live, session)
+        return
+    if t.get("claude_session") != session:
+        chat_store.adopt_thread_session(thread_id, session)
+
+
+def _session_goes_back(thread_id: str, rewind: dict | None) -> bool:
+    """Make the model's copy of the conversation match the point gone back to.
+
+    REWIND WHEN A SESSION KNOWS THE POINT. A reply records where the CLI
+    session stood when it ended (`meta.cli`), so going back to it is a resume
+    at that entry (`--resume-session-at`): its prompt cache and every file
+    read, tool result and subagent report up to there, nothing after. Measured
+    2026-10-28: a cancelled send that detached instead dropped a working chat
+    from 40% of its window to the 5% its visible text came to.
+
+    The point's session need not be the live one. A point before a /clear or
+    a /compact, or on a line another go-back left, is in the session that was
+    live then, which the CLI still has, so that session is adopted again.
+    Whether the CLI can still find the point is asked when the next turn
+    starts (`_rewind_unreachable`), against the cwd that turn runs in.
+
+    OTHERWISE DETACH, as before: the next turn mints a fresh session and the
+    prompt is re-assembled from the transcript, which `_fold` filters to the
+    current branch. That is the only answer when the point has no recorded
+    entry."""
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        return False
+    provider = chat_context.get_provider(t.get("context_key"))
+    if rewind and rewind.get("session") and rewind.get("at"):
+        _adopt_live_session(thread_id, t, provider, rewind["session"])
+        chat_store.set_rewind(thread_id, rewind["session"], rewind["at"])
+        chat_store.clear_thread_context_tokens(thread_id)
+        return True
+    chat_store.clear_rewind(thread_id)
+    _detach_live_session(thread_id, t, provider)
+    return False
+
+
+async def _rewind_unreachable(thread_id: str, sid: str | None, is_new: bool,
+                              cwd: str) -> bool:
+    """True when the next turn would resume `sid` at a point the CLI can no
+    longer find, so it must start a fresh session from the transcript instead.
+
+    Resuming the session at its end instead would be wrong: that is the line
+    the operator went back from. The rewind is cleared then, since a point
+    that cannot be found now never can be."""
+    at = chat_store.rewind_for(thread_id, sid)
+    if not at or is_new:
+        return False
+    if await asyncio.to_thread(build_streaming.session_reaches, sid, cwd, at):
+        return False
+    log.info("thread %s: session %s no longer reaches %s; starting fresh", thread_id, sid, at)
+    chat_store.clear_rewind(thread_id)
+    return True
 
 
 @router.post("/threads/{thread_id}/branches/{branch_id}", response_model=cm.SwitchResult, response_model_exclude_unset=True)
@@ -942,10 +1071,7 @@ async def switch_branch(thread_id: str, branch_id: str):
     # line that was compacted is what makes re-resolving load-bearing rather than
     # tidy: that line's boundary is real again, so its cut has to come back.
     chat_store.resolve_cut(thread_id)
-    t = chat_store.get_thread(thread_id)
-    if t is not None:
-        _detach_live_session(
-            thread_id, t, chat_context.get_provider(t.get("context_key")))
+    _session_goes_back(thread_id, out.pop("rewind", None))
     chat_events.bump(thread_id)
     return out
 
@@ -973,7 +1099,8 @@ async def remove(thread_id: str):
     wakeups.forget(thread_id)
     chat_events.forget(thread_id)
     t = chat_store.get_thread(thread_id)
-    draft_store.clear_for_thread(t.get("context_key") if t else None, thread_id)
+    await asyncio.to_thread(
+        draft_store.clear_for_thread, t.get("context_key") if t else None, thread_id)
     return {"deleted": chat_store.delete_thread(thread_id)}
 
 
@@ -1434,6 +1561,57 @@ async def set_chat_mode(thread_id: str, body: SetChatMode):
     return {"id": thread_id, "mode": t.get("mode")}
 
 
+class SetPermissionMode(BaseModel):
+    # Blank clears the chat's own choice, back to the operator's default.
+    mode: str
+
+
+@router.post("/threads/{thread_id}/permission-mode", response_model=cm.ChatModeSet, response_model_exclude_unset=True)
+async def set_permission_mode(thread_id: str, body: SetPermissionMode):
+    """Set how much the chat asks before it acts, on change, and carry it into a
+    turn that is already running (`build_streaming.apply_mode_now`)."""
+    try:
+        mode = model_caps.normalize_permission_mode(body.mode)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if mode and mode not in model_caps.OFFERED_MODES:
+        raise HTTPException(400, f"{mode} is not offered")
+    t = chat_store.set_thread_permission_mode(thread_id, mode)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    turn_id = _live_turn_id(thread_id)
+    if turn_id:
+        await asyncio.to_thread(build_streaming.apply_mode_now, turn_id, thread_id)
+    return {"id": thread_id, "mode": t.get("permission_mode") or ""}
+
+
+class SetThreadModel(BaseModel):
+    # An omitted field is left alone. Blank effort clears the chat's own choice.
+    model: str | None = None
+    effort: str | None = None
+
+
+@router.post("/threads/{thread_id}/model", response_model=cm.ThreadModelSet, response_model_exclude_unset=True)
+async def set_thread_model_choice(thread_id: str, body: SetThreadModel):
+    """Set the chat's model and effort on change, not only when a message is sent.
+
+    They used to be written by the send alone, so a pick made and then left
+    without sending was never stored and the picker snapped back on the next
+    load. Validated through the same resolver as a turn, so a level the model
+    does not honour is refused here exactly as it would be there."""
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    choice = _choose(t, model=body.model or None, effort=body.effort)
+    if body.model and body.model != t.get("model"):
+        t = chat_store.set_thread_model(thread_id, choice.model_id) or t
+    if body.effort is not None:
+        effort = (choice.effort or None) if body.effort.strip() else None
+        if effort != t.get("effort"):
+            t = chat_store.set_thread_effort(thread_id, effort) or t
+    return {"id": thread_id, "model": t.get("model"), "effort": t.get("effort")}
+
+
 @router.post("/threads/{thread_id}/arming", response_model=cm.ThreadArming, response_model_exclude_unset=True)
 async def set_thread_arming(thread_id: str, body: SetThreadArming):
     """Set what advances this thread without a person, and the role it answers
@@ -1494,7 +1672,7 @@ async def rescope_thread(thread_id: str, body: RescopeThread):
     # project to actually exist on disk; otherwise the re-keyed thread would be
     # a builder chat over a nonexistent cwd that fails on its next turn.
     if isinstance(provider, chat_context.ProjectContextProvider) and not provider.dir.exists():
-        raise HTTPException(400, f"unknown project: {new_key.split(':', 1)[1]}")
+        raise HTTPException(400, f"unknown project: {new_key.split(':', 1)[-1]}")
 
     old_key = t.get("context_key") or ""
     t["context_key"] = new_key
@@ -1582,6 +1760,7 @@ def _build_prompt(
     summary: str = "",
     tools_active: bool = False,
     thread_id: str = "",
+    contract_in_system: bool = False,
 ) -> str:
     # `thread_id` is used for exactly one thing: telling the scope's working
     # state apart from THIS thread's own compaction summary when they are the
@@ -1601,9 +1780,12 @@ def _build_prompt(
     #   4. The conversation.
     parts: list[str] = []
     # L0 first, always, so it heads the cache-stable prefix and outranks
-    # everything below it.
-    parts.append(chat_context.platform_kernel())
-    if preamble:
+    # everything below it. Unless it, the preamble and the persona are already
+    # the turn's system prompt (`chat_context.app_system_prompt`), where a
+    # second copy here would cost their whole length again.
+    if not contract_in_system:
+        parts.append(chat_context.platform_kernel())
+    if preamble and not contract_in_system:
         parts.append(preamble)
     # Build providers get the templated runtime briefing right after the platform
     # preamble: cwd, stack, app services/ports, how to run+see the app, edit
@@ -1618,7 +1800,8 @@ def _build_prompt(
         manifest = chat_context.orientation_manifest(provider)
         if manifest:
             parts.append(manifest)
-    parts.append(provider.persona())
+    if not contract_in_system:
+        parts.append(provider.persona())
     # Capability-aware fragment (doc 01 §3): consult the permissions framework so
     # an app-bound assistant states its REAL allowed actions instead of promising
     # things it can't do. Additive + best-effort: returns "" for non-app-bound
@@ -1666,7 +1849,7 @@ def _build_prompt(
     if ambient_block:
         parts.append(ambient_block)
     # THIS SCOPE'S WORKING STATE, written by the last compaction that happened
-    # anywhere in this scope (routes/chat._write_working_state_now ->
+    # anywhere in this scope (working_state.write_now ->
     # knowledge.write_working_state). It is what makes compaction worth
     # something to a chat OTHER than the one that compacted: objective,
     # decisions with their reasons, done, not done, shortcuts owed, open
@@ -1679,7 +1862,7 @@ def _build_prompt(
     # budget, which is spent on note titles and would be emptied by one
     # handoff. Best-effort like its neighbours; never blocks the reply.
     try:
-        ws_block = chat_context.working_state_block(provider)
+        ws_block = chat_context.working_state_block(provider, thread_id=thread_id)
     except Exception as e:
         log.warning("chat working state block failed for %s: %s", provider.key, e)
         ws_block = ""
@@ -1697,7 +1880,8 @@ def _build_prompt(
     try:
         kscope = provider.knowledge_scope()
         krole = _agent_role_for(provider)
-        kindex, kused = knowledge.layered_index_block(kscope, krole)
+        kindex, kused = knowledge.layered_index_block(
+            kscope, krole, layers=chat_context.knowledge_layers(provider))
     except Exception as e:
         log.warning("chat knowledge index failed for %s: %s", provider.key, e)
         kindex, kused = "", []
@@ -1711,7 +1895,10 @@ def _build_prompt(
     # prefix so a data-mode assistant knows what it can invoke; full bodies load on
     # demand via the use_skill action (see _expand_use_skill). Builders discover
     # skills natively from their cwd .claude/skills, so this is data-mode only.
-    if not chat_context.is_build_provider(provider):
+    # Not for an app's own assistant either: the installed skills are how to
+    # build and ship, which is not its work.
+    if not (chat_context.is_build_provider(provider)
+            or chat_context.is_app_scoped(provider)):
         try:
             sblock = skills.descriptions_block(provider.knowledge_scope())
         except Exception as e:
@@ -1736,12 +1923,15 @@ def _build_prompt(
     # prompt. Marked as a summary rather than pasted in as if it were the
     # conversation, because a model that cannot tell a summary from a transcript
     # will quote it back as something the operator said.
+    # Only a chat that HAS search is told its older messages can be searched.
+    searchable = (" and is searchable with mcp__workshop__search"
+                  if tools_active and chat_context.grants_search(provider) else "")
     if summary:
         parts.append(
             "=== EARLIER IN THIS CONVERSATION (summary) ===\n"
             "The messages before this point were folded into the summary below to "
             "reclaim context. They are NOT deleted: the full text is still in the "
-            "transcript and is searchable with mcp__workshop__search. Treat this as "
+            f"transcript{searchable}. Treat this as "
             "a summary, not as anyone's words.\n\n"
             + origin.escape_markers(summary)
         )
@@ -1757,22 +1947,21 @@ def _build_prompt(
                 f"=== EARLIER MESSAGES NOT INCLUDED ({over_ceiling}) ===\n"
                 f"This conversation is larger than one prompt can carry, so the "
                 f"{over_ceiling} oldest messages were left out. They are NOT deleted: "
-                f"they are still in the transcript, and they are searchable with "
-                f"mcp__workshop__search. Say so if the answer depends on them."
+                f"they are still in the transcript"
+                + (", and they are searchable with mcp__workshop__search"
+                   if searchable else "")
+                + ". Say so if the answer depends on them."
             )
         # `meta.agent` names the AGENT that produced a reply when the operator
         # addressed one by @mention. It is stored on every such message and was
         # dropped here, so the assistant was handed another agent's words as its
         # own. The @mention path already did this correctly; this is the same
         # rule on the default path. See docs/decisions/0015 §8 case 1.
-        convo = []
         # IN THE ORDER THINGS HAPPENED, not in log order. A message sent while a
         # reply was being written has a lower seq than that reply, so flat it
         # sits above the whole thing — including the part of the reply written
         # before it was sent. See chat_context.interleave_history.
-        for m in chat_context.interleave_history(history):
-            who = origin.speaker_label(m["role"], m.get("meta"))
-            convo.append(f"{who}: {origin.escape_markers(m['content'])}")
+        convo = chat_context.conversation_lines(history)
         parts.append("=== CONVERSATION SO FAR ===\n" + "\n\n".join(convo))
     # --- VOLATILE TAIL (Phase 3 cache-stable ordering) ---------------------------
     # Everything that changes every turn goes AFTER the conversation so it never
@@ -1785,11 +1974,14 @@ def _build_prompt(
         ctx = ""
     if ctx:
         parts.append("=== LIVE CONTEXT (current app state) ===\n" + origin.escape_markers(ctx))
+    conn = _connections({"id": thread_id}, provider) if thread_id else ""
+    if conn:
+        parts.append(conn)
     parts.append(
         "=== NOW REPLY ===\n"
         f"Operator: {origin.escape_markers(user_msg)}\n\n"
-        "Reply as the assistant. Output only your reply text (plus a plan-patch block if a "
-        "change was requested). No 'You:' prefix."
+        "Reply as the assistant, using your tools as the request needs, and end "
+        "with your reply to the operator. No 'You:' prefix."
     )
     _warn_if_over_prefix_budget(parts, provider)
     return "\n\n".join(parts)
@@ -2015,7 +2207,7 @@ async def compact_thread(thread_id: str):
     read.
 
     THE SCOPE'S WORKING STATE IS STILL WRITTEN, and it is a separate feature
-    that happened to ride on the fold's summary. See `_write_working_state`:
+    that happened to ride on the fold's summary. See `services/working_state`:
     one note per scope, so a chat that does not exist yet can continue from
     this one. It runs in the background off the transcript as it stands right
     now, and never delays or fails the compaction."""
@@ -2025,7 +2217,7 @@ async def compact_thread(thread_id: str):
     # Off the transcript AS IT IS NOW, before the provider collapses it. Fired
     # and not awaited: the operator pressed compact to reclaim context, and a
     # handoff note is not allowed to stand between them and that.
-    _spawn_working_state(thread_id, t)
+    working_state.spawn(thread_id, t)
     try:
         res = await _send(thread_id, _COMPACT_COMMAND)
     except Exception as e:  # noqa: BLE001 - report it, do not 500 the button
@@ -2038,173 +2230,6 @@ async def compact_thread(thread_id: str):
     if res.get("queued"):
         return {"queued": True}
     return {"turn_id": res.get("turn_id") or ""}
-
-
-def _spawn_working_state(thread_id: str, t: dict) -> None:
-    """Kick off the scope's working-state note without blocking the caller.
-
-    Best effort in the strongest sense: a failure to schedule is a log line.
-    Nothing about compaction depends on this."""
-    try:
-        asyncio.create_task(asyncio.to_thread(_write_working_state_now, thread_id, t))
-    except Exception as e:  # noqa: BLE001
-        log.warning("compact: could not schedule the working state for %s: %s", thread_id, e)
-
-
-def _fmt_for_summary(messages: list[dict]) -> str:
-    # In the order things happened, for the same reason `_build_prompt` does it:
-    # a message sent mid-reply sits above that whole reply in the log. Here it
-    # matters more than anywhere, because this text BECOMES the history once the
-    # fold lands, so a wrong order is baked in rather than re-derived.
-    out = []
-    for m in chat_context.interleave_history(messages):
-        who = origin.speaker_label(m.get("role", "user"), m.get("meta"))
-        out.append(f"{who}: {m.get('content', '')}")
-    return "\n\n".join(out)
-
-
-def _summary_prompt(prev_summary: str, to_fold: list[dict]) -> str:
-    """The exact text `_summarize_sync` sends. Split out so the ledger estimate
-    can measure the SAME prompt `call_cloud` actually saw, without duplicating
-    it out of sync or re-plumbing `_summarize_sync`'s return type (tests
-    monkeypatch that function directly)."""
-    headings = "\n".join(f"## {h}" for h in knowledge.WORKING_STATE_SECTIONS)
-    return (
-        "You are writing this scope's WORKING STATE from a chat transcript: the "
-        "handoff a DIFFERENT session reads later to continue this work without "
-        "the transcript. Write it as a handoff, not as a story about a "
-        "conversation.\n\n"
-        "Use EXACTLY these six headings, all of them, in this order, spelled "
-        "exactly like this:\n"
-        f"{headings}\n\n"
-        "Under each heading write short lines starting with '- '. A heading with "
-        "nothing under it gets the single line '- None.' Never add a heading, "
-        "rename one, drop one, reorder them, or write anything outside them.\n\n"
-        "What belongs under each:\n"
-        "- Objective: what this work is trying to achieve, one or two sentences.\n"
-        "- Decisions and why: THE MOST IMPORTANT SECTION. Every decision together "
-        "with the reason it was made. A decision recorded without its reason gets "
-        "re-litigated by the next session or silently reversed, so a line here "
-        "that does not say why is not finished. Include decisions to NOT do "
-        "something, which are the ones that get quietly undone.\n"
-        "- Done: what is actually finished, each with the identifiers that make it "
-        "checkable: file paths, function names, commit hashes, ticket ids. Not "
-        "'refactored the router', but which file and which function.\n"
-        "- Not done: what remains, and for anything blocked, what it is blocked on "
-        "and who or what would unblock it.\n"
-        "- Shortcuts taken and what they owe: work done the quick way that needs "
-        "revisiting, and what the real version would be. Stubs, hardcoded values, "
-        "copy-paste, skipped tests, a second code path added instead of changing "
-        "the first, anything deferred 'for now'. A shortcut nobody wrote down is "
-        "indistinguishable later from a deliberate design, which is how a codebase "
-        "accumulates parallel systems nobody chose.\n"
-        "- Open questions: things genuinely undecided, each with who owns the "
-        "answer (the operator, or this session).\n\n"
-        "Preserve file paths, identifiers and numbers verbatim, and preserve the "
-        "operator's stated preferences in their own words. Drop pleasantries, "
-        "repetition, and narration of the work as it happened. Write plainly, no "
-        "em-dashes, no emojis. Keep the whole thing under about 500 words: it is "
-        "carried into the prompt of every other chat in this scope, so its "
-        "length is a cost paid on every one of their turns.\n\n"
-        "You are given the working state so far, if there is one, and the "
-        "conversation to fold into it. Return the UPDATED working state: merge it "
-        "in, move items from Not done to Done as they finish, drop what has stopped "
-        "being true, and keep everything from the earlier state that is still "
-        "true.\n\n"
-        + (f"=== WORKING STATE SO FAR ===\n{prev_summary}\n\n" if prev_summary else "")
-        + f"=== THE CONVERSATION ===\n{_fmt_for_summary(to_fold)}\n\n"
-        "=== OUTPUT ===\nThe updated working state only. Start with the first "
-        "heading. No preamble, no closing remark."
-    )
-
-
-def _summarize_sync(prev_summary: str, to_fold: list[dict]) -> str:
-    """One summarization call. Text in, text out, no tools.
-
-    `tools_disabled` matters: without it this runs in the CLI's default agentic
-    mode, which spins up every MCP server just to write a paragraph and takes
-    minutes, which is what made /compact look hung."""
-    prompt = _summary_prompt(prev_summary, to_fold)
-    res = llm_router.call_cloud(prompt, model=llm_router.TIER_HAIKU,
-                               tools_disabled=True, timeout_s=180)
-    return (res.get("text") or "").strip()
-
-
-def _write_working_state_now(thread_id: str, t: dict) -> None:
-    """Write this SCOPE's working state, so a chat that does not exist yet can
-    continue from this one.
-
-    THIS IS WHAT MAKES COMPACTION WORTH ANYTHING TO ANYONE ELSE, and it is a
-    separate feature from compaction itself. The provider's `/compact` collapses
-    ONE session's window; nothing about that reaches another chat, so a new chat
-    in the same scope would start by re-deriving what the last session already
-    worked out. The hand-written `HANDOFF-*.md` files under docs are what that
-    looks like when somebody remembers to do it manually.
-
-    It used to be handed the fold's summary, because Workshop's own fold had
-    just computed one. That fold is gone, so this makes its own summarizing call
-    (`_summarize_sync`, the same Haiku call, the same prompt) over the
-    transcript as it stands. That is not "deciding what compaction keeps" -- the
-    provider decides that, and this text never goes back into the compacted
-    chat. It is a handoff note for the NEXT chat.
-
-    It goes into the note store (`knowledge.write_working_state`), NOT into a
-    new table or file of its own: one note per scope at the reserved id
-    `working-state`, overwritten each time, so the scope has one current
-    working state rather than a pile of dated handoffs. That also buys the
-    Memory page, search, backlinks and hand-editing for free.
-
-    BEST EFFORT, ALWAYS, and it runs off the request path entirely (see
-    `_spawn_working_state`). The operator pressed compact to reclaim context; a
-    handoff that could not be filed is a log line, never a failed operation.
-    Logged at WARNING rather than debug because nothing retries this: the next
-    compaction writes the NEXT state, so a state lost here is lost.
-    """
-    try:
-        msgs = [m for m in (t.get("messages") or [])
-                if not (m.get("meta") or {}).get("streaming")]
-        ct = int(t.get("cleared_through", 0) or 0)
-        if 0 < ct <= len(msgs):
-            msgs = msgs[ct:]
-        # Two messages is not a session worth handing off, and it would cost a
-        # model call on every press in a chat that has barely started.
-        if len(msgs) < _WORKING_STATE_MIN_MESSAGES:
-            log.info("compact: no working state for %s, only %d messages",
-                     thread_id, len(msgs))
-            return
-        scope = knowledge.scope_for_context(t.get("context_key") or "")
-        # MERGE, don't overwrite. The note is one per scope and every chat in
-        # the scope writes it, so starting from scratch each time would throw
-        # away what another chat recorded. The prompt already knows how to
-        # merge: move items from Not done to Done, drop what stopped being
-        # true, keep what still is.
-        prev, _ = knowledge.read_working_state(scope)
-        summary = _summarize_sync(prev, msgs)
-        if not summary:
-            log.warning("compact: the working-state summary came back empty for %s", thread_id)
-            return
-        knowledge.write_working_state(
-            scope, summary,
-            # `derived:<model>`, the origin vocabulary for "a model wrote
-            # this", so the Memory page and anything else reading provenance
-            # can tell it from a note the operator or an agent wrote. The
-            # model named is the one that actually produced the text.
-            author=origin.derived(llm_router.TIER_HAIKU),
-            # The originating chat, which `put_note` already records on every
-            # note, so the Memory page can say where a working state came from.
-            chat_id=thread_id,
-        )
-        log.info("compact: working state for scope %s written from %s (%d chars)",
-                 scope, thread_id, len(summary))
-    except Exception as e:
-        log.warning("compact: working-state note write failed for %s: %s", thread_id, e)
-
-
-# Below this, a chat has not had a session worth handing to the next one, and
-# summarizing it would spend a model call to say almost nothing.
-_WORKING_STATE_MIN_MESSAGES = 4
-
-
 
 
 @router.post("/threads/{thread_id}/clear", response_model=cm.ClearResult, response_model_exclude_unset=True)
@@ -2370,10 +2395,13 @@ async def thread_context(thread_id: str):
         tool_summary=tool_summary,
         cwd=(str(provider.dir) if is_build_mode else None),
         is_build=is_build_mode,
+        app_scoped=chat_context.is_app_scoped(provider),
     )
     # Same stop rule on the first turn as on every resumed one, so behaviour
     # does not differ between a fresh chat and a continued one.
-    preamble = chat_context.turn_contract(CHAT_TIMEOUT_S) + "\n\n" + preamble
+    preamble = (chat_context.turn_contract(
+        CHAT_TIMEOUT_S, app_scoped=chat_context.is_app_scoped(provider))
+        + "\n\n" + preamble)
     # Mirror what a real turn sends: everything after the last /clear.
     history = t.get("messages", [])
     ct = int(t.get("cleared_through", 0) or 0)
@@ -2735,7 +2763,8 @@ def _agent_role_for(provider) -> str | None:
     return role or None
 
 
-async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, bool]:
+async def _assemble_full_prompt(t: dict, provider, content: str, *,
+                                contract_in_system: bool = False) -> tuple[str, bool]:
     """Assemble the full turn prompt (role preamble + persona + capability facts +
     compacted history + this message) for either a data
     or a build provider. Shared by POST /messages (blocking) and POST /turns
@@ -2762,6 +2791,7 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
         tool_summary=tool_summary,
         cwd=(str(provider.dir) if is_build_mode else None),
         is_build=is_build_mode,
+        app_scoped=chat_context.is_app_scoped(provider),
     )
     # THE CUT IS APPLIED HERE, and until 2026-08-12 it was applied NOWHERE.
     #
@@ -2800,10 +2830,13 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
     # /clear before handing it over, and nothing else may remove a message.
     prompt = _build_prompt(provider, history, content, preamble=preamble,
                            summary=summary, tools_active=tools_active,
-                           thread_id=str(t.get("id") or ""))
+                           thread_id=str(t.get("id") or ""),
+                           contract_in_system=contract_in_system)
     # Stated after the persona so it can override the ticket protocols the
     # persona carries, in the direction that removes capability.
-    prompt = prompt + "\n\n" + chat_context.chat_mode_block(t.get("mode"))
+    app_scoped = chat_context.is_app_scoped(provider)
+    if not app_scoped:
+        prompt = prompt + "\n\n" + chat_context.chat_mode_block(t.get("mode"))
     # THE STOP RULE GOES ON THIS PATH TOO, and until 2026-08-12 it went only on
     # the resumed one. `_resumed_prompt` opens with it every turn; this assembly
     # — a fresh chat, and every FIRST TURN AFTER A /compact or /clear, which
@@ -2824,7 +2857,8 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
     # It goes LAST here, not first as on the resumed path: this prompt ends with
     # the operator's message, and the rule has to sit near it rather than
     # 322k characters back behind the whole transcript.
-    prompt = prompt + "\n\n" + chat_context.turn_contract(CHAT_TIMEOUT_S)
+    prompt = prompt + "\n\n" + chat_context.turn_contract(
+        CHAT_TIMEOUT_S, app_scoped=app_scoped)
     # RECORD WHAT THIS SESSION HAS NOW BEEN TOLD. This prompt carries the role
     # preamble and the persona in full, so the session holds the current
     # contract; without this mark the very next (resumed) turn would compare
@@ -2833,6 +2867,7 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
     try:
         tid = t.get("id")
         if tid:
+            chat_store.set_turn_marks(tid, page_hash=_digest(_connections(t, provider)))
             chat_store.set_turn_marks(tid, contract_hash=chat_context.contract_digest(
                 chat_context.instruction_contract(
                     provider, enable_chat_tools=ENABLE_CHAT_TOOLS)))
@@ -2851,8 +2886,7 @@ def _is_raw_command(content: str) -> bool:
     Sent raw, the CLI reads the whole blob as one command name and the turn
     fails — and the operator's other message is then neither executed as a
     command nor read as text. It is simply lost."""
-    stripped = content.strip()
-    return stripped.startswith("/") and "\n" not in stripped
+    return chat_queue.is_command(content)
 
 
 def _thread_session(thread_id: str, cwd: str) -> tuple[str | None, bool]:
@@ -2877,7 +2911,24 @@ def _thread_session(thread_id: str, cwd: str) -> tuple[str | None, bool]:
     return sid, is_new
 
 
-async def _resumed_prompt(t: dict, provider, content: str) -> str:
+def _message_heading(sends: list[dict] | None, thread_id: str | None = None) -> str:
+    """The heading over this turn's message. A message the operator typed is
+    the OPERATOR MESSAGE; one every part of which a producer sent (a run that
+    keeps itself going, a finished job, a schedule) is headed with that sender,
+    so the model never reads an automatic message as the operator's own words."""
+    senders = [s.get("sender") for s in sends or []]
+    if senders and all(senders):
+        from services import chat_schedules
+        who = ", ".join(dict.fromkeys(
+            chat_schedules.heading_name(thread_id, str(x)) if thread_id else str(x)
+            for x in senders))
+        return (f"=== MESSAGE FROM {who}, SENT AUTOMATICALLY "
+                "(not typed by the operator) ===")
+    return "=== OPERATOR MESSAGE ==="
+
+
+async def _resumed_prompt(t: dict, provider, content: str,
+                          sends: list[dict] | None = None) -> str:
     """The per-turn message for a chat whose claude session is being RESUMED.
 
     The session already holds the persona, the history, and everything the first
@@ -2890,8 +2941,12 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
     # condition that ends its own turn; being told once at session start is not
     # enough, because that instruction is thousands of tokens back by the time
     # it matters. See chat_context.turn_contract.
-    parts.append(chat_context.turn_contract(CHAT_TIMEOUT_S))
-    parts.append(chat_context.chat_mode_block(t.get("mode")))
+    # An app's own assistant files no tickets and has no modes to switch
+    # between, so it gets neither the mode block nor the builder's stop rule.
+    app_scoped = chat_context.is_app_scoped(provider)
+    parts.append(chat_context.turn_contract(CHAT_TIMEOUT_S, app_scoped=app_scoped))
+    if not app_scoped:
+        parts.append(chat_context.chat_mode_block(t.get("mode")))
     marks = chat_store.get_turn_marks(t)
     new_marks: dict[str, object] = {}
     # THE CONTRACTS THIS SESSION WAS GIVEN AT SPAWN CAN CHANGE UNDER IT, and
@@ -2911,7 +2966,11 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
             provider, enable_chat_tools=ENABLE_CHAT_TOOLS)
         c_digest = chat_context.contract_digest(contract)
         if c_digest != marks.get("contract_hash"):
-            parts.append(chat_context.contract_update_block(contract))
+            # Not re-sent to an app's own assistant: on a small window the whole
+            # contract arriving mid-session is a third of it, and what it holds
+            # (tools, cards, style) changes far less often than that costs.
+            if not app_scoped:
+                parts.append(chat_context.contract_update_block(contract))
             new_marks["contract_hash"] = c_digest
     except Exception as e:  # noqa: BLE001 - a protocol refresh is not worth a dead turn
         log.warning("contract freshness check skipped for %s: %s", provider.key, e)
@@ -2977,7 +3036,16 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
     # The per-message "=== RELEVANT NOTES ===" injection was here. Removed with
     # its twin on the fresh-session path above; see the note there for why the
     # ranking made it noise, and for what replaces it.
-    parts.append("=== OPERATOR MESSAGE ===\n" + origin.escape_markers(content))
+    # The page beside this chat and the apps it reaches, re-stated only when it
+    # moved since the last turn (same rule as the live context above). A block
+    # that has gone away is superseded by one line saying so.
+    conn = _connections(t, provider)
+    conn_digest = _digest(conn)
+    if conn_digest != marks.get("page_hash", _digest("")):
+        parts.append(conn or (connections_prompt.HEADING + "\nNo page is beside this "
+                              "chat now, and it reaches no app beyond its own."))
+        new_marks["page_hash"] = conn_digest
+    parts.append(_message_heading(sends, t.get("id")) + "\n" + origin.escape_markers(content))
     # Immediately after the message, because it is a fact ABOUT that message:
     # whether it was typed while the previous turn was still running, and whether
     # others were typed alongside it before any had been answered. Placed last so
@@ -3116,6 +3184,14 @@ class StartTurnIn(BaseModel):
     # message you already sent turned up in the next new chat you started. See
     # services/draft_store.
     draft_key: str | None = None
+    # WHEN IT MAY GO OUT, if not now (services/send_rules). Any rule queues the
+    # message rather than joining a running turn or starting one ahead of it.
+    when: cm.SendRule | None = None
+
+
+class SetSendRuleIn(BaseModel):
+    # None is Send now: the rule is cleared and the message goes out at once.
+    when: cm.SendRule | None = None
 
 
 def _first_part_ts(parts: list[TurnPart] | None) -> str | None:
@@ -3746,6 +3822,28 @@ async def _turn_for_message(thread_id: str, t: dict, content: str,
         raise
 
 
+def _own_app_slug(provider) -> str | None:
+    """The app whose own chat this is, for an `app:<slug>` scope."""
+    return getattr(provider, "slug", None) if chat_context.is_app_scoped(provider) else None
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _connections(t: dict, provider) -> str:
+    """This turn's PAGE AND APPS block (services/connections_prompt), or ""."""
+    thread_id = t.get("id")
+    if not thread_id:
+        return ""
+    try:
+        return connections_prompt.block(
+            thread_id, chat_store.get_thread_page_level(thread_id), _own_app_slug(provider))
+    except Exception as e:  # noqa: BLE001 - context is best-effort, never a dead turn
+        log.warning("page and apps block skipped for %s: %s", thread_id, e)
+        return ""
+
+
 async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: str,
                                 model: str, turn_id: str, effort: str | None = None,
                                 permission_mode: str | None = None,
@@ -3770,6 +3868,9 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
     # MCP choice was silently discarded — the one chat kind whose turns run the
     # full agentic toolset.
     mcp_selection = chat_store.get_thread_mcp_servers(thread_id)
+    # Built-in tools the model's own server cannot run (a local model's): not
+    # offered, and not named to it as tools it has.
+    unserved = local_turn.SERVER_SIDE_TOOLS if llm_providers.redirects_cli(model) else ()
     # EVERY MCP server on this instance is configured with the OPERATOR's own
     # credentials (Plaid, Google, Discord...) — there is no per-user credential
     # provisioning yet, for any provider. `mcp_selection is None` reads as "give
@@ -3816,8 +3917,11 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         # Stale-session guard: an existing id whose claude session no longer exists
         # on disk (old agent, post-reboot prune) would make `--resume` fail the
         # whole turn. Detect it up front and start fresh so the turn just works.
-        if sid and not is_new and not build_streaming.session_alive(sid, tree.cwd):
+        # So would a point gone back to that the session can no longer find.
+        gone = sid and not is_new and not build_streaming.session_alive(sid, tree.cwd)
+        if gone:
             log.info("agent %s: claude session %s is gone; starting fresh", provider.slug, sid)
+        if gone or await _rewind_unreachable(thread_id, sid, is_new, tree.cwd):
             _ba.reset_session(provider.slug)
             try:
                 sid, is_new = _ba.ensure_session_id(provider.slug)
@@ -3848,7 +3952,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
                     chat_store.set_turn_marks(thread_id, contract_hash=c_digest)
             except Exception as e:  # noqa: BLE001 - never fail a turn over this
                 log.warning("agent contract refresh skipped for %s: %s", provider.key, e)
-            head.append("=== OPERATOR MESSAGE ===\n" + content)
+            head.append(_message_heading(sends, thread_id) + "\n" + content)
             prompt = "\n\n".join(head) if len(head) > 1 else content
             resume_flag = True
         else:
@@ -3865,32 +3969,65 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         )
 
     is_project = chat_context.is_build_provider(provider)
+    mcp_specs: dict[str, dict] = {}
     if is_project:
         _link_build_skills(provider)
         cwd = tree.cwd
         allowed_tools: list[str] | None = None
         mcp_servers: list[str] = []
         tools_disabled = False
+        # Granted apps ride on the additive config the full toolset already
+        # gets (build_streaming), so nothing it inherits is dropped.
+        extra_specs, _ = chat_apps.turn_servers(thread_id, None)
+        mcp_specs = llm_router.with_caller(
+            extra_specs, scope=provider.key, thread_id=thread_id, turn_id=turn_id)
     else:
         cwd = str(ownership.chat_cwd())
         if ENABLE_CHAT_TOOLS:
             mcp_servers = llm_router.select_names(list(provider.mcp_servers), mcp_selection)
-            allowed_tools = llm_router.filter_allowed_tools(
+            allowed_tools = [tool for tool in llm_router.filter_allowed_tools(
                 chat_context.effective_allowed_tools(provider),
-                {n: {} for n in mcp_servers}, mcp_selection)
+                {n: {} for n in mcp_servers}, mcp_selection) if tool not in unserved]
+            own_specs = {n: spec for n, spec in provider.mcp_specs().items() if n in mcp_servers}
+            own_slug = _own_app_slug(provider)
+            header = chat_apps.own_access_header(thread_id, own_slug)
+            if header:
+                own_specs = {n: {**spec, "headers": {**(spec.get("headers") or {}), **header}}
+                             for n, spec in own_specs.items()}
+            # The OTHER apps the operator gave this chat (services/chat_apps).
+            # Added after the selection filter: they are this chat's own grant,
+            # not servers the selection was choosing among.
+            extra_specs, extra_allowed = chat_apps.turn_servers(thread_id, own_slug)
+            mcp_servers = [*mcp_servers, *extra_specs]
+            allowed_tools = [*allowed_tools, *extra_allowed]
+            if mcp_selection is not None and extra_specs and ownership.caller_is_operator():
+                mcp_selection = [*mcp_selection, *extra_specs]
+            mcp_specs = llm_router.with_caller(
+                {**own_specs, **extra_specs},
+                scope=provider.key, thread_id=thread_id, turn_id=turn_id)
             tools_disabled = False
         else:
             allowed_tools, mcp_servers, tools_disabled = None, [], True
 
     sid, is_new = _thread_session(thread_id, cwd)
+    if await _rewind_unreachable(thread_id, sid, is_new, cwd):
+        chat_store.clear_thread_session(thread_id)
+        sid, is_new = _thread_session(thread_id, cwd)
+    # An app's own assistant is handed the kernel and its contract as the CLI's
+    # whole system prompt, on every spawn, so the first message leaves them out.
+    app_scoped = chat_context.is_app_scoped(provider)
+    system_prompt = (chat_context.app_system_prompt(
+        provider, enable_chat_tools=ENABLE_CHAT_TOOLS, without=unserved)
+        if app_scoped else None)
     if _is_raw_command(content):
         # A slash command goes raw so the CLI registers it as a command (this is
         # what makes a native /compact actually compact the live session).
         prompt, resume_flag = content, bool(sid and not is_new)
     elif sid and not is_new:
-        prompt, resume_flag = await _resumed_prompt(t, provider, content), True
+        prompt, resume_flag = await _resumed_prompt(t, provider, content, sends), True
     else:
-        prompt, _ = await _assemble_full_prompt(t, provider, content)
+        prompt, _ = await _assemble_full_prompt(
+            t, provider, content, contract_in_system=app_scoped)
         resume_flag = False
     return await build_streaming.start_turn(
         thread_id=thread_id, agent_slug=getattr(provider, "slug", provider.key),
@@ -3900,12 +4037,15 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         permission_mode=permission_mode, attachments=attachments,
         tree=(tree.as_dict() if tree.held else None),
         allowed_tools=allowed_tools, mcp_servers=mcp_servers, tools_disabled=tools_disabled,
+        mcp_specs=mcp_specs,
         # Redundant on the narrow branch above (which already filtered
         # `mcp_servers` and `allowed_tools` through it, and the filter is
         # idempotent), load-bearing on the project branch, which sets
         # `allowed_tools=None` and would otherwise emit no MCP flags at all.
         mcp_selection=mcp_selection,
         origin=sends,
+        app_scoped=app_scoped,
+        system_prompt=system_prompt,
     )
 
 
@@ -3915,7 +4055,8 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
                 effort_in: str | None = None,
                 mode_in: str | None = None,
                 attachments: list[dict] | None = None,
-                sent_at: str | None = None) -> dict:
+                sent_at: str | None = None,
+                when_in: dict | None = None) -> dict:
     """Send one message into a chat: deliver it to the turn in flight, or start
     one for it. Returns `{turn_id, injected, at_segment}`.
 
@@ -3956,6 +4097,7 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
 
     try:
         model = chat_context.normalize_model(model_in)
+        when = send_rules.normalize(when_in, thread_id=thread_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -3986,6 +4128,20 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
         if _pm != t.get("permission_mode"):
             chat_store.set_thread_permission_mode(thread_id, _pm)
             t = chat_store.get_thread(thread_id) or t
+            if (_live := _live_turn_id(thread_id)):
+                await asyncio.to_thread(build_streaming.apply_mode_now, _live, thread_id)
+
+    if when:
+        # A RULE MEANS NOT NOW, so it never joins the running turn and never
+        # starts one: it waits in the queue, where the drain sends it when the
+        # rule and the thread both allow (services/send_rules).
+        st = chat_queue.enqueue(
+            thread_id, text=content, client_id=client_id or chat_log.new_ulid(),
+            ts=_first_part_ts(parts) or sent_at, attachments=attachments,
+            model=model_in, effort=effort_in, permission_mode=mode_in, when=when)
+        chat_drain.drain_soon(thread_id, reason="queued with a send rule")
+        return {"turn_id": _live_turn_id(thread_id), "injected": False,
+                "queued": True, "at_segment": None, "queue": st}
 
     take_over: str | None = None
     already_recorded = False
@@ -4002,7 +4158,11 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     # would run on the pre-operation prompt and race the operation's writes:
     # exactly the 2026-08-14 compact incident. The message is accepted and
     # durable; the drain sends it the moment the operation lands.
-    if not turn_id and (chat_queue.read(thread_id) or thread_ops.pending(thread_id)):
+    # A TURN THAT COULD ONLY FAIL WAITS IN THE QUEUE. With the usage window
+    # exhausted, starting it would spend the message on the limit reply; queued,
+    # it goes out when the window resets, or on the operator's Send now.
+    if not turn_id and (chat_queue.read(thread_id) or thread_ops.pending(thread_id)
+                        or turn_admission.wait_reason(t, [{"model": model_in}])):
         st = chat_queue.enqueue(
             thread_id, text=content, client_id=client_id or chat_log.new_ulid(),
             ts=_first_part_ts(parts) or sent_at, attachments=attachments,
@@ -4233,6 +4393,26 @@ async def cancel_queued_message(thread_id: str, client_id: str):
     return chat_queue.drop(thread_id, [client_id])
 
 
+@router.put("/threads/{thread_id}/queued/{client_id}/when", response_model=cm.QueueState, response_model_exclude_unset=True)
+async def set_queued_send_rule(thread_id: str, client_id: str, body: SetSendRuleIn):
+    """Change when one queued message goes out, or clear its rule to send it
+    now. Send now is the operator overriding every reason to wait, the usage
+    window included, so the drain is forced."""
+    if chat_store.get_thread(thread_id) is None:
+        raise HTTPException(404, "thread not found")
+    try:
+        when = send_rules.normalize(body.when.model_dump() if body.when else None,
+                                    thread_id=thread_id)
+        st = chat_queue.set_when(thread_id, client_id, when)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except KeyError:
+        raise HTTPException(404, "that message is no longer queued")
+    await chat_drain.drain(thread_id, reason="operator changed a send rule",
+                           force=when is None)
+    return chat_queue.state(thread_id)
+
+
 @router.post("/threads/{thread_id}/queued/release", response_model=cm.QueueState, response_model_exclude_unset=True)
 async def release_queued_messages(thread_id: str):
     """Send what is waiting: clears a Stop hold or a failed drain's diagnosis.
@@ -4242,7 +4422,7 @@ async def release_queued_messages(thread_id: str):
     if chat_store.get_thread(thread_id) is None:
         raise HTTPException(404, "thread not found")
     chat_queue.set_held(thread_id, False)
-    await chat_drain.drain(thread_id, reason="operator released the queue")
+    await chat_drain.drain(thread_id, reason="operator released the queue", force=True)
     return chat_queue.state(thread_id)
 
 
@@ -4260,13 +4440,14 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     out = await _send(thread_id, content, body.model, body.parts,
                       client_id=body.client_id, effort_in=body.effort,
                       mode_in=body.permission_mode, attachments=atts,
-                      sent_at=body.sent_at)
+                      sent_at=body.sent_at,
+                      when_in=body.when.model_dump() if body.when else None)
     # ACCEPTED IS ACCEPTED, and the composer it came out of is empty from here
     # on. Every branch below is an acceptance — running now, handed to the turn in
     # flight, or queued — so the clear is unconditional and happens once, on the
     # server, under the key the operator was actually typing in.
     if body.draft_key:
-        draft_store.clear_draft(body.draft_key)
+        await asyncio.to_thread(draft_store.clear_draft, body.draft_key)
     if out.get("queued"):
         # Taken and durable, just not running yet: the thread is busy with
         # something that cannot be spoken to. It is on the thread, every device
@@ -4309,10 +4490,17 @@ async def answer_turn_permission(thread_id: str, turn_id: str, body: PermissionA
     suggestion = _mode_suggestion(turn_id, body.request_id, t) if allow and (
         body.apply_suggestion or _is_plan_exit(turn_id, body.request_id)
     ) else None
+    # A request with no mode to move to (an MCP tool, a delete) stops asking by
+    # rule instead, kept on the chat: a mode change would loosen far more than
+    # the one thing the operator answered.
+    rules = (build_streaming.stop_asking_rules(turn_id, body.request_id)
+             if allow and body.apply_suggestion and not suggestion else [])
     ok, detail = build_streaming.resolve_permission(
-        turn_id, body.request_id, allow, message=body.message)
+        turn_id, body.request_id, allow, message=body.message, allow_rules=rules)
     if not ok:
         raise HTTPException(409, detail)
+    if rules:
+        chat_store.add_thread_allow_rules(thread_id, rules)
     # Applied only after the answer landed: a mode change recorded for a turn
     # that never got the approval would leave the chat looser than the operator
     # believes, on the strength of a click that did nothing.
@@ -4384,11 +4572,23 @@ def _mode_suggestion(turn_id: str, request_id: str, thread: dict) -> str | None:
         for s in seg.get("suggestions") or []:
             if isinstance(s, dict) and s.get("type") == "setMode" and s.get("mode"):
                 try:
-                    return model_caps.normalize_permission_mode(str(s["mode"]))
+                    mode = model_caps.normalize_permission_mode(str(s["mode"]))
                 except ValueError:
                     break
+                # "Stop asking" only ever widens a chat. On `auto` the CLI
+                # runs at `acceptEdits` underneath, so it proposes that, and
+                # taking it would move the chat OFF auto into a mode that asks
+                # before every command.
+                now = (thread.get("permission_mode")
+                       or chat_store.get_default_permission_mode()
+                       or model_caps.DEFAULT_PERMISSION_MODE)
+                return mode if _WIDTH.get(mode, 0) > _WIDTH.get(now, 0) else None
         return None
     return None
+
+
+# How much a mode runs without asking, for "stop asking" never to narrow a chat.
+_WIDTH = {"plan": 0, "default": 1, "acceptEdits": 2, "auto": 3, "bypassPermissions": 4}
 
 
 class InjectMessage(BaseModel):
@@ -4562,7 +4762,7 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
                 ts=body.sent_at, attachments=atts)
             chat_drain.drain_soon(thread_id, reason="joined the queue via inject")
             if body.draft_key:
-                draft_store.clear_draft(body.draft_key)
+                await asyncio.to_thread(draft_store.clear_draft, body.draft_key)
             return {"delivered": False, "queued_for_turn": True, "queued": True,
                     "turn_id": None, "at_segment": None, "queue": st,
                     "reason": "a compact or clear is running on this chat; this goes out next"}
@@ -4575,7 +4775,7 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
     out = await _send(thread_id, content, client_id=body.client_id, attachments=atts,
                       sent_at=body.sent_at)
     if body.draft_key:
-        draft_store.clear_draft(body.draft_key)
+        await asyncio.to_thread(draft_store.clear_draft, body.draft_key)
     if out.get("queued"):
         # TAKEN, and durable on the thread. A command turn owns the chat and will
         # never read this, so it waits — but it waits HERE, not in the browser,
@@ -4637,6 +4837,27 @@ async def stop_turn(turn_id: str):
     return await build_streaming.stop_turn(turn_id)
 
 
+async def _turn_sse(turn: "build_streaming.Turn", after: int, is_disconnected):
+    """The SSE frames for one turn, from byte cursor `after`.
+
+    `end` means the TURN ended, and is sent only then. `iter_events` also returns
+    when the backend is shutting down with the turn still running (its child
+    survives the restart); ending that stream with `end` told the client the turn
+    was over, so it stopped following a turn that was not. Closing without it is
+    a dropped connection, which the client reconnects from `Last-Event-ID`."""
+    try:
+        async for offset, ev in build_streaming.iter_events(turn, after=after):
+            if await is_disconnected():
+                return
+            payload = _json.dumps({"kind": ev.kind, "payload": ev.payload, "ts": ev.ts})
+            # SSE frame: id: <offset>\nevent: <kind>\ndata: <json>\n\n
+            yield f"id: {offset}\nevent: {ev.kind}\ndata: {payload}\n\n"
+        if turn.complete:
+            yield "event: end\ndata: {}\n\n"
+    except asyncio.CancelledError:
+        return
+
+
 @router.get("/turns/{turn_id}/stream")
 async def stream_turn(turn_id: str, request: Request):
     turn = build_streaming.get_turn(turn_id)
@@ -4649,21 +4870,8 @@ async def stream_turn(turn_id: str, request: Request):
     except ValueError:
         after = 0
 
-    async def gen():
-        try:
-            async for offset, ev in build_streaming.iter_events(turn, after=after):
-                if await request.is_disconnected():
-                    return
-                payload = _json.dumps({"kind": ev.kind, "payload": ev.payload, "ts": ev.ts})
-                # SSE frame: id: <offset>\nevent: <kind>\ndata: <json>\n\n
-                yield f"id: {offset}\nevent: {ev.kind}\ndata: {payload}\n\n"
-            # Final terminator so clients close cleanly.
-            yield "event: end\ndata: {}\n\n"
-        except asyncio.CancelledError:
-            return
-
     return StreamingResponse(
-        gen(),
+        _turn_sse(turn, after, request.is_disconnected),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",

@@ -35,8 +35,7 @@ log = logging.getLogger("workshop.llm_router")
 # Cloud chat shells out to the `claude` CLI. Per-deployment and portable: honor
 # an explicit CLAUDE_CLI, else resolve `claude` on PATH, else bare "claude".
 # Under systemd --user the PATH can be minimal (no ~/.local/bin), so a local
-# build should set CLAUDE_CLI explicitly on its service. See
-# docs/simonsays-local-instance.md.
+# build should set CLAUDE_CLI explicitly on its service.
 CLAUDE_CLI = os.environ.get("CLAUDE_CLI") or shutil.which("claude") or "claude"
 # Optional extra env for the subprocess (e.g. an API key). Missing file is fine —
 # a CLI already logged in (its own ~/.claude creds) needs nothing here.
@@ -52,6 +51,7 @@ def auth_env_path() -> str:
 TIER_HAIKU = "claude-haiku-4-5-20251001"
 TIER_SONNET = "claude-sonnet-4-6"
 TIER_SONNET_5 = "claude-sonnet-5"
+TIER_SONNET_5_5 = "claude-sonnet-5-5"
 TIER_OPUS = "claude-opus-4-8"
 TIER_OPUS_5 = "claude-opus-5"
 TIER_OPUS_5_5 = "claude-opus-5-5"
@@ -66,6 +66,7 @@ TIERS = {
     "haiku": TIER_HAIKU,
     "sonnet": TIER_SONNET,
     "sonnet-5": TIER_SONNET_5,
+    "sonnet-5-5": TIER_SONNET_5_5,
     "opus": TIER_OPUS,
     "opus-5": TIER_OPUS_5,
     "opus-5-5": TIER_OPUS_5_5,
@@ -472,6 +473,7 @@ def tool_flags(
     permission_mode: str = "bypassPermissions",
     mcp_selection: list[str] | None = None,
     cwd: str = "",
+    mcp_specs: dict[str, dict] | None = None,
 ) -> tuple[list[str], dict, bool]:
     """The tool / MCP / permission CLI flags for one of the three tool modes,
     shared by call_cloud (the blocking data path) and build_streaming (streaming
@@ -494,7 +496,11 @@ def tool_flags(
     to it. None means the chat has never chosen, which must behave exactly as it
     did before this parameter existed. See `select_servers`. `cwd` is only read
     on the full-agentic path, where the surviving servers have to be re-declared
-    from the configuration that directory actually sees."""
+    from the configuration that directory actually sees.
+
+    `mcp_specs` are launch specs the caller's scope brings for servers no
+    installed app registers; they resolve names in `mcp_servers` exactly like
+    the installed ones and add nothing that is not named there."""
     if tools_disabled:
         return ([
             "--strict-mcp-config",
@@ -503,7 +509,7 @@ def tool_flags(
             "--append-system-prompt", _TOOLS_OFF_SYSTEM_NUDGE,
         ], {}, False)
     if allowed_tools:
-        _specs = _mcp_server_specs()
+        _specs = {**_mcp_server_specs(), **(mcp_specs or {})}
         servers_subset = select_servers(
             {name: _specs[name] for name in (mcp_servers or []) if name in _specs},
             mcp_selection,
@@ -793,6 +799,25 @@ def status() -> dict:
 # drop every other server the tree legitimately configures. The emitted file is
 # ADDITIVE: `--mcp-config <path>` on its own merges with the CLI's own
 # configuration.
+
+def with_caller(specs: dict[str, dict], *, scope: str, thread_id: str,
+                turn_id: str) -> dict[str, dict]:
+    """HTTP tool servers told who is calling: an agent, in this chat's scope,
+    thread and turn (`X-Actor`, `X-Actor-Detail`, `X-Thread`, `X-Turn`). An app
+    that keeps a log of what was done to it can then name the chat and turn
+    behind each change; an app that ignores the headers loses nothing. Stdio
+    servers are left as they are."""
+    out = {}
+    for name, spec in specs.items():
+        if spec.get("type") == "http":
+            spec = {**spec, "headers": {**(spec.get("headers") or {}),
+                                        "X-Actor": "agent",
+                                        "X-Actor-Detail": f"chat:{scope}",
+                                        "X-Thread": str(thread_id),
+                                        "X-Turn": str(turn_id)}}
+        out[name] = spec
+    return out
+
 
 def mcp_config_json(servers: list[str] | None = None,
                     *, owner_id: int | None = None,

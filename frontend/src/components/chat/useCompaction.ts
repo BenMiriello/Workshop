@@ -97,7 +97,7 @@ export function useCompaction({
 
   const compact = useCallback(async () => {
     const id = activeIdRef.current;
-    if (!id) { setErr({ text: "Nothing to compact. This chat has no messages yet.", endpoint: null }); return; }
+    if (!id) { setErr({ text: "Nothing to compact yet.", endpoint: null, tone: "info" }); return; }
     setErr(null);
     try {
       // A RESTART IS NOT A REFUSAL. The public edge answers 502 for the second
@@ -119,12 +119,12 @@ export function useCompaction({
         });
         return;
       }
-      // QUEUED IS NOT A FAILURE. A slash command cannot be delivered into a
-      // turn that is already running, so it waits in the thread's own queue
-      // and the drain sends it the moment that turn ends. Saying nothing here
-      // would read as a dead button, so say the one true thing and no more.
+      // QUEUED IS NOT A FAILURE, AND IT NEEDS NO NOTICE. A slash command cannot
+      // be delivered into a running turn, so the server puts `/compact` in the
+      // thread's own queue, where it draws as a queued bubble like any message
+      // sent mid-reply. Pulling the log is what puts that bubble on screen.
       if (r.queued) {
-        setErr({ text: "Compact is queued behind the reply in flight.", endpoint: null });
+        void sync();
         return;
       }
       // The turn is running. Pull the log so its first segment appears without
@@ -142,7 +142,7 @@ export function useCompaction({
 
   const clear = useCallback(async () => {
     const id = activeIdRef.current;
-    if (!id) { setErr({ text: "Nothing to clear. This chat has no messages yet.", endpoint: null }); return; }
+    if (!id) { setErr({ text: "Nothing to clear yet.", endpoint: null, tone: "info" }); return; }
     setErr(null);
     // Reuses the compact hold: it closes the same window either command needs
     // closed — a message typed right after this call must not become a turn
@@ -160,12 +160,10 @@ export function useCompaction({
       // when NEITHER did.
       if (r.cancelled) {
         return;
-      } else if (r.busy) {
-        setErr({ text: "A compact or clear is already in progress on this chat.", endpoint: null });
       } else if (r.deferred) {
-        setErr({ text: "Clear is waiting for the current reply to finish, then it lands.", endpoint: null });
+        setErr({ text: "Clear will run when the current reply finishes.", endpoint: null, tone: "info" });
       } else if (!r.cleared && !r.session_reset) {
-        setErr({ text: "Nothing to clear. This chat has no messages yet.", endpoint: null });
+        setErr({ text: "Nothing to clear yet.", endpoint: null, tone: "info" });
         return;
       }
       // Nothing is written to the transcript: keeping it is the entire point of

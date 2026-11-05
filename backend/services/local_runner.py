@@ -177,7 +177,7 @@ def resolve_command(cwd: str) -> str:
 # ---- scoped env -------------------------------------------------------------
 
 def scoped_env(port: int) -> dict[str, str]:
-    """Build the child's environment: ONLY the allowlisted host vars plus PORT.
+    """Build the child's environment: ONLY the allowlisted host vars plus PORT and HOST.
 
     Deliberately does not start from os.environ, so no platform secret can leak
     by omission. Missing allowlisted vars are simply absent (e.g. no LC_ALL).
@@ -190,4 +190,8 @@ def scoped_env(port: int) -> dict[str, str]:
     # Guarantee a PATH even on a stripped host env so the child can find python/node.
     env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
     env["PORT"] = str(port)
+    # The conventional bind-address variable. The proxy reaches every app on
+    # loopback, so an app that honors it is never on the LAN; a manifest that
+    # truly needs another address sets HOST in its own env, which wins.
+    env["HOST"] = "127.0.0.1"
     return env

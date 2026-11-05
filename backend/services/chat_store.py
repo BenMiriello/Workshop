@@ -29,11 +29,12 @@ import asyncio
 import bisect
 import json
 import logging
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import chat_log, context_window, ownership, scope_tree, user_prefs  # noqa: F401  (ownership re-exported for tests)
+from . import chat_log, context_window, held_asks, ownership, page_link, scope_tree, user_prefs  # noqa: F401  (ownership re-exported for tests)
 
 log = logging.getLogger("workshop.chat_store")
 
@@ -180,6 +181,44 @@ def set_default_model(model: str | None) -> str | None:
     return value
 
 
+def get_scope_models() -> dict[str, str]:
+    """The operator's per-scope model defaults, `{context key: model id}`.
+
+    Rung 4 of `services/model_resolution`, ABOVE what the scope itself declares:
+    the scope's declaration is its author's suggestion, this is the operator's
+    choice for his own installation. Unvalidated on read for the same reason as
+    `get_default_model`; a junk entry is dropped rather than raised."""
+    raw = _read_prefs().get("scope_models")
+    if not isinstance(raw, dict):
+        return {}
+    return {k: v.strip() for k, v in raw.items()
+            if isinstance(k, str) and isinstance(v, str) and v.strip()}
+
+
+def get_scope_model(context_key: str | None) -> str | None:
+    """The operator's model default for one scope, or None."""
+    return get_scope_models().get(canonical_context_key(context_key))
+
+
+def set_scope_model(context_key: str, model: str | None) -> str | None:
+    """Persist (or, on empty/None, clear) one scope's model default. Raises
+    ValueError on a model nothing can reach, exactly as `set_default_model`."""
+    from services import llm_providers
+
+    key = canonical_context_key(context_key)
+    value = (model or "").strip() or None
+    if value is not None and llm_providers.find(value) is None:
+        raise ValueError(
+            f"unknown model {model!r}; pick one of {llm_providers.model_ids()}")
+    models = get_scope_models()
+    if value is None:
+        models.pop(key, None)
+    else:
+        models[key] = value
+    _write_pref("scope_models", models or None)
+    return value
+
+
 def get_default_effort() -> str | None:
     """The operator's preferred effort level, or None for "no preference".
 
@@ -263,12 +302,12 @@ def _now_iso() -> str:
 # which a caller holding a pre-award snapshot would silently strip (the
 # latent race window R7 in docs/platform-redesign/chat-concurrency-model).
 _PRESERVED_ON_SAVE = ("claude_session", "agent_sessions", "summary",
-                      "context_tokens", "turn_marks", "card_states",
+                      "context_tokens", "context_overhead", "turn_marks", "card_states",
                       "_seed_title", "_name_attempts", "_name_idx", "cut_through",
-                      "cut_mode", "voice_session", "live_message")
+                      "cut_mode", "voice_session", "live_message", "cli_rewind")
 
 _INTERNAL_META = ("last_seq", "boundary_seq", "active_turn_id", "active_turn_seq",
-                  "live_message", "cut_through")
+                  "live_message", "cut_through", "auto_resume")
 
 
 # `_promotion_patch` USED TO BE HERE, and deleting it is what made "chat with an
@@ -532,7 +571,7 @@ def _document(meta: dict, messages: list[dict], seqs: list[int], cut_seq: int = 
     # SCOPE IS DERIVED, NOT STORED. It used to be back-filled only when the
     # stored field was absent, which made it stale from the moment anything
     # moved: `rescope_thread` writes `context_key` and nothing else, so a chat
-    # rebound from `general` to `project:birds` went on reporting `workshop`
+    # rebound from `general` to `project:<slug>` went on reporting `workshop`
     # for the rest of its life. Reads that trusted the stored value are what
     # carried `app:development` (see scope_tree.scope_for_context) onto 27
     # threads and out to `Memory.tsx`, which filters the chat list against
@@ -1121,6 +1160,81 @@ def get_thread_mcp_servers(thread_id: str) -> list[str] | None:
     return list(value) if isinstance(value, list) else None
 
 
+def set_thread_page_level(thread_id: str, level: str) -> dict | None:
+    """How much of the page beside it this chat may see and use
+    (services/page_link.LEVELS). The default is stored as no field at all."""
+    level = page_link.clamp_level(level)
+    return _patch(thread_id, page_level=None if level == page_link.DEFAULT_LEVEL else level)
+
+
+def get_thread_page_level(thread_id: str) -> str:
+    meta = chat_log.read_meta(thread_id) or {}
+    return page_link.clamp_level(meta.get("page_level"))
+
+
+def set_thread_page_view(thread_id: str, view: str) -> dict | None:
+    """How the operator sees this chat's work in an app (page_link.VIEWS);
+    follow, the default, is stored as no field."""
+    if view not in page_link.VIEWS:
+        raise ValueError(f"view must be one of {', '.join(page_link.VIEWS)}")
+    return _patch(thread_id, page_view=None if view == "follow" else view, page_stay=None)
+
+
+def get_thread_page_view(thread_id: str) -> str:
+    meta = chat_log.read_meta(thread_id) or {}
+    view = meta.get("page_view")
+    if view in page_link.VIEWS:
+        return view
+    return "show" if meta.get("page_stay") else "follow"
+
+
+def set_thread_page_follow(thread_id: str, follow: bool) -> dict | None:
+    """Follow, or show without bringing anything forward."""
+    return set_thread_page_view(thread_id, "follow" if follow else "show")
+
+
+def get_thread_title(thread_id: str) -> str:
+    """The chat's title (or the title it was seeded with), read from meta
+    without folding the log."""
+    meta = chat_log.read_meta(thread_id) or {}
+    return str(meta.get("title") or meta.get("_seed_title") or "")
+
+
+def get_thread_page_follow(thread_id: str) -> bool:
+    return get_thread_page_view(thread_id) == "follow"
+
+
+def add_thread_allow_rules(thread_id: str, rules: list[str]) -> list[str]:
+    """Rules the operator gave with "Allow and stop asking" (services/tool_policy),
+    in the CLI's syntax, kept for every later turn of this chat."""
+    have = get_thread_allow_rules(thread_id)
+    merged = have + [r for r in rules if r and r not in have]
+    if merged != have:
+        _patch(thread_id, allow_rules=merged)
+    return merged
+
+
+def get_thread_allow_rules(thread_id: str) -> list[str]:
+    if not thread_id:
+        return []
+    raw = (chat_log.read_meta(thread_id) or {}).get("allow_rules")
+    return [str(r) for r in raw if isinstance(r, str)] if isinstance(raw, list) else []
+
+
+def set_thread_app_access(thread_id: str, access: dict[str, list[str]]) -> dict | None:
+    """Which other apps this chat may use, and which of each app's declared
+    access options are on (services/chat_apps). An empty map clears the field."""
+    return _patch(thread_id, app_access=access or None)
+
+
+def get_thread_app_access(thread_id: str) -> dict[str, list[str]]:
+    meta = chat_log.read_meta(thread_id) or {}
+    raw = meta.get("app_access")
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): [str(o) for o in v] for k, v in raw.items() if isinstance(v, list)}
+
+
 class _Unset:
     """Sentinel for "this field was not in the request".
 
@@ -1286,7 +1400,62 @@ def append_message(thread_id: str, role: str, content: str, meta: dict | None = 
             chat_naming.schedule(thread_id)
         except Exception:   # pragma: no cover — naming is best-effort, always
             pass
+    _operator_wrote(thread_id, role, meta, ev)
     return _msg_from_event(ev)
+
+
+_HELD_LOCK = threading.Lock()
+
+
+def _held(thread_id: str) -> list[dict]:
+    """The calls this chat's unanswered cards hold (services/held_asks). A chat
+    whose meta cannot be read holds nothing."""
+    try:
+        return held_asks.valid((chat_log.read_meta(thread_id) or {}).get("held_asks"))
+    except Exception as e:
+        log.debug("held asks on %s unreadable: %s", thread_id, e)
+        return []
+
+
+def _set_held(thread_id: str, before: list[dict], after: list[dict]) -> None:
+    if after != before:
+        chat_log.patch_meta_sync(thread_id, held_asks=after or None)
+
+
+def hold_ask(thread_id: str, tool: str, tool_input: dict | None) -> None:
+    """Keep a call whose card went unanswered, for the operator's next message."""
+    if not thread_id or not tool:
+        return
+    with _HELD_LOCK:
+        have = _held(thread_id)
+        _set_held(thread_id, have, held_asks.held(have, held_asks.key(tool, tool_input)))
+
+
+def take_approved_ask(thread_id: str, tool: str, tool_input: dict | None) -> bool:
+    """Whether the operator's message approved this exact call. Using it spends it."""
+    if not thread_id:
+        return False
+    call = held_asks.key(tool, tool_input)
+    with _HELD_LOCK:
+        have = _held(thread_id)
+        if not held_asks.approved(have, call):
+            return False
+        _set_held(thread_id, have, held_asks.spent(have, call))
+    log.info("thread %s: %s approved by the operator's message", thread_id, tool)
+    return True
+
+
+def _operator_wrote(thread_id: str, role: str, meta: dict | None, ev: dict) -> None:
+    """A message from the operator (no `sender`) approves the calls its chat's
+    unanswered cards held."""
+    if role != "user" or (meta or {}).get("sender") or ev.get("seq") is None:
+        return
+    try:
+        with _HELD_LOCK:
+            have = _held(thread_id)
+            _set_held(thread_id, have, held_asks.after_message(have, ev["seq"]))
+    except Exception as e:  # pragma: no cover — an approval never fails a message
+        log.warning("held asks on %s: %s", thread_id, e)
 
 
 def append_message_during_turn(thread_id: str, role: str, content: str,
@@ -1330,6 +1499,7 @@ def append_message_during_turn(thread_id: str, role: str, content: str,
         raise KeyError(thread_id)
     ev = chat_log.append_message_sync(thread_id, role, content, meta=meta,
                                       client_id=client_id, ts=ts or _now_iso())
+    _operator_wrote(thread_id, role, meta, ev)
     return _msg_from_event(ev)
 
 
@@ -1795,6 +1965,7 @@ def commit_turn(
     agent: str | None = None,
     state: str = "finished",
     cut_head: list[str] | None = None,
+    cli: dict | None = None,
 ) -> dict | None:
     """Commit a turn: one assistant message at the TAIL, one `turn` marker, done.
 
@@ -1854,6 +2025,10 @@ def commit_turn(
         meta["receipts"] = receipts
     if agent:
         meta["agent"] = agent
+    # Where the CLI session stood when this reply ended: {session, at}. Going
+    # back to the end of this reply resumes the session there (see rewind_to).
+    if cli:
+        meta["cli"] = cli
     ev = chat_log.append_message_sync(thread_id, "assistant", content, meta=meta,
                                       ts=_now_iso())
     # Index this message's receipts as backlink sources (design doc sec 10/7.2:
@@ -1908,8 +2083,27 @@ LOST_TURN_TEXT = (
     "disk is intact. Send \"continue\" to pick it back up."
 )
 
+# The same event when `chat_drain.schedule_auto_resume` is about to pick it up,
+# so the operator is not told to do what is already being done.
+LOST_TURN_RESUMING_TEXT = (
+    "Lost when the backend restarted mid-turn. Anything already written to "
+    "disk is intact. Resuming it automatically."
+)
 
-def lose_turn(thread_id: str, turn_id: str) -> dict | None:
+
+def turn_started_at(thread_id: str, turn_id: str) -> float | None:
+    """When the in-flight turn was claimed, as epoch seconds, from the draft the
+    claim writes. None when the thread holds no draft for this turn."""
+    live = (chat_log.read_meta(thread_id) or {}).get("live_message")
+    if not isinstance(live, dict) or live.get("turn_id") != turn_id or not live.get("ts"):
+        return None
+    try:
+        return datetime.fromisoformat(str(live["ts"]).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def lose_turn(thread_id: str, turn_id: str, *, resuming: bool = False) -> dict | None:
     """Close out a turn whose process is dead or gone: a `turn: lost` marker and a
     message saying so, so the chat is never left waiting on something that will
     never answer.
@@ -1918,7 +2112,8 @@ def lose_turn(thread_id: str, turn_id: str) -> dict | None:
     been written for and which nothing had set since the per-read self-heal was
     deleted. Without it this renders as an ordinary reply that happens to be
     about a restart; with it, it reads as what it is."""
-    return commit_turn(thread_id, turn_id, [], LOST_TURN_TEXT, state="lost",
+    text = LOST_TURN_RESUMING_TEXT if resuming else LOST_TURN_TEXT
+    return commit_turn(thread_id, turn_id, [], text, state="lost",
                        stopped=STOPPED_INTERRUPTED)
 
 
@@ -2001,6 +2196,20 @@ def set_thread_context_tokens(thread_id: str, tokens: int,
                 sorted(s for s in owned if s) or "no session")
             return t
     return _patch(thread_id, context_tokens=max(0, int(tokens)))
+
+
+def set_thread_context_overhead(thread_id: str, tokens: int) -> dict | None:
+    """Remember what the system prompt, tool schemas and memory add to this
+    thread's window, so a compaction can estimate the window it leaves before
+    the next reply measures it. A property of the prompt, not of the live
+    window, so a clear or fold does not invalidate it. Writes only on change."""
+    value = max(0, int(tokens))
+    t = get_thread(thread_id)
+    if t is None:
+        return None
+    if t.get("context_overhead") == value:
+        return t
+    return _patch(thread_id, context_overhead=value or None)
 
 
 def clear_thread_context_tokens(thread_id: str) -> dict | None:
@@ -2158,6 +2367,46 @@ def clear_thread_session(thread_id: str) -> dict | None:
     from services import attachment_carry  # local: see note_auto_compact
     attachment_carry.note_dropped(thread_id)
     return _patch(thread_id, claude_session=None)
+
+
+def set_rewind(thread_id: str, session: str, at: str) -> dict | None:
+    """Make the thread's next turn resume its session at entry `at`
+    (`--resume-session-at`): the session as it stood at an earlier point, with
+    its prompt cache and everything read up to there, and nothing after.
+
+    This is what going back in the transcript does when the point it goes back
+    to is one the session recorded (`meta.cli` on a reply). It replaces
+    detaching the session, which re-sent the visible messages as prose and lost
+    every tool result, file read and the cache with them.
+
+    `session` may be an earlier one than the live session (a point before a
+    /clear, a /compact, or on another line); the caller makes it the live one
+    (`adopt_thread_session`). The next turn forks it at `at` and adopts the
+    copy (`build_streaming._adopt_fork`), so `session` itself never moves."""
+    if chat_log.read_meta(thread_id) is None:
+        return None
+    return _patch(thread_id, cli_rewind={"session": session, "at": at})
+
+
+def adopt_thread_session(thread_id: str, session: str) -> dict | None:
+    """Make `session` the one the thread's next turn resumes."""
+    if chat_log.read_meta(thread_id) is None:
+        return None
+    return _patch(thread_id, claude_session=session)
+
+
+def rewind_for(thread_id: str, session: str | None) -> str | None:
+    """The entry the next turn on `session` resumes at, if one is set."""
+    meta = chat_log.read_meta(thread_id) or {}
+    r = meta.get("cli_rewind")
+    if not session or not isinstance(r, dict) or r.get("session") != session:
+        return None
+    return r.get("at") or None
+
+
+def clear_rewind(thread_id: str) -> None:
+    if (chat_log.read_meta(thread_id) or {}).get("cli_rewind"):
+        _patch(thread_id, cli_rewind=None)
 
 
 def resolve_cut(thread_id: str) -> dict:

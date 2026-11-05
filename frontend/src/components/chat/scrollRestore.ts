@@ -38,10 +38,17 @@ export const FOLLOW_SLOP = 80;
  *  by reopening chats and watching where they land.
  *
  *  `null` (nothing saved) means the bottom: a thread you have never scrolled is
- *  a thread you want the end of. */
+ *  a thread you want the end of. So does `turnLive`, a turn running as it opens. */
 export function restoresToBottom(
   saved: ScrollPos | null, scrollHeight: number, clientHeight: number,
+  turnLive = false,
 ): boolean {
+  // A TURN IN FLIGHT OPENS AT ITS WORKING LINE, wherever the thread was left.
+  // That line carries Stop, and it is the only thing on the page still moving.
+  // Restoring a mid-thread offset over a running turn put a long reply between
+  // the operator and both: on 2026-10-03 the line sat 4000px below the fold of
+  // an embedded chat, under a wall of reasoning, while the turn ran for an hour.
+  if (turnLive) return true;
   if (!saved || saved.atBottom) return true;
   const max = Math.max(0, scrollHeight - clientHeight);
   const top = Math.min(Math.max(0, saved.top), max);

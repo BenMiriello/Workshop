@@ -90,10 +90,58 @@ export function RunningDot({ running, ordinal }: { running: boolean; ordinal: nu
   );
 }
 
+/** The row's verbs behind its More button. Each item is omitted where the
+ *  surface does not offer it, and with none there is no button at all. The
+ *  stop keeps the trigger from also opening the chat behind it. Shared with the
+ *  grid's card, so both layouts offer the same verbs the same way. */
+export function ChatMenu({ thread: t, onArchive, onRestore, onDelete }: {
+  thread: ThreadSummary;
+  onArchive?: (t: ThreadSummary) => void;
+  onRestore?: (t: ThreadSummary) => void;
+  onDelete?: (t: ThreadSummary) => void;
+}) {
+  if (!onArchive && !onRestore && !onDelete) return null;
+  return (
+    <span onClick={(e) => e.stopPropagation()}>
+      <Menu
+        label="Chat actions"
+        trigger={
+          <button type="button" className="ws-chat-row__act" title="More" aria-label="More chat actions">
+            <MoreVertical size={14} aria-hidden />
+          </button>
+        }
+      >
+        {onArchive && (
+          <MenuItem icon={<Archive size={14} aria-hidden />} onSelect={() => onArchive(t)}>
+            Archive
+          </MenuItem>
+        )}
+        {onRestore && (
+          <MenuItem icon={<ArchiveRestore size={14} aria-hidden />} onSelect={() => onRestore(t)}>
+            Restore
+          </MenuItem>
+        )}
+        {(onArchive || onRestore) && onDelete && <MenuSeparator />}
+        {onDelete && (
+          <MenuItem
+            danger
+            icon={<Trash2 size={14} aria-hidden />}
+            onSelect={() => onDelete(t)}
+          >
+            Delete
+          </MenuItem>
+        )}
+      </Menu>
+    </span>
+  );
+}
+
 export default function ChatRow({
-  thread, ordinal = 0, showScope = true, time, onOpen, onArchive, onRestore, onDelete,
+  thread, ordinal = 0, showScope = true, time, snippet, onOpen, onArchive, onRestore, onDelete,
 }: {
   thread: ThreadSummary;
+  /** A search's passage, shown on line two in place of the last message. */
+  snippet?: string | null;
   /** Whether to tag this row with its scope. FALSE on a list that is all one
    *  scope, where the tag is the page's own title repeated once per row. The
    *  caller decides by asking the ROWS (`spansScopes` in pages/chatList), not
@@ -190,41 +238,7 @@ export default function ChatRow({
               <ArchiveRestore size={14} aria-hidden />
             </button>
           )}
-          {/* The menu opens on its own; the stop keeps its trigger from also
-              opening the chat behind it. */}
-          {(onArchive || onRestore || onDelete) && (
-            <span onClick={(e) => e.stopPropagation()}>
-              <Menu
-                label="Chat actions"
-                trigger={
-                  <button type="button" className="ws-chat-row__act" title="More" aria-label="More chat actions">
-                    <MoreVertical size={14} aria-hidden />
-                  </button>
-                }
-              >
-                {onArchive && (
-                  <MenuItem icon={<Archive size={14} aria-hidden />} onSelect={() => onArchive(t)}>
-                    Archive
-                  </MenuItem>
-                )}
-                {onRestore && (
-                  <MenuItem icon={<ArchiveRestore size={14} aria-hidden />} onSelect={() => onRestore(t)}>
-                    Restore
-                  </MenuItem>
-                )}
-                {(onArchive || onRestore) && onDelete && <MenuSeparator />}
-                {onDelete && (
-                  <MenuItem
-                    danger
-                    icon={<Trash2 size={14} aria-hidden />}
-                    onSelect={() => onDelete(t)}
-                  >
-                    Delete
-                  </MenuItem>
-                )}
-              </Menu>
-            </span>
-          )}
+          <ChatMenu thread={t} onArchive={onArchive} onRestore={onRestore} onDelete={onDelete} />
         </div>
       </div>
       {/* Line two: the last message, and the row's tags trailing it.
@@ -246,7 +260,7 @@ export default function ChatRow({
             for 8rem and take the rest only when there is a rest. Measured in a
             390px shot, which is the only thing that catches this. */}
         <p className="ws-muted ws-chat-row__snippet" style={{ flex: "1 1 8rem", width: "auto" }}>
-          {t.last_message || " "}
+          {snippet ?? (t.last_message || " ")}
         </p>
         {tags.length > 0 && (
           <span className="ws-tagstrip" style={{ flex: "0 1 auto" }}>

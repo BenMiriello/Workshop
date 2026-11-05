@@ -1,12 +1,17 @@
-import { Fragment, memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import SentContext from "./SentContext";
+import { splitAttached } from "../shell/beside/contextItems";
 import { Archive, ArrowRightLeft, Bot, Clock, Eraser, FileText, Lightbulb, Radio, RotateCcw, Ticket, TriangleAlert, X, Zap } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@workshop/ui";
 import { chatApi, type ChatMsg } from "../../lib/chat";
+import type { Schedule } from "../../lib/chatSchedules";
+import { shownAs } from "./schedules";
 import { scopeName } from "./chatScope";
 import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn, AnswerBody, ElidedContent } from "./Transcript";
 import CopyMessage from "./CopyMessage";
+import ReadAloudMessage from "./ReadAloudMessage";
 import LiveTurn from "./LiveTurn";
 import StatusNote from "./StatusNote";
 import UnsentNote from "./UnsentNote";
@@ -301,6 +306,9 @@ const MessageBubble = memo(function MessageBubble({
   // and an empty box above the stopped-reply line reads as a rendering
   // fault rather than as a turn the operator ended. See replyBody.hasBubble.
   const body = hasBubble(msg);
+  // A message sent from beside a page carries what was attached after what was
+  // typed; the two are shown apart (shell/beside/contextItems).
+  const typed = msg.role === "user" ? splitAttached(msg.content) : { text: msg.content, parts: [] };
   // DOES THIS WANT SOMETHING FROM YOU. That is the reader's actual question and
   // it is what the emphasis follows now.
   //
@@ -358,7 +366,11 @@ const MessageBubble = memo(function MessageBubble({
               {(msg.meta?.agent || attributed) && (
                 <div className="chat-byline">
                   <Bot size={13} strokeWidth={1.8} aria-hidden />
-                  <span>{msg.meta?.agent || senderName(msg.meta)}</span>
+                  {msg.meta?.sender_href && !msg.meta?.agent ? (
+                    <Link to={msg.meta.sender_href}>{msg.meta.sender_name}</Link>
+                  ) : (
+                    <span>{msg.meta?.agent || msg.meta?.sender_name || senderName(msg.meta)}</span>
+                  )}
                 </div>
               )}
               {/* Said only when something is actually waiting on a person, and
@@ -383,17 +395,31 @@ const MessageBubble = memo(function MessageBubble({
                   message, not beside it. */}
               <Receipts msg={msg} />
             </>
-          ) : msg.content.trim() ? (
-            <ElidedContent source={msg.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
+          ) : typed.text.trim() || typed.parts.length ? (
+            <>
+              {typed.text.trim() && (
+                <ElidedContent source={typed.text} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
+              )}
+              <SentContext parts={typed.parts} />
+            </>
           ) : null}
         </div>
-        {msg.content.trim() && <CopyMessage value={msg.content} />}
+        {typed.text.trim() && <ReadAloudMessage value={typed.text} />}
+        {msg.content.trim() && <CopyMessage value={typed.text.trim() ? typed.text : msg.content} />}
         {branchFor}
       </div>}
       {/* One quiet line under the reply, and that is the whole treatment for a
           turn that ended early. No border, no tag above the body, no icon. */}
       {msg.meta?.stopped && (
         <div className="chat-status-line">{stoppedTag(msg.meta.stopped)}</div>
+      )}
+      {/* Sent by one of the operator's own schedules: still his words, and
+          said under them so a repeat is never mistaken for a new message. */}
+      {msg.meta?.scheduled !== undefined && (
+        <div className="chat-status-line">
+          <Clock size={12} strokeWidth={1.8} aria-hidden />
+          {msg.meta.scheduled ? ` Scheduled: ${msg.meta.scheduled}` : " Scheduled"}
+        </div>
       )}
       {/* DECIDE IT HERE. A ticket this chat filed that is waiting on an answer
           gets its control under the message that raised it, the way a permission
@@ -531,6 +557,7 @@ function PendingBubble({
         >
           <X size={13} strokeWidth={1.8} aria-hidden />
         </button>
+        {text.trim() && <ReadAloudMessage value={text} />}
         {text.trim() && <CopyMessage value={text} />}
       </div>
     </div>
@@ -542,7 +569,7 @@ function PendingBubble({
 export type AnswerPermissionFor = (
   turnId: string,
   a: { requestId: string; allow: boolean; message?: string; applySuggestion?: boolean },
-) => Promise<void>;
+) => Promise<boolean>;
 
 // Memoized, and the reason is the composer. The chat's draft text is state on
 // the same component that owns this transcript, so every keystroke re-renders
@@ -556,11 +583,13 @@ export type AnswerPermissionFor = (
 // Keep the props stable if you add one. An inline object or arrow here silently
 // turns this memo off and nothing fails visibly; it just gets slow again.
 function MessageList({
-  blocks, selectedModel, cardCtx, workingLabel, elapsed, nowMs, onRetry,
+  blocks, schedules, selectedModel, cardCtx, workingLabel, elapsed, nowMs, onRetry,
   onCancelPending,
   answerPermission, liveTurnId, renderBranch, branchHead, onStop, stopping,
 }: {
   blocks: TranscriptBlock[];
+  /** The chat's schedules, to name who sent a message one of them sent. */
+  schedules: readonly Schedule[];
   selectedModel: string;
   cardCtx: UiCardCtx;
   workingLabel: string;
@@ -592,6 +621,19 @@ function MessageList({
   // auto-shorten — but only when nothing is running, because a live turn is
   // itself the most recent thing.
   const arrivedAfterMount = useArrivedAfterMount();
+  // Stable across stream events, so the live turn's memoized step runs are not
+  // all redrawn on each one just because this closure was rebuilt.
+  const answerLive = useMemo(
+    () => (answerPermission && liveTurnId
+      ? (a: Parameters<AnswerPermissionFor>[1]) => answerPermission(liveTurnId, a)
+      : undefined),
+    [answerPermission, liveTurnId],
+  );
+  // A message someone else put there reads as theirs (schedules.shownAs).
+  // Memoized so a bubble whose message did not change keeps its memo.
+  const shown = useMemo(() => new Map(blocks.flatMap((b) => (
+    b.kind === "message" ? [[b.key, shownAs(b.msg, schedules)] as const] : []))),
+  [blocks, schedules]);
   let latestAssistantKey: string | null = null;
   for (let i = blocks.length - 1; i >= 0; i--) {
     const b = blocks[i];
@@ -636,7 +678,7 @@ function MessageList({
           {b.kind === "scope" && <ScopeChangeNote to={b.to} />}
           {b.kind === "message" && (
             <MessageBubble
-              msg={b.msg}
+              msg={shown.get(b.key) ?? b.msg}
               flashId={b.key}
               arrived={arrivedAfterMount(b.key, b.msg.ts)}
               inflight={b.inflight}
@@ -659,9 +701,7 @@ function MessageList({
               nowMs={nowMs}
               model={selectedModel}
               cardCtx={cardCtx}
-              onAnswerPermission={
-                answerPermission && liveTurnId ? (a) => answerPermission(liveTurnId, a) : undefined
-              }
+              onAnswerPermission={answerLive}
               onStop={onStop}
               stopping={stopping}
             />

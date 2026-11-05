@@ -79,17 +79,18 @@ class EffortCaps(BaseModel):
     default: str | None = None
 
 
-class ModelCaps(BaseModel):
-    vendor: str
-    efforts: EffortCaps
-
-
 class ModesPayload(BaseModel):
-    """Vendor-level, not per model: a permission mode is a property of the CLI
-    running the turn, not of the model answering it."""
+    """Vendor-level: a permission mode is a property of the CLI running the
+    turn. A model served by a local server narrows it (`ModelCaps.modes`)."""
 
     options: list[str]
     default: str | None = None
+
+
+class ModelCaps(BaseModel):
+    vendor: str
+    efforts: EffortCaps
+    modes: ModesPayload | None = None
 
 
 class Provider(BaseModel):
@@ -158,6 +159,16 @@ class ThreadSummary(BaseModel):
     # coerced to a default.
     armed: str = "off"
     role: str | None = None
+
+
+class ThreadSearchHit(BaseModel):
+    """One chat matching a search, best first (`services/chat_search`). `where`
+    says whether the words were in the title or only in the messages; a
+    message match carries the passage it was found in."""
+
+    id: str
+    where: str
+    snippet: str | None = None
 
 
 class StoredCardState(BaseModel):
@@ -325,6 +336,16 @@ class AttachmentRef(BaseModel):
     kind: str = ""
 
 
+class SendRule(BaseModel):
+    """When a queued message may go out (services/send_rules). `kind` is one
+    of after_turn | at | usage_reset | after_thread | hold; `at` is ISO with a
+    zone, for `at` and a resolved `usage_reset`; `thread_id` for after_thread."""
+
+    kind: str
+    at: str | None = None
+    thread_id: str | None = None
+
+
 class QueuedMessage(BaseModel):
     """A message the SERVER has taken responsibility for but has not sent. The
     per-turn overrides ride with it so a queued message runs under the model,
@@ -347,6 +368,15 @@ class QueuedMessage(BaseModel):
     # `role` (user/assistant) stays the model-API field it always was; `sender`
     # is ours and means "who put this here", which `role` never answered.
     sender: str | None = None
+    when: SendRule | None = None
+
+
+class QueueWaiting(BaseModel):
+    """`reason` is a code (`usage_limit`); `until` is when it is expected to
+    pass, ISO UTC, if known."""
+
+    reason: str
+    until: str | None = None
 
 
 class QueueState(BaseModel):
@@ -357,6 +387,9 @@ class QueueState(BaseModel):
     queued: list[QueuedMessage]
     queue_held: bool
     queue_error: str
+    # Set while the platform holds the next turn back for a reason outside the
+    # thread (`turn_admission`), cleared the moment it passes.
+    queue_waiting: QueueWaiting | None = None
 
 
 class ThreadDocument(ThreadSettings):
@@ -413,6 +446,12 @@ class ChatModeSet(BaseModel):
     mode: str | None = None
 
 
+class ThreadModelSet(BaseModel):
+    id: str
+    model: str | None = None
+    effort: str | None = None
+
+
 class ThreadArming(BaseModel):
     """What advances this thread without a person, and which definition it
     answers as. The response to `POST /threads/{id}/arming` and the shape the
@@ -436,6 +475,16 @@ class CardStates(BaseModel):
 
 # --------------------------------------------------------------------- drafts
 
+class DraftSettings(BaseModel):
+    """What was picked in a blank chat before any message existed. A field that
+    is absent was never chosen, which is not the same as the default's value."""
+
+    model: str | None = None
+    effort: str | None = None
+    permission_mode: str | None = None
+    mode: str | None = None
+
+
 class Draft(BaseModel):
     """The unsent text in a composer, plus the files attached to it -- a draft is
     everything in the box. `superseded` is set when a write LOST to a strictly
@@ -447,6 +496,7 @@ class Draft(BaseModel):
     ts: int
     client_id: str
     attachments: list[AttachmentRef] | None = None
+    settings: DraftSettings | None = None
     superseded: bool | None = None
 
 
@@ -475,6 +525,46 @@ class ChatPrefsOut(BaseModel):
     timezone: str | None = None
     resolved_timezone: str | None = None
     timezone_source: str | None = None
+
+
+class ModelOption(BaseModel):
+    """One model a default may name. `window` is 0 when nothing reported it."""
+
+    id: str
+    label: str
+    provider_id: str
+    window: int
+
+
+class ScopeModelDefault(BaseModel):
+    """One scope's model default. `model` is what the operator chose (null when
+    he has not); `fallback_model` is what runs without that choice and
+    `fallback_source` the resolution rung it comes from ("scope" when the scope
+    declares one, else "principal" or "deployment"). `compaction_model` is the
+    model its compactions go to when the operator chose one, and
+    `compaction_fallback` what applies without that choice (the global
+    compaction model, null for the chat's own)."""
+
+    key: str
+    label: str
+    model: str | None = None
+    fallback_model: str
+    fallback_source: str
+    compaction_model: str | None = None
+    compaction_fallback: str | None = None
+
+
+class ModelDefaultsOut(BaseModel):
+    """The operator's model defaults with the choices for each. A null
+    `default_model` falls back to `deployment_model`; a null
+    `compaction_model` leaves every compaction on the chat's own model."""
+
+    default_model: str | None = None
+    deployment_model: str
+    models: list[ModelOption]
+    scopes: list[ScopeModelDefault]
+    compaction_model: str | None = None
+    compaction_models: list[ModelOption]
 
 
 # --------------------------------------------------------------------- events
@@ -538,6 +628,9 @@ class ThreadEvents(BaseModel):
     queued: list[QueuedMessage]
     queue_held: bool
     queue_error: str
+    # Set while the platform holds the next turn back for a reason outside the
+    # thread (`turn_admission`), cleared the moment it passes.
+    queue_waiting: QueueWaiting | None = None
     # On the sync response as well as on the thread document, for the same
     # reason the queue is on both: the GET paints it once when the chat opens,
     # and sync is what keeps it true afterwards. A client that only ever saw it
@@ -598,6 +691,18 @@ class ForkResult(BaseModel):
     branch: CurrentBranch
     branches: list[Branch]
     queued_held: int
+    # The session resumes at the point gone back to (its cache and everything
+    # read up to there kept) rather than starting over from the visible text.
+    rewound: bool = False
+
+
+class UnsendResult(BaseModel):
+    """`branched` is true when another line still reached the message, so it
+    was left there and this line went back to before it instead."""
+
+    branch: CurrentBranch
+    branched: bool
+    rewound: bool = False
 
 
 class SwitchResult(BaseModel):
@@ -790,9 +895,10 @@ class MessageAccepted(BaseModel):
     """Every branch is an acceptance -- running now, handed to the turn in
     flight, or queued. `injected` means the bytes reached the running process,
     NOT that the model read them: measured, the model addresses a mid-turn
-    message at the end of its current plan."""
+    message at the end of its current plan. `turn_id` is absent when the
+    message was queued on a chat with nothing running."""
 
-    turn_id: str
+    turn_id: str | None = None
     injected: bool | None = None
     queued: bool | None = None
     at_segment: int | None = None
@@ -802,13 +908,16 @@ class MessageAccepted(BaseModel):
 class InjectResult(BaseModel):
     """THE CHAT HAS THE MESSAGE either way -- it is in the log before any
     delivery is attempted, so re-sending would show it twice. `delivered` says
-    whether the RUNNING turn took it; false means a fresh turn was started."""
+    whether the RUNNING turn took it; false means a fresh turn was started.
+    With no turn running there is no `turn_id`: `queued_for_turn` true means
+    it waits behind a compact or clear, false means it was NOT taken and goes
+    out as an ordinary turn."""
 
     delivered: bool
     injected: bool | None = None
     queued_for_turn: bool
     queued: bool | None = None
-    turn_id: str
+    turn_id: str | None = None
     at_segment: int | None = None
     queue: QueueState | None = None
     reason: str

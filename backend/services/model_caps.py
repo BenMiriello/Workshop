@@ -16,12 +16,19 @@ Two shapes worth knowing before editing the table:
   - Haiku 4.5 is absent from the vendor's supported list, so it gets no
     control at all, even though the CLI accepts the flag for it.
 
+An app whose chat sends its model requests through its own gateway may declare
+the levels that gateway honours (`app_chat_gateway.declared_efforts`). For a chat in
+that app's scope on a model the gateway serves, that declaration IS the ladder,
+whatever the model's own entry says, because the gateway is what reads the
+level. Every other scope, and a model the CLI reaches itself, is unchanged.
+
 Permission modes are a CLI-level concept and don't vary by model; they belong to
 the vendor entry, not here.
 """
 
 from __future__ import annotations
 
+from services import app_chat_gateway, llm_providers
 from services import llm_router as _llm
 
 # Every level the CLI will accept, in ascending order. Membership here means
@@ -38,6 +45,7 @@ EFFORT_BY_MODEL: dict[str, tuple[str, ...]] = {
     _llm.TIER_OPUS_5_5: ("low", "medium", "high", "xhigh", "max"),
     _llm.TIER_OPUS_5: ("low", "medium", "high", "xhigh", "max"),
     _llm.TIER_FABLE_5_1: ("low", "medium", "high", "xhigh", "max"),
+    _llm.TIER_SONNET_5_5: ("low", "medium", "high", "xhigh", "max"),
     _llm.TIER_SONNET_5: ("low", "medium", "high", "xhigh", "max"),
     _llm.TIER_FABLE: ("low", "medium", "high", "xhigh", "max"),
     _llm.TIER_OPUS: ("low", "medium", "high", "xhigh", "max"),  # opus-4-8
@@ -61,7 +69,7 @@ PERMISSION_MODES: tuple[str, ...] = (
     "default",            # Manual: reads freely, asks before anything else
     "plan",               # research and propose, no edits
     "acceptEdits",        # edits and common fs commands without asking
-    "auto",               # everything, with background safety checks
+    "auto",               # everything but deleting (see AUTO_RUNS_AS)
     "bypassPermissions",  # everything, no checks
 )
 
@@ -111,6 +119,31 @@ def modes_payload(operator_default: str | None = None) -> dict:
     return {"options": list(OFFERED_MODES), "default": default}
 
 
+# What a chat at `auto` hands the CLI. The CLI's own `auto` asks a second model
+# to vet every call, and that check is not ours to set: it refused curl to the
+# installation's own API, edits to its own gate files and reads of its own env,
+# and its refusal tells the model to stop and explain (measured 2026-10-18, ~20
+# refusals in a week). On a local model it is worse, because the vetting model is
+# the busy one and the check times out (2026-10-11). So `auto` here means
+# `tool_policy`'s rule, everything but deleting, on this mode, whose own asks
+# the policy hook answers before they reach anyone.
+AUTO_RUNS_AS = "acceptEdits"
+
+
+def mode_for_model(mode: str | None, model: str | None) -> str | None:
+    """The mode the CLI is given for a chat at `mode` on `model`."""
+    if mode == "auto":
+        return AUTO_RUNS_AS
+    return mode
+
+
+def modes_for(model: str | None, operator_default: str | None = None) -> dict | None:
+    """The modes a chat on `model` may pick when they differ from the vendor's
+    list (`modes_payload`). They no longer do: `auto` is the policy's rule on
+    every model."""
+    return None
+
+
 def normalize_permission_mode(value: str | None) -> str | None:
     """Blank -> None (use the default). An unknown mode raises: unlike an effort
     level, there is no model-dependence here, so a value we don't recognise is a
@@ -135,43 +168,130 @@ def needs_approval_channel(mode: str | None) -> bool:
     return (mode or DEFAULT_PERMISSION_MODE) in NEEDS_APPROVAL_CHANNEL
 
 
-def efforts_for(model: str | None) -> tuple[str, ...]:
-    """Effort levels this model honours, ascending. Unknown model -> none, so a
-    provider pointing at something outside the pickable set degrades to hiding
-    the control rather than to a control that does nothing."""
+def _scope_ladder(model: str | None,
+                  scope: str | None) -> tuple[tuple[str, ...], str] | None:
+    """(ladder, default) a scope declares for `model`, or None when it declares
+    none that applies.
+
+    Applies only to a model whose turns the CLI sends to another provider's
+    server (`llm_providers.redirects_cli`), because only those go through an
+    app's gateway. Levels the CLI cannot spell are dropped. The default is the
+    declared `effort_default` when it is on the ladder, else the middle rung."""
+    if not model or not scope:
+        return None
+    declared, default = app_chat_gateway.declared_efforts(scope)
+    if not declared or not llm_providers.redirects_cli(model):
+        return None
+    ladder = tuple(level for level in EFFORT_LEVELS if level in declared)
+    if not ladder:
+        return None
+    return ladder, default if default in ladder else ladder[len(ladder) // 2]
+
+
+def _served_elsewhere(model: str | None) -> bool:
+    """Whether the CLI sends this model's requests to another provider's server.
+    First-party models are answered from the table without asking the catalog,
+    which is built from that table."""
+    if not model or model.strip() in EFFORT_BY_MODEL:
+        return False
+    return llm_providers.redirects_cli(model)
+
+
+def _provider_ladder(model: str | None) -> tuple[tuple[str, ...], str] | None:
+    """(ladder, default) the model's own provider declares, or None.
+
+    Only for a model whose turns the CLI sends to another provider's server,
+    because the first-party ladders are the table below and asking the catalog
+    for those would ask this module for them again. The default is the middle
+    rung, as for a scope's ladder."""
+    if not _served_elsewhere(model):
+        return None
+    info = llm_providers.find(model)
+    ladder = tuple(level for level in EFFORT_LEVELS
+                   if info is not None and level in info.efforts)
+    return (ladder, ladder[len(ladder) // 2]) if ladder else None
+
+
+def _declared_ladder(model: str | None,
+                     scope: str | None) -> tuple[tuple[str, ...], str] | None:
+    return _scope_ladder(model, scope) or _provider_ladder(model)
+
+
+def scope_efforts(model: str | None, scope: str | None) -> tuple[str, ...] | None:
+    """The ladder declared for `model` in this scope, ascending, or None: the
+    scope's own, else the one the model's provider declares."""
+    found = _declared_ladder(model, scope)
+    return found[0] if found else None
+
+
+def scope_default_effort(model: str | None, scope: str | None) -> str | None:
+    """The level a turn with a declared ladder (its scope's, else its model
+    provider's) runs at when nothing was picked, or None. Such a turn always
+    names its level:
+    without `--effort` the CLI sends one of its own choosing (CLI 2.1.287 sends
+    `output_config.effort` on every request)."""
+    found = _declared_ladder(model, scope)
+    return found[1] if found else None
+
+
+def first_party_efforts(model: str | None) -> tuple[str, ...]:
+    """The vendor's own ladder for `model`: the table, and nothing a scope or a
+    provider declares. What the first-party catalog is built from, so that
+    building it never asks the catalog."""
+    return EFFORT_BY_MODEL.get((model or "").strip(), ())
+
+
+def efforts_for(model: str | None, scope: str | None = None) -> tuple[str, ...]:
+    """Effort levels this model honours in this scope, ascending. Unknown
+    model -> none, so a provider pointing at something outside the pickable set
+    degrades to hiding the control rather than to a control that does nothing.
+    """
     if not model:
         return ()
-    return EFFORT_BY_MODEL.get(model.strip(), ())
+    declared = scope_efforts(model, scope)
+    if declared is not None:
+        return declared
+    return first_party_efforts(model)
 
 
-def default_effort_for(model: str | None) -> str | None:
-    levels = efforts_for(model)
+def default_effort_for(model: str | None, scope: str | None = None) -> str | None:
+    declared = scope_default_effort(model, scope)
+    if declared is not None:
+        return declared
+    levels = efforts_for(model, scope)
     if not levels:
         return None
     return DEFAULT_EFFORT if DEFAULT_EFFORT in levels else levels[-1]
 
 
-def caps_for(model: str | None, operator_default_effort: str | None = None) -> dict:
+def caps_for(model: str | None, operator_default_effort: str | None = None,
+             scope: str | None = None,
+             operator_default_mode: str | None = None) -> dict:
     """The capability descriptor the composer renders from. `modes` is absent
-    because a permission mode is a property of the CLI, not of the model; it
-    rides on the provider entry beside the models instead.
+    unless the model's own provider changes which modes a chat may pick
+    (`modes_for`); otherwise it rides on the provider entry beside the models.
 
     `efforts.default` is WHAT WILL RUN when nothing is picked, not a fact about
     the model in isolation — so the operator's preference displaces the model's
     own where the model has that rung. A preference this model has no rung for
     falls back to the model's default rather than showing a level the turn would
     drop."""
-    levels = efforts_for(model)
-    default = default_effort_for(model)
+    levels = efforts_for(model, scope)
+    default = default_effort_for(model, scope)
     if operator_default_effort and operator_default_effort in levels:
         default = operator_default_effort
-    return {
+    caps = {
         "vendor": VENDOR,
         "efforts": {"levels": list(levels), "default": default},
     }
+    modes = modes_for(model, operator_default_mode)
+    if modes is not None:
+        caps["modes"] = modes
+    return caps
 
 
-def normalize_effort(value: str | None, model: str | None) -> str | None:
+def normalize_effort(value: str | None, model: str | None,
+                     scope: str | None = None) -> str | None:
     """Resolve an incoming effort selection against a model.
 
     Blank -> None. A level this model doesn't support is DROPPED (None) rather
@@ -187,4 +307,4 @@ def normalize_effort(value: str | None, model: str | None) -> str | None:
         raise ValueError(
             f"unknown effort {value!r}; pick one of {list(EFFORT_LEVELS)}"
         )
-    return v if v in efforts_for(model) else None
+    return v if v in efforts_for(model, scope) else None

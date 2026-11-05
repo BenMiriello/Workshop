@@ -18,6 +18,8 @@
 // with a sentence around it rather than being flattened into a generic line that
 // would hide the one detail that mattered.
 
+import { isRequestTimeout } from "../../lib/requestTimeout";
+
 /** The bounded tail we are willing to show of an unrecognised error. Long enough
  *  for a real server message, short enough that an HTML error page cannot take
  *  over the transcript. */
@@ -73,6 +75,9 @@ function trimDetail(raw: string, status: number | null): string {
  *  NO for anything the server answered with. A 400, a 403, a 500 out of the
  *  turn itself: those are about this message, and repeating it changes nothing. */
 export function isTransientSendFailure(e: unknown): boolean {
+  // No answer inside the send deadline (lib/requestTimeout): the server was
+  // stalled, which is the same fault as a 502 seen from the other side.
+  if (isRequestTimeout(e)) return true;
   const raw = messageOf(e);
   if (/failed to fetch|networkerror|network request failed|load failed|err_internet/i.test(raw)) {
     return true;
@@ -83,6 +88,9 @@ export function isTransientSendFailure(e: unknown): boolean {
 
 /** The line shown under a message that never reached the server. */
 export function sendFailureText(e: unknown): string {
+  if (isRequestTimeout(e)) {
+    return "Not sent: the server did not answer in time. Press Retry in a moment.";
+  }
   const raw = messageOf(e);
   // The browser's own wording for "the request never left, or never came back".
   // Firefox, Chrome and Safari each say it differently and none of them says it

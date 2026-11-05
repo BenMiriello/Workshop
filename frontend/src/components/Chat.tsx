@@ -8,7 +8,8 @@ import { useChatWork } from "./chat/work/useChatWork";
 import { chatBadge } from "./chat/work/workRows";
 import { ChatWorkProvider, type ChatWorkAccess } from "./chat/work/TicketCard";
 import ChatComposer from "./chat/ChatComposer";
-import { useAttachments, dragHasFiles, filesFromTransfer } from "./chat/useAttachments";
+import { useAttachments, dragHasFiles, filesFromTransfer, uploadRefs } from "./chat/useAttachments";
+import { attachedBlocks, type ContextItem } from "./shell/beside/contextItems";
 import { canSendWith } from "./chat/attachments";
 import ChatToolbar from "./chat/ChatToolbar";
 import BranchPill from "./chat/BranchPill";
@@ -40,7 +41,11 @@ import { useSendOutbox, type SendOutbox } from "./chat/useSendOutbox";
 import { useChatScope } from "./chat/useChatScope";
 import { useChatThread } from "./chat/useChatThread";
 import { linkIntentKey } from "./chat/threadIntent";
+import { leaveFrame, useChatEmbed } from "./chat/chatEmbed";
+import AccessMenu from "./chat/AccessMenu";
+import ChatPlace from "./chat/ChatPlace";
 import { useSendPipeline, wasFirstExchange } from "./chat/useSendPipeline";
+import { useAutoResend } from "./chat/useAutoResend";
 import { logPlaceholder, noRealContent } from "./chat/chatLogState";
 import { placementFor, type ChatProblem } from "./chat/chatProblem";
 import {
@@ -49,21 +54,27 @@ import {
 } from "./chat/problemState";
 import { scopeSwitch } from "./chat/scopeSwitch";
 import { STALE_TEXT } from "./chat/staleNotice";
-import { indicatorElapsed } from "./chat/turnStatus";
+import { elapsedSeconds } from "./chat/turnStatus";
 import {
   deriveTurnLifecycle, indicatorLabel, isBusy, runningTurnId, showIndicator,
 } from "./chat/turnLifecycle";
 import {
   committedClientIds, committedMessages, withoutCommitted,
 } from "./chat/transcriptBlocks";
-import { chatApi, type CardState } from "../lib/chat";
+import { chatApi, type CardState, type SendRule } from "../lib/chat";
 import { writeSelection, NEW_CHAT } from "../lib/chatSelection";
 import { useDraft } from "../lib/draftSync";
+import { useOpenChat } from "./chat/useOpenChat";
+import { draftKeyFor, settingsToApply } from "./chat/composerDraft";
+import { CHAT_MODES, type ChatModeId } from "./chat/chatModes";
 import VoiceSettings from "./VoiceSettings";
 import { type UiCardCtx } from "./chat/uiCardActions";
 import { computeSupersededKeys } from "./chat/UiCard";
+import { useEmbedSignals } from "./chat/embedSignals";
 import { queryKeys } from "../lib/queryKeys";
 import type { components } from "../api/schema.gen";
+import { beside, useBeside } from "./shell/beside/besideStore";
+import { useFinding } from "./shell/find/FindProvider";
 
 // The unified chat. COMPOSITION over one store and a handful of hooks, each of
 // which owns one seam:
@@ -157,6 +168,11 @@ export default function Chat({
   }, [boundSlug]);
   const effectiveMode: ChatMode = mode ?? deriveMode(contextKey, boundAgent);
   const navigate = useNavigate();
+  // Set only on the embed route. A conversation picked there stays in the
+  // frame; any other Workshop page opens outside it. See chat/chatEmbed.
+  const embed = useChatEmbed();
+  const host = embed?.host ?? null;
+  const goTo = host ? host.leave : embed ? (embed.leave ?? leaveFrame) : navigate;
   // THE CHAT'S PROBLEM SLOT, held BY SOURCE. Everything in it is chat-scoped by
   // definition — anything caused by a specific message is said under that
   // message instead (see chat/chatProblem for the routing rule,
@@ -229,7 +245,8 @@ export default function Chat({
   }, []);
 
   const scopeState = useChatScope({
-    contextKey, effectiveMode, scoped, initialThreadId, startNew,
+    // A frame (an embed with no host in this window) is its scope's alone.
+    contextKey, effectiveMode, scoped, fixed: !!embed && !host, initialThreadId, startNew,
     onError: scopeError,
   });
   const {
@@ -263,9 +280,15 @@ export default function Chat({
     setSelectedEffort,
     setSelectedPermissionMode,
     onError: threadsError,
-    onLeaveForList: () => navigate("/chats"),
+    onLeaveForList: embed ? null : () => navigate("/chats"),
+    preferRunning: !!embed,
   });
   const { activeId, activeIdRef, loadingThreads } = thread;
+  // The composer takes no input until the scope and the thread are settled. The
+  // draft is keyed by both, and typing into the key of a scope that is about to
+  // be replaced by the resolved one is how text ended up in a slot nobody
+  // looked at again.
+  const composerReady = scopeState.providersReady && !loadingThreads;
 
   // KEEP THE ADDRESS BAR HONEST about which conversation THIS TAB is on.
   //
@@ -314,9 +337,15 @@ export default function Chat({
   // the operator dismissing it.
   useEffect(() => { setProblems(clearProblems); }, [activeId]);
 
-  const log = useThreadLog({ threadId: activeId, onError: logError });
+  // Set once the send pipeline exists, below; the log's change stream reopening
+  // is one of the two things that re-send unsent messages (useAutoResend).
+  const resendRef = useRef<() => void>(() => {});
+  const log = useThreadLog({
+    threadId: activeId, onError: logError,
+    onReconnect: () => resendRef.current(),
+  });
   const {
-    state, stateRef, dispatch, transcript, sync, turnActive, liveShown, hydrated,
+    state, stateRef, dispatch, transcript, sync, syncLanded, turnActive, liveShown, hydrated,
     stale, branch, loadOlder, loadingOlder, olderError,
   } = log;
   // A FOLD IS THE SERVER'S FACT, NOT THIS TAB'S. `folding` is what THIS tab
@@ -373,6 +402,7 @@ export default function Chat({
   // in flight refuses: rescope clears the session the run is speaking through,
   // and doing that underneath a live turn breaks it. Saying so is better than
   // either corrupting the run or silently ignoring the click.
+  const carryDraftRef = useRef<(toKey: string) => void>(() => {});
   const chooseScope = useCallback(async (key: string) => {
     const id = activeIdRef.current;
     const plan = scopeSwitch({
@@ -391,6 +421,7 @@ export default function Chat({
       // Recording the blank intent for the new scope keeps the loader landing
       // on blank there too, same as pressing "New chat" does today.
       writeSelection(key, NEW_CHAT);
+      carryDraftRef.current(draftKeyFor(key, null));
       scopeState.chooseProvider(key);
       return;
     }
@@ -407,6 +438,7 @@ export default function Chat({
       // thread loader reads that scope's remembered selection and opens
       // something else.
       writeSelection(key, id);
+      carryDraftRef.current(draftKeyFor(key, id));
       scopeState.chooseProvider(key);
       void thread.refreshThreads();
       void sync();
@@ -419,6 +451,13 @@ export default function Chat({
     // scopeState and thread are stable hook objects; the refs are refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeState.scope, scopeState.chooseProvider, activeIdRef, stateRef, runActiveRef, sync]);
+
+  // A framed chat tells its host when a turn is running, which conversation it
+  // is on and when the operator is using it, none of which the host can see
+  // across the frame. See embedSignals.
+  useEmbedSignals(!!embed && !host, !!state.activeTurn, activeId);
+  // The drawer beside a page follows which conversation this chat is on.
+  useEffect(() => { host?.onThread(activeId); }, [host, activeId]);
 
   const stream = useTurnStream({
     dispatch, stateRef, sync,
@@ -530,13 +569,16 @@ export default function Chat({
   // behaviour — see useLogScroll for the rules and the bugs each prevents.
   // Draft is stored PER CONVERSATION, not per scope. Keyed by the open thread so
   // switching chats never shows one chat's unsent text in another; a blank chat
-  // that has no thread yet keeps its own "new" draft under the scope, which the
-  // send-clear (clearInput below) wipes before the thread it creates is adopted.
-  const draftKey = activeId ? `${contextKey}::${activeId}` : `${contextKey}::new`;
+  // that has no thread yet keeps its own "new" draft under the RESOLVED scope
+  // (not the route it was opened at), which the send-clear (clearInput below)
+  // wipes before the thread it creates is adopted.
+  const draftKey = draftKeyFor(scope, activeId);
   const {
     draft: input, setDraft: setInput, clearForSend: clearInput,
     attachments: draftAttachments, setAttachments: setDraftAttachments,
+    settings: draftSettings, setSettings: setDraftSettings, carryTo: carryDraftTo,
   } = useDraft(draftKey);
+  carryDraftRef.current = carryDraftTo;
   // WHAT YOU ARE SAYING GOES IN THE MESSAGE BOX, because that is where unsent
   // text lives in this app and the box is already mirrored to the server. It
   // used to be a bubble at the foot of the log drawn from socket state, which
@@ -607,6 +649,7 @@ export default function Chat({
     // appeared at its foot.
     followDeps: [transcript, state.queued, foldMode, vsnap.state, vsnap.sentences, vsnap.lastUser],
     hasContent: transcript.length > 0,
+    turnLive: !!state.activeTurn,
     // Restore the scroll position per thread when returning to it.
     //
     // AND WHEN THE DROP AREA HANDS THE LOG BACK. A drag unmounts the transcript
@@ -662,18 +705,23 @@ export default function Chat({
   //
   // Operator, 2026-08-23: a manual "load earlier messages" button is the wrong
   // answer to slow loading. Loading on approach still asks nothing of him.
+  //
+  // AND WHILE THE PAGE IS SEARCHED, ALL OF IT. Find can only count what is in
+  // the DOM, so a search pages the rest of the thread in, with the scroll held
+  // as always, and the count grows as it lands.
+  const finding = useFinding();
   useEffect(() => {
     if (!activeId || !hydrated) return;
     if (!state.hasMoreOlder || loadingOlder) return;
     const el = scrollRef.current;
     // Only fill when the content is too short to scroll to. Once past this it is
     // the scroll handler's job, so a long thread opened at its foot loads nothing.
-    if (el && el.scrollHeight > el.clientHeight * MIN_FILL_SCREENS) return;
+    if (!finding && el && el.scrollHeight > el.clientHeight * MIN_FILL_SCREENS) return;
     const delay = olderError ? 5000 : 200;
     const t = setTimeout(() => { onLoadOlder(); }, delay);
     return () => clearTimeout(t);
   }, [activeId, hydrated, state.hasMoreOlder, loadingOlder, olderError, onLoadOlder,
-      transcript.length, scrollRef]);
+      transcript.length, scrollRef, finding]);
 
   const pipeline = useSendPipeline({
     scope, selectedModel, selectedEffort: scopeState.selectedEffort,
@@ -681,20 +729,17 @@ export default function Chat({
     chatModeRef: thread.chatModeRef, activeIdRef,
     adoptThread: thread.adoptThread,
     scheduleAutoNameRefetch: thread.scheduleAutoNameRefetch,
-    stateRef, dispatch, sync, draftKey,
+    stateRef, dispatch, sync: syncLanded, draftKey,
     compacting,
-    // Typed `/compact` and `/clear` ask as well. One rule for the action, not
-    // one for the button and another for the keystroke.
-    // Guarded, because the button is: a fold already running is the one state
-    // where asking again can only be refused by the server. The button goes
-    // inactive; the keystroke does nothing rather than opening a dialog whose
-    // only outcome is an error.
+    // Typed `/compact` and `/clear` behave like their buttons: compact runs at
+    // once (it deletes nothing, so it does not ask), clear asks. While a clear
+    // is running the buttons are inactive, and the keystroke does nothing.
     compact: async () => {
-      if (foldMode) { setErr({ text: `A ${foldMode} is already running in this chat.`, endpoint: null }); return; }
-      setConfirmCompact(true);
+      if (foldMode) return;
+      await compact();
     },
     clear: async () => {
-      if (foldMode) { setErr({ text: `A ${foldMode} is already running in this chat.`, endpoint: null }); return; }
+      if (foldMode) return;
       setConfirmClear(true);
     },
     setErr,
@@ -702,7 +747,9 @@ export default function Chat({
     // `/new` ASKS. It opens the same dialog the toolbar button does rather than
     // abandoning the conversation on a four-character keystroke.
     onNewChat: () => thread.setConfirmNew(true),
+    beforeFirstTurn: host?.bindThread,
   });
+  resendRef.current = useAutoResend({ stateRef, retry: pipeline.retry });
 
   // RE-ATTACH, in one place. If the server says a run is in flight on this
   // thread and this tab has no socket for it, open one. That covers every way a
@@ -718,45 +765,121 @@ export default function Chat({
   // until this lands, so a failure here has to be visible: a silent catch would
   // leave the operator looking at a chat that had simply stopped.
   //
-  // No optimistic update. The segment moves when the server says the frame
-  // reached the process (an SSE permission_resolved, or the refresh below) —
-  // showing "Allowed" for an answer that never landed would be the one lie this
-  // control cannot afford.
+  // No optimistic update. Resolves true only once the server has answered 200,
+  // which it does only after the frame reached the process; the card shows the
+  // decision from that, without waiting for the stream's permission_resolved
+  // (slow to apply on a long turn). Showing "Allowed" for an answer that never
+  // landed would be the one lie this control cannot afford.
+  // The picker commits on change: the server saves it on the chat and moves a
+  // running turn to it. A chat not yet created sends it with its first message.
+  const selectPermissionMode = useCallback(async (mode: string) => {
+    setSelectedPermissionMode(mode);
+    const threadId = activeIdRef.current;
+    if (!threadId) { setDraftSettings({ permission_mode: mode }); return; }
+    try {
+      await chatApi.setPermissionMode(threadId, mode);
+    } catch (e) {
+      setErr({
+        text: `Couldn't change the mode: ${e}. It applies from your next message.`,
+        endpoint: `/api/chat/threads/${threadId}/permission-mode`,
+      });
+    }
+  }, [setSelectedPermissionMode, setDraftSettings]);
+
+  // Model and effort commit on change too. A chat with a thread saves them on
+  // the thread; a blank chat saves them with its draft. Either way the pick
+  // survives leaving and coming back without a message having been sent.
+  const selectModelOrEffort = useCallback(async (pick: { model?: string; effort?: string }) => {
+    const threadId = activeIdRef.current;
+    if (!threadId) { setDraftSettings(pick); return; }
+    try {
+      await chatApi.setThreadModel(threadId, pick);
+    } catch (e) {
+      setErr({
+        text: `Couldn't save the ${pick.model ? "model" : "effort"}: ${e}. It applies from your next message.`,
+        endpoint: `/api/chat/threads/${threadId}/model`,
+      });
+    }
+  }, [setDraftSettings]);
+  const selectModel = useCallback((id: string) => {
+    setSelectedModel(id);
+    void selectModelOrEffort({ model: id });
+  }, [setSelectedModel, selectModelOrEffort]);
+  const selectEffort = useCallback((level: string) => {
+    setSelectedEffort(level);
+    void selectModelOrEffort({ effort: level });
+  }, [setSelectedEffort, selectModelOrEffort]);
+  const threadChooseChatMode = thread.chooseChatMode;
+  const chooseChatMode = useCallback((next: ChatModeId) => {
+    threadChooseChatMode(next);
+    if (!activeIdRef.current) setDraftSettings({ mode: next });
+  }, [threadChooseChatMode, activeIdRef, setDraftSettings]);
+
+  // A blank chat has no thread to hold its picks, so they come back from the
+  // draft. Only once the thread question is settled: for a chat that does have
+  // a thread, the thread is the authority and these must not land on top of it.
+  // Re-runs when a shown value changes, so a default that arrives late (the
+  // prefs seed) cannot silently replace a saved pick.
+  useEffect(() => {
+    if (activeId || loadingThreads || !scopeState.providersReady) return;
+    const todo = settingsToApply(
+      draftSettings,
+      {
+        model: selectedModel, effort: scopeState.selectedEffort,
+        permission_mode: scopeState.selectedPermissionMode, mode: thread.chatMode,
+      },
+      {
+        models: scopeState.modelOptions, efforts: scopeState.effortLevels,
+        permissionModes: scopeState.modeOptions, modes: CHAT_MODES.map((m) => m.id),
+      },
+    );
+    if (todo.model) setSelectedModel(todo.model);
+    if (todo.effort) setSelectedEffort(todo.effort);
+    if (todo.permission_mode) setSelectedPermissionMode(todo.permission_mode);
+    if (todo.mode) thread.chooseChatMode(todo.mode as ChatModeId);
+    // The setters and `thread.chooseChatMode` are stable; the rest is the rule.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeId, loadingThreads, scopeState.providersReady, draftSettings, selectedModel,
+    scopeState.selectedEffort, scopeState.selectedPermissionMode, thread.chatMode,
+    scopeState.modelOptions, scopeState.effortLevels, scopeState.modeOptions,
+  ]);
+
   const answerPermission = useCallback(async (
     turnId: string,
     a: { requestId: string; allow: boolean; message?: string; applySuggestion?: boolean },
-  ) => {
+  ): Promise<boolean> => {
     const threadId = activeIdRef.current;
-    if (!threadId) return;
+    if (!threadId) return false;
     try {
-      await chatApi.answerPermission(threadId, turnId, {
+      const r = await chatApi.answerPermission(threadId, turnId, {
         request_id: a.requestId,
         behavior: a.allow ? "allow" : "deny",
         ...(a.message ? { message: a.message } : {}),
         ...(a.applySuggestion ? { apply_suggestion: true } : {}),
       });
-      // "Stop asking" changes the chat's mode server-side; pull the new value in
-      // rather than guessing it, so the composer's picker and the server agree.
-      if (a.applySuggestion) {
-        const t = await chatApi.getThread(threadId).catch(() => null);
-        if (t) setSelectedPermissionMode(t.permission_mode ?? "");
-      }
+      // "Stop asking" may change the chat's mode server-side. The answer names
+      // the mode the chat is on now, so the composer's picker follows the server
+      // rather than guessing.
+      if (a.applySuggestion) setSelectedPermissionMode(r.permission_mode ?? "");
+      return true;
     } catch (e) {
       setErr({
         text: `Couldn't answer that request: ${e}. The turn is still waiting; answer it again.`,
         endpoint: `/api/chat/threads/${threadId}/turns/${turnId}/permission`,
       });
+      return false;
     }
   }, [activeIdRef, setErr, setSelectedPermissionMode]);
-  const { attach, hasOpenStream, isDetached, closeStream } = stream;
+  const { attach, hasOpenStream, reconnectPending, isDetached, closeStream } = stream;
   useEffect(() => {
     // Keyed on the run's ID, not the run object: that object changes on every
     // streamed segment, and re-running this hundreds of times a turn to
     // early-return is not free.
     if (!turnId || !activeId) return;
-    if (hasOpenStream() || isDetached(turnId)) return;
+    if (hasOpenStream() || reconnectPending(turnId) || isDetached(turnId)) return;
     attach(turnId);
-  }, [turnId, activeId, attach, hasOpenStream, isDetached]);
+  }, [turnId, activeId, attach, hasOpenStream, reconnectPending, isDetached]);
 
   // ...AND THE SAME RULE ON A TIMER, because losing a socket changes none of
   // the deps above. `attach`/`hasOpenStream`/`isDetached` are stable callbacks
@@ -779,7 +902,7 @@ export default function Chat({
   usePoll(
     () => {
       const live = stateRef.current.activeTurn?.turnId;
-      if (!live || hasOpenStream() || isDetached(live)) return;
+      if (!live || hasOpenStream() || reconnectPending(live) || isDetached(live)) return;
       attach(live);
     },
     LIVENESS_MS,
@@ -820,7 +943,6 @@ export default function Chat({
   // Compact and clear ASK. Both are irreversible in the way that matters (the
   // model's view of the conversation) and both are one click from a primary
   // button in the context modal.
-  const [confirmCompact, setConfirmCompact] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [mentionSel, setMentionSel] = useState(0);
   // WHERE THIS CHAT'S WORKING TREE IS, as an app address. `project_slug`
@@ -855,7 +977,7 @@ export default function Chat({
     // of the rows in the directory".
     selfSessionId: activeId,
     chatMode: thread.chatMode,
-    onChooseChatMode: thread.chooseChatMode,
+    onChooseChatMode: chooseChatMode,
     // Filing this chat is an action on an existing conversation, so it only
     // exists once one does.
     onFileTicket: activeId ? () => setTicketsOpen(true) : undefined,
@@ -903,7 +1025,7 @@ export default function Chat({
   // fact about a thread no longer on screen) cannot happen to a fact that is
   // read from the thread rather than remembered beside it.
 
-  const send = useCallback(() => {
+  const sendWith = useCallback((when?: SendRule) => {
     const text = input.trim();
     // Files with no text is a complete message. `take` hands over what is
     // attached and clears it in the same step, so "sent" and "cleared" can never
@@ -915,7 +1037,8 @@ export default function Chat({
     // Enter while an image was still uploading sent the text and silently
     // dropped the attachment (take() returns only ready refs and clears the
     // rest) while the operator believed the file went with it.
-    if (!canSendWith(text, files.items)) return;
+    if (!composerReady) return null;
+    if (!canSendWith(text || (host?.pending ? "attached" : ""), files.items)) return null;
     // clearInput, not setInput(""): a send-clear must be written through to
     // every synced surface immediately and then defended, or a stale copy from
     // another tab/device can restore the text you just sent.
@@ -940,8 +1063,56 @@ export default function Chat({
     // instead of spending a snapshot relinquishing a prefix that is already
     // gone. Anything dictated was part of `text` and went out with it.
     dictatedRef.current = "";
-    pipeline.submitText(text, files.take());
-  }, [input, clearInput, voiceOn, vsession, pipeline, files]);
+    // What the operator attached beside a page goes after what was typed
+    // (components/shell/beside/contextItems).
+    const attached = host?.takeContext() ?? "";
+    return pipeline.submitText(attached ? (text ? `${text}\n\n${attached}` : attached) : text, files.take(),
+                               when ? { when } : undefined);
+  }, [input, clearInput, voiceOn, vsession, pipeline, files, host, composerReady]);
+  // A Send later rule picked with nothing typed: the next Send goes out under
+  // it. Belongs to the chat it was picked in.
+  const [armedRule, setArmedRule] = useState<SendRule | null>(null);
+  useEffect(() => { setArmedRule(null); }, [activeId]);
+  const send = useCallback(() => {
+    if (armedRule && !canSendWith(input.trim() || (host?.pending ? "attached" : ""), files.items)) return null;
+    const sent = sendWith(armedRule ?? undefined);
+    setArmedRule(null);
+    return sent;
+  }, [sendWith, armedRule, input, host, files.items]);
+
+  // THE DRAWER FILLS AND SENDS THIS COMPOSER when a page asks it to (an app's
+  // "Discuss", Add to chat with a prompt). Read through refs so the host holds
+  // one stable handle while the draft and the files change under it.
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  const canSendRef = useRef(false);
+  canSendRef.current = canSendWith(input.trim() || (host?.pending ? "attached" : ""), files.items);
+  const filesAddRef = useRef(files.add);
+  filesAddRef.current = files.add;
+  // A page's "attach and send": a message of its own, uploaded and sent beside
+  // whatever the box holds, which stays exactly as it was.
+  const sendOnlyRef = useRef<(f: File[], items: ContextItem[]) => void>(() => undefined);
+  sendOnlyRef.current = (f, items) => {
+    void uploadRefs(f, { scope, threadId: activeId }).then((refs) => {
+      const text = attachedBlocks(items);
+      if (refs.length || text) pipeline.submitText(text, refs, { keepDraft: true });
+    });
+  };
+  useEffect(() => {
+    if (!host) return;
+    host.bindComposer({
+      addFiles: (f) => filesAddRef.current(f),
+      setDraft: (t) => setInput(t),
+      trySend: () => {
+        if (!canSendRef.current) return false;
+        sendRef.current();
+        return true;
+      },
+      sendOnly: (f, items) => sendOnlyRef.current(f, items),
+      focus: () => inputRef.current?.focus(),
+    });
+    return () => host.bindComposer(null);
+  }, [host, setInput, inputRef]);
 
   // ---- Composer helpers ----------------------------------------------------
   // There is no slash catalogue and no picker any more. Three commands are
@@ -953,11 +1124,16 @@ export default function Chat({
   // which any other dock or tab on the same scope can have overwritten. That
   // gap is why the address bar could read `/chat/general` with no thread on
   // it: right after popping out, and again on every reload from then on.
-  const popOut = useCallback(() => navigate(
-    activeId
+  // From the drawer beside a page this goes through the host, which notes the
+  // page it left so the full chat can put the conversation back beside it. The
+  // drawer steps aside on a chat page, so the chat is never on screen twice.
+  const popOut = useCallback(() => {
+    const path = activeId
       ? `/chat/${encodeURIComponent(contextKey)}?thread=${encodeURIComponent(activeId)}`
-      : `/chat/${encodeURIComponent(contextKey)}`,
-  ), [navigate, contextKey, activeId]);
+      : `/chat/${encodeURIComponent(contextKey)}`;
+    if (host) host.openFull(path);
+    else navigate(path);
+  }, [navigate, contextKey, activeId, host]);
 
   const { matches: mentionMatches, show: showMentions } = matchMention(input, mentionable);
 
@@ -1005,7 +1181,15 @@ export default function Chat({
     }
   };
 
+  // Opened full screen from beside a page: back is to that page, with this
+  // conversation beside it again (whichever one is open now).
+  const { poppedFrom } = useBeside();
   const back = () => {
+    if (poppedFrom && !embed) {
+      beside.carry(activeId, contextKey);
+      navigate(poppedFrom.path);
+      return;
+    }
     // Prefer where you actually came from; otherwise the chat list, which is
     // this surface's parent now that the thread dropdown is gone.
     if (window.history.length > 1) navigate(-1);
@@ -1069,7 +1253,7 @@ export default function Chat({
     document.addEventListener("visibilitychange", onVisibility);
     return () => { stop(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [indicatorOn]);
-  const elapsed = indicatorElapsed(state.activeTurn?.segments, state.activeTurn?.startedMs ?? null, nowMs);
+  const elapsed = elapsedSeconds(state.activeTurn?.startedMs ?? null, nowMs);
   const workingLabel = indicatorLabel(lifecycle);
 
   // ---- Egress banner (build only) -----------------------------------------
@@ -1263,6 +1447,23 @@ export default function Chat({
   // so the list stays the source of record and this only ever corrects it
   // forward. See `title` in threadStore.
   const activeThreadTitle = state.title ?? thread.activeThreadTitle;
+  const openThread = (id: string, key: string) => (host
+    ? host.openThread(id, key)
+    : embed?.openThread ? embed.openThread(id)
+      : navigate(embed ? embed.threadPath(id) : `/chat/${encodeURIComponent(key)}?thread=${encodeURIComponent(id)}`));
+  // On screen for the dictation bar (lib/speech/chatTargets): which chat this
+  // is, and its composer.
+  useOpenChat({
+    where: host ? "beside" : variant === "full" && !embed ? "main" : "other",
+    contextKey, scope, activeId, activeIdRef, draftKey,
+    title: activeThreadTitle || (activeId ? "Chat" : "New chat"),
+    draft: input, attachments: draftAttachments,
+    setDraftText: setInput, setDraftAttachments,
+    send, dropSend: pipeline.cancel, resync: () => { void sync(); },
+    model: selectedModel, modelOptions: scopeState.modelOptions, setModel: selectModel,
+    startNew: host ? () => beside.open({ scope: contextKey, startNew: true }) : thread.newChat,
+    openThread, inputRef,
+  });
   const toolbar = (
     <ChatToolbar
       variant={variant}
@@ -1284,7 +1485,8 @@ export default function Chat({
       workCount={workBadge.count}
       needsYouCount={workBadge.needsYou}
       onWorkClick={() => requestAnimationFrame(() => setWorkOpen(drawer !== "work"))}
-      onBack={back}
+      onBack={embed ? null : back}
+      backLabel={!embed && poppedFrom ? poppedFrom.label : undefined}
       // THE APP'S FILES, not a second chat. `pages/AgentBuild.tsx` used to
       // wrap this same transcript in a workbench and route to it from here,
       // which is how a chat and an agent stayed two things. The workbench was a
@@ -1292,20 +1494,28 @@ export default function Chat({
       // the app that owns that tree already serves all four (Files, and Work
       // for the diff). Null when this chat has no tree, which drops the button
       // rather than inventing a destination.
-      onOpenFiles={appFilesHref ? () => navigate(appFilesHref) : null}
+      onOpenFiles={appFilesHref ? () => goTo(appFilesHref) : null}
       onEditTitle={() => thread.setRenameOpen(true)}
       // Route rather than select in place. The chat you picked can be bound to
       // any scope, and the loader already reads `?thread=` as a link to fetch by
       // id from wherever it lives (useChatThread, the `linked` branch), so this
       // one path is correct for a chat in this scope and one in another. Same
       // destination the /chats list navigates to.
-      onOpenThread={(t) => navigate(
-        `/chat/${encodeURIComponent(t.context_key)}?thread=${encodeURIComponent(t.id)}`,
-      )}
+      onOpenThread={(t) => openThread(t.id, t.context_key)}
       onNewChat={() => thread.setConfirmNew(true)}
       onArchive={(id) => { void thread.archiveThread(id); }}
       onPopOut={popOut}
-      onNavigate={navigate}
+      onNavigate={goTo}
+      allChatsPath={embed?.listPath}
+      recentScope={embed?.pickerScope ?? null}
+      access={(
+        <>
+          <ChatPlace threadId={activeId} contextKey={contextKey} live={turnActive} onAdopt={thread.adoptThread} />
+          <AccessMenu threadId={activeId} contextKey={contextKey} onAdopt={thread.adoptThread} />
+        </>
+      )}
+      onClose={host?.onClose}
+      onShowChats={host?.showChats}
     />
   );
 
@@ -1330,9 +1540,6 @@ export default function Chat({
       confirmNew={thread.confirmNew}
       onCancelNew={() => thread.setConfirmNew(false)}
       onConfirmNew={() => { thread.setConfirmNew(false); thread.newChat(); }}
-      confirmCompact={confirmCompact}
-      onCancelCompact={() => setConfirmCompact(false)}
-      onConfirmCompact={() => { setConfirmCompact(false); void compact(); }}
       confirmClear={confirmClear}
       onCancelClear={() => setConfirmClear(false)}
       onConfirmClear={() => { setConfirmClear(false); void clear(); }}
@@ -1388,6 +1595,7 @@ export default function Chat({
         clientId: q.client_id, text: q.text, sentAt: q.ts,
         // The wire says `list | null`; absent and null both mean "no files".
         attachments: q.attachments ?? undefined,
+        when: q.when ?? undefined,
       })),
       committedIds,
     ),
@@ -1411,7 +1619,7 @@ export default function Chat({
   // the durable copy IS that entry, mirrored to storage — so there is no second
   // kind of failure with a second way to re-send it.
   const onRetryAny = useCallback((clientId: string) => {
-    retryRef.current(clientId);
+    void retryRef.current(clientId);
   }, []);
 
   // Same reasoning as retryRef: pipeline.cancel is a stable useCallback, but
@@ -1433,6 +1641,16 @@ export default function Chat({
       .catch((e) => setErr({
         text: `Could not unsend that message: ${e}. It is still queued.`,
         endpoint: `/api/chat/threads/${id}/queued/${clientId}/cancel`,
+      }));
+  }, [activeIdRef, sync, setErr]);
+  const setQueuedRule = useCallback((clientId: string, when: SendRule | null) => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    void chatApi.setQueuedRule(id, clientId, when)
+      .then(() => sync())
+      .catch((e) => setErr({
+        text: `Could not change when that message sends: ${e}. It is still queued.`,
+        endpoint: `/api/chat/threads/${id}/queued/${clientId}/when`,
       }));
   }, [activeIdRef, sync, setErr]);
   const releaseQueue = useCallback(() => {
@@ -1490,6 +1708,10 @@ export default function Chat({
       onReleaseQueue={releaseQueue}
       queueHeld={state.queueHeld}
       queueError={state.queueError}
+      queueWaiting={state.queueWaiting}
+      onSetQueuedRule={setQueuedRule}
+      threadId={activeId}
+      streaming={indicatorOn}
       workingLabel={workingLabel}
       elapsed={elapsed}
       nowMs={nowMs}
@@ -1522,7 +1744,7 @@ export default function Chat({
           variant="ghost"
           onClick={() => {
             const next = firstUnsent(pendingList);
-            if (next) retryRef.current(next.clientId);
+            if (next) void retryRef.current(next.clientId);
           }}
         >
           Retry
@@ -1534,6 +1756,8 @@ export default function Chat({
   ) : null;
 
   const composer = (
+    <>
+    {host?.chips}
     <ChatComposer
       composerRef={composerRef}
       inputRef={inputRef}
@@ -1571,9 +1795,13 @@ export default function Chat({
       // `showIndicator`.
       streaming={indicatorOn}
       onSend={send}
+      onSendLater={sendWith}
+      armedRule={armedRule}
+      onArmRule={setArmedRule}
       // One rule for "is there anything to send", shared with the Enter key:
       // text, or a finished upload, and never while one is still going up.
-      canSend={canSendWith(input, files.items)}
+      locked={!composerReady}
+      canSend={composerReady && canSendWith(input || (host?.pending ? "attached" : ""), files.items)}
       attachments={files.items}
       attachNotice={files.notice}
       onAttachFiles={files.add}
@@ -1582,14 +1810,15 @@ export default function Chat({
       onPasteFiles={files.add}
       modelOptions={scopeState.modelOptions}
       selectedModel={selectedModel}
-      onSelectModel={setSelectedModel}
+      onSelectModel={selectModel}
       effortLevels={scopeState.effortLevels}
       effectiveEffort={scopeState.effectiveEffort}
-      onSelectEffort={setSelectedEffort}
+      onSelectEffort={selectEffort}
       modeOptions={scopeState.modeOptions}
       effectivePermissionMode={scopeState.effectivePermissionMode}
-      onSelectPermissionMode={setSelectedPermissionMode}
+      onSelectPermissionMode={selectPermissionMode}
       activeId={activeId}
+      draftKey={draftKey}
       messages={messages}
       ctxNonce={ctxNonce}
       liveCtxTokens={state.activeTurn?.ctxTokens}
@@ -1604,6 +1833,7 @@ export default function Chat({
       onOpenVoiceSettings={() => setVoiceSettings(true)}
       onOpenContext={() => setContextOpen(true)}
     />
+    </>
   );
 
   // THE WHOLE CHAT IS THE DROP TARGET, transcript and composer alike: the
@@ -1729,7 +1959,7 @@ export default function Chat({
         onClose={() => setContextOpen(false)}
         threadId={activeId}
         foldMode={foldMode}
-        onCompact={() => { setContextOpen(false); setConfirmCompact(true); }}
+        onCompact={() => { setContextOpen(false); void compact(); }}
         onClear={() => { setContextOpen(false); setConfirmClear(true); }}
       />
       <VoiceSettings

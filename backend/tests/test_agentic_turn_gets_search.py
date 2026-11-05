@@ -26,6 +26,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services import auth_store, build_streaming as bs, ownership  # noqa: E402
+from services import app_registry  # noqa: E402
 from wsplatform import paths  # noqa: E402
 
 
@@ -81,7 +82,7 @@ def test_the_owner_is_pinned() -> None:
     """The server is owner-scoped. Unpinned, the turn searches an EMPTY index
     and every smoke test still passes, which is the way this ships broken."""
     doc = _config_of(bs._build_cmd(_meta())[0])
-    env = (doc["mcpServers"]["workshop"].get("env") or {})
+    env = app_registry.spec_context(doc["mcpServers"]["workshop"])
     assert env.get("WORKSHOP_QUERY_OWNER"), "no owner pinned on the workshop server"
 
 
@@ -124,5 +125,5 @@ def test_no_owner_gets_no_server() -> None:
 
 def test_the_pinned_owner_is_the_caller(owner: int) -> None:
     doc = _config_of(bs._build_cmd(_meta())[0])
-    env = (doc["mcpServers"]["workshop"].get("env") or {})
+    env = app_registry.spec_context(doc["mcpServers"]["workshop"])
     assert env.get("WORKSHOP_QUERY_OWNER") == str(owner)

@@ -25,6 +25,7 @@ const MODEL_ORDER = [
   "claude-opus-5-5",
   "claude-opus-5",
   "claude-opus-4-8",
+  "claude-sonnet-5-5",
   "claude-sonnet-5",
   "claude-sonnet-4-6",
   "claude-haiku-4-5-20251001",
@@ -54,6 +55,7 @@ export const MODEL_LABELS: Record<string, string> = {
   "claude-fable-5-1": "Fable 5.1",
   "claude-fable-5": "Fable 5",
   "claude-sonnet-5": "Sonnet 5",
+  "claude-sonnet-5-5": "Sonnet 5.5",
   "claude-sonnet-4-6": "Sonnet 4.6",
   "claude-haiku-4-5-20251001": "Haiku 4.5",
 };
@@ -94,6 +96,7 @@ const CONTEXT_WINDOW: Record<string, number> = {
   "claude-opus-4-6": 1_000_000,
   "claude-fable-5-1": 1_000_000,
   "claude-fable-5": 1_000_000,
+  "claude-sonnet-5-5": 1_000_000,
   "claude-sonnet-5": 1_000_000,
   "claude-sonnet-4-6": 1_000_000,
   "claude-haiku-4-5": 200_000,

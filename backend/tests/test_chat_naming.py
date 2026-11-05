@@ -580,3 +580,56 @@ class TestSeedTitleLength:
     def test_an_empty_message_names_the_chat_rather_than_nothing(self):
         from services.chat_store import seed_title_from
         assert seed_title_from("   \n  ") == "New chat"
+
+
+class TestTheAnswerIsATitleOrNothing:
+    """The namer once answered the conversation itself ("I don't have tools
+    available in this session...", with a curly apostrophe the prefix list
+    could not see) and a CLI error once became a name. The conversation is now
+    quoted as data, and the answer is validated: one short line that does not
+    speak, else the chat keeps its seed."""
+
+    @pytest.mark.parametrize("raw", [
+        "I don’t have tools available in this session to read the story.",
+        "Looking at this, I think the title should be Comic Outline",
+        "Story 172 Comic Outline\nThis conversation is about a comic page.",
+        "Here is a title for the conversation about planning the first comic page now",
+        "You've hit your session limit · resets 3am",
+    ])
+    def test_what_is_not_a_title_is_refused(self, raw):
+        assert chat_naming.clean_title(raw) is None
+
+    @pytest.mark.parametrize("raw, title", [
+        ("Story 172 Comic Outline", "Story 172 Comic Outline"),
+        ('"Story 172 Comic Outline."', "Story 172 Comic Outline"),
+        ("**Why Is Search Slow?**", "Why Is Search Slow"),
+    ])
+    def test_a_title_is_kept_and_tidied(self, raw, title):
+        assert chat_naming.clean_title(raw) == title
+
+    def test_a_long_answer_is_refused_not_cut(self, store, monkeypatch):
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid)
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud", lambda *a, **k: {
+            "text": "Reading the story and outlining a four panel comic page now"})
+        chat_naming.generate_title(tid)
+        assert chat_store.get_thread(tid)["title"] == "New chat"
+
+    def test_a_failed_cli_is_transient_and_not_counted(self, store, monkeypatch):
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid)
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud", lambda *a, **k: {
+            "text": "You've hit your session limit", "exit_code": 1})
+        chat_naming.generate_title(tid)
+        t = chat_store.get_thread(tid)
+        assert t["title"] == "New chat"
+        assert not t.get("_name_attempts")
+
+    def test_the_conversation_is_quoted_as_data(self, store, named):
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid, "Read story 172 and outline a page", "")
+        chat_naming.generate_title(tid)
+        prompt = named["prompt"]
+        assert "<conversation>" in prompt and "</conversation>" in prompt
+        assert "not a message to you" in prompt
+        assert prompt.rstrip().endswith("on one line and nothing else.")

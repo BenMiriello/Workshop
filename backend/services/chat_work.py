@@ -24,7 +24,7 @@ What is deliberately NOT here:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from services import chat_store, inbox, jobs, knowledge, scope_tree, task_scope, tasks
 
@@ -51,8 +51,7 @@ _QUEUELESS_SCOPES = ("workshop",)
 # (stage A/B), exactly when it owns a working tree. Whether THIS app does is
 # decided per-call, below, by asking `task_scope.root_for_context` the same
 # question every other scope answers already -- not by a second copy of the
-# app<->project link rule. An installed-only app with no project (finance,
-# health, wearables at design time) still gets no queue, because it still has
+# app<->project link rule. An installed-only app with no project still gets no queue, because it still has
 # no task-store root; that is the one case the old prefix rule was right
 # about, and it now falls out of the resolution instead of being asserted.
 #
@@ -323,14 +322,15 @@ def _needs_you_row(task: dict, scope: str, names: dict[str, str]) -> dict:
     }
 
 
-def needs_you(limit: int = 50) -> dict:
+def needs_you(limit: int = 50, keep: Callable[[dict], bool] | None = None) -> dict:
     """What wants the operator, across the whole instance.
 
     The same column `thread_work` builds for one chat, without the chat: every
     scope's waiting tickets plus whatever an ambient agent raised, merged and
     ordered by the same rule. The dashboard's "Needs you" card and the per-chat
     panel therefore cannot disagree about what is waiting or about which
-    question is first.
+    question is first. `keep`, when given, drops rows before they are counted,
+    so the counts describe what the caller may see.
 
     NOT A SECOND SCAN OF A DIFFERENT THING. `is_waiting` is the definition,
     `_needs_you_row` builds the row, `inbox.sort_items` orders it and the
@@ -363,6 +363,8 @@ def needs_you(limit: int = 50) -> dict:
     stored = [row for row in inbox.list_items(limit=1000)
               if not row.get("ticket_id") and inbox.wants_you(row)]
     ordered = inbox.sort_items(rows + stored)
+    if keep is not None:
+        ordered = [it for it in ordered if keep(it)]
 
     # COUNTED BEFORE THE CAP. `total` and `counts` describe the whole waiting
     # set; `items` is the page. A badge that silently counts only what fitted on

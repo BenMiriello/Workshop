@@ -17,15 +17,6 @@ import type { ChatSegment } from "../../lib/chat";
 
 type Approval = Extract<ChatSegment, { t: "approval" }>;
 
-/** The mode the CLI itself proposed, if any. This is what "stop asking" means:
- *  the vendor's own suggestion, not a policy of ours. */
-function suggestedMode(seg: Approval): string | null {
-  for (const s of seg.suggestions || []) {
-    if (s && s.type === "setMode" && s.mode) return s.mode;
-  }
-  return null;
-}
-
 /** Plan approvals read as a plan, not as a tool call with an argument blob. */
 function planText(seg: Approval): string | null {
   if (seg.tool !== "ExitPlanMode") return null;
@@ -37,24 +28,28 @@ export default function ApprovalBlock({
   seg, onAnswer,
 }: {
   seg: Approval;
-  onAnswer: (a: { requestId: string; allow: boolean; message?: string; applySuggestion?: boolean }) => Promise<void>;
+  onAnswer: (a: { requestId: string; allow: boolean; message?: string; applySuggestion?: boolean }) => Promise<boolean>;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [denying, setDenying] = useState(false);
   const [reason, setReason] = useState("");
+  // The answer the server took, shown at once: the turn's stream says the same
+  // a moment later, and a long turn's stream can be slow to say it.
+  const [taken, setTaken] = useState<Approval["state"] | null>(null);
   const plan = planText(seg);
-  const suggestion = suggestedMode(seg);
+  const state = seg.state === "pending" && taken ? taken : seg.state;
 
-  if (seg.state !== "pending") {
+  if (state !== "pending") {
     // A decision, kept in place so the transcript still reads as what happened.
     // Quiet: it is history now, and history should not shout at the operator.
     const said =
-      seg.state === "allowed" ? "Allowed"
-        : seg.state === "denied" ? "Denied"
-          : "Expired when the turn ended";
+      state === "allowed" ? "Allowed"
+        : state === "denied" ? "Denied"
+          : state === "unanswered" ? "Skipped, no answer in time"
+            : "Expired when the turn ended";
     return (
       <div className="chat-approval is-resolved">
-        {seg.state === "allowed"
+        {state === "allowed"
           ? <Check size={14} aria-hidden className="chat-approval__icon" />
           : <X size={14} aria-hidden className="chat-approval__icon" />}
         <span className="chat-approval__resolved">
@@ -71,12 +66,13 @@ export default function ApprovalBlock({
     const key = !allow ? "deny" : (applySuggestion && !plan ? "always" : "allow");
     setBusy(key);
     try {
-      await onAnswer({
+      const ok = await onAnswer({
         requestId: seg.id,
         allow,
         message: allow ? undefined : (reason.trim() || undefined),
         applySuggestion,
       });
+      if (ok) setTaken(allow ? "allowed" : "denied");
     } finally {
       setBusy(null);
     }
@@ -120,7 +116,10 @@ export default function ApprovalBlock({
         >
           {plan ? "Approve plan" : "Allow"}
         </Button>
-        {suggestion && !plan && (
+        {/* "Stop asking" moves the chat to the mode the CLI proposed, or, for a
+            request with none (an app's tool, a delete), keeps a rule for this
+            one thing on the chat. The server decides which. */}
+        {!plan && (
           <Button
             size="sm"
             loading={busy === "always"}

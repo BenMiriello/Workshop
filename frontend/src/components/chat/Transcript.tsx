@@ -1,8 +1,8 @@
 import {
-  useEffect, useId, useLayoutEffect, useRef, useState,
+  memo, useEffect, useId, useLayoutEffect, useRef, useState,
   type CSSProperties, type ReactNode,
 } from "react";
-import { Bot, Brain, ChevronRight, Wrench } from "lucide-react";
+import { Bot, ChevronRight, Wrench } from "lucide-react";
 import { ChatMarkdown as Markdown } from "./ChatMarkdown";
 import type { ChatSegment } from "../../lib/chat";
 import { flashSpent, flashesOnArrivalAt, spendFlash } from "./arrivalFlash";
@@ -11,15 +11,18 @@ import { agentBrief, agentChipLine, agentSummary } from "./segments";
 import {
   blockedLabel, buildTurnBlocks, groupCount, groupLabel, hadErrorResult, isRunning,
   runningSeconds, stepAlert, stepDuration, turnDuration, turnWorkSummary, workNarrationPreview,
+  workThinkingPreview,
   type TurnItem,
 } from "./grouping";
-import { openInitial, onLive, onToggle } from "./disclosure";
+import { openInitial, onFound, onLive, onToggle } from "./disclosure";
+import { sameStepRun } from "./stepRunMemo";
 import { CAP_ROWS, isCapped, bottomOf, shouldFollow, onReaderScroll } from "./stepScroll";
 import { Reveal } from "./Reveal";
 import { lineBottoms, cutHeight, worthClamping } from "./clampCut";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
 import { modelDisplay, type ModelDisplay } from "./models";
+import { FOUND_EVENT } from "../shell/find/useOnFound";
 
 // How a turn renders. Purely presentational: given segments, produce the
 // transcript. No chat state, no fetching, no effects beyond local open/closed.
@@ -104,7 +107,11 @@ function ToolChip({ seg, nowMs, arrived }: {
         <Wrench size={12} aria-hidden
                 className={`chat-tool__icon${arrived ? " chat-tool__icon--arrive" : ""}`} />
         <span className="chat-tool__name">{seg.name}</span>
-        {!!seg.input && <span className="chat-tool__preview ws-mono">{seg.input}</span>}
+        {/* Skipped by find when the panel holds the same text in full. */}
+        {!!seg.input && (
+          <span className="chat-tool__preview ws-mono"
+                data-find-skip={hasDetail && detail === seg.input ? "" : undefined}>{seg.input}</span>
+        )}
         {/* The clock rides on the STEP, not the turn. A single total for the
             whole turn reads "3h 41m" on a long one and describes nothing; what
             the reader wants to know is whether the thing happening now is
@@ -113,7 +120,7 @@ function ToolChip({ seg, nowMs, arrived }: {
         {!running && !!took && <span className="chat-tool__time">{took}</span>}
         {alert && <span className="chat-tool__alert">{blockedLabel(seg)}</span>}
       </button>
-      <Reveal open={open && hasDetail} id={panelId}>
+      <Reveal open={open && hasDetail} id={panelId} onFound={hasDetail ? () => setOpen(true) : undefined}>
         <pre className="chat-tool__detail ws-mono">{detail}</pre>
       </Reveal>
     </div>
@@ -287,7 +294,8 @@ function GroupChip({ item, nowMs, arrived, current }: {
           A bare group has no control to animate and nothing to collapse into, so
           it is always open and never animates. */}
       <Reveal open={open} id={id} className={bare ? undefined : "chat-group__body"}
-              animate={!bare && disc.animate}>
+              animate={!bare && disc.animate}
+              onFound={bare ? undefined : () => setDisc((d) => onFound(d, Date.now()))}>
         {/* THE SCROLLER IS INSIDE THE REVEAL, NOT THE REVEAL ITSELF. Reveal
             animates a grid row between 0fr and 1fr and clips its own overflow;
             putting `overflow-y: auto` on that same element would make the
@@ -344,6 +352,15 @@ export function ElidedContent({
   // Programmatic, so it does not animate: this fires as a turn stops being the
   // latest one, which happens to every message in the log as history loads.
   useEffect(() => { setOpen(!!expanded); }, [expanded]);
+  // Find showing a match the clamp cuts off opens it, without animating, so the
+  // match is in place to scroll to (shell/find/useOnFound.ts).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const found = () => setOpen(true);
+    el.addEventListener(FOUND_EVENT, found);
+    return () => el.removeEventListener(FOUND_EVENT, found);
+  }, []);
 
   // SHOW MORE / LESS, ANIMATED, IN TWO PHASES.
   //
@@ -531,13 +548,13 @@ export function AnswerBody({
 // This component is that clamp applied where it was missing. Interim text
 // rendered in full however long it was, the one place in the transcript where
 // "a message shortens itself" was not true.
-function WorkText({ text, cfg }: { text: string; cfg: ModelDisplay }) {
+const WorkText = memo(function WorkText({ text, cfg }: { text: string; cfg: ModelDisplay }) {
   return (
     <div className="chat-work__text">
       <ElidedContent source={text} cfg={cfg} render={(s) => <Markdown>{s}</Markdown>} />
     </div>
   );
-}
+});
 
 // ---- Subagent: one row for the whole delegation ---------------------------
 // A subagent exists to keep its working context OUT of this conversation, so it
@@ -581,7 +598,8 @@ function AgentChip({ seg, cfg, nowMs }: {
         <span className="chat-agent__preview">{line}</span>
         <span className="chat-agent__meta">{agentSummary(seg)}</span>
       </button>
-      <Reveal open={open && hasBody} className="chat-agent__body">
+      <Reveal open={open && hasBody} className="chat-agent__body"
+              onFound={hasBody ? () => setOpen(true) : undefined}>
         <>
           {brief && (
             <div className="chat-agent__brief">
@@ -618,7 +636,7 @@ function AgentChip({ seg, cfg, nowMs }: {
 
 export type AnswerPermission = (a: {
   requestId: string; allow: boolean; message?: string; applySuggestion?: boolean;
-}) => Promise<void>;
+}) => Promise<boolean>;
 
 // One contiguous stretch of machine work, between two things the model said.
 //
@@ -631,7 +649,9 @@ export type AnswerPermission = (a: {
 // approvals in it, and those are the things the reader wants to see. A second
 // truncation on top of the grouping would hide work for no gain and bring back
 // the pinning rules to stop it hiding the wrong work.
-function StepRun({ items, cfg, nowMs, arrived, current, onAnswerPermission }: {
+//
+// Memoized by `sameStepRun`: a stream event redraws only the stretch it changed.
+const StepRun = memo(function StepRun({ items, cfg, nowMs, arrived, current, onAnswerPermission }: {
   items: TurnItem[]; cfg: ModelDisplay; nowMs: number;
   arrived?: (seg: ChatSegment) => boolean;
   // This run is the trailing one of a turn still streaming, so its LAST item is
@@ -657,14 +677,14 @@ function StepRun({ items, cfg, nowMs, arrived, current, onAnswerPermission }: {
         ? <AgentChip key={item.seg.id || `a${i}`} seg={item.seg} cfg={cfg} nowMs={nowMs} />
         : item.seg.t === "approval"
           ? <ApprovalBlock key={item.seg.id || `p${i}`} seg={item.seg}
-                           onAnswer={onAnswerPermission ?? (async () => {})} />
+                           onAnswer={onAnswerPermission ?? (async () => false)} />
           : null;
   return (
     <div className="chat-work">
       <div className="chat-work__list">{items.map(renderItem)}</div>
     </div>
   );
-}
+}, sameStepRun);
 
 // The work of a SETTLED turn, behind one line.
 //
@@ -702,14 +722,20 @@ function SettledWork({
   // The work summary comes FIRST and is never omitted. A duration on its own
   // would label the control "45s", which says nothing about what opening it
   // shows.
-  const summary = [turnWorkSummary(work) || "Steps", turnDuration(tookMs)]
+  const counted = turnWorkSummary(work);
+  // Reasoning's first line stands in when the turn narrated nothing, muted
+  // like the reasoning itself. A turn that only reasoned has no steps to count,
+  // so it gets no "Steps" fallback beside it.
+  const said = workNarrationPreview(work);
+  const thought = said ? "" : workThinkingPreview(work);
+  const summary = [counted || (thought ? "" : "Steps"), turnDuration(tookMs)]
     .filter(Boolean).join(" · ");
   // WHAT WAS SAID, not just what was done. A pure step count told the reader
   // nothing was worth reading; when the turn narrated mid-run, the collapsed
   // row now leads with a taste of it and keeps the count as trailing meta,
   // the same split AgentChip already uses (name leads, meta trails). Empty for
   // a turn that only made tool calls, so that case reads exactly as before.
-  const preview = workNarrationPreview(work);
+  const preview = said || thought;
   // A turn blocked on a decision is never summarised away, even when it is no
   // longer the latest: the buttons are the only thing that can restart it.
   const pending = work.some((s) => s.t === "approval" && s.state === "pending");
@@ -732,8 +758,8 @@ function SettledWork({
           "Hide steps"
         ) : preview ? (
           <>
-            <span className="chat-work__preview">{preview}</span>
-            <span className="chat-work__meta">{summary}</span>
+            <span className={`chat-work__preview${thought ? " is-thought" : ""}`} data-find-skip="">{preview}</span>
+            {summary && <span className="chat-work__meta">{summary}</span>}
           </>
         ) : (
           summary
@@ -747,7 +773,8 @@ function SettledWork({
           "one click opens all groups" rule (Operator-agreed, 2026-08-12) is
           gone, because it turned opening a long settled turn into a wall of
           nested rows that was harder to navigate than the collapsed summary. */}
-      <Reveal open={open} id={id} animate={disc.animate}>
+      <Reveal open={open} id={id} animate={disc.animate}
+              onFound={() => setDisc((d) => onFound(d, Date.now()))}>
         <TurnWork work={work} cfg={cfg} nowMs={nowMs}
                   streaming={streaming}
                   onAnswerPermission={onAnswerPermission} />
@@ -756,41 +783,16 @@ function SettledWork({
   );
 }
 
-// The model's reasoning, folded away by default.
-//
-// Reasoning is not the answer and it is not narration to the operator, so it
-// gets its own disclosure, collapsed even on the latest turn: a reader who wants
-// to see how the turn thought opens it, and everyone else reads the answer. This
-// is the "Thought" fold ChatGPT and Claude both use. Neutral at rest, like every
-// other control here: the Brain icon and the chevron carry no hue.
-//
-// It stays closed while the turn streams too, deliberately. Live progress is
-// carried by the steps and the working indicator; the reasoning is there to open
-// after the fact, not a third thing scrolling past as it is written.
-function Thought({ text, cfg }: { text: string; cfg: ModelDisplay }) {
-  const [open, setOpen] = useState(false);
-  const id = useId();
+// The model's reasoning, always shown in full, muted. It has no fold of its own:
+// the only thing that hides it is collapsing the turn's whole work block, whose
+// collapsed row then previews the reasoning's first line (workThinkingPreview).
+const Thought = memo(function Thought({ text }: { text: string }) {
   return (
-    <div className={`chat-think${open ? " is-open" : ""}`}>
-      <button
-        type="button"
-        className="chat-think__toggle"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        aria-controls={id}
-      >
-        <ChevronRight size={13} aria-hidden className="chat-think__chev" />
-        <Brain size={12} aria-hidden className="chat-think__icon" />
-        <span className="chat-think__label">{open ? "Hide reasoning" : "Thought"}</span>
-      </button>
-      <Reveal open={open} id={id}>
-        <div className="chat-think__body">
-          <ElidedContent source={text} cfg={cfg} render={(s) => <Markdown>{s}</Markdown>} />
-        </div>
-      </Reveal>
+    <div className="chat-think">
+      <Markdown>{text}</Markdown>
     </div>
   );
-}
+});
 
 // A turn's work as blocks: prose the model wrote, and the runs of steps between
 // them. There is no wrapper around the whole thing, because there never was one
@@ -824,7 +826,7 @@ function TurnWork({ work, cfg, nowMs, streaming, onAnswerPermission }: {
           // work is still streaming is the bug this replaces.
           ? <WorkText key={`p${i}`} text={b.text} cfg={cfg} />
           : b.t === "thinking"
-          ? <Thought key={`t${i}`} text={b.text} cfg={cfg} />
+          ? <Thought key={`t${i}`} text={b.text} />
           : <StepRun key={`r${i}`} items={b.items} cfg={cfg} nowMs={nowMs}
                      arrived={arrived}
                      current={!!streaming && endsOnRun && i === lastRun}
@@ -860,11 +862,6 @@ export function AssistantTurn({
   const work = segments.slice(0, cut);
   const answer = segments.slice(cut);
   const clock = nowMs ?? 0;
-  // A turn that only REASONED before answering has no steps to summarise, so it
-  // must not wear a "Steps" toggle that opens onto a lone Thought. Show the
-  // Thought fold directly. The common case (reasoning alongside tool calls)
-  // keeps the reasoning inside the work section, in order, where it happened.
-  const onlyThinking = work.length > 0 && work.every((s) => s.t === "thinking");
   return (
     <>
       {/* ONE TOGGLE AT THE TOP OF THE BUBBLE, on every turn, which is 4a's
@@ -882,13 +879,10 @@ export function AssistantTurn({
           It opens itself while the turn is still being written, because live
           progress has to be legible without a click, and settles closed once the
           turn is done. */}
-      {work.length > 0 && (onlyThinking
-        ? work.map((s, i) => (s.t === "thinking" && s.text.trim()
-            ? <Thought key={`t${i}`} text={s.text} cfg={cfg} />
-            : null))
-        : <SettledWork work={work} cfg={cfg} nowMs={clock} tookMs={tookMs}
-                       streaming={streaming}
-                       onAnswerPermission={onAnswerPermission} />
+      {work.length > 0 && (
+        <SettledWork work={work} cfg={cfg} nowMs={clock} tookMs={tookMs}
+                     streaming={streaming}
+                     onAnswerPermission={onAnswerPermission} />
       )}
       {answer.map((s, i) =>
         s.t === "text" && s.text.trim() ? (

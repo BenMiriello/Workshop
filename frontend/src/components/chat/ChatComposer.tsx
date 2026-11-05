@@ -1,7 +1,9 @@
-import type { RefObject } from "react";
-import { AudioLines, BotMessageSquare, CornerDownLeft, Maximize2, Minimize2 } from "lucide-react";
+import { useRef, type RefObject } from "react";
+import {
+  AudioLines, BotMessageSquare, Clock, CornerDownLeft, Maximize2, Minimize2, X,
+} from "lucide-react";
 import { Menu, MenuItem } from "@workshop/ui";
-import type { ChatMsg } from "../../lib/chat";
+import type { ChatMsg, SendRule } from "../../lib/chat";
 import type { VoiceSnapshot } from "../../lib/voice/client";
 import type { VoicePrefs } from "../../lib/voice/modes";
 import AttachmentChips, { AttachButton } from "./AttachmentChips";
@@ -17,6 +19,10 @@ import EffortMeter from "./EffortMeter";
 import { permissionModeDef } from "./permissionModes";
 import { nextTurnHint } from "./pickerTiming";
 import { keepFocusOnTap } from "./keepFocus";
+import { useRowFit } from "./rowFit";
+import SendLaterMenu from "./SendLaterMenu";
+import { useScheduled } from "./useScheduled";
+import { ruleText } from "./sendRules";
 
 // Everything below the log: the type-ahead pickers, the voice strip, the input,
 // and the per-turn controls.
@@ -40,12 +46,12 @@ export default function ChatComposer({
   // Type-ahead
   mentionOptions, mentionSelected, showMentions, onMentionHover, onMentionPick,
   // Turn controls
-  streaming, onSend, canSend,
+  streaming, onSend, onSendLater, armedRule, onArmRule, canSend, locked,
   modelOptions, selectedModel, onSelectModel,
   effortLevels, effectiveEffort, onSelectEffort,
   modeOptions, effectivePermissionMode, onSelectPermissionMode,
   // Context meter
-  activeId, messages, ctxNonce, liveCtxTokens,
+  activeId, draftKey, messages, ctxNonce, liveCtxTokens,
   // Attachments
   attachments, attachNotice, onAttachFiles, onRemoveAttachment, onDismissAttachNotice,
   onPasteFiles,
@@ -71,7 +77,15 @@ export default function ChatComposer({
   onMentionPick: (key: string) => void;
   streaming: boolean;
   onSend: () => void;
+  /** Queue the message under a rule instead of sending it now. */
+  onSendLater: (when: SendRule) => void;
+  /** A rule picked with nothing typed: the next Send goes out under it. */
+  armedRule: SendRule | null;
+  onArmRule: (when: SendRule | null) => void;
   canSend: boolean;
+  /** The scope or thread is still being resolved: the draft it would land in is
+   *  not known yet, so the box takes no input. */
+  locked: boolean;
   modelOptions: string[];
   selectedModel: string;
   onSelectModel: (id: string) => void;
@@ -82,6 +96,9 @@ export default function ChatComposer({
   effectivePermissionMode: string;
   onSelectPermissionMode: (mode: string) => void;
   activeId: string | null;
+  /** The draft this box types into. Marked on the box so dictation treats it
+   *  as a chat (lib/speech/chatTargets), with the thread when there is one. */
+  draftKey: string;
   messages: ChatMsg[];
   ctxNonce: number;
   /** The in-flight run's own context reading, when one is streaming. */
@@ -109,11 +126,14 @@ export default function ChatComposer({
   onOpenContext: () => void;
 }) {
   const voice = useVoiceComposer(vsnap, vprefs, vsession);
+  const scheduledCount = useScheduled(activeId).data?.count ?? 0;
   // The input's height is written by the autosize handler on every keystroke,
   // so the expand/collapse transition is gated on a class that only exists just
   // after the control is pressed. Without it, growing by a line while typing
   // would animate too, and typing is the one place lag is least welcome.
   const sizing = useToggleAnim(expanded);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  useRowFit(actionsRef, `${voiceOn}|${modeOptions.length > 1}|${modelOptions.length}|${scheduledCount > 0}`);
 
   return (
     <div
@@ -163,8 +183,11 @@ export default function ChatComposer({
         <textarea
           ref={inputRef}
           className="chat-input"
+          data-dictation-chat={draftKey}
+          data-dictation-thread={activeId ?? undefined}
           rows={1}
           value={input}
+          readOnly={locked}
           placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
@@ -201,7 +224,17 @@ export default function ChatComposer({
       {/* One handler for the whole row: a tap here never steals focus from the
           textarea, so it never spends itself closing the mobile keyboard
           instead of pressing the button. See keepFocus. */}
-      <div className="chat-actions" onPointerDown={keepFocusOnTap}>
+      {armedRule && (
+        <div className="chat-armed-rule">
+          <Clock size={13} strokeWidth={1.8} aria-hidden />
+          <span>{ruleText(armedRule)}</span>
+          <button className="chat-slash-btn" aria-label="Send normally" title="Send normally"
+            onClick={() => onArmRule(null)}>
+            <X size={14} aria-hidden />
+          </button>
+        </div>
+      )}
+      <div ref={actionsRef} className="chat-actions" onPointerDown={keepFocusOnTap}>
         {/* The context meter stays put when voice turns on. Voice is another way
             to talk to the SAME conversation, so how full that conversation is
             does not stop being relevant, and removing it made the row visibly
@@ -283,6 +316,7 @@ export default function ChatComposer({
             trigger={
               <button
                 className="chat-model"
+                aria-label={`Model: ${modelLabel(selectedModel)}`}
                 title={`Model for this conversation.${nextTurnHint(streaming)}`}
               >
                 <BotMessageSquare size={14} aria-hidden />
@@ -344,9 +378,31 @@ export default function ChatComposer({
             gained then lost a control every time a turn started and ended, which
             shifted Send sideways under the operator's thumb mid-conversation.
             Operator, 2026-08-14. Do not add it back here. */}
+        {/* Send later: a clock beside Send that opens a drop-up of rules. With
+            text typed, a rule sends it now under that rule; with none, it is
+            held for the next Send. */}
+        <SendLaterMenu
+          threadId={activeId}
+          streaming={streaming}
+          onPick={(w) => (canSend ? onSendLater(w) : onArmRule(w))}
+          text={input}
+          onScheduled={() => onChange("")}
+          className="chat-send-later"
+          trigger={
+            <button
+              className={`chat-slash-btn${armedRule ? " is-active" : ""}`}
+              aria-label={scheduledCount ? `Send later (${scheduledCount} scheduled)` : "Send later"}
+              title={scheduledCount ? `Send later. ${scheduledCount} scheduled in this chat` : "Send later"}
+            >
+              <Clock size={16} aria-hidden />
+              {/* Something is set to send into this chat, until it is done or
+                  cleared (Scheduled in this menu lists it). */}
+              {scheduledCount > 0 && <span className="chat-sched-dot" aria-hidden />}
+            </button>
+          }
+        />
         <button
           className="chat-send"
-         
           onClick={onSend}
           disabled={!canSend}
           // Not "Send (Enter)" any more. Enter only sends on a physical
@@ -354,7 +410,8 @@ export default function ChatComposer({
           // false instruction on exactly the device that most needed the
           // button. The shortcut is standard enough not to need announcing.
           aria-label="Send"
-          title={streaming ? "Send (queues behind the current turn)" : "Send"}
+          title={armedRule ? ruleText(armedRule)
+            : streaming ? "Send (joins the current turn)" : "Send"}
         >
           <CornerDownLeft size={16} aria-hidden />
         </button>

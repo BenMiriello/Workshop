@@ -25,11 +25,12 @@ import type { PendingSend } from "./threadStore";
 // draws at the bottom again -- then the first page lands, `tail` jumps past it,
 // and it is spliced back up.
 //
-// AND IT DIES SILENTLY. Nothing ever removes it from `pending`, so the outbox
-// keeps re-writing it until `OUTBOX_MAX_AGE_MS` (24h) drops it with no notice.
-// A message the operator believes they sent is deleted a day later without
-// anything having said so. That is what makes this data loss rather than a
-// layout complaint.
+// IT USED TO DIE SILENTLY, too: the outbox dropped any entry older than 24h
+// with no notice, so a message the operator believed they sent was deleted a
+// day later without anything having said so. There is no age bound any more
+// (chatSelection.readOutbox). An entry stays until the server takes it, by
+// Retry or by useAutoResend when the connection comes back, or until the
+// operator cancels it.
 
 /** The sends that failed and are still owed an answer. */
 export function unsentSends(pending: PendingSend[]): PendingSend[] {

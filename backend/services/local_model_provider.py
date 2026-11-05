@@ -26,10 +26,10 @@ somebody actually asks for a turn on a model that is not there.
 
 NOTHING HERE IS INFERRED FROM THE WIRE FORMAT. The capabilities on a probed
 model start FALSE and are set only by something observed: a context window the
-server itself reported, a `count_tokens` endpoint that actually answered. Ollama's
-Messages implementation lacks `count_tokens`, `cache_control` and `tool_choice`,
-and llama.cpp makes no strong claim of full spec compatibility, so "it speaks
-anthropic_messages" is not a capability claim about any of them.
+server itself reported. Ollama's Messages implementation lacks `count_tokens`,
+`cache_control` and `tool_choice`, and llama.cpp makes no strong claim of full
+spec compatibility, so "it speaks anthropic_messages" is not a capability claim
+about any of them. A reading never names a model: see `_capabilities`.
 
 A PINNED MODEL THAT VANISHED IS NOT AN ERROR EITHER. A server restarted with a
 different weight loaded has a different model list, and a thread pinned to the
@@ -46,6 +46,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,7 +56,7 @@ import httpx
 
 from wsplatform import paths
 
-from services import llm_contract
+from services import llm_contract, local_thinking
 
 log = logging.getLogger("workshop.local_model_provider")
 
@@ -78,11 +79,59 @@ PROBE_TTL_S = 20.0
 # A connect that has not landed in this long is a server that is not running.
 # Deliberately small: this budget is spent on a page load.
 CONNECT_TIMEOUT_S = 1.5
-READ_TIMEOUT_S = 10.0
+READ_TIMEOUT_S = 3.0
+
+# The tier aliases the CLI resolves on its own for side requests. See
+# `LocalHttpProvider.cli_env`.
+_CLI_MODEL_ALIASES = (
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+)
+
+# Cloud credentials a CLI child may carry, none of which a local turn uses.
+_CLOUD_CREDENTIAL_ENV = frozenset({
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+})
 
 # A turn is not a probe. It runs as long as generation takes on hardware the
 # operator owns, which on a large local weight is minutes.
 TURN_TIMEOUT_S = 900.0
+
+# How long one reply on a local model may run, which is also what decides when
+# the CLI compacts. Its threshold is `window - min(max_output, 20000) - 13000`
+# (CLI 2.1.287; `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` can only lower it). At the
+# CLI's own 32000 default a 65k window compacts at 32.5k, half of it; at this
+# value it compacts at 44.5k. A quarter of the window caps it on a small one.
+LOCAL_MAX_OUTPUT_TOKENS = 8000
+
+# How many times the CLI retries a failed model request before it gives up and
+# ends the turn with the error (`CLAUDE_CODE_MAX_RETRIES`; its own default is
+# 10, CLI 2.1.287). A local server that fails a request usually fails the next
+# one the same way: the model was unloaded, or the server is down. Retried ten
+# times per request, with each attempt able to wait out the CLI's ten-minute
+# request timeout, one turn sat "working" for two hours on 2026-10-03.
+# `services/model_failures.py` bounds the turn whatever the CLI does.
+LOCAL_MAX_RETRIES = 2
+
+# The hop lives in this backend, so a restart of it refuses connections for a
+# few seconds. Six retries wait 31.5 s at their shortest (0.5 + 1 + 2 + 4 + 8 +
+# 16), which rides that out; a server that is down is answered by the hop with
+# a 503 at once, so the extra retries cost seconds, not the ten-minute waits.
+HOP_MAX_RETRIES = 6
+
+
+def hop_url() -> str | None:
+    """Where a local turn's requests go to have their thinking set: this
+    backend's `/local-llm`. None when the backend does not know its own port
+    (`WORKSHOP_BACKEND_PORT`), in which case the turn goes straight to the
+    server; guessing a port could reach another install's backend."""
+    port = os.environ.get("WORKSHOP_BACKEND_PORT", "").strip()
+    return f"http://127.0.0.1:{port}/local-llm" if port.isdigit() else None
 
 
 def config_path() -> Path:
@@ -127,7 +176,8 @@ def normalize_base_url(value: str | None) -> str:
 
 
 def load_config() -> dict:
-    """`{"base_url": ...}`, or `{}` when nothing is configured.
+    """`{"base_url": ..., "compaction_model": ...}`, or `{}` when nothing is
+    configured.
 
     An unreadable or corrupt file reads as "not configured" rather than raising:
     the alternative is a backend that will not answer a model list because of a
@@ -153,27 +203,101 @@ def base_url() -> str | None:
         return None
 
 
+def _write_config(key: str, value) -> None:
+    """Set (or, on None, clear) one key of the config, keeping the others. The
+    file goes when nothing is left in it."""
+    path = config_path()
+    config = load_config()
+    if value is None:
+        config.pop(key, None)
+    else:
+        config[key] = value
+    if not config:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(config, indent=2))
+    tmp.replace(path)
+
+
 def set_base_url(value: str | None) -> str | None:
     """Configure (or, on None/empty, clear) the local model server.
 
     Forgets the probe cache, because the answer it holds is about a different
     server the moment this changes.
     """
-    path = config_path()
-    if not (value or "").strip():
-        try:
-            os.remove(path)
-        except FileNotFoundError:
-            pass
-        forget_probe()
-        return None
-    origin = normalize_base_url(value)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"base_url": origin}, indent=2))
-    tmp.replace(path)
+    origin = normalize_base_url(value) if (value or "").strip() else None
+    _write_config("base_url", origin)
     forget_probe()
     return origin
+
+
+def compaction_model() -> str | None:
+    """The local model a compaction is sent to instead of the chat's own, or
+    None to keep the chat's. Installation-wide, beside the server's URL, because
+    the hop that applies it (`routes/local_llm`) serves the CLI rather than a
+    signed-in request and so has no owner to read a preference for."""
+    raw = load_config().get("compaction_model")
+    if not isinstance(raw, str):
+        return None
+    return raw.strip() or None
+
+
+def compaction_candidates() -> dict[str, llm_contract.ModelInfo]:
+    """The models a compaction may be sent to: those this server lists with a
+    window, since the hop takes a model only when its window is known to fit."""
+    return {m.id: m for m in probe().models if m.capabilities.context_tokens > 0}
+
+
+def set_compaction_model(model: str | None) -> str | None:
+    """Persist (or, on empty/None, clear) the compaction model. Raises
+    ValueError unless the model is one this local server lists: a compaction is
+    rewritten inside the hop to this server, so a model elsewhere cannot serve
+    it."""
+    value = (model or "").strip() or None
+    if value is not None and value not in compaction_candidates():
+        raise ValueError(f"{model!r} is not a model the local model server "
+                         "lists with a context window")
+    _write_config("compaction_model", value)
+    return value
+
+
+def scope_compaction_models() -> dict[str, str]:
+    """The compaction model chosen per scope (`app:<slug>`), kept in the same
+    file as the global one for the same reason: the hop that applies it has no
+    owner to read a preference for."""
+    raw = load_config().get("scope_compaction_models")
+    if not isinstance(raw, dict):
+        return {}
+    return {k: v.strip() for k, v in raw.items()
+            if isinstance(k, str) and k and isinstance(v, str) and v.strip()}
+
+
+def set_scope_compaction_model(scope: str, model: str | None) -> str | None:
+    """Persist (or, on empty/None, clear) the compaction model of one scope,
+    under the rule of `set_compaction_model`."""
+    value = (model or "").strip() or None
+    if value is not None and value not in compaction_candidates():
+        raise ValueError(f"{model!r} is not a model the local model server "
+                         "lists with a context window")
+    chosen = scope_compaction_models()
+    if value is None:
+        chosen.pop(scope, None)
+    else:
+        chosen[scope] = value
+    _write_config("scope_compaction_models", chosen or None)
+    return value
+
+
+def compaction_model_for(scope: str | None) -> str | None:
+    """The model a compaction in `scope` is sent to: the scope's own choice,
+    else the global one, else None to keep the chat's model."""
+    return (scope_compaction_models().get(scope or "")
+            or compaction_model())
 
 
 # ------------------------------------------------------------------- the probe
@@ -189,6 +313,7 @@ class Probe:
 
 
 _PROBE: dict[str, Probe] = {}
+_REFRESHING = threading.Lock()
 
 
 def forget_probe() -> None:
@@ -201,51 +326,52 @@ def _client(timeout_s: float):
     return httpx.Client(timeout=httpx.Timeout(timeout_s, connect=CONNECT_TIMEOUT_S))
 
 
-def _capabilities(origin: str, entry: dict, client) -> llm_contract.Capabilities:
-    """What this model can do, from what the SERVER said and what answered.
+def window_of(entry: dict) -> int:
+    """The context window a model-list entry states, 0 when it states none."""
+    for key in ("max_input_tokens", "context_length", "context_window",
+                "max_context_length"):
+        value = entry.get(key)
+        if isinstance(value, int) and value > 0:
+            return value
+    return 0
+
+
+def window_env(window: int) -> dict[str, str]:
+    """What tells the CLI a model's window, which is also what decides when
+    it compacts (`LOCAL_MAX_OUTPUT_TOKENS`). Without a window the CLI assumes
+    200k for a model it does not know, so its auto-compact waits for the server
+    to overflow."""
+    out = {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(
+        min(LOCAL_MAX_OUTPUT_TOKENS, window // 4) if window > 0
+        else LOCAL_MAX_OUTPUT_TOKENS)}
+    if window > 0:
+        out["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(window)
+    return out
+
+
+def _capabilities(entry: dict) -> llm_contract.Capabilities:
+    """What this model can do, from what the SERVER said.
 
     Everything starts False. `context_tokens` is taken from whichever field the
     server used — the Models API's `max_input_tokens`, or the `context_length`
     that the llama.cpp-derived servers report — and stays 0 when none is present,
     which every caller renders as unknown rather than as zero.
+
+    `count_tokens` stays False because establishing it means a request that
+    names the model, and a server that swaps weights per request (llama-swap)
+    LOADS whatever a request names. Probing it on every catalog read loaded each
+    model in turn, evicted whatever else held the card, and held the caller for
+    the length of the load.
     """
-    window = 0
-    for key in ("max_input_tokens", "context_length", "context_window",
-                "max_context_length"):
-        value = entry.get(key)
-        if isinstance(value, int) and value > 0:
-            window = value
-            break
+    window = window_of(entry)
     return llm_contract.Capabilities(
         cache=False,
         thinking=False,
         tools=False,
         vision=False,
-        count_tokens=_counts_tokens(origin, entry.get("id"), client),
+        count_tokens=False,
         context_tokens=window,
     )
-
-
-def _counts_tokens(origin: str, model_id: object, client) -> bool:
-    """THE RUNTIME CAPABILITY PROBE. Does `/v1/messages/count_tokens` answer?
-
-    This is the one capability that can be established cheaply and without
-    generating anything, and it is the one that differs most between servers
-    claiming the same wire. A 404 or a 405 is a clear no; a connection error is
-    also a no, because the answer this feeds is "what can be relied on".
-    """
-    if not isinstance(model_id, str) or not model_id:
-        return False
-    try:
-        r = client.post(
-            f"{origin}/v1/messages/count_tokens",
-            json={"model": model_id,
-                  "messages": [{"role": "user", "content": "hi"}]},
-            headers={"anthropic-version": "2023-06-01"},
-        )
-    except Exception:
-        return False
-    return r.status_code == 200
 
 
 def probe(force: bool = False) -> Probe:
@@ -255,6 +381,12 @@ def probe(force: bool = False) -> Probe:
     success and the failure are cached for `PROBE_TTL_S`, because a failure that
     is not cached means one TCP connect per model-list read, several times per
     page, against a port with nothing on it.
+
+    ONLY THE FIRST READING IS WAITED FOR. The catalog is read on the event loop
+    by every composer fetch, so a reading past its TTL is still the answer while
+    one background thread takes the next. A server that is slow to answer then
+    costs nothing but freshness; it used to freeze every request in the backend
+    for as long as the server took.
     """
     origin = base_url()
     if origin is None:
@@ -262,12 +394,34 @@ def probe(force: bool = False) -> Probe:
                                          "No local model server is configured."),
                      (), time.time())
     cached = _PROBE.get(origin)
-    if cached is not None and not force and (time.time() - cached.at) < PROBE_TTL_S:
-        return cached
-    result = _read(origin)
+    if cached is None or force:
+        return _remember(origin, _read(origin))
+    if time.time() - cached.at >= PROBE_TTL_S:
+        _refresh_soon(origin)
+    return cached
+
+
+def _remember(origin: str, result: Probe) -> Probe:
     _PROBE.clear()
     _PROBE[origin] = result
     return result
+
+
+def _refresh_soon(origin: str) -> None:
+    """Take a new reading off the caller's thread. One at a time: the lock is
+    held by the refreshing thread, and a caller that finds it held moves on."""
+    if not _REFRESHING.acquire(blocking=False):
+        return
+
+    def run() -> None:
+        try:
+            result = _read(origin)
+            if base_url() == origin:
+                _remember(origin, result)
+        finally:
+            _REFRESHING.release()
+
+    threading.Thread(target=run, name="local-model-probe", daemon=True).start()
 
 
 def _read(origin: str) -> Probe:
@@ -281,19 +435,19 @@ def _read(origin: str) -> Probe:
                         llm_contract.REACH_UNREACHABLE,
                         f"{origin}/v1/models answered {r.status_code}."),
                     (), time.time())
-            entries = _entries(r.json())
+            entries = model_entries(r.json())
             models = tuple(
                 llm_contract.ModelInfo(
                     id=str(entry["id"]),
                     label=str(entry.get("display_name") or entry["id"]),
                     provider_id=PROVIDER_ID,
                     wire=llm_contract.WIRE_ANTHROPIC,
-                    capabilities=_capabilities(origin, entry, client),
-                    # NO EFFORT LADDER. `output_config.effort` is a first-party
-                    # feature; a local server that ignores it would give the
-                    # operator a control that moves no needle, which is the exact
-                    # failure `model_caps` exists to prevent.
-                    efforts=(),
+                    capabilities=_capabilities(entry),
+                    # Effort is the thinking level, applied by the platform's
+                    # own hop in front of the server (`routes/local_llm`), not
+                    # by anything the server reads from the request itself. No
+                    # hop, no ladder: the level would move nothing.
+                    efforts=local_thinking.LEVELS if hop_url() else (),
                 )
                 for entry in entries if isinstance(entry.get("id"), str)
             )
@@ -311,7 +465,7 @@ def _read(origin: str) -> Probe:
                  models, time.time())
 
 
-def _entries(payload: object) -> list[dict]:
+def model_entries(payload: object) -> list[dict]:
     """The model list out of either shape a server may return: the Models API's
     `{"data": [...]}`, or a bare list."""
     if isinstance(payload, dict):
@@ -339,8 +493,68 @@ class LocalHttpProvider:
     def __init__(self, origin: str) -> None:
         self.base_url = origin
 
+    # THE AGENTIC HARNESS IS THE CLI, POINTED HERE. Tools, permission modes,
+    # MCP servers and the streaming parser are all CLI concerns on this
+    # platform, and the CLI speaks `anthropic_messages` to whatever base URL it
+    # is given. So an agentic turn on a local model is the same `claude -p`
+    # spawn as any other, with `cli_env` redirecting it; nothing about the turn
+    # path forks. `run_turn` below stays the blocking, tool-less path.
+    cli_harness = True
+
+    # WHAT IT RUNS ON (services/resources). A server on this machine shares its
+    # accelerator with everything else here, so a turn on it is recorded as
+    # holding "gpu" unless the config names something else (a CPU-only server
+    # declares `"resources": []`).
+    @property
+    def resources(self) -> tuple[str, ...]:
+        raw = load_config().get("resources")
+        if isinstance(raw, list):
+            return tuple(str(r) for r in raw if str(r).strip())
+        return ("gpu",)
+
     def models(self) -> list[llm_contract.ModelInfo]:
         return list(probe().models)
+
+    def cli_env(self, model: str, env: dict) -> dict:
+        """`env` for a CLI turn that runs `model` on this server.
+
+        EVERY MODEL ALIAS THE CLI USES IS THIS MODEL. Besides `--model`, the CLI
+        sends side requests (titles, summaries, subagents) under its own tier
+        aliases, and a local server answers only for what it has loaded; an
+        alias left at its default asks for a model that is not there.
+
+        The subscription credentials are REMOVED, not just outranked. The auth
+        token below wins over them, but nothing here should hand a cloud
+        credential to a process whose every request goes to a server the
+        operator may not control.
+
+        ATTRIBUTION OFF: the CLI otherwise puts a per-request header block at the
+        top of the system prompt, which changes every turn and so misses the
+        server's prompt cache from the first token.
+        """
+        out = {k: v for k, v in env.items() if k not in _CLOUD_CREDENTIAL_ENV}
+        hop = hop_url()
+        out.update({
+            "ANTHROPIC_BASE_URL": hop or self.base_url,
+            # Any non-empty value: a local server checks no credential, and the
+            # CLI refuses to start without one.
+            "ANTHROPIC_AUTH_TOKEN": PROVIDER_ID,
+            "ANTHROPIC_MODEL": model,
+            **{alias: model for alias in _CLI_MODEL_ALIASES},
+            "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "CLAUDE_CODE_MAX_RETRIES": str(
+                HOP_MAX_RETRIES if hop else LOCAL_MAX_RETRIES),
+        })
+        if hop:
+            out["CLAUDE_CODE_GATEWAY_HINT_HEADERS"] = "1"
+        # The window the server itself reported, when it reported one. A
+        # server may report none for a model it has not loaded lately; an app
+        # gateway in front of it can say instead (`app_chat_gateway`).
+        window = next((m.capabilities.context_tokens for m in self.models()
+                       if m.id == model), 0)
+        out.update(window_env(window))
+        return out
 
     def reach(self) -> llm_contract.Reach:
         return probe().reach
@@ -357,8 +571,14 @@ class LocalHttpProvider:
         A TOOL-BEARING TURN IS REFUSED, LOUDLY. Tools and permission modes are
         CLI FLAGS on this platform, so there is nothing here to carry them, and
         quietly dropping them would run an agent with no hands and report
-        success. `model_resolution` already keeps such a turn off this provider;
-        this is the backstop for a caller that constructed one by hand.
+        success. An agentic turn on this provider runs through the CLI instead
+        (`cli_env`); this is the backstop for a caller that constructed a
+        blocking one by hand.
+
+        `base_url` and `headers` send the request somewhere that stands in for
+        this server, with what it needs to know: an app's gateway in front of
+        it, told which chat the request is for (`services/own_model`).
+        `thinking=False` asks the model to answer without reasoning first.
         """
         if kw.get("allowed_tools") or kw.get("mcp_servers"):
             raise llm_contract.ProviderCallFailed(
@@ -374,14 +594,22 @@ class LocalHttpProvider:
             "max_tokens": int(kw.get("max_tokens") or 8192),
             "messages": [{"role": "user", "content": prompt}],
         }
+        if kw.get("thinking") is False:
+            # Both spellings: the Messages API's own, and the chat-template
+            # switch the llama.cpp and vLLM servers read (llama.cpp's
+            # `/v1/messages` ignores `thinking.type: disabled`).
+            payload["thinking"] = {"type": "disabled"}
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        origin = kw.get("base_url") or self.base_url
+        headers = {**(kw.get("headers") or {}), "anthropic-version": "2023-06-01"}
         start = time.time()
         try:
             with _client(float(kw.get("timeout_s") or TURN_TIMEOUT_S)) as client:
-                r = client.post(f"{self.base_url}/v1/messages", json=payload,
-                                headers={"anthropic-version": "2023-06-01"})
+                r = client.post(f"{origin}/v1/messages", json=payload,
+                                headers=headers)
         except Exception as e:
             raise llm_contract.ProviderCallFailed(
-                f"{PROVIDER_LABEL} at {self.base_url} did not answer: "
+                f"{PROVIDER_LABEL} at {origin} did not answer: "
                 f"{e.__class__.__name__}") from e
         elapsed = time.time() - start
         if r.status_code != 200:

@@ -16,7 +16,7 @@ import os
 
 import pytest
 
-from services import build_streaming, chat_drain, chat_queue, chat_store, ownership
+from services import build_streaming, chat_drain, chat_queue, chat_store, ownership, turn_end
 
 
 @pytest.fixture()
@@ -226,6 +226,47 @@ class TestTheFirstResultIsNotAlwaysTheEnd:
         d = asyncio.run(go())
         assert d.retired is True
         assert chat_store.get_thread(thread["id"])["messages"][-1]["content"] == "the real answer"
+
+
+class TestAModelThatIsThinkingIsNotSilent:
+    """Reasoning text is redacted, so a long think produces no segment, only
+    `thinking_tokens` and empty `thinking_delta` frames. Turn 75c5370c
+    (2026-10-16) was a resumed turn thinking for over a minute: the silence
+    bound read that as a wedge, retired the process mid-thought, and the chat
+    committed "Ended without a reply"."""
+
+    GRACE_S = 0.4
+
+    @staticmethod
+    def _thinking_frames() -> tuple[str, str]:
+        return (json.dumps({"type": "system", "subtype": "thinking_tokens",
+                            "estimated_tokens": 100, "estimated_tokens_delta": 100}),
+                json.dumps({"type": "stream_event", "event": {
+                    "type": "content_block_delta", "index": 0,
+                    "delta": {"type": "thinking_delta", "thinking": ""}}}))
+
+    def _run(self, thread, monkeypatch, *, frames: bool):
+        monkeypatch.setattr(turn_end, "STUCK_GRACE_S", self.GRACE_S)
+
+        async def go():
+            d = Driver(thread["id"], monkeypatch, delivered=1)
+            d.write(_result(), _replay("do the thing"))
+            task = asyncio.create_task(build_streaming._drive_turn(d.turn, d.meta, proc=d.proc))
+            for _ in range(int(self.GRACE_S * 4 / 0.1)):
+                await asyncio.sleep(0.1)
+                if frames and not d.retired:
+                    d.write(*self._thinking_frames())
+            d.proc.returncode = 0
+            await asyncio.wait_for(task, 5)
+            return d
+        return asyncio.run(go())
+
+    def test_a_long_think_is_not_retired(self, thread, monkeypatch):
+        assert self._run(thread, monkeypatch, frames=True).retired is False
+
+    def test_a_silent_wedge_is_still_bounded(self, thread, monkeypatch):
+        """The control: the bound still ends a turn that says nothing at all."""
+        assert self._run(thread, monkeypatch, frames=False).retired is True
 
 
 class TestAMessageTheCliNeverReadGoesBackOnTheQueue:

@@ -52,11 +52,19 @@ export type StreamEvent =
 
 const isAgent = (s: ChatSegment): s is Extract<ChatSegment, { t: "agent" }> => s.t === "agent";
 
+/** The index of the LAST segment matching `hit`, scanning from the end without
+ *  allocating: this runs on every stream event of a turn that can hold
+ *  thousands of segments, and the match is almost always near the tail. */
+function lastIndex(segs: ChatSegment[], hit: (s: ChatSegment) => boolean): number | undefined {
+  for (let k = segs.length - 1; k >= 0; k--) if (hit(segs[k])) return k;
+  return undefined;
+}
+
 /** Append `step` to the open subagent with this id. Returns null when no such
  *  subagent is open, which tells the caller to treat the event as ordinary
  *  top-level work rather than drop it. */
 function intoAgent(segs: ChatSegment[], parent: string, step: ChatSegment): ChatSegment[] | null {
-  const i = segs.map((s, k) => (isAgent(s) && s.id === parent ? k : -1)).filter((k) => k >= 0).pop();
+  const i = lastIndex(segs, (s) => isAgent(s) && s.id === parent);
   if (i === undefined) return null;
   const host = segs[i] as Extract<ChatSegment, { t: "agent" }>;
   const steps = host.steps;
@@ -169,10 +177,18 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
     }];
   }
   if (ev.kind === "permission_resolved") {
-    const next = ev.stale ? "stale" : (ev.state === "allowed" ? "allowed" : "denied");
-    return segs.map((s) =>
-      s.t !== "approval" || s.state !== "pending" ? s
-        : (ev.stale || s.id === ev.id) ? { ...s, state: next as typeof s.state } : s);
+    const next = ev.stale ? "stale"
+      : (ev.state === "allowed" || ev.state === "unanswered" ? ev.state : "denied");
+    // Unchanged input comes back unchanged (a replayed answer, or one this tab
+    // already applied), so the reducer's identity check skips the re-render.
+    let out: ChatSegment[] | null = null;
+    for (let k = 0; k < segs.length; k++) {
+      const s = segs[k];
+      if (s.t !== "approval" || s.state !== "pending" || !(ev.stale || s.id === ev.id)) continue;
+      out ??= segs.slice();
+      out[k] = { ...s, state: next as typeof s.state };
+    }
+    return out ?? segs;
   }
   if (ev.kind === "tool") {
     const step: ChatSegment = { t: "tool", name: ev.name || "?", input: ev.input || "" };
@@ -225,13 +241,13 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
   // settled turn tell a command that failed from a file that was read.
   const id = ev.tool_use_id || "";
   if (!id) return segs;
-  const i = segs.map((s, k) => (isAgent(s) && s.id === id ? k : -1)).filter((k) => k >= 0).pop();
+  const i = lastIndex(segs, (s) => isAgent(s) && s.id === id);
   if (i !== undefined) {
     const copy = segs.slice();
     copy[i] = { ...(segs[i] as Extract<ChatSegment, { t: "agent" }>), done: true, result: ev.text || "" };
     return copy;
   }
-  const j = segs.map((s, k) => (s.t === "tool" && s.id === id ? k : -1)).filter((k) => k >= 0).pop();
+  const j = lastIndex(segs, (s) => s.t === "tool" && s.id === id);
   if (j !== undefined) {
     const out = segs.slice();
     out[j] = closeStep(segs[j] as Extract<ChatSegment, { t: "tool" }>, ev);

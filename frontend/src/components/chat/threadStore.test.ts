@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ChatSegment } from "../../lib/chat";
 import {
   committedEvents, initialThreadState, pendingSends, snapshotThread, threadReducer,
   type LogEvent, type ThreadState,
@@ -450,6 +451,39 @@ describe("re-attaching to a run already on screen", () => {
         live: { meta: { segments: [{ t: "text", text: "server has more" }] } } },
     });
     expect(after.activeTurn?.segments).toEqual([{ t: "text", text: "server has more" }]);
+  });
+});
+
+describe("a turn adopted after a backend restart", () => {
+  const started = (): ThreadState =>
+    apply(initialThreadState("t"), { type: "turnStarted", turnId: "r1" });
+  const text = (content: string) =>
+    ({ type: "turnDelta", turnId: "r1", event: { kind: "text", content } }) as const;
+  const before: ChatSegment[] = [{ t: "thinking", text: "worked out before the restart" }];
+
+  // The adopted turn's stream holds only what came after the restart, so the
+  // rewind emptied the view and nothing put it back: "working" over nothing.
+  it("is shown from the snapshot that opens its stream, then grows from deltas", () => {
+    const s = apply(started(),
+      { type: "turnReattached", turnId: "r1" },
+      { type: "turnSnapshot", turnId: "r1", segments: before, cutHead: ["m-7"] },
+      text("and after"));
+    expect(s.activeTurn?.segments).toEqual([...before, { t: "text", text: "and after" }]);
+    expect(s.activeTurn?.cutHead).toEqual(["m-7"]);
+  });
+
+  it("replaces rather than appends, so a second re-attach does not double it", () => {
+    const once = apply(started(),
+      { type: "turnReattached", turnId: "r1" },
+      { type: "turnSnapshot", turnId: "r1", segments: before, cutHead: [] });
+    const twice = apply(once,
+      { type: "turnSnapshot", turnId: "r1", segments: before, cutHead: [] });
+    expect(twice.activeTurn?.segments).toEqual(before);
+  });
+
+  it("leaves a different run alone", () => {
+    const s = started();
+    expect(threadReducer(s, { type: "turnSnapshot", turnId: "x", segments: before, cutHead: [] })).toBe(s);
   });
 });
 

@@ -1,4 +1,6 @@
-import type { ActiveTurnPayload, ChatSegment, LogEvent, QueuedMessagePayload } from "../../lib/chat";
+import type {
+  ActiveTurnPayload, ChatSegment, LogEvent, QueuedMessagePayload, QueueWaiting,
+} from "../../lib/chat";
 import { applyStreamEvent, sealTrailingText, type StreamEvent } from "./segments";
 
 // The wire shapes live with the rest of the API surface (lib/chat); re-exported
@@ -80,6 +82,10 @@ export type PendingSend = {
    *  next send, so the explanation for a bubble outlived the bubble by about a
    *  keystroke. See sendFailure.ts. */
   error?: string;
+  /** The failure was one that clears by itself (a restart, a dropped
+   *  connection, a stall), so it is worth sending again unasked. Set only with
+   *  `failed`; absent on an entry restored from storage. See useAutoResend. */
+  transient?: boolean;
   /** Files this send carries, kept so a RETRY re-sends them. Without it a failed
    *  message retried as bare text and the operator had no way to see that the
    *  files had gone. */
@@ -148,6 +154,8 @@ export type QueuedMessage = {
   /** When the operator hit enter. */
   ts: string;
   attachments?: QueuedMessagePayload["attachments"];
+  /** When it may go out, if not as soon as the chat is free. */
+  when?: QueuedMessagePayload["when"];
 };
 
 export type ThreadState = {
@@ -166,6 +174,8 @@ export type ThreadState = {
   queueHeld: boolean;
   /** Why the queue is not moving, when it stopped for a reason. */
   queueError: string;
+  /** Held back by something outside the thread (the usage limit). */
+  queueWaiting: QueueWaiting | null;
   /** "compact" | "clear" while a fold is running on the SERVER, else null.
    *  Server truth, not this tab's optimism: a fold started in another tab, or
    *  before this component mounted, has to disable the button here too. */
@@ -242,6 +252,7 @@ export type ThreadAction =
       queued?: QueuedMessage[];
       queueHeld?: boolean;
       queueError?: string;
+      queueWaiting?: QueueWaiting | null;
       /** Absent leaves what is held, like the queue fields above. */
       pendingOperation?: string | null;
       /** The cut the server is APPLYING: how many messages are behind it and
@@ -285,7 +296,7 @@ export type ThreadAction =
       attachments?: PendingSend["attachments"];
     }
   | { type: "sendAcked"; clientId: string }
-  | { type: "sendFailed"; clientId: string; error?: string }
+  | { type: "sendFailed"; clientId: string; error?: string; transient?: boolean }
   | { type: "sendRetracted"; clientId: string }
   // The OPERATOR pulled a still-local send back, from its X. Same effect on
   // `pending` as `sendRetracted` (the outbox mirror is keyed off that map, not
@@ -316,6 +327,9 @@ export type ThreadAction =
   // is still in flight; the poll takes over as the segment source now, so this
   // hands ownership back to it (see `streamOwned`).
   | { type: "turnStreamDropped"; turnId: string }
+  // The stream's own opening frame for a turn adopted after a backend restart:
+  // the segments and head cuts it had before, which its replay never carried.
+  | { type: "turnSnapshot"; turnId: string; segments: ChatSegment[]; cutHead: string[] }
   | { type: "turnContext"; turnId: string; tokens: number }
   | { type: "turnCommitted"; turnId: string }
   // Adopt a PREVIOUSLY-HELD snapshot of this same thread in one commit, so a
@@ -359,7 +373,8 @@ export type ThreadAction =
 export type ThreadSnapshot = Pick<
   ThreadState,
   "threadId" | "byId" | "order" | "idBySeq" | "cursor" | "cut"
-  | "queued" | "queueHeld" | "queueError" | "hasMoreOlder" | "pendingOperation"
+  | "queued" | "queueHeld" | "queueError" | "queueWaiting" | "hasMoreOlder"
+  | "pendingOperation"
   | "title" | "titleSeq"
 >;
 
@@ -378,6 +393,7 @@ export function snapshotThread(state: ThreadState): ThreadSnapshot {
     queued: state.queued,
     queueHeld: state.queueHeld,
     queueError: state.queueError,
+    queueWaiting: state.queueWaiting,
     pendingOperation: state.pendingOperation,
     hasMoreOlder: state.hasMoreOlder,
     // Cacheable for the same reason the events are: a `title` event is a
@@ -399,6 +415,7 @@ export function initialThreadState(threadId: string | null = null): ThreadState 
     queued: [],
     queueHeld: false,
     queueError: "",
+    queueWaiting: null,
     pendingOperation: null,
     cut: null,
     syncedAt: 0,
@@ -558,8 +575,13 @@ function sameQueue(prev: QueuedMessage[], next: QueuedMessage[] | undefined): bo
   if (prev.length !== next.length) return false;
   for (let i = 0; i < prev.length; i++) {
     if (prev[i].client_id !== next[i].client_id || prev[i].text !== next[i].text) return false;
+    if (JSON.stringify(prev[i].when ?? null) !== JSON.stringify(next[i].when ?? null)) return false;
   }
   return true;
+}
+
+function sameWaiting(a: QueueWaiting | null, b: QueueWaiting | null): boolean {
+  return (a?.reason ?? null) === (b?.reason ?? null) && (a?.until ?? null) === (b?.until ?? null);
 }
 
 /** Drop the optimistic copies of anything the log now carries.
@@ -699,6 +721,9 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
           : (action.queued ?? state.queued),
         queueHeld: superseded ? state.queueHeld : (action.queueHeld ?? state.queueHeld),
         queueError: superseded ? state.queueError : (action.queueError ?? state.queueError),
+        queueWaiting: superseded || action.queueWaiting === undefined ? state.queueWaiting
+          : sameWaiting(state.queueWaiting, action.queueWaiting) ? state.queueWaiting
+          : action.queueWaiting,
         // `?? state` is wrong for this one: null is the MEANINGFUL value (the
         // fold ended), and `??` would swallow it and leave the button disabled
         // forever. Absent (older backend) keeps what is held; explicit null
@@ -806,10 +831,11 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       if (!cur) return state;
       const status: PendingStatus = action.type === "sendAcked" ? "sent" : "failed";
       const error = action.type === "sendFailed" ? action.error : undefined;
-      if (cur.status === status && cur.error === error) return state;
+      const transient = action.type === "sendFailed" ? action.transient : undefined;
+      if (cur.status === status && cur.error === error && cur.transient === transient) return state;
       return {
         ...state,
-        pending: { ...state.pending, [action.clientId]: { ...cur, status, error } },
+        pending: { ...state.pending, [action.clientId]: { ...cur, status, error, transient } },
       };
     }
 
@@ -899,6 +925,15 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
           localStartedAt: Date.now(),
         },
       };
+    }
+
+    case "turnSnapshot": {
+      // REPLACES, never appends: it arrives first on a stream that was just
+      // rewound (`turnReattached`), and again on every later re-attach, each
+      // time onto a view the rewind emptied.
+      const run = state.activeTurn;
+      if (!run || run.turnId !== action.turnId) return state;
+      return { ...state, activeTurn: { ...run, segments: action.segments, cutHead: action.cutHead } };
     }
 
     case "turnStreamDropped": {

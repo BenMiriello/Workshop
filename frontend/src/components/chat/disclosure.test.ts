@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { openInitial, onLive, onToggle, MIN_VISIBLE_MS, type Disclosure } from "./disclosure";
+import { openInitial, onFound, onLive, onToggle, MIN_VISIBLE_MS, type Disclosure } from "./disclosure";
 
 /** Replay a sequence of events, the way the component will. Every step is a
  *  long way apart in time, so these exercise the placement rule and not the
@@ -173,5 +173,18 @@ describe("what animates", () => {
     d = onLive(d, false, t + 9000);
     expect(d.open).toBe(false);
     expect(d.animate).toBe(true);
+  });
+});
+
+describe("find opening what hides a match", () => {
+  it("opens a closed one at once, and it stays open as a click would leave it", () => {
+    const d = onFound(openInitial(false, false, 0), 5000);
+    expect(d).toMatchObject({ open: true, animate: false, byUser: true });
+    expect(onLive(d, false, 9000).open).toBe(true);
+  });
+
+  it("leaves an open one exactly as it is", () => {
+    const open = onToggle(openInitial(false, false, 0), 100);
+    expect(onFound(open, 5000)).toBe(open);
   });
 });

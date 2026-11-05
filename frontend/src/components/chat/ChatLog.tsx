@@ -9,9 +9,13 @@ import MessageList, { SentAttachments, type AnswerPermissionFor } from "./Messag
 import FoldingNote from "./FoldingNote";
 import type { FoldMode } from "./useCompaction";
 import CopyMessage from "./CopyMessage";
+import ReadAloudMessage from "./ReadAloudMessage";
 import UnsendMessage from "./UnsendMessage";
 import QueueNote from "./QueueNote";
+import QueuedRule from "./QueuedRule";
+import type { QueueWaiting, SendRule } from "../../lib/chat";
 import { VoiceReply } from "./VoiceTurn";
+import { NO_SCHEDULES, useScheduled } from "./useScheduled";
 
 // The scrolling transcript. It renders BLOCKS the selector produced, in the
 // order it produced them, and arranges nothing itself.
@@ -75,7 +79,8 @@ export default function ChatLog({
   scrollRef, onScroll,
   error, blocks, isBuild, placeholder,
   selectedModel, cardCtx, onRetry, onCancelPending, onCancelQueued, onReleaseQueue,
-  queueHeld, queueError, workingLabel, elapsed, nowMs,
+  queueHeld, queueError, queueWaiting, onSetQueuedRule, threadId, streaming,
+  workingLabel, elapsed, nowMs,
   answerPermission, liveTurnId, renderBranch, branchHead,
   queued, folding, onStop, stopping, onStopFold, foldStopping,
   voiceOn, vsnap,
@@ -109,6 +114,12 @@ export default function ChatLog({
   queueHeld: boolean;
   /** Why the queue is not moving, when it stopped for a reason. */
   queueError: string;
+  /** Held back by something outside the thread (the usage limit). */
+  queueWaiting: QueueWaiting | null;
+  /** Change when one queued message goes out; null sends it now. */
+  onSetQueuedRule: (clientId: string, when: SendRule | null) => void;
+  threadId: string | null;
+  streaming: boolean;
   workingLabel: string;
   elapsed: number;
   // The shared 1Hz clock, threaded to the per-step counters in the live turn.
@@ -132,6 +143,7 @@ export default function ChatLog({
     // promise one of the three the composer produces. `AttachmentChips` already
     // falls through to a generic icon for anything else.
     attachments?: { id: string; name: string; kind: string }[];
+    when?: SendRule | null;
   }[];
   /** A /compact or /clear in flight, or null. It is drawn at the foot of the
    *  log, where its divider lands, and nowhere else. */
@@ -148,6 +160,8 @@ export default function ChatLog({
   voiceOn: boolean;
   vsnap: VoiceSnapshot;
 }) {
+  // Who sent a message a schedule sent: its byline reads the schedule.
+  const scheduled = useScheduled(threadId);
   const voiceLive = voiceOn && (vsnap.state === "thinking" || vsnap.state === "speaking");
 
   return (
@@ -176,6 +190,7 @@ export default function ChatLog({
 
       <MessageList
         blocks={blocks}
+        schedules={scheduled.data?.schedules ?? NO_SCHEDULES}
         selectedModel={selectedModel}
         cardCtx={cardCtx}
         workingLabel={workingLabel}
@@ -220,18 +235,24 @@ export default function ChatLog({
               {!!q.attachments?.length && <SentAttachments items={q.attachments} />}
               {q.text}
             </div>
+            {q.text.trim() && <ReadAloudMessage value={q.text} />}
             {q.text.trim() && <CopyMessage value={q.text} />}
             <UnsendMessage onUnsend={() => onCancelQueued(q.clientId)} />
           </div>
+          {q.when && (
+            <QueuedRule threadId={threadId} when={q.when} streaming={streaming}
+              onSet={(w) => onSetQueuedRule(q.clientId, w)} />
+          )}
         </div>
       ))}
       {/* Only when the queue is NOT simply waiting: it stopped (held) or a drain
           failed (error). Both carry a Send now the dimmed bubbles cannot. The
           ordinary waiting case shows no line at all. */}
-      {queued.length > 0 && (queueHeld || !!queueError) && (
+      {queued.length > 0 && (queueHeld || !!queueError || !!queueWaiting) && (
         <QueueNote
           held={queueHeld}
           error={queueError}
+          waiting={queueWaiting}
           onRelease={onReleaseQueue}
         />
       )}

@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ThreadAction, ThreadState } from "./threadStore";
+import type { ChatSegment } from "../../lib/chat";
 import type { ChatProblem } from "./chatProblem";
 import { CONSUMED_WIRE_KINDS, type ConsumedWireKind } from "./streamWire";
+import {
+  TURN_RECONNECT_WINDOW_MS, TURN_STREAM_HEALTHY, afterSettle, turnStreamDropped,
+  type TurnReconnect,
+} from "./turnReconnect";
 
 // The live turn's SSE channel, and nothing else.
 //
@@ -27,16 +32,20 @@ import { CONSUMED_WIRE_KINDS, type ConsumedWireKind } from "./streamWire";
 //  - Only a CLOSED socket is terminal. CONNECTING means the browser is already
 //    auto-retrying — let it.
 //  - Any inbound frame means healthy: reset the reconnect budget, so one long
-//    turn with the odd drop never exhausts the cap.
+//    turn with the odd drop never exhausts the cap. The budget is a length of
+//    outage, backed off with jitter (turnReconnect.ts).
 //  - Running out of budget must not finish the turn. It stops the socket, not
 //    the run. The transcript keeps showing the run (the store still has it, and
 //    the poll keeps its snapshot current) and the indicator says so.
+//  - Only `end`, or a sync that succeeded and no longer shows the run, finishes
+//    it. A socket closed without `end` is a backend going away (a shutdown
+//    closes streams without one), and a sync that failed says nothing at all
+//    about the run. Retiring on either made a tab look idle while its turn was
+//    still working, and stop following it.
 //  - Read before retiring. Sync the log FIRST, then flip out of streaming, so
 //    there is no window in which the chat looks idle but the reply is not in
 //    the transcript yet.
 
-const MAX_RECONNECTS = 8;
-const RECONNECT_DELAY_MS = 1200;
 // The gap between the `done` frame and the committed reply is a single append,
 // so this settles on the first or second try in practice.
 const COMMIT_SETTLE_TRIES = 10;
@@ -79,6 +88,9 @@ export type TurnStream = {
   stopWatching: () => void;
   closeStream: () => void;
   hasOpenStream: () => boolean;
+  /** A re-attach to this run is scheduled on the backoff. Whoever else would
+   *  attach (the liveness poll) waits for it, or the backoff is a 5s loop. */
+  reconnectPending: (turnId: string) => boolean;
   /** Runs this tab has deliberately stopped watching, so the re-attach effect
    *  leaves them alone. */
   isDetached: (turnId: string) => boolean;
@@ -104,7 +116,7 @@ export function useTurnStream({
 
   const sseRef = useRef<EventSource | null>(null);
   const finishingRef = useRef(false);
-  const reconnectsRef = useRef(0);
+  const reconnectRef = useRef<TurnReconnect>(TURN_STREAM_HEALTHY);
   const detachedRef = useRef<Set<string>>(new Set());
   const attachRef = useRef<(turnId: string) => void>(() => {});
   // The pending reconnect, held so teardown can cancel it. Without this handle
@@ -115,6 +127,7 @@ export function useTurnStream({
   // open for the life of the page, once per dropped stream, which in a PWA that
   // is never closed is a socket and a parse-per-second accumulating for days.
   const reconnectTimerRef = useRef<number | undefined>(undefined);
+  const reconnectTurnRef = useRef<string | null>(null);
 
   // Callers pass inline lambdas; refs keep `attach` referentially stable.
   const cb = useRef({ dispatch, sync, onTurnEnd, onError });
@@ -130,6 +143,10 @@ export function useTurnStream({
   }, []);
 
   const hasOpenStream = useCallback(() => sseRef.current !== null, []);
+  const reconnectPending = useCallback(
+    (turnId: string) => reconnectTimerRef.current !== undefined && reconnectTurnRef.current === turnId,
+    [],
+  );
   const isDetached = useCallback((turnId: string) => detachedRef.current.has(turnId), []);
 
   const attach = useCallback((turnId: string) => {
@@ -140,6 +157,11 @@ export function useTurnStream({
     sseRef.current?.close();
     finishingRef.current = false;
     detachedRef.current.delete(turnId);
+    // Another run's outage is not this one's.
+    if (reconnectTurnRef.current !== turnId) {
+      reconnectRef.current = TURN_STREAM_HEALTHY;
+      reconnectTurnRef.current = turnId;
+    }
     setDetached(false);
 
     // REWIND BEFORE OPENING THE SOCKET. A fresh EventSource carries no
@@ -155,7 +177,7 @@ export function useTurnStream({
     sseRef.current = es;
 
     const markAlive = () => {
-      reconnectsRef.current = 0;
+      reconnectRef.current = TURN_STREAM_HEALTHY;
       setReconnecting(false);
     };
 
@@ -276,6 +298,16 @@ export function useTurnStream({
         const ref = String(p.ref || "");
         if (ref) cb.current.dispatch({ type: "turnDelta", turnId, event: { kind: "cut", ref } });
       },
+      // What an adopted turn showed before the restart. See streamWire.ts.
+      snapshot: (e) => {
+        markAlive();
+        const p = parse(e);
+        cb.current.dispatch({
+          type: "turnSnapshot", turnId,
+          segments: Array.isArray(p.segments) ? (p.segments as ChatSegment[]) : [],
+          cutHead: Array.isArray(p.cut_head) ? (p.cut_head as string[]) : [],
+        });
+      },
       // The model's own report of how full its window is, sent whenever the
       // number changes. This is the ONLY live source: the thread's stored
       // reading is written at finalize, so without this event the meter cannot
@@ -337,17 +369,23 @@ export function useTurnStream({
           });
         } catch { /* ignore */ }
       },
-      // Defined below, once `finish` exists.
+      // Defined below, once `finish` exists. `done` leaves the socket open so
+      // the `end` that follows it can still arrive: that frame is the only
+      // thing that says the run is over when the settle syncs cannot reach the
+      // server.
       done: () => { void finish(); },
-      end: () => { void finish(); },
+      end: () => {
+        ended = true;
+        es.close();
+        if (sseRef.current === es) sseRef.current = null;
+        void finish();
+      },
     };
 
+    let ended = false;
     const finish = async () => {
       if (finishingRef.current) return;
       finishingRef.current = true;
-      es.close();
-      sseRef.current = null;
-      reconnectsRef.current = 0;
 
       // READ FIRST, THEN RETIRE, IN ONE COMMIT.
       //
@@ -367,13 +405,34 @@ export function useTurnStream({
       // of the transcript until the next poll. Wait for the server to say the
       // run is over instead, and keep the live block (and its indicator) up
       // meanwhile — it is still true.
+      const settled = () => stateRef.current.activeTurn?.turnId !== turnId;
       for (let i = 0; i < COMMIT_SETTLE_TRIES; i++) {
         await cb.current.sync();
-        if (stateRef.current.activeTurn?.turnId !== turnId) break;
+        if (settled()) break;
         await new Promise((r) => window.setTimeout(r, COMMIT_SETTLE_MS));
       }
-      // A floor, not the expected path: if the commit never showed up, stop
-      // claiming a run is in flight and let the poll correct the transcript.
+      // A superseding attach took this run over while we waited.
+      if (sseRef.current !== null && sseRef.current !== es) return;
+      const outcome = afterSettle({
+        settled: settled(), ended, stopped: detachedRef.current.has(turnId),
+      });
+      // Stop owns this run's ending now (stopWatching syncs and refreshes).
+      if (outcome === "leave-to-stop") return;
+      if (outcome === "keep-following") {
+        // NOT KNOWN TO BE OVER. `done` arrived but `end` did not, and no sync
+        // has shown the run gone: the backend went away between the two, or is
+        // still committing. Release the claim and let the socket say which. A
+        // socket that is still up delivers `end` or drops; one already closed
+        // goes through the drop path, which re-asks and re-attaches.
+        finishingRef.current = false;
+        if (es.readyState === EventSource.CLOSED) void handleDrop();
+        return;
+      }
+      es.close();
+      if (sseRef.current === es) sseRef.current = null;
+      reconnectRef.current = TURN_STREAM_HEALTHY;
+      // `end` with the commit not visible yet is a floor, not the expected path:
+      // stop claiming a run is in flight and let the poll correct the transcript.
       cb.current.dispatch({ type: "turnCommitted", turnId });
       setDetached(false);
       setReconnecting(false);
@@ -395,29 +454,36 @@ export function useTurnStream({
       if (finishingRef.current) return;
       es.close();
       if (sseRef.current === es) sseRef.current = null;
-      // Did the turn really end, or did the socket? Only the server knows.
+      // Did the turn really end, or did the socket? Only the server knows, and
+      // a sync that could not reach it leaves `activeTurn` as it was, so an
+      // outage reads as "still running" here, which is the truth as far as
+      // anyone can tell.
       await cb.current.sync();
       if (finishingRef.current) return;
+      if (sseRef.current !== null) return;
       if (stateRef.current.activeTurn?.turnId !== turnId) { void finish(); return; }
-      if (reconnectsRef.current >= MAX_RECONNECTS) {
-        // OUT OF BUDGET IS NOT THE END OF THE TURN. Stop the fast retry loop and
-        // stop claiming a socket, but leave the run in the store: it is still in
+      const { next, reattachAfterMs } = turnStreamDropped(
+        reconnectRef.current, Date.now(), Math.random());
+      reconnectRef.current = next;
+      // With no socket held the stream is not replaying, so the poll snapshot
+      // must advance the segments meanwhile (see threadStore `streamOwned`). The
+      // next attach takes ownership back.
+      cb.current.dispatch({ type: "turnStreamDropped", turnId });
+      if (reattachAfterMs === null) {
+        // OUT OF BUDGET IS NOT THE END OF THE TURN. Stop the retry loop and stop
+        // claiming a socket, but leave the run in the store: it is still in
         // flight, the poll keeps its snapshot current, and the indicator reads
         // "Still running" rather than the transcript going quiet.
         //
         // The slow path takes over from here: the liveness poll in Chat sees the
         // server still reports this run active with no socket held, and attaches
-        // again — which resets `finishingRef` and, on the first frame that
+        // again, which resets `finishingRef` and, on the first frame that
         // arrives, the reconnect budget too. The budget is deliberately NOT
         // reset here; leaving it spent is what keeps a genuinely dead stream on
-        // the poll's pace instead of back in a tight retry loop.
+        // the poll's pace instead of back in a retry loop.
         finishingRef.current = true;
         setDetached(true);
         setReconnecting(false);
-        // Hand the segments back to the poll: with no socket held, the stream is
-        // no longer replaying, so the poll snapshot must resume advancing them
-        // (see threadStore `streamOwned`). A re-attach later takes ownership back.
-        cb.current.dispatch({ type: "turnStreamDropped", turnId });
         // NOTHING IS SAID ON SCREEN, BECAUSE THE SCREEN ALREADY SAYS IT.
         //
         // This used to raise a problem block reading "Lost the connection to
@@ -436,22 +502,19 @@ export function useTurnStream({
         //     budget is spent deliberately here; the liveness poll in Chat is
         //     what attaches again, on its own pace.
         //
-        // The run is still in the store, the poll keeps its snapshot current,
-        // and the indicator keeps saying the turn is running. That is the whole
-        // truth the operator needs, and it is already on screen. The path goes
-        // to the console, where a developer can reach it.
+        // The path goes to the console, where a developer can reach it.
         console.warn(
-          `chat: stream dropped after ${MAX_RECONNECTS} reconnects; the poll takes over`,
+          `chat: stream down for ${TURN_RECONNECT_WINDOW_MS / 60_000} minutes; the poll takes over`,
           { turnId, endpoint: `/api/chat/turns/${turnId}/stream` },
         );
         return;
       }
-      reconnectsRef.current += 1;
       setReconnecting(true);
+      reconnectTurnRef.current = turnId;
       reconnectTimerRef.current = window.setTimeout(() => {
         reconnectTimerRef.current = undefined;
         if (!finishingRef.current) attachRef.current(turnId);
-      }, RECONNECT_DELAY_MS);
+      }, reattachAfterMs);
     };
     es.onerror = () => {
       if (es.readyState === EventSource.CLOSED) void handleDrop();
@@ -490,5 +553,5 @@ export function useTurnStream({
   }, []);
 
   return { detached, reconnecting, attach, beginStop, stopWatching,
-           closeStream, hasOpenStream, isDetached };
+           closeStream, hasOpenStream, reconnectPending, isDetached };
 }
