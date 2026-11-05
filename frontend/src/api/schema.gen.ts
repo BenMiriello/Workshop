@@ -4310,81 +4310,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/github/app/manifest": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Post Manifest */
-        post: operations["post_manifest_github_app_manifest_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/github/authorize": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Post Authorize */
-        post: operations["post_authorize_github_authorize_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/github/authorized": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Authorized
-         * @description The operator authorized the application, or declined it.
-         *
-         *     A decline comes back as `error`, which is an outcome rather than a fault, so
-         *     it lands on the settings page saying so. The description is the forge's own
-         *     sentence and carries no credential.
-         */
-        get: operations["authorized_github_authorized_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/github/client-id": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Put Client Id */
-        put: operations["put_client_id_github_client_id_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/github/defaults": {
         parameters: {
             query?: never;
@@ -4446,47 +4371,6 @@ export interface paths {
         get?: never;
         /** Put Helper */
         put: operations["put_helper_github_helper_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/github/registered": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Registered
-         * @description The forge created the application and sent its code back.
-         *
-         *     Storing it is only half a connection, so this does not stop here: it mints
-         *     the next nonce and sends the browser straight on to the authorize leg, which
-         *     is what makes connecting two clicks instead of four.
-         */
-        get: operations["registered_github_registered_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/github/token": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Put Token */
-        put: operations["put_token_github_token_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -8791,14 +8675,6 @@ export interface components {
             writes: string[];
         };
         /**
-         * AuthorizeOut
-         * @description Where to send the browser to authorize the registered application.
-         */
-        AuthorizeOut: {
-            /** Url */
-            url: string;
-        };
-        /**
          * AutonomyLogOut
          * @description The sweep history. Not the ADR 0023 envelope, for the same reason as
          *     `TaskJobsOut`: ProjectDetail reads these keys and cannot be edited in this
@@ -9822,14 +9698,6 @@ export interface components {
              */
             user_agent: string;
         };
-        /** ClientIdIn */
-        ClientIdIn: {
-            /**
-             * Client Id
-             * @default
-             */
-            client_id: string;
-        };
         /** ClientMedia */
         ClientMedia: {
             /**
@@ -10432,16 +10300,6 @@ export interface components {
          */
         DevicePollOut: {
             /**
-             * App Registered
-             * @default false
-             */
-            app_registered: boolean;
-            /**
-             * Client Id Set
-             * @default false
-             */
-            client_id_set: boolean;
-            /**
              * Connected
              * @default false
              */
@@ -10471,11 +10329,6 @@ export interface components {
              * @default
              */
             login: string;
-            /**
-             * Manifest Available
-             * @default false
-             */
-            manifest_available: boolean;
             /**
              * Scopes
              * @default []
@@ -12205,21 +12058,6 @@ export interface components {
             ticket_status?: string | null;
             /** Ticket Title */
             ticket_title?: string | null;
-        };
-        /**
-         * ManifestOut
-         * @description What the browser POSTs at the forge, and where.
-         *
-         *     `manifest` is a JSON string because the forge takes it as one form field.
-         *     This is the only route whose answer is meant to be submitted rather than
-         *     read: the forge replies with a page for the operator, so the client has to
-         *     navigate to it, not fetch it.
-         */
-        ManifestOut: {
-            /** Manifest */
-            manifest: string;
-            /** Post Url */
-            post_url: string;
         };
         /**
          * MarkDuplicateOut
@@ -15276,10 +15114,6 @@ export interface components {
          * @description What a settings surface may know about the connection. No secret.
          */
         StatusOut: {
-            /** App Registered */
-            app_registered: boolean;
-            /** Client Id Set */
-            client_id_set: boolean;
             /** Connected */
             connected: boolean;
             /** Connected At */
@@ -15293,8 +15127,6 @@ export interface components {
             helper_path: string;
             /** Login */
             login: string;
-            /** Manifest Available */
-            manifest_available: boolean;
             /** Scopes */
             scopes: string[];
             /** Source */
@@ -16781,11 +16613,6 @@ export interface components {
             reason?: string | null;
             /** Spec Hash */
             spec_hash?: string | null;
-        };
-        /** TokenIn */
-        TokenIn: {
-            /** Token */
-            token: string;
         };
         /** ToolCreate */
         ToolCreate: {
@@ -25040,113 +24867,6 @@ export interface operations {
             };
         };
     };
-    post_manifest_github_app_manifest_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ManifestOut"];
-                };
-            };
-        };
-    };
-    post_authorize_github_authorize_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AuthorizeOut"];
-                };
-            };
-        };
-    };
-    authorized_github_authorized_get: {
-        parameters: {
-            query?: {
-                code?: string;
-                state?: string;
-                error?: string;
-                error_description?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    put_client_id_github_client_id_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ClientIdIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StatusOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     put_defaults_github_defaults_put: {
         parameters: {
             query?: never;
@@ -25243,71 +24963,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["HelperIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StatusOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    registered_github_registered_get: {
-        parameters: {
-            query?: {
-                code?: string;
-                state?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    put_token_github_token_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TokenIn"];
             };
         };
         responses: {

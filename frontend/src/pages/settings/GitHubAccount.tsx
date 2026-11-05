@@ -1,14 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import {
-  FolderGit2,
-  GitPullRequest,
-  KeyRound,
-  Link2,
-  Link2Off,
-  ShieldCheck,
-  SquareAsterisk,
-} from "lucide-react";
+import { ExternalLink, FolderGit2, GitPullRequest, Link2, Link2Off } from "lucide-react";
 import {
   Button,
   Card,
@@ -45,16 +36,13 @@ import type { components } from "../../api/schema.gen";
 // credential lived in a `gh` login on disk that nobody had renewed. Backend
 // reasoning is in backend/services/github_identity.py.
 //
-// CONNECT IS ONE BUTTON NOW (docs/platform-redesign/
-// github-connect-flow-2026-09-16.md). It registers an application from a
-// generated manifest and then authorizes it, and neither leg asks the operator
-// to copy anything. What used to be the whole screen, a pasted token and a
-// hand-entered client id, is what is left when this installation has no address
-// the forge could redirect back to.
+// CONNECT IS ONE BUTTON. It starts GitHub's device sign-in against the
+// product's own application: this card shows a short code, the operator
+// approves it on github.com, and the card finishes by itself. Nobody registers
+// an application or pastes a token.
 //
-// THE TOKEN IS WRITE ONLY. It goes up once and never comes back; every field
-// rendered here is a login, a scope name, a timestamp or a boolean. So is the
-// registered application's client secret, which no response carries at all.
+// THE TOKEN NEVER REACHES THIS PAGE. Every field rendered here is a login, a
+// scope name, a timestamp or a boolean.
 
 const ENDPOINT = "/api/github";
 
@@ -64,21 +52,12 @@ const ENDPOINT = "/api/github";
 type Defaults = components["schemas"]["DefaultsOut"];
 type Status = components["schemas"]["StatusOut"];
 type Device = components["schemas"]["DeviceStartOut"];
-type Manifest = components["schemas"]["ManifestOut"];
-type Authorize = components["schemas"]["AuthorizeOut"];
 
 const SOURCE_LABEL: Record<string, string> = {
   pat: "Personal access token",
   device: "Signed in with GitHub",
   oauth: "Signed in with GitHub",
 };
-
-// What to generate, in the words GitHub's own form uses, so the operator can
-// follow it without a second tab open. Fine-grained rather than classic is the
-// decision recorded in ticket [SEC-G1]: it keeps the boundary against accounts
-// this installation must not touch in the credential, not only in code.
-const TOKEN_HELP =
-  "Fine-grained token. Resource owner: your own account. Repository permissions: Contents read and write, Metadata read, Pull requests read and write. No organization access.";
 
 function extractDetail(body: unknown, fallback: string): string {
   if (body && typeof body === "object") {
@@ -99,19 +78,10 @@ export default function GitHubAccount() {
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmOff, setConfirmOff] = useState(false);
 
-  // Write only. Held just long enough to submit, then dropped: this value never
-  // comes back from the server and nothing here keeps a copy of it.
-  const [token, setToken] = useState("");
-  const [clientId, setClientId] = useState("");
   const [branchDraft, setBranchDraft] = useState<string | null>(null);
   const [device, setDevice] = useState<Device | null>(null);
   const [devicePending, setDevicePending] = useState<string | null>(null);
   const pollTimer = useRef<number | null>(null);
-
-  // The manifest POST is a real form submission, not a fetch: the forge answers
-  // it with a page for the operator to read and approve.
-  const manifestForm = useRef<HTMLFormElement | null>(null);
-  const manifestField = useRef<HTMLInputElement | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollTimer.current !== null) {
@@ -134,25 +104,10 @@ export default function GitHubAccount() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  // RE-READ WHEN THIS PAGE COMES BACK INTO VIEW, because the sign-in finishes
-  // somewhere this component cannot see.
-  //
-  // Three paths all end here and none of them re-mounts anything:
-  //   * the operator goes to github.com, authorizes, and the browser restores
-  //     this page from the back/forward cache, where `busy` is whatever it was
-  //     when the navigation started -- a Connect button still spinning for a
-  //     flow that is over;
-  //   * they press Back from github.com without authorizing, same restore,
-  //     same stuck control, and nothing else would ever clear it;
-  //   * the native shell hands github.com to the SYSTEM browser
-  //     (mobile/app/index.tsx sends any non-app origin to `Linking.openURL`),
-  //     so the sign-in completes in Safari against a different cookie jar and
-  //     the WebView is never navigated at all. It keeps saying "Not connected"
-  //     for a connection that succeeded.
-  //
-  // `pageshow` covers the bfcache restore specifically (a plain `load` event
-  // does not fire on one); `visibilitychange` covers coming back to the tab or
-  // the app. Both are cheap: one GET that returns no secret.
+  // RE-READ WHEN THIS PAGE COMES BACK INTO VIEW. The approval happens on
+  // github.com, often in the system browser (the native shell hands any other
+  // origin to it), so coming back is the moment the connection may have
+  // changed. One GET that returns no secret.
   useEffect(() => {
     const refresh = () => { setBusy(null); void load(); };
     const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
@@ -163,19 +118,6 @@ export default function GitHubAccount() {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [load]);
-
-  // A callback that could not finish lands back here with its sentence in the
-  // query string, because the browser followed a redirect from the forge and
-  // there is no response body it would ever have shown.
-  const [params, setParams] = useSearchParams();
-  useEffect(() => {
-    const failed = params.get("github_error");
-    if (!failed) return;
-    setActionError(failed);
-    const next = new URLSearchParams(params);
-    next.delete("github_error");
-    setParams(next, { replace: true });
-  }, [params, setParams]);
 
   const send = useCallback(async (
     key: string,
@@ -205,32 +147,8 @@ export default function GitHubAccount() {
     }
   }, []);
 
-  // ---- connect --------------------------------------------------------------
-  // One button, two legs. With no application registered yet it POSTs a
-  // generated manifest at the forge, which creates one and redirects back into
-  // the authorize leg on its own. With one already registered it goes straight
-  // to authorize, which is what a reconnect is.
-  const connect = useCallback(async () => {
-    if (!data) return;
-    if (data.app_registered) {
-      const out = await send("connect", "/authorize", "POST");
-      if (!out) return;
-      window.location.assign((out as Authorize).url);
-      return;
-    }
-    const out = await send("connect", "/app/manifest", "POST");
-    if (!out) return;
-    const reg = out as Manifest;
-    const form = manifestForm.current;
-    const field = manifestField.current;
-    if (!form || !field) return;
-    form.action = reg.post_url;
-    field.value = reg.manifest;
-    form.submit();
-  }, [data, send]);
-
-  // ---- device authorization grant -------------------------------------------
-  // The operator reads a code here, types it on github.com, and this polls until
+  // ---- connecting -------------------------------------------------------------
+  // The operator reads a code here, enters it on github.com, and this polls until
   // GitHub says yes. GitHub's own interval is honoured rather than a guess, and
   // `authorization_pending` is a state of the flow rather than a failure, so it
   // renders as a line and not as an error.
@@ -323,11 +241,11 @@ export default function GitHubAccount() {
                   )}
                 </Row>
 
-                <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                  {data.scopes.length
-                    ? `Scopes: ${data.scopes.join(", ")}.`
-                    : "No classic scopes, which is what a fine-grained token looks like."}
-                </span>
+                {data.scopes.length > 0 && (
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                    Scopes: {data.scopes.join(", ")}.
+                  </span>
+                )}
 
                 {/* A view-shaped switch over a reversible action, so it commits
                     on change rather than behind an Edit and a Save. Nothing
@@ -360,89 +278,32 @@ export default function GitHubAccount() {
               </Stack>
             ) : (
               <Stack gap="sm">
-                <StatusDot status="stopped">
-                  Not connected. Pushes and pull requests have no credential.
-                </StatusDot>
+                <StatusDot status="stopped">Not connected</StatusDot>
 
                 {device ? (
                   <Stack gap="sm">
-                    <Field label="Your code" help="Enter this on github.com, then come back. This page is waiting.">
+                    <Field label="Your code" help="Enter it on github.com and approve. This page finishes by itself.">
                       <CopyButton value={device.user_code} />
                     </Field>
-                    <Row wrap style={{ gap: "var(--space-3)", alignItems: "center" }}>
-                      <a href={device.verification_uri} target="_blank" rel="noreferrer">
-                        Open github.com to enter it
-                      </a>
+                    <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                      <Button size="sm" variant="primary"
+                              onClick={() => window.open(device.verification_uri, "_blank", "noopener")}>
+                        <ExternalLink aria-hidden /> Open GitHub
+                      </Button>
                       <Button size="sm" variant="ghost" onClick={cancelDevice}>Cancel</Button>
                     </Row>
                     {devicePending && <Notice tone="info">{devicePending}</Notice>}
                   </Stack>
+                ) : data.device_available ? (
+                  <Row>
+                    <Button size="sm" variant="primary" loading={busy === "start"}
+                            disabled={busy === "start"}
+                            onClick={() => void startDevice()}>
+                      <Link2 aria-hidden /> Connect GitHub
+                    </Button>
+                  </Row>
                 ) : (
-                  <Stack gap="sm">
-                    {data.manifest_available ? (
-                      <Row>
-                        <Button size="sm" variant="primary" loading={busy === "connect"}
-                                disabled={busy === "connect"}
-                                onClick={() => void connect()}>
-                          <Link2 aria-hidden /> Connect GitHub
-                        </Button>
-                      </Row>
-                    ) : (
-                      <Notice tone="warn">
-                        This installation has no address GitHub can redirect back
-                        to, so it cannot register an app. Paste a token instead.
-                      </Notice>
-                    )}
-
-                    <SectionLabel icon={<KeyRound aria-hidden />}>Other ways in</SectionLabel>
-
-                    {data.device_available && (
-                      <Row>
-                        <Button size="sm" loading={busy === "start"}
-                                disabled={busy === "start"}
-                                onClick={() => void startDevice()}>
-                          <SquareAsterisk aria-hidden /> Sign in with a device code
-                        </Button>
-                      </Row>
-                    )}
-
-                    <Field label="Token" help={TOKEN_HELP}>
-                      <Input type="password" value={token} autoComplete="off"
-                             placeholder="github_pat_..."
-                             onChange={(e) => setToken(e.target.value)} />
-                    </Field>
-                    <Row>
-                      <Button size="sm" loading={busy === "token"}
-                              disabled={!token.trim() || busy === "token"}
-                              onClick={async () => {
-                                const out = await send("token", "/token", "PUT",
-                                  { token: token.trim() });
-                                if (out) { setToken(""); setData(out as Status); }
-                              }}>
-                        <ShieldCheck aria-hidden /> Connect
-                      </Button>
-                    </Row>
-
-                    <Field
-                      label="GitHub app client ID"
-                      optional
-                      help={data.client_id_set ? "Saved." : "For a device sign-in."}
-                    >
-                      <Row style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                        <Input value={clientId} autoComplete="off" placeholder="Iv1..."
-                               onChange={(e) => setClientId(e.target.value)} />
-                        <Button size="sm" loading={busy === "clientid"}
-                                disabled={!clientId.trim() || busy === "clientid"}
-                                onClick={async () => {
-                                  const out = await send("clientid", "/client-id", "PUT",
-                                    { client_id: clientId.trim() });
-                                  if (out) { setClientId(""); setData(out as Status); }
-                                }}>
-                          Save
-                        </Button>
-                      </Row>
-                    </Field>
-                  </Stack>
+                  <Notice tone="warn">This installation has no GitHub application to sign in with.</Notice>
                 )}
               </Stack>
             )}
@@ -483,14 +344,6 @@ export default function GitHubAccount() {
           </Stack>
         </Card>
       )}
-
-      {/* The manifest leaves the browser as a form POST because the forge
-          replies with a page the operator has to read and approve. Its action
-          and its one field are filled in from the backend's answer at the
-          moment of the click, so no state nonce is minted until it is used. */}
-      <form ref={manifestForm} method="post" hidden>
-        <input ref={manifestField} type="hidden" name="manifest" />
-      </form>
 
       <ConfirmDialog
         open={confirmOff}

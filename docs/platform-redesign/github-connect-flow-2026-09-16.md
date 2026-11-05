@@ -1,5 +1,13 @@
 # Connecting GitHub: the manifest flow plus the OAuth web flow
 
+> **Superseded 2026-11-05.** An installation no longer registers a GitHub
+> application of its own: the operator found that the manifest leg dropped them
+> on GitHub's developer form, which is not how connecting an account works. The
+> product has one application, its public client id comes from
+> `WORKSHOP_GITHUB_CLIENT_ID`, and connecting is the device sign-in alone
+> (`services/github_identity.py`). The registration and web-flow legs, their
+> callbacks and the pasted-token path were removed.
+
 Date: 2026-09-16. Status: accepted, supersedes one leg of
 `app-separation-and-github-2026-08-20.md` §3.2.
 
