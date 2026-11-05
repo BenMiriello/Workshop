@@ -1,0 +1,152 @@
+/* The chat beside the page (BesideDrawer.tsx). A column on the right of the
+   content on a desktop; on a phone the content and the chat stack, the page
+   above, so an app drawing its own native view above the shell keeps a real
+   rectangle instead of being covered by a sheet. */
+
+.ws-beside {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+}
+.ws-beside .ws-overlay-scope > .chat-panel { flex: 1 1 auto; min-height: 0; }
+/* The drawer is the edge a menu or popover opening inside it must stay within:
+   a menu measures its room against every ancestor that clips, so this makes it
+   slide and flip inside the column instead of opening out over the page. Only
+   across: `clip` leaves the vertical axis alone, so a drop-up may still rise. */
+.ws-beside .ws-overlay-scope { overflow-x: clip; }
+.ws-beside .ws-menu__list,
+.ws-beside .ws-popover__surface { max-width: calc(var(--beside-w, 100vw) - var(--space-6)); }
+
+/* The edge you drag to resize: the left edge here, the top edge on a phone. */
+.ws-beside__grip {
+  position: absolute; z-index: var(--z-sticky);
+  top: 0; bottom: 0; left: calc(-1 * var(--space-1));
+  width: var(--space-2);
+  cursor: col-resize;
+  touch-action: none;
+}
+.ws-beside__grip:hover, .ws-beside__grip:active { background: var(--border-strong); }
+
+@media (max-width: 899px) {
+  /* The page scrolls inside its own part; the chat scrolls inside its own.
+     The shell above both is pinned to the visible window (shell.css). */
+  .ws-shell__cols:has(> .ws-beside) { flex-direction: column; }
+  .ws-shell__cols:has(> .ws-beside) > .ws-app__body { flex: 1 1 0; min-height: 0; }
+  .ws-beside {
+    width: auto;
+    height: var(--beside-h, 50%);
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+  /* Typing in the chat: it takes most of the window, and a strip of the page
+     stays above it so you still see what it is beside. */
+  html[data-keyboard] .ws-beside:focus-within { height: max(var(--beside-h, 50%), 72%); }
+  .ws-beside__grip {
+    left: 0; right: 0; bottom: auto;
+    top: calc(-1 * var(--space-2));
+    width: auto; height: var(--space-4);
+    cursor: row-resize;
+  }
+  .ws-beside__grip::after {
+    content: "";
+    position: absolute; left: 50%; top: 50%;
+    width: var(--space-8); height: var(--space-1);
+    transform: translate(-50%, -50%);
+    border-radius: var(--radius-pill);
+    background: var(--border-strong);
+  }
+  .ws-beside__grip:hover, .ws-beside__grip:active { background: transparent; }
+}
+
+/* In control: the page the chat is driving is outlined in the live tone, the
+   one hue that means something is happening. */
+.ws-shell__cols.is-driving > .ws-app__body {
+  outline: 2px solid var(--live);
+  outline-offset: -2px;
+}
+
+/* The Chat button. On the rail it is a tile; in the phone's bar a plain icon
+   button. Neutral at rest, the MINE tone while the chat is open. */
+.ws-beside-btn { border: 0; background: transparent; cursor: pointer; }
+.ws-beside-btn.is-on { background: var(--you-soft); color: var(--you); }
+.ws-beside-btn--bar {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--space-6); height: var(--space-6);
+  border-radius: var(--radius-md);
+  color: var(--muted);
+}
+.ws-beside-btn--bar:hover { color: var(--fg); background: var(--card-hover); }
+
+/* The Access menu (components/chat/AccessMenu.tsx). */
+.ws-access { width: min(300px, calc(100vw - var(--space-6))); }
+.ws-access__group { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) 0; }
+.ws-access__group + .ws-access__group { border-top: 1px solid var(--border); }
+.ws-access__level {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 0; border-radius: var(--radius-md);
+  background: transparent; color: var(--fg);
+  font: inherit; text-align: left;
+  cursor: pointer;
+}
+.ws-access__level:hover { background: var(--card-hover); }
+.ws-access__tick { visibility: hidden; color: var(--you); }
+.ws-access__level.is-on .ws-access__tick { visibility: visible; }
+.ws-access__app { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-1) var(--space-2); }
+.ws-access__option { padding-left: var(--space-6); color: var(--muted); }
+.ws-access__name { color: var(--fg); }
+.ws-access__note { margin: 0; padding: 0 var(--space-2); color: var(--muted); font-size: var(--fs-sm); }
+
+/* Where a chat works and how it is seen (components/chat/ChatPlace.tsx). */
+.ws-place__where {
+  margin: 0; padding: 0 var(--space-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fg); font-size: var(--fs-sm);
+}
+.ws-access__group > .ws-btn { align-self: flex-start; margin: var(--space-1) var(--space-2) 0; }
+.ws-place__view { align-items: flex-start; }
+.ws-place__view .ws-access__tick { margin-top: 3px; flex: 0 0 auto; }
+.ws-place__hint { display: block; color: var(--muted); font-size: var(--fs-sm); }
+
+/* Attached items above the composer: the composer's own chip row, inset to match. */
+.ws-beside-chips { padding: 0 var(--page-pad-x); }
+
+/* Add to chat, beside Read aloud under a selection. */
+.ws-speech-select { display: flex; gap: var(--space-1); }
+
+/* Attached items on a sent message (components/chat/SentContext.tsx): one line
+   each, opening to the text that went with it. */
+.chat-sent-ctx { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-1); }
+.chat-sent-ctx__item > summary {
+  display: flex; align-items: center; gap: var(--space-1);
+  list-style: none; cursor: pointer;
+  font-size: var(--fs-sm); opacity: 0.8;
+}
+.chat-sent-ctx__item > summary::-webkit-details-marker { display: none; }
+.chat-sent-ctx__body {
+  margin: var(--space-1) 0 0; max-height: 240px; overflow: auto;
+  white-space: pre-wrap; word-break: break-word;
+  font-family: inherit; font-size: var(--fs-sm); opacity: 0.85;
+}
+
+/* Every chat, over the conversation (DrawerChats.tsx). The chat stays mounted
+   underneath, so only its input is switched off. */
+.ws-beside__chats {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  background: var(--bg);
+}
+.ws-beside__chats-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  padding: var(--space-3) var(--page-pad-x);
+}
+.chat-tb__label { font-size: var(--fs-sm); color: var(--muted); padding: 0 var(--space-2); }
+/* The kit sheds a row's widest meta by window width; the drawer is narrower
+   than its window, so it sheds the same parts at any width. */
+.ws-beside__chats .ws-chat-row__meta .ws-chat-row__model,
+.ws-beside__chats .ws-chat-row__meta .ws-chat-row__sep--model,
+.ws-beside__chats .ws-chat-row__meta .ws-chat-row__archive { display: none; }
