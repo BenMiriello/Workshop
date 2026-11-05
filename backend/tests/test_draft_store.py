@@ -119,3 +119,31 @@ class TestClearingAWholeConversation:
         store.put_draft("general::t2", "two", now, "tab-a")
         store.clear_for_thread("general", "t1")
         assert store.get_draft("general::t2")["text"] == "two"
+
+
+class TestSettingsRideWithTheDraft:
+    def test_round_trip_keeps_only_what_was_chosen(self, store):
+        now = store._now_ms()
+        store.put_draft("development::new", "", now, "tab-a", None,
+                        {"model": "m1", "effort": "", "permission_mode": None})
+        assert store.get_draft("development::new")["settings"] == {"model": "m1"}
+
+    def test_a_pick_with_no_text_is_still_a_draft(self, store):
+        now = store._now_ms()
+        store.put_draft("development::new", "", now, "tab-a", None, {"model": "m1"})
+        assert store.get_draft("development::new")["settings"]["model"] == "m1"
+
+    def test_an_older_write_cannot_overwrite_a_newer_pick(self, store):
+        now = store._now_ms()
+        store.put_draft("development::new", "", now, "tab-a", None, {"model": "new"})
+        out = store.put_draft("development::new", "", now - 1000, "tab-b", None, {"model": "old"})
+        assert out.get("superseded") is True
+        assert store.get_draft("development::new")["settings"]["model"] == "new"
+
+    def test_a_send_clears_the_settings_with_the_text(self, store):
+        now = store._now_ms()
+        store.put_draft("development::new", "hi", now - 1000, "tab-a", None, {"model": "m1"})
+        store.clear_draft("development::new", now)
+        got = store.get_draft("development::new")
+        assert got["text"] == ""
+        assert "settings" not in got

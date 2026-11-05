@@ -169,3 +169,36 @@ async def put_budget(body: BudgetPatch) -> dict:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return usage_ledger.status()
+
+
+class UsageWindow(BaseModel):
+    name: str
+    resets_at: str | None = None
+    utilization: float | None = None
+    status: str = ""
+
+
+class UsageLimits(BaseModel):
+    """The subscription's own windows as the CLI last reported them
+    (services/usage_limits). `blocked_until` is set while one is exhausted;
+    `next_reset` is what "when the usage limit resets" means right now."""
+
+    windows: list[UsageWindow]
+    blocked_until: str | None = None
+    next_reset: str | None = None
+
+
+def _iso(epoch: float | None) -> str | None:
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat(timespec="seconds") if epoch else None
+
+
+@router.get("/limits", response_model=UsageLimits, response_model_exclude_unset=True)
+async def get_usage_limits():
+    from services import usage_limits
+    data = usage_limits.read()
+    windows = [UsageWindow(name=k, resets_at=_iso(v.get("resets_at")),
+                           utilization=v.get("utilization"), status=v.get("status") or "")
+               for k, v in sorted(data["windows"].items()) if isinstance(v, dict)]
+    return UsageLimits(windows=windows, blocked_until=_iso(usage_limits.blocked_until()),
+                       next_reset=_iso(usage_limits.next_reset()))

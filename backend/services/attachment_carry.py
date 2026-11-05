@@ -56,7 +56,7 @@ from __future__ import annotations
 
 import logging
 
-from . import chat_attachments, chat_log, chat_store
+from . import chat_attachments, chat_log, chat_queue, chat_store
 
 log = logging.getLogger(__name__)
 
@@ -120,8 +120,7 @@ def _is_command(prompt: str) -> bool:
     """A single-line slash command, the same test `routes/chat._is_raw_command`
     makes. A `/compact` turn must not be given the images back: they would be
     the first thing the compaction it is about to run threw away again."""
-    s = (prompt or "").strip()
-    return s.startswith("/") and "\n" not in s
+    return chat_queue.is_command(prompt)
 
 
 def recent_images(thread_id: str, owner_id: int | None = None) -> list[dict]:

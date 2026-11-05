@@ -130,6 +130,9 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Iterable
+
+from services import ownership, proc_liveness
 
 log = logging.getLogger(__name__)
 
@@ -273,27 +276,6 @@ def _parse_iso(s) -> datetime | None:
     except (TypeError, ValueError):
         return None
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-
-
-def _pid_alive(pid) -> bool:
-    """True if a process with this pid is alive (signal 0 probe). Unknown pid
-    (None / unparseable) is treated as NOT alive so a claim with no recorded pid
-    is reclaimable once its lease expires."""
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # exists, owned by someone else
-    except OSError:
-        return False
-    return True
 
 
 def _would_cycle(items: list[dict], task_id: str, new_deps: list[str]) -> bool:
@@ -1912,12 +1894,28 @@ def retry_prompt_context(task: dict) -> str:
     )
 
 
+def _claim_liveness(t: dict) -> str:
+    """`proc_liveness` verdict for the process holding this claim. The last
+    heartbeat (else `updated`) is a moment the claimant existed, which is what
+    lets a claim written before boot ids were recorded still detect a reboot or
+    a recycled pid."""
+    return proc_liveness.check(
+        t.get("claim_pid"),
+        recorded_at=t.get("last_heartbeat") or t.get("updated"))
+
+
+def _claim_is_dead(t: dict) -> bool:
+    return (t.get("status") == "doing"
+            and _claim_liveness(t) in (proc_liveness.DEAD, proc_liveness.REBOOTED))
+
+
 def _is_stale_claim(t: dict, now_dt: datetime, ttl: int) -> bool:
     """A `doing` task is a stale claim (crashed/killed/hung sweep) when either:
 
-      (a) dead-pid fast path: the process that recorded the claim is provably gone
-          (a pid that _pid_alive reports dead). A crashed sweep is reclaimed at once,
-          without waiting for the heartbeat window to lapse.
+      (a) dead-worker fast path: the claim predates the current boot, or the pid
+          that recorded it is gone, a zombie, or recycled (`proc_liveness`). A
+          crashed sweep is reclaimed at once, without waiting for the heartbeat
+          window to lapse.
       (b) missed heartbeat: the worker has not renewed its lease within `ttl`
           (now - last_heartbeat > ttl). A slow-but-alive worker heartbeats from
           inside ralph.sh's loop, so it is never reclaimed; only a hung/dead worker
@@ -1928,12 +1926,11 @@ def _is_stale_claim(t: dict, now_dt: datetime, ttl: int) -> bool:
     stores behave exactly as before."""
     if t.get("status") != "doing":
         return False
-    pid = t.get("claim_pid")
-    # (a) Dead-pid fast path: a recorded-but-dead pid means the sweep crashed; its
-    # last heartbeat (however recent) is moot. A None/unparseable pid is NOT an
-    # instant reclaim here (a claim with no recorded pid must not be yanked from a
-    # live worker); it is handled by the heartbeat / legacy-lease windows below.
-    if pid is not None and not _pid_alive(pid):
+    verdict = _claim_liveness(t)
+    # (a) A claim with no recorded pid and no reboot evidence is UNKNOWN, not
+    # dead: it must not be yanked from a live worker, and is left to the
+    # heartbeat / legacy-lease windows below.
+    if verdict in (proc_liveness.DEAD, proc_liveness.REBOOTED):
         return True
     # (b) Missed-heartbeat window (new claims). Fresh heartbeat -> alive -> keep.
     hb = _parse_iso(t.get("last_heartbeat"))
@@ -1946,13 +1943,14 @@ def _is_stale_claim(t: dict, now_dt: datetime, ttl: int) -> bool:
         eff = (u + timedelta(seconds=ttl)) if u else None
     if eff is None or now_dt < eff:
         return False
-    if pid is not None and _pid_alive(pid):
+    if verdict == proc_liveness.ALIVE:
         return False  # sweep is legitimately still working; lease was conservative
     return True
 
 
 def reclaim(root: Path, *, now: datetime | None = None, ttl: int = LEASE_TTL_SEC,
-            attempt_cap: int = RECLAIM_ATTEMPT_CAP) -> list[dict]:
+            attempt_cap: int = RECLAIM_ATTEMPT_CAP,
+            dead_only: bool = False) -> list[dict]:
     """Release or park stale `doing` tasks so a crashed/killed sweep never strands
     a task forever (self-healing 2d). A stale claim under its attempt cap returns
     to `todo` (re-runnable next sweep); a stale claim AT the cap lands in `parked`
@@ -1973,20 +1971,32 @@ def reclaim(root: Path, *, now: datetime | None = None, ttl: int = LEASE_TTL_SEC
     ran: two tickets sat `doing` with dead pids for 41 hours, and because
     `next_ready` calls `reclaim` first, they were invisible to the scheduler the
     whole time. A prescan that reads a different store from the pass it guards
-    is not an optimization, it is a guaranteed wrong answer."""
+    is not an optimization, it is a guaranteed wrong answer.
+
+    ``dead_only`` restricts the pass to claims whose worker is provably dead
+    (`_claim_is_dead`), leaving lease and heartbeat expiry to the scheduler.
+    That is what the liveness watchdog runs, so a periodic pass can never
+    reclaim a live-but-quiet worker."""
     normalized = _load(root)
     if not normalized:
         return []
     now_dt = now or datetime.now(timezone.utc)
-    if not any(_is_stale_claim(t, now_dt, ttl) for t in normalized):
+
+    def stale(t: dict) -> bool:
+        return _claim_is_dead(t) if dead_only else _is_stale_claim(t, now_dt, ttl)
+
+    if not any(stale(t) for t in normalized):
         return []
     out: list[dict] = []
     with _locked(root):
         tasks = _load(root)
         changed = False
         for t in tasks:
-            if not _is_stale_claim(t, now_dt, ttl):
+            if not stale(t):
                 continue
+            rebooted = _claim_liveness(t) == proc_liveness.REBOOTED
+            died = "worker lost to a host reboot" if rebooted else \
+                "worker died with lease expired"
             # attempts was already incremented at claim time, so the crashed run
             # is already counted; do NOT bump again here (avoids double-counting).
             attempts = _as_int(t.get("attempts"), 0)
@@ -2018,18 +2028,43 @@ def reclaim(root: Path, *, now: datetime | None = None, ttl: int = LEASE_TTL_SEC
             if attempts >= cap:
                 t["status"] = "parked"
                 t["blocked_reason"] = (
-                    f"parked: worker died with lease expired after {attempts} "
-                    f"attempt(s) (cap {cap})"
+                    f"parked: {died} after {attempts} attempt(s) (cap {cap})"
                 )
-                out.append({"id": t["id"], "action": "parked"})
+                out.append({"id": t["id"], "action": "parked",
+                            **({"reason": "host rebooted"} if rebooted else {})})
             else:
                 t["status"] = "todo"
                 t["blocked_reason"] = None
-                out.append({"id": t["id"], "action": "released"})
+                out.append({"id": t["id"], "action": "released",
+                            **({"reason": "host rebooted"} if rebooted else {})})
             t["updated"] = _now()
             changed = True
         if changed:
             _persist(root, tasks)
+    return out
+
+
+def reclaim_dead_claims(scope_roots: Iterable[tuple[str, Path]]) -> list[dict]:
+    """`reclaim(root, dead_only=True)` over every `(scope, root)` given, as the
+    operator. Returns the reclaimed rows, each tagged with its `scope`. A scope
+    that fails to load is skipped so one bad store cannot stall the rest. The
+    caller supplies the scopes because enumerating them is a route-layer
+    concern (`routes.tasks_all.scope_roots`)."""
+    previous = ownership.owner_or_none()
+    ownership.pin_operator()
+    out: list[dict] = []
+    try:
+        for scope, root in scope_roots:
+            try:
+                for row in reclaim(root, dead_only=True):
+                    out.append({**row, "scope": scope})
+            except Exception as e:
+                log.warning("dead-claim reclaim skipped %s: %s", scope, e)
+    finally:
+        if previous is None:
+            ownership.clear_current_owner()
+        else:
+            ownership.set_current_owner(previous)
     return out
 
 

@@ -157,7 +157,7 @@ describe("the app shell cannot scroll its own chrome away", () => {
 //
 // Reported 2026-08-23: "why do we have multiple randomly implemented poorly
 // implemented different overlay backdrops". There were four (the kit's
-// `.ws-overlay`, the chat work sheet's, the place menu's, the birds More
+// `.ws-overlay`, the chat work sheet's, the place menu's, an app's More
 // sheet's), they differed in blur, in z-index and in which part of the screen
 // they covered, and one of them dimmed only the chat column. They are one rule
 // now, and this is what stops a fifth being written: a dimming surface is
@@ -652,7 +652,7 @@ describe("no text-entry surface can zoom an iOS page on focus", () => {
   });
 
   it("sizes the code editor from the token, on the element the gutter shares", () => {
-    const editor = read("../../packages/ui/src/Editor.tsx");
+    const editor = read("../../packages/ui/src/EditorCore.tsx");
     expect(editor).toContain('fontSize: "var(--fs-field-code)"');
     // .cm-content must NOT carry its own size: the gutter would stay behind.
     const content = editor.slice(editor.indexOf('".cm-content": {'));
@@ -673,5 +673,19 @@ describe("no text-entry surface can zoom an iOS page on focus", () => {
     const html = read("../index.html");
     expect(html).not.toContain("user-scalable");
     expect(html).not.toContain("maximum-scale");
+  });
+});
+
+// A long live reply put its working line, and the Stop on it, 4000px below the
+// fold (2026-10-03). The line sticks to the foot of the log instead.
+describe("the working line stays on screen", () => {
+  it("is sticky at the bottom of the log, filled so stuck text cannot show through", () => {
+    const at = css.indexOf(".chat-msg.assistant .chat-working {");
+    expect(at, "no sticky working-line rule").toBeGreaterThan(-1);
+    const rule = css.slice(at, css.indexOf("}", at));
+    expect(rule).toContain("position: sticky");
+    // Flush with the log's edge, past its bottom padding (`.chat-log`).
+    expect(rule).toContain("bottom: calc(-1 * var(--space-4))");
+    expect(rule).toContain("background: var(--card)");
   });
 });

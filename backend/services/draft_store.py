@@ -52,10 +52,19 @@ matters for a given key is the composer the operator is actually typing in.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 
 from . import ownership
+
+# Every read-modify-write of drafts.json holds this. The draft routes run on
+# worker threads, not the event loop: a save renames over the file, which waits
+# on the disk under pressure, and the composer saves every few seconds while the
+# operator types (2026-10-04: 4 of the backend's dumped event-loop stalls were
+# this save). Off the loop, two saves can overlap, and without the lock the later
+# load-modify-save would drop the earlier one's key.
+_LOCK = threading.Lock()
 
 # How long a cleared draft keeps its timestamp.
 #
@@ -154,7 +163,8 @@ def get_draft(key: str) -> dict:
 
 
 def put_draft(key: str, text: str, ts: int, client_id: str,
-              attachments: list[dict] | None = None) -> dict:
+              attachments: list[dict] | None = None,
+              settings: dict | None = None) -> dict:
     """Store (or clear, when there is neither text nor a file) the draft.
 
     A DRAFT IS EVERYTHING IN THE COMPOSER, which includes the files attached to
@@ -164,20 +174,32 @@ def put_draft(key: str, text: str, ts: int, client_id: str,
     text came back while the screenshot did not, leaving an orphan on disk and a
     message about a file that is no longer there.
 
+    SETTINGS RIDE WITH THE DRAFT of a blank chat: the model, effort, permission
+    mode and chat mode picked before any message exists. A blank chat has no
+    thread to hold them, so they were plain browser state and any remount reset
+    them. They are one record with the text for the same reason the files are:
+    last write wins, a send clears the lot (the entry is rebuilt from scratch),
+    and a new blank chat therefore starts at the defaults again. A field absent
+    from `settings` was never chosen; it is not a stored default.
+
     Returns the authoritative entry — which is the EXISTING one when it is
     strictly newer, marked `superseded`, so the caller can reconcile instead of
     believing a write that did not happen."""
     ts = int(ts) or _now_ms()
-    data = _load()
-    existing = data.get(key)
-    if existing and int(existing.get("ts", 0)) > ts:
-        return {"key": key, **existing, "superseded": True}
-    entry = {"text": text or "", "ts": ts, "client_id": client_id}
-    if attachments:
-        entry["attachments"] = attachments
-    data[key] = entry
-    _prune(data)
-    _save(data)
+    with _LOCK:
+        data = _load()
+        existing = data.get(key)
+        if existing and int(existing.get("ts", 0)) > ts:
+            return {"key": key, **existing, "superseded": True}
+        entry = {"text": text or "", "ts": ts, "client_id": client_id}
+        if attachments:
+            entry["attachments"] = attachments
+        chosen = {k: v for k, v in (settings or {}).items() if v}
+        if chosen:
+            entry["settings"] = chosen
+        data[key] = entry
+        _prune(data)
+        _save(data)
     return {"key": key, **entry}
 
 
@@ -189,15 +211,16 @@ def clear_draft(key: str, ts: int | None = None) -> dict:
 def clear_for_thread(context_key: str | None, thread_id: str) -> None:
     """Every draft belonging to a conversation that is going away.
 
-    The thread's own key, and — because a thread's first message may still be
-    sitting in the blank-chat slot it was typed into — that slot too, but only
-    when the caller knows the surface it was started from.
+    The thread's own key (every row ending `::<thread_id>`). The blank-chat slot
+    a first message was typed into is cleared by the send itself, which carries
+    its `draft_key`; nothing here touches a `::new` row.
     """
     ts = _now_ms()
-    data = _load()
-    keys = [k for k in data if k.endswith(f"::{thread_id}")]
-    for k in keys:
-        data[k] = {"text": "", "ts": ts, "client_id": "server"}
-    if keys or context_key:
-        _prune(data)
-        _save(data)
+    with _LOCK:
+        data = _load()
+        keys = [k for k in data if k.endswith(f"::{thread_id}")]
+        for k in keys:
+            data[k] = {"text": "", "ts": ts, "client_id": "server"}
+        if keys or context_key:
+            _prune(data)
+            _save(data)

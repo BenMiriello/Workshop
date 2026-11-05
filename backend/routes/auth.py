@@ -149,6 +149,31 @@ class DeviceRow(BaseModel):
     last_seen: str | None = None
 
 
+class SessionRow(BaseModel):
+    """A signed-in browser, identified by a 12-character prefix of its session
+    hash. `label` is the operator's name for it; `current` is the asker."""
+
+    id: str
+    label: str | None = None
+    user_agent: str | None = None
+    created_at: str | None = None
+    last_seen: str | None = None
+    current: bool = False
+
+
+class SessionList(BaseModel):
+    sessions: list[SessionRow]
+
+
+class SessionLabelBody(BaseModel):
+    label: str | None = Field(default=None, max_length=120)
+
+
+class SessionChanged(BaseModel):
+    ok: bool
+    changed: int
+
+
 class DeviceList(BaseModel):
     """Revoked tokens are excluded, so `total` is the live count rather than
     everything ever minted."""
@@ -186,7 +211,10 @@ async def register(body: RegisterBody, request: Request, response: Response) -> 
 
 @router.post("/login", response_model=Session, response_model_exclude_unset=True)
 async def login(body: LoginBody, request: Request, response: Response) -> dict:
+    if auth_store.login_locked_out():
+        raise HTTPException(status_code=429, detail="too many attempts, try again shortly")
     user = auth_store.verify_credentials(str(body.email), body.password)
+    auth_store.note_login_result(user is not None)
     if user is None:
         raise HTTPException(status_code=401, detail="invalid email or password")
     return _login_response(response, user, request)
@@ -223,7 +251,7 @@ async def change_password(body: ChangePasswordBody, request: Request, response: 
 
 
 @router.get("/me", response_model=PublicUser, response_model_exclude_unset=True)
-async def me(user: dict = Depends(current_user)) -> dict:
+def me(user: dict = Depends(current_user)) -> dict:
     full = auth_store.get_by_id(user["id"])
     if full is None:
         raise HTTPException(status_code=401, detail="account no longer exists")
@@ -255,3 +283,28 @@ async def list_devices(
 async def revoke_device(device_id: str, user: dict = Depends(current_user)) -> dict:
     removed = auth_store.revoke_device_by_prefix(user["id"], device_id)
     return {"ok": True, "removed": removed}
+
+
+# ---- browser sessions (one per signed-in device) ----
+
+
+@router.get("/sessions", response_model=SessionList, response_model_exclude_unset=True)
+async def list_sessions(request: Request, user: dict = Depends(current_user)) -> dict:
+    return {"sessions": auth_store.list_sessions(user["id"], request.cookies.get(SESSION_COOKIE))}
+
+
+@router.patch("/sessions/{session_id}", response_model=SessionChanged, response_model_exclude_unset=True)
+async def rename_session(session_id: str, body: SessionLabelBody,
+                         user: dict = Depends(current_user)) -> dict:
+    changed = auth_store.rename_session(user["id"], session_id, body.label)
+    if not changed:
+        raise HTTPException(status_code=404, detail="no such session")
+    return {"ok": True, "changed": changed}
+
+
+@router.delete("/sessions/{session_id}", response_model=SessionChanged, response_model_exclude_unset=True)
+async def revoke_session(session_id: str, user: dict = Depends(current_user)) -> dict:
+    changed = auth_store.revoke_session_by_prefix(user["id"], session_id)
+    if not changed:
+        raise HTTPException(status_code=404, detail="no such session")
+    return {"ok": True, "changed": changed}

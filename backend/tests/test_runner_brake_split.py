@@ -229,9 +229,12 @@ class TestARefusedTargetCarriesTheGatesReason:
         assert "WORKSHOP_DEV_MODE=1" in detail
         assert spawned == []
 
-    def test_dev_mode_on_permits_the_platform_repo(self, client, spawned, monkeypatch):
+    def test_dev_mode_on_permits_the_platform_repo(self, client, spawned, monkeypatch,
+                                                   one_maker):
         """The gate is a real gate, not a blanket refusal: with the flag on, the
-        same target is accepted and the watchdog is spawned with it."""
+        same target is accepted and the watchdog is spawned with it. `one_maker`
+        because a scope with no maker is refused before the spawn, so without it
+        this passed or failed on whether the box happened to have one."""
         monkeypatch.setenv("WORKSHOP_DEV_MODE", "1")
         root = str(autonomy_routes.WORKSHOP_ROOT)
         r = client.post("/api/queue/runner/start", json={"dir": root})
@@ -306,7 +309,7 @@ class TestTheTargetMustBeATree:
 class TestStopNamesItsTree:
     def test_stop_without_a_dir_is_refused(self, client):
         """Runners are per tree. A missing `dir` used to resolve to the platform
-        repo, so stopping a `projects/birds` runner without naming it killed the
+        repo, so stopping a `projects/widgets` runner without naming it killed the
         wrong one and reported success."""
         r = client.post("/api/queue/runner/stop")
         assert r.status_code == 400

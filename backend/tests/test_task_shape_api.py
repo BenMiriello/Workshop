@@ -27,6 +27,9 @@ from services import tasks  # noqa: E402
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    # The create and patch routes wake the queue runner by touching
+    # `<_WORKSHOP_ROOT>/.runtime/queue-runner.wake`; aim that at the tmp tree.
+    monkeypatch.setattr(tasks_all, "_WORKSHOP_ROOT", tmp_path)
     # One scope, rooted at a tmp store. Dedup's embedder is not available in the
     # test env and is not what these tests are about, so the create path is
     # pinned to the plain store add.

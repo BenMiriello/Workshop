@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from services import agent_authority, llm_router
+from services import app_registry  # noqa: E402
 
 BACKEND = Path(__file__).resolve().parent.parent
 ROOT = BACKEND.parent
@@ -125,16 +126,24 @@ class TestTheEmitterPinsTheOwner:
 
     def test_the_owner_rides_in_the_spec_env(self):
         cfg = json.loads(llm_router.mcp_config_json(["workshop"], owner_id=4242))
-        env = cfg["mcpServers"]["workshop"]["env"]
+        env = app_registry.spec_context(cfg["mcpServers"]["workshop"])
         assert env["WORKSHOP_QUERY_OWNER"] == "4242"
 
     def test_it_defaults_to_the_operator_not_to_nothing(self):
         from services import auth_store
         cfg = json.loads(llm_router.mcp_config_json(["workshop"]))
-        env = cfg["mcpServers"]["workshop"]["env"]
+        env = app_registry.spec_context(cfg["mcpServers"]["workshop"])
         assert env.get("WORKSHOP_QUERY_OWNER") == str(auth_store.operator_id())
 
-    def test_the_spec_can_actually_be_launched(self):
+    def test_the_spec_is_served_over_http_with_signed_claims(self):
+        cfg = json.loads(llm_router.mcp_config_json(["workshop"]))
+        spec = cfg["mcpServers"]["workshop"]
+        assert spec["type"] == "http"
+        assert spec["url"].endswith("/mcp/workshop")
+        assert app_registry.spec_context(spec)["WORKSHOP_QUERY_OWNER"]
+
+    def test_the_stdio_spec_can_actually_be_launched(self, monkeypatch):
+        monkeypatch.setenv("WORKSHOP_MCP_TRANSPORT", "stdio")
         cfg = json.loads(llm_router.mcp_config_json(["workshop"]))
         spec = cfg["mcpServers"]["workshop"]
         assert Path(spec["command"]).exists(), spec["command"]
@@ -159,7 +168,7 @@ class TestTheEmitterPinsTheOwner:
             assert path.is_file(), out.stdout
             cfg = json.loads(path.read_text())
             assert "workshop" in cfg["mcpServers"]
-            assert cfg["mcpServers"]["workshop"]["env"]["WORKSHOP_QUERY_OWNER"]
+            assert app_registry.spec_context(cfg["mcpServers"]["workshop"])["WORKSHOP_QUERY_OWNER"]
         finally:
             path.unlink(missing_ok=True)
 
@@ -229,12 +238,14 @@ class TestRalphPassesIt:
         consecutive worktree sweeps produced nothing while the log said enabled.
         The property pinned here has not changed: the paragraph that describes
         mcp__workshop__search is reachable only where MCP_FLAGS was set."""
-        flagged = self.SRC.index('MCP_FLAGS=(--mcp-config "$MCP_JSON")')
+        over_http = self.SRC.index('MCP_STATUS="enabled (served by the backend over http)"')
         enabled = self.SRC.index('MCP_STATUS="enabled (inline mcp-config')
-        described = self.SRC.index("mcp__workshop__search", enabled)
+        gate = self.SRC.index('if [[ "$MCP_OK" == 1 ]]; then')
+        flagged = self.SRC.index('MCP_FLAGS=(--mcp-config "$MCP_JSON")')
+        described = self.SRC.index("mcp__workshop__search", flagged)
         logged = self.SRC.index('log "workshop search tool: $MCP_STATUS"')
-        assert flagged < enabled < described < logged
-        assert "The workshop's own memory" in self.SRC[enabled:logged]
+        assert over_http < enabled < gate < flagged < described < logged
+        assert "The workshop's own memory" in self.SRC[gate:logged]
         # Every not-applied status names a reason, so the line distinguishes
         # "the flag was passed" from "the server is there".
         reasons = re.findall(r'MCP_STATUS="not applied: ([^"]+)"', self.SRC)

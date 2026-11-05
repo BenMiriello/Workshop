@@ -20,7 +20,7 @@ import asyncio
 
 import pytest
 
-from services import chat_context, chat_log, chat_store, ownership
+from services import chat_context, chat_log, chat_store, ownership, working_state
 
 
 @pytest.fixture()
@@ -269,7 +269,7 @@ class TestCompactIsTheProvidersOwnCommand:
             return {"turn_id": "t-1"}
 
         monkeypatch.setattr(chat_routes, "_send", fake_send)
-        monkeypatch.setattr(chat_routes, "_spawn_working_state", lambda *a: None)
+        monkeypatch.setattr(working_state, "spawn", lambda *a: None)
         out = asyncio.run(chat_routes.compact_thread(chatty))
         assert sent == {"thread_id": chatty, "content": "/compact"}
         assert out == {"turn_id": "t-1"}
@@ -291,7 +291,7 @@ class TestCompactIsTheProvidersOwnCommand:
             return {"turn_id": None, "queued": True}
 
         monkeypatch.setattr(chat_routes, "_send", fake_send)
-        monkeypatch.setattr(chat_routes, "_spawn_working_state", lambda *a: None)
+        monkeypatch.setattr(working_state, "spawn", lambda *a: None)
         assert asyncio.run(chat_routes.compact_thread(chatty)) == {"queued": True}
 
     def test_a_failure_to_start_is_reported_not_raised(self, chatty, monkeypatch):
@@ -301,7 +301,7 @@ class TestCompactIsTheProvidersOwnCommand:
             raise RuntimeError("no session")
 
         monkeypatch.setattr(chat_routes, "_send", boom)
-        monkeypatch.setattr(chat_routes, "_spawn_working_state", lambda *a: None)
+        monkeypatch.setattr(working_state, "spawn", lambda *a: None)
         assert asyncio.run(chat_routes.compact_thread(chatty)) == {"error": "no session"}
 
     def test_it_does_not_fold_the_transcript_itself(self, chatty, monkeypatch):
@@ -314,7 +314,7 @@ class TestCompactIsTheProvidersOwnCommand:
             return {"turn_id": "t-1"}
 
         monkeypatch.setattr(chat_routes, "_send", fake_send)
-        monkeypatch.setattr(chat_routes, "_spawn_working_state", lambda *a: None)
+        monkeypatch.setattr(working_state, "spawn", lambda *a: None)
         before = _conversation(_prompt(chatty))
         asyncio.run(chat_routes.compact_thread(chatty))
         assert _conversation(_prompt(chatty)) == before
@@ -340,49 +340,45 @@ class TestTheScopesWorkingStateSurvivesTheFoldsDeletion:
     """
 
     def test_it_writes_the_note_for_the_scope(self, chatty, monkeypatch, tmp_path):
-        from routes import chat as chat_routes
         from services import knowledge
         written = {}
-        monkeypatch.setattr(chat_routes, "_summarize_sync", lambda prev, msgs: "## Objective\n- ship it")
+        monkeypatch.setattr(working_state, "_summarize_sync", lambda prev, msgs: "## Objective\n- ship it")
         monkeypatch.setattr(knowledge, "read_working_state", lambda scope: ("", ""))
         monkeypatch.setattr(
             knowledge, "write_working_state",
             lambda scope, text, **kw: written.update(scope=scope, text=text))
-        chat_routes._write_working_state_now(chatty, chat_store.get_thread(chatty))
+        working_state.write_now(chatty, chat_store.get_thread(chatty))
         assert written["text"] == "## Objective\n- ship it"
         assert written["scope"]
 
     def test_it_merges_with_what_another_chat_left(self, chatty, monkeypatch):
         """One note per scope, and every chat in the scope writes it. Starting
         from scratch each time would throw away what another chat recorded."""
-        from routes import chat as chat_routes
         from services import knowledge
         seen = {}
         monkeypatch.setattr(knowledge, "read_working_state", lambda scope: ("EARLIER", "other"))
         monkeypatch.setattr(knowledge, "write_working_state", lambda *a, **k: None)
         monkeypatch.setattr(
-            chat_routes, "_summarize_sync",
+            working_state, "_summarize_sync",
             lambda prev, msgs: seen.setdefault("prev", prev) or "S")
-        chat_routes._write_working_state_now(chatty, chat_store.get_thread(chatty))
+        working_state.write_now(chatty, chat_store.get_thread(chatty))
         assert seen["prev"] == "EARLIER"
 
     def test_a_barely_started_chat_costs_no_model_call(self, owned, monkeypatch):
-        from routes import chat as chat_routes
         called = []
-        monkeypatch.setattr(chat_routes, "_summarize_sync",
+        monkeypatch.setattr(working_state, "_summarize_sync",
                             lambda prev, msgs: called.append(1) or "S")
         tid = chat_store.create_thread("general")["id"]
         chat_store.append_message(tid, "user", "hi")
-        chat_routes._write_working_state_now(tid, chat_store.get_thread(tid))
+        working_state.write_now(tid, chat_store.get_thread(tid))
         assert called == []
 
     def test_a_failure_here_never_escapes(self, chatty, monkeypatch):
         """The operator pressed compact to reclaim context. A handoff note that
         could not be filed is a log line, never a failed operation."""
-        from routes import chat as chat_routes
 
         def boom(prev, msgs):
             raise RuntimeError("summarizer down")
 
-        monkeypatch.setattr(chat_routes, "_summarize_sync", boom)
-        chat_routes._write_working_state_now(chatty, chat_store.get_thread(chatty))
+        monkeypatch.setattr(working_state, "_summarize_sync", boom)
+        working_state.write_now(chatty, chat_store.get_thread(chatty))

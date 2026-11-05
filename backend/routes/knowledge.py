@@ -17,7 +17,7 @@ router = APIRouter()
 
 # MOUNTED AT `/memory/scopes` (backend/main.py). It used to be `/knowledge`, one
 # of four prefixes for one concept -- `/knowledge`, `/notes`, `/memory` and an
-# app's `/notes-app` -- while the page they serve is called Memory and the thing
+# app's own notes prefix -- while the page they serve is called Memory and the thing
 # they hold is called a note. One word for one concept, settled 2026-08-27 and
 # applied here (ticket MEM-15).
 #
@@ -27,7 +27,7 @@ router = APIRouter()
 # scope_key="notes". The extra segment is what makes the merged prefix
 # unambiguous rather than order-dependent.
 #
-# `/notes-app` is deliberately NOT folded in. That prefix belongs to an
+# An app's notes prefix is deliberately NOT folded in. That prefix belongs to an
 # installed app, not to the platform's memory, and merging them would put an app
 # inside a platform surface -- the thing CLAUDE.md's app-separation rule exists
 # to stop.

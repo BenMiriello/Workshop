@@ -61,8 +61,7 @@ def test_a_compressed_backend_response_reaches_the_client_still_compressed(edge)
     payload = b'{"threads": [' + b",".join([b'"row"'] * 2000) + b"]}"
     compressed = gzip.compress(payload)
 
-    async def fake_send_upstream(request, backend_path, headers, body, *, stream):
-        assert not stream
+    async def fake_send_upstream(request, backend_path, headers, body, *, stream, read=None):
         return _FakeUpstreamResponse(
             200,
             {"content-type": "application/json", "content-encoding": "gzip"},
@@ -95,7 +94,7 @@ def test_an_uncompressed_backend_response_is_unaffected(edge):
     edge_app, monkeypatch = edge
     payload = b'{"ok": true}'
 
-    async def fake_send_upstream(request, backend_path, headers, body, *, stream):
+    async def fake_send_upstream(request, backend_path, headers, body, *, stream, read=None):
         return _FakeUpstreamResponse(200, {"content-type": "application/json"}, payload)
 
     monkeypatch.setattr(edge_app, "_send_upstream", fake_send_upstream)
@@ -199,7 +198,7 @@ def test_sse_proxy_response_still_streams_uncompressed(edge):
         async def aclose(self):
             pass
 
-    async def fake_send_upstream(request, backend_path, headers, body, *, stream):
+    async def fake_send_upstream(request, backend_path, headers, body, *, stream, read=None):
         assert stream
         return _FakeStreamUpstream()
 

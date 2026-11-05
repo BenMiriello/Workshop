@@ -37,13 +37,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from wsplatform import paths
+from services import proc_liveness, tasks
 
 # ---------------------------------------------------------------------------
 # Vocabulary
@@ -103,7 +103,9 @@ def start(
     `task_id` links a child Job to the Task it worked; `parent_id` links it to
     the coordinator sweep Job, so the Jobs feed + task history form one graph.
     `pid` records the launching process so the liveness watchdog can tell a
-    running Job whose process is dead from one that is genuinely in flight (2d)."""
+    running Job whose process is dead from one that is genuinely in flight (2d).
+    The boot id and the pid's start time are recorded beside it, so neither a
+    recycled pid nor a reboot can make a dead Job read as alive."""
     if trigger not in TRIGGERS:
         trigger = "manual"
     if status not in STATUSES:
@@ -122,6 +124,7 @@ def start(
         pid=pid,
         kind=kind,
         binding=binding,
+        **proc_liveness.identity(pid),
     )
     _append(record)
     return record
@@ -136,7 +139,7 @@ def record_pid(job_id: str, pid: int) -> dict:
     two-hour age ceiling, so a crashed run reads `running` for two hours. Append
     rather than reorder: the opening line must land before the child can write
     its own terminal line, or the collapse would resurrect a finished Job."""
-    line = _clean(id=job_id, pid=int(pid))
+    line = _clean(id=job_id, pid=int(pid), **proc_liveness.identity(int(pid)))
     _append(line)
     return line
 
@@ -367,25 +370,6 @@ def get(job_id: str) -> dict | None:
 # Liveness reconcile (self-healing 2d): fail Jobs stuck `running` after death
 # ---------------------------------------------------------------------------
 
-def _pid_alive(pid) -> bool:
-    """True if a process with this pid is alive (signal 0 probe)."""
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
-
-
 def _age_seconds(rec: dict, now: datetime | None = None) -> float | None:
     started = rec.get("started_at")
     if not started:
@@ -400,38 +384,50 @@ def _age_seconds(rec: dict, now: datetime | None = None) -> float | None:
     return (now - dt).total_seconds()
 
 
+HOST_REBOOTED = "host rebooted: the launching process did not survive the restart"
+PROCESS_DIED = "liveness watchdog: launching process dead while running"
+
+
 def reconcile_stuck(*, min_age_sec: int = 120, max_age_sec: int = 7200,
                     now: datetime | None = None) -> list[dict]:
     """Find Jobs stuck in `running` whose launching process is dead and close
     them as `failed`, so the Jobs feed tells the truth and a crashed sweep does
     not linger as a phantom "still running" record forever (2d).
 
-    A running Job is considered dead when it is older than ``min_age_sec`` (to
-    avoid racing a just-opened Job) AND either its recorded ``pid`` is no longer
-    alive, or it has no pid and is older than ``max_age_sec`` (a hard age ceiling
-    for legacy records that predate pid recording). Returns the list of Jobs it
-    failed. Reclaiming the associated Task is the task store's job:
-    `tasks.next_ready` calls `tasks.reclaim` unconditionally before it hands out
-    work, so a strand is released at the moment it would otherwise block a
-    dispatch. This only fixes the Job record."""
+    A running Job older than ``min_age_sec`` (so a just-opened Job is not raced)
+    is dead when `proc_liveness.check` says so: it was recorded under another
+    boot, or its pid is gone, a zombie, or recycled. With no pid and no reboot
+    evidence it is dead only past the ``max_age_sec`` ceiling, which exists for
+    legacy records that predate pid recording. A reboot is named as the reason,
+    because "the host restarted" and "the run crashed" call for different
+    responses. Returns the Jobs it failed, each carrying the `halted` reason.
+
+    Reclaiming the associated Task is the task store's job
+    (`tasks.reclaim_dead_claims`, run by `reconcile_loop`). A chat-launched
+    background run is the one case with nobody else to tell its chat, so it is
+    reported here (`background_runs.report_lost`)."""
     now = now or datetime.now(timezone.utc)
     failed: list[dict] = []
     for rec in read(status="running", limit=1000):
         age = _age_seconds(rec, now)
         if age is None or age < min_age_sec:
             continue
-        pid = rec.get("pid")
-        if pid is not None:
-            dead = not _pid_alive(pid)
-        else:
-            dead = age >= max_age_sec
-        if not dead:
+        verdict = proc_liveness.check(
+            rec.get("pid"), boot_id=rec.get("boot_id"),
+            pid_start=rec.get("pid_start"), recorded_at=rec.get("started_at"))
+        if verdict == proc_liveness.ALIVE:
             continue
-        finish(
-            rec["id"],
-            status="failed",
-            evidence={"halted": "liveness watchdog: launching process dead while running"},
-        )
+        if verdict == proc_liveness.UNKNOWN and age < max_age_sec:
+            continue
+        reason = HOST_REBOOTED if verdict == proc_liveness.REBOOTED else PROCESS_DIED
+        finish(rec["id"], status="failed", evidence={"halted": reason})
+        rec = {**rec, "status": "failed", "halted": reason}
+        if rec.get("kind") == "background":
+            try:
+                from services import background_runs
+                background_runs.report_lost(rec, reason)
+            except Exception:
+                pass
         failed.append(rec)
     return failed
 
@@ -439,7 +435,10 @@ def reconcile_stuck(*, min_age_sec: int = 120, max_age_sec: int = 7200,
 RECONCILE_INTERVAL_S = 120
 
 
-async def reconcile_loop(interval_s: int = RECONCILE_INTERVAL_S) -> None:
+async def reconcile_loop(
+    interval_s: int = RECONCILE_INTERVAL_S,
+    scope_roots: Callable[[], Iterable[tuple[str, Path]]] | None = None,
+) -> None:
     """Run `reconcile_stuck` forever, inside the backend process.
 
     Until this existed, reconcile had no caller that actually ran: the dispatcher
@@ -453,9 +452,10 @@ async def reconcile_loop(interval_s: int = RECONCILE_INTERVAL_S) -> None:
     import logging
 
     log = logging.getLogger("workshop.jobs")
+    # The first pass runs at once rather than after one interval: at backend
+    # start, and above all after a reboot, is exactly when every orphan exists.
     while True:
         try:
-            await asyncio.sleep(interval_s)
             failed = await asyncio.to_thread(reconcile_stuck)
             if failed:
                 log.info("reconciled %d stuck job(s): %s",
@@ -464,6 +464,17 @@ async def reconcile_loop(interval_s: int = RECONCILE_INTERVAL_S) -> None:
             raise
         except Exception as e:
             log.warning("job reconcile pass failed: %s", e)
+        try:
+            reclaimed = (await asyncio.to_thread(lambda: tasks.reclaim_dead_claims(scope_roots()))
+                         if scope_roots is not None else [])
+            if reclaimed:
+                log.info("reclaimed %d dead ticket claim(s): %s", len(reclaimed),
+                         ", ".join(f"{r['id']}:{r['action']}" for r in reclaimed))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("ticket claim reclaim pass failed: %s", e)
+        await asyncio.sleep(interval_s)
 
 
 # ---------------------------------------------------------------------------

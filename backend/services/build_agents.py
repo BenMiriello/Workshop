@@ -358,3 +358,17 @@ def reset_session(slug: str) -> None:
         record["claude_session"] = None
         record["state"] = "idle"
         _save(data)
+
+
+def adopt_session(slug: str, old: str | None, new: str | None) -> bool:
+    """Move the agent from session `old` to `new` (None detaches it), but
+    only while `old` is still its session, so a reset or another chat's move
+    in between is not overwritten. Going back in a chat resumes at a point in
+    an earlier session, and the turn that does it forks a copy."""
+    data = _load()
+    record = (data.get("build_agents") or {}).get(slug)
+    if not record or record.get("claude_session") != old or old == new:
+        return False
+    record["claude_session"] = new
+    _save(data)
+    return True

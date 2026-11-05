@@ -189,8 +189,8 @@ export default function AutonomyControls() {
       });
       // ONLY A NAMED TREE. Runners are per tree, and an unnamed stop used to
       // resolve server-side to the platform repo: start a runner on
-      // `projects/birds`, reload the page (which clears the picker), hit Stop
-      // all, and the brake engaged while the birds runner kept working and the
+      // `projects/widgets`, reload the page (which clears the picker), hit Stop
+      // all, and the brake engaged while that runner kept working and the
       // panel reported it stopped. A control that lies.
       //
       // The brake still goes on, which is what actually stops the NEXT sweep

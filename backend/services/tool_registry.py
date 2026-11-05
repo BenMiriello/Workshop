@@ -34,6 +34,9 @@ from typing import Any
 # five workshop tool descriptions below have ONE source: the server that
 # actually answers `tools/list`. Duplicating that prose here is how a catalog
 # starts describing a tool the server no longer exposes.
+from mcp import access_tool as _access_tool
+from mcp import ops_tools as _ops_tools
+from mcp import page_tools as _page_tools
 from mcp import workshop_query_server as _wqs
 
 log = logging.getLogger("workshop.tool_registry")
@@ -330,6 +333,24 @@ PLATFORM_TOOLS: tuple[Tool, ...] = (
         scopes=("chat",),
         ceiling=(_mcp_id(_wqs.NOTIFY_TOOL_NAME),),
     ),
+    # The page a chat is open beside (mcp/page_tools). Chat-scope, and offered
+    # by the server only to a turn that was handed a page at start.
+    *(Tool(
+        id=_mcp_id(name),
+        title=title,
+        description=desc,
+        kind="mcp",
+        provenance="platform",
+        spec={"server": _WORKSHOP_SERVER, "tool": name},
+        scopes=("chat",),
+        ceiling=(_mcp_id(name),),
+    ) for name, title, desc in (
+        (_page_tools.READ_NAME, "Read the page beside the chat", _page_tools.READ_DESC),
+        (_page_tools.FIND_NAME, "Find on the page beside the chat", _page_tools.FIND_DESC),
+        (_page_tools.ACT_NAME, "Use the page beside the chat", _page_tools.ACT_DESC),
+        (_page_tools.TOOL_NAME, "Call a tool the page offers", _page_tools.TOOL_DESC),
+        (_access_tool.NAME, "See and change what this chat can reach", _access_tool.DESC),
+    )),
     # Project-bound rather than chat-bound: the server offers it whenever this
     # chat's own scope names a project (`project:<slug>`), which is a fact
     # about the SCOPE, not about whether a thread is behind it -- see
@@ -344,6 +365,24 @@ PLATFORM_TOOLS: tuple[Tool, ...] = (
         scopes=("project",),
         ceiling=(_mcp_id(_wqs.SET_REPO_TOOL_NAME),),
     ),
+    # Operating apps (mcp/ops_tools). Any scope may be OFFERED them; what a
+    # call may touch is decided per call from the turn's claimed scope
+    # (`services/app_ops.authority`), and the server lists them only over HTTP,
+    # where the runner they operate lives.
+    *(Tool(
+        id=_mcp_id(t["name"]),
+        title=title,
+        description=t["description"],
+        kind="mcp",
+        provenance="platform",
+        spec={"server": _WORKSHOP_SERVER, "tool": t["name"]},
+        ceiling=(_mcp_id(t["name"]),),
+    ) for t, title in zip(_ops_tools.TOOLS, (
+        "What an app is doing", "Read an app's log", "Start, stop or restart an app",
+        "Make a change live", "Build an app", "Run an app's tests", "Run an app's checks",
+        "An app's settings and secrets", "Screenshot an app's page",
+        "Hand work to an app's own agent", "Run a heavy command with a memory ceiling"),
+        strict=True)),
     # ---- CLI builtins -------------------------------------------------------
     # These add description and eligibility to tools the harness already has.
     # Names are the CLI's own allowlist vocabulary (verified against the four
@@ -471,6 +510,7 @@ PLATFORM_TOOL_IDS: frozenset[str] = frozenset(t.id for t in PLATFORM_TOOLS)
 #   WAKEUP_TOOL_IDS                   → chat_context.WAKEUP_TOOLS
 #   NOTIFY_TOOL_ID                    → chat_context.NOTIFY_TOOL
 #   GENERAL_ALLOWLIST_IDS             → chat_context._general.allowed_tools
+#   APP_TOOLKIT_IDS                   → chat_context.AppChatProvider.allowed_tools
 #   READ_TOOL_IDS                     → agent_authority._READ_TOOLS
 #   TREE_WRITE_IDS                    → agent_authority._TARGET_TOOLS["tree"]
 #   PERSONA_CEILING_IDS               → agents_registry._PERSONA_TOOL_CEILING
@@ -481,6 +521,7 @@ PLATFORM_TOOL_IDS: frozenset[str] = frozenset(t.id for t in PLATFORM_TOOLS)
 WEB_TOOL_IDS: tuple[str, ...] = ("WebSearch", "WebFetch")
 SUBAGENT_TOOL_ID: str = "Agent"
 WORKSHOP_SEARCH_TOOL_ID: str = _mcp_id(_wqs.SEARCH_TOOL_NAME)
+WORKSHOP_QUERY_TOOL_ID: str = _mcp_id(_wqs.TOOL_NAME)
 SPAWN_TOOL_ID: str = _mcp_id(_wqs.SPAWN_TOOL_NAME)
 
 # The alarm clock. Named as its own group because two things read it: the
@@ -509,6 +550,9 @@ WAKEUP_TOOL_IDS: tuple[str, ...] = (
 # able to say "the thing you asked for is done" is not a builder's capability.
 NOTIFY_TOOL_ID: str = _mcp_id(_wqs.NOTIFY_TOOL_NAME)
 
+PAGE_ONLY_TOOL_IDS: tuple[str, ...] = tuple(_mcp_id(n) for n in _page_tools.ALL_NAMES)
+PAGE_TOOL_IDS: tuple[str, ...] = (*PAGE_ONLY_TOOL_IDS, _mcp_id(_access_tool.NAME))
+
 # Workshop tools offered to every chat (not spawn, which is chat-scope only).
 WORKSHOP_TOOLKIT_IDS: tuple[str, ...] = (
     # `open_ref` goes wherever `search` goes. A search that returns a ranked
@@ -521,12 +565,23 @@ WORKSHOP_TOOLKIT_IDS: tuple[str, ...] = (
     _mcp_id(_wqs.GET_FILE_TOOL_NAME),
     *WAKEUP_TOOL_IDS,
     NOTIFY_TOOL_ID,
+    # The page beside the chat. Listed for every chat; the server offers them
+    # only to a turn that was handed a page (mcp/page_tools).
+    *PAGE_TOOL_IDS,
 )
 
 # Full allowlist for the general/assistant chat provider.
 GENERAL_ALLOWLIST_IDS: tuple[str, ...] = (
-    _mcp_id(_wqs.TOOL_NAME),
-    _mcp_id(_wqs.SEARCH_TOOL_NAME),
+    WORKSHOP_QUERY_TOOL_ID,
+    WORKSHOP_SEARCH_TOOL_ID,
+    *WORKSHOP_TOOLKIT_IDS,
+)
+
+# The workshop tools an app's own assistant gets: the toolkit plus `search`,
+# which the server keeps to the chat's own scope (its notes and its chats) for
+# a confined turn. No `query`: its digest is the work of building the app.
+APP_TOOLKIT_IDS: tuple[str, ...] = (
+    WORKSHOP_SEARCH_TOOL_ID,
     *WORKSHOP_TOOLKIT_IDS,
 )
 

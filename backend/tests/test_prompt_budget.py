@@ -49,7 +49,7 @@ class TestTheRegistryDescribesTheRealAssembler:
             ("provider.capability_note(", "capability_note"),
             ("chat_context.learnings_context(provider)", "standing_notes"),
             ("chat_context.ambient_digest(provider)", "ambient_digest"),
-            ("chat_context.working_state_block(provider)", "working_state"),
+            ("chat_context.working_state_block(provider", "working_state"),
             ("knowledge.layered_index_block(", "knowledge_index"),
             ("skills.descriptions_block(", "skills"),
             ("provider.custom_prompt()", "custom_prompt_row"),

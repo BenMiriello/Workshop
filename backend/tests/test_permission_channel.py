@@ -31,11 +31,11 @@ def flag_value(cmd: list[str], flag: str) -> str | None:
 
 class TestPermissionModeArgv:
     def test_the_default_asks_and_therefore_gets_a_channel(self):
-        # The default was bypassPermissions until 2026-08-09. It is now `auto`,
-        # which CAN stop and ask — so the default spawn must carry the channel,
-        # or every chat silently auto-denies.
+        # The default is `auto`, which the CLI runs as `model_caps.AUTO_RUNS_AS`
+        # and which still asks before a delete, so the default spawn must carry
+        # the channel, or every chat silently auto-denies.
         cmd, _ = build_streaming._build_cmd(meta())
-        assert flag_value(cmd, "--permission-mode") == "auto"
+        assert flag_value(cmd, "--permission-mode") == model_caps.AUTO_RUNS_AS
         assert flag_value(cmd, "--permission-prompt-tool") == "stdio"
 
     def test_bypass_gets_no_approval_channel(self):
@@ -46,7 +46,7 @@ class TestPermissionModeArgv:
     @pytest.mark.parametrize("mode", ["default", "plan", "acceptEdits", "auto"])
     def test_every_asking_mode_gets_the_channel(self, mode):
         cmd, _ = build_streaming._build_cmd(meta(permission_mode=mode))
-        assert flag_value(cmd, "--permission-mode") == mode
+        assert flag_value(cmd, "--permission-mode") == model_caps.mode_for_model(mode, None)
         assert flag_value(cmd, "--permission-prompt-tool") == "stdio", (
             f"{mode} can stop and ask; without the stdio channel the CLI "
             "silently auto-denies every gated call"
@@ -183,3 +183,59 @@ class TestApprovalSegments:
         turn.segments[0]["state"] = "denied"
         build_streaming._stale_pending_approvals(turn)
         assert turn.segments[0]["state"] == "denied"
+
+
+class TestModeAsItIsNow:
+    """An ask is settled by the chat's mode when it arrives, not the mode the
+    turn started at, so a mode picked mid-turn applies to the next call."""
+
+    def _turn(self, monkeypatch, mode, segs=()):
+        import json
+        turn = build_streaming.Turn(id="t-mid", thread_id="th", agent_slug="x")
+        turn.segments = list(segs)
+        monkeypatch.setitem(build_streaming.TURNS, "t-mid", turn)
+        monkeypatch.setattr(build_streaming.chat_store, "get_thread",
+                            lambda _id: {"permission_mode": mode})
+        monkeypatch.setattr(build_streaming.chat_store, "get_thread_allow_rules", lambda _id: [])
+        monkeypatch.setattr(build_streaming, "_read_meta", lambda _d: {})
+        monkeypatch.setattr(build_streaming, "_record_answer", lambda *a: None)
+        sent = {"frames": [], "answers": [], "resolved": []}
+        monkeypatch.setattr(build_streaming, "_write_line",
+                            lambda tid, line: sent["frames"].append(json.loads(line)) or True)
+        monkeypatch.setattr(build_streaming, "answer_permission",
+                            lambda tid, rid, allow, *a, **k: sent["answers"].append(rid) or True)
+        monkeypatch.setattr(build_streaming, "resolve_permission",
+                            lambda tid, rid, allow, *a, **k: sent["resolved"].append(rid) or (True, "allowed"))
+        return turn, sent
+
+    def test_switching_to_auto_moves_the_cli_and_answers_what_it_allows(self, monkeypatch):
+        _, sent = self._turn(monkeypatch, "auto", [
+            {"t": "approval", "id": "r1", "tool": "Bash", "input": {"command": "ls"}, "state": "pending"},
+            {"t": "approval", "id": "r2", "tool": "Bash",
+             "input": {"command": "git push --force origin main"}, "state": "pending"},
+        ])
+        build_streaming.apply_mode_now("t-mid", "th")
+        assert sent["frames"][0]["request"] == {"subtype": "set_permission_mode", "mode": "acceptEdits"}
+        assert sent["resolved"] == ["r1"]
+
+    def test_an_ask_auto_allows_is_answered_with_no_card(self, monkeypatch):
+        turn, sent = self._turn(monkeypatch, "auto")
+        build_streaming._segment_ingest(turn, "permission", {
+            "id": "r3", "tool": "WebFetch", "input": {"url": "https://example.com"}})
+        assert sent["answers"] == ["r3"] and turn.answers["r3"] == "settled"
+        assert not [s for s in turn.segments if s.get("t") == "approval"]
+
+    def test_manual_still_shows_the_card(self, monkeypatch):
+        monkeypatch.setattr(build_streaming, "_expire_when_unanswered", lambda *a: None)
+        turn, sent = self._turn(monkeypatch, "default")
+        build_streaming._segment_ingest(turn, "permission", {
+            "id": "r4", "tool": "WebFetch", "input": {"url": "https://example.com"}})
+        assert sent["answers"] == []
+        assert [s["id"] for s in turn.segments if s.get("t") == "approval"] == ["r4"]
+
+    def test_a_plan_is_never_settled_by_a_mode(self, monkeypatch):
+        monkeypatch.setattr(build_streaming, "_expire_when_unanswered", lambda *a: None)
+        turn, sent = self._turn(monkeypatch, "auto")
+        build_streaming._segment_ingest(turn, "permission", {
+            "id": "r5", "tool": "ExitPlanMode", "input": {"plan": "x"}})
+        assert sent["answers"] == []

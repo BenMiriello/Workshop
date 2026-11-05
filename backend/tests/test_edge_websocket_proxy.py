@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,17 +25,27 @@ def edge(monkeypatch):
     class FakeUpstream:
         """Echoes back whatever it is sent, prefixed, so both directions show."""
 
-        def __init__(self):
+        def __init__(self, subprotocols):
             self.q: asyncio.Queue = asyncio.Queue()
             self.closed = False
+            self.subprotocol = (subprotocols or [None])[-1]
+            self.close_code = None
+            self.close_reason = None
 
         async def send(self, data):
             sent.append(data)
+            if data == "close-me":
+                self.close_code, self.close_reason = 4002, "done here"
+                await self.q.put(None)
+                return
             await self.q.put(f"echo:{data}" if isinstance(data, str) else data)
 
-        async def close(self):
-            self.closed = True
-            await self.q.put(None)
+        async def close(self, code=1000, reason=""):
+            if not self.closed:
+                self.closed = True
+                self.close_code = self.close_code or code
+                self.close_reason = self.close_reason or reason
+                await self.q.put(None)
 
         def __aiter__(self):
             return self
@@ -49,22 +60,12 @@ def edge(monkeypatch):
 
     async def fake_connect(url, **kw):
         made.append({"url": url, **kw})
-        return FakeUpstream()
+        made[-1]["upstream"] = FakeUpstream(kw.get("subprotocols"))
+        return made[-1]["upstream"]
 
-    import sys
-    import types
+    from services import ws_relay
 
-    fake_ws = types.ModuleType("websockets")
-    fake_ws.connect = fake_connect
-    fake_exc = types.ModuleType("websockets.exceptions")
-
-    class ConnectionClosed(Exception):
-        pass
-
-    fake_exc.ConnectionClosed = ConnectionClosed
-    fake_ws.exceptions = fake_exc
-    monkeypatch.setitem(sys.modules, "websockets", fake_ws)
-    monkeypatch.setitem(sys.modules, "websockets.exceptions", fake_exc)
+    monkeypatch.setattr(ws_relay.websockets, "connect", fake_connect)
     return edge_app, made, sent
 
 
@@ -149,3 +150,57 @@ class TestTheEdgeCarriesTheUpgrade:
                 with TestClient(edge_app.app).websocket_connect(f"/api{prefix}/anything"):
                     pass
             assert made == [], f"blocked path {prefix} was still dialed upstream"
+
+
+class TestTheEdgeCarriesAnAppSocket:
+    """An app framed through the runner opens its socket on whichever prefix
+    its page was served from, so both have to reach the backend's runner proxy."""
+
+    def test_the_runner_path_is_dialed_verbatim(self, edge):
+        edge_app, made, _sent = edge
+        with TestClient(edge_app.app).websocket_connect(
+                "/base-apps/run/x/proxy/web/?token=a%2Fb&n=1"):
+            pass
+        assert made[0]["url"].endswith("/base-apps/run/x/proxy/web/?token=a%2Fb&n=1")
+
+    def test_the_api_prefix_reaches_the_same_path(self, edge):
+        edge_app, made, _sent = edge
+        with TestClient(edge_app.app).websocket_connect(
+                "/api/base-apps/run/x/proxy/web/live"):
+            pass
+        assert made[0]["url"].endswith("/base-apps/run/x/proxy/web/live")
+        assert "/api/" not in made[0]["url"]
+
+    def test_the_subprotocol_is_negotiated_end_to_end(self, edge):
+        edge_app, made, _sent = edge
+        with TestClient(edge_app.app).websocket_connect(
+                "/base-apps/run/x/proxy/web/", subprotocols=["v1", "v2"]) as ws:
+            assert ws.accepted_subprotocol == "v2"
+        assert made[0]["subprotocols"] == ["v1", "v2"]
+
+    def test_the_upstream_close_code_reaches_the_browser(self, edge):
+        edge_app, _made, _sent = edge
+        with TestClient(edge_app.app).websocket_connect("/base-apps/run/x/proxy/web/") as ws:
+            ws.send_text("close-me")
+            msg = ws.receive()
+        assert msg == {"type": "websocket.close", "code": 4002, "reason": "done here"}
+
+    def test_the_browser_close_code_reaches_the_upstream(self, edge):
+        edge_app, made, _sent = edge
+        with TestClient(edge_app.app).websocket_connect("/base-apps/run/x/proxy/web/") as ws:
+            ws.close(code=4001, reason="bye")
+        upstream = made[0]["upstream"]
+        for _ in range(100):
+            if upstream.closed:
+                break
+            time.sleep(0.01)
+        assert (upstream.close_code, upstream.close_reason) == (4001, "bye")
+
+    def test_a_cross_site_origin_is_refused_without_dialing(self, edge):
+        edge_app, made, _sent = edge
+        with pytest.raises(Exception):
+            with TestClient(edge_app.app).websocket_connect(
+                    "/base-apps/run/x/proxy/web/",
+                    headers={"origin": "https://elsewhere.invalid"}):
+                pass
+        assert made == []

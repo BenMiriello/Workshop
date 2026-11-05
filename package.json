@@ -8,8 +8,11 @@
     "frontend"
   ],
   "scripts": {
+    "pretest": "node scripts/require_node.cjs",
     "test": "npm test --workspace @workshop/ui && npm test --workspace workshop-frontend",
+    "pretypecheck": "node scripts/require_node.cjs",
     "typecheck": "npm run typecheck --workspace @workshop/ui && cd frontend && tsc -b --noEmit",
+    "prebuild:ui": "node scripts/require_node.cjs",
     "build:ui": "npm run build --workspace @workshop/ui",
     "build:web": "npm run build --workspace workshop-frontend",
     "gen:tokens": "npm run gen:tokens --workspace @workshop/ui",
@@ -18,7 +21,7 @@
     "api:check": "npm run api:check --workspace @workshop/ui"
   },
   "engines": {
-    "node": ">=18",
+    "node": ">=20",
     "npm": ">=9"
   },
   "//overrides": [

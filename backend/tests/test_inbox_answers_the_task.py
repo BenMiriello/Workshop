@@ -35,6 +35,10 @@ def scope_root(tmp_path, monkeypatch):
     monkeypatch.setattr(tasks_all, "_root_for_scope",
                         lambda scope: root if scope == "workshop" else None)
     monkeypatch.setattr(ownership, "_RUNTIME", tmp_path / "runtime")
+    # Approving a proposal mints a real grant; without these the test wrote one
+    # into the instance's own grants file on every run.
+    monkeypatch.setenv("WORKSHOP_GRANTS_PATH", str(tmp_path / "grants.json"))
+    monkeypatch.setenv("WORKSHOP_RESOURCE_GRANTS_PATH", str(tmp_path / "resource-grants.json"))
     ownership.set_current_owner(1)
     try:
         yield root

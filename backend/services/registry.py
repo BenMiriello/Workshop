@@ -303,7 +303,7 @@ def _pick_target_slug(item_id: str, requested: str | None) -> str:
     from projects.json AND no dir exists for it (both checked, per spec)."""
     pdata = projects_routes._load_registry()
     taken_in_registry = set((pdata.get("projects") or {}).keys())
-    root = projects_routes.PROJECTS_ROOT
+    root = projects_routes._projects_root()
 
     def _free(slug: str) -> bool:
         return slug not in taken_in_registry and not (root / slug).exists()
@@ -350,7 +350,7 @@ def install(item_id: str, *, target_slug: str | None = None) -> dict[str, Any]:
         )
 
     slug = _pick_target_slug(item_id, target_slug)
-    root = projects_routes.PROJECTS_ROOT
+    root = projects_routes._projects_root()
     root.mkdir(parents=True, exist_ok=True)
     target_dir = root / slug
 
@@ -361,12 +361,34 @@ def install(item_id: str, *, target_slug: str | None = None) -> dict[str, Any]:
         what="git clone (bundle)",
     )
 
+    # Provenance: which registry item + version this fork was installed from.
+    # update_from_upstream uses this to find newer upstream releases and to
+    # bump the recorded version after a clean merge.
+    return register_installed(
+        slug, target_dir,
+        title=item.get("title") or slug,
+        purpose=f"forked from registry: {item_id}",
+        sensitivity=item.get("sensitivity", "private"),
+        provenance={"from_registry": {"id": item_id, "version": item.get("version")}},
+    )
+
+
+def register_installed(slug: str, target_dir: Path, *, title: str, purpose: str,
+                       sensitivity: str = "private",
+                       provenance: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Register a tree already on disk as a project, the record every install
+    writes (this module's and the app catalog's). Returns it with its slug.
+
+    Single writer: read-modify-write projects.json through the projects hub
+    helpers, exactly as create_project / import_project do."""
+    from services import scope_owner
+
     now = _now()
     record = {
-        "title": item.get("title") or slug,
-        "purpose": f"forked from registry: {item_id}",
+        "title": title,
+        "purpose": purpose,
         "dir": str(target_dir),
-        "sensitivity": item.get("sensitivity", "private"),
+        "sensitivity": sensitivity,
         "state": "mounted",
         "surfaces": {"integrated": None, "standalone": None, "public": None},
         "needs": [],
@@ -374,17 +396,12 @@ def install(item_id: str, *, target_slug: str | None = None) -> dict[str, Any]:
         "created": now,
         "last_touched": now,
         "claude_session": None,
-        # Provenance: which registry item + version this fork was installed from.
-        # update_from_upstream uses this to find newer upstream releases and to
-        # bump the recorded version after a clean merge.
-        "from_registry": {"id": item_id, "version": item.get("version")},
+        **(provenance or {}),
+        **scope_owner.stamp(),
     }
-    # Single writer: read-modify-write projects.json through the projects hub
-    # helpers, exactly as create_project / import_project do.
     pdata = projects_routes._load_registry()
     pdata.setdefault("projects", {})[slug] = record
     projects_routes._save_registry(pdata)
-
     return {"slug": slug, **record}
 
 

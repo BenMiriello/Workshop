@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prebuild": "bash ../scripts/stamp_build.sh --capture",
+    "prebuild": "node ../scripts/require_node.cjs && bash ../scripts/stamp_build.sh --capture",
     "build": "tsc -b && vite build",
     "postbuild": "bash ../scripts/stamp_build.sh --write",
     "preview": "vite preview",
@@ -14,6 +14,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.11.0",
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language": "^6.12.4",

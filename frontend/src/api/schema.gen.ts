@@ -600,6 +600,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/app-events/{event}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Raise Event */
+        post: operations["raise_event_app_events__event__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/apps": {
         parameters: {
             query?: never;
@@ -623,6 +640,91 @@ export interface paths {
         put?: never;
         /** Create App */
         post: operations["create_app_apps_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Catalog */
+        get: operations["list_catalog_apps_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/catalog/defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply Defaults */
+        post: operations["apply_defaults_apps_catalog_defaults_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/catalog/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Toggle App */
+        put: operations["toggle_app_apps_catalog__slug__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/catalog/{slug}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install App */
+        post: operations["install_app_apps_catalog__slug__install_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/overlays": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Overlays */
+        get: operations["list_overlays_apps_overlays_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -872,6 +974,41 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/auth/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sessions */
+        get: operations["list_sessions_auth_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke Session */
+        delete: operations["revoke_session_auth_sessions__session_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Session */
+        patch: operations["rename_session_auth_sessions__session_id__patch"];
         trace?: never;
     };
     "/base-apps/contributions": {
@@ -1468,1207 +1605,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/birds/activity/daily": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Daily */
-        get: operations["get_daily_birds_activity_daily_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/activity/hourly": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Hourly */
-        get: operations["get_hourly_birds_activity_hourly_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/analyze": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Analyze
-         * @description Analyze one audio chunk from the web app and return its detections live,
-         *     attributed to the posting device and its resolved location. The UI posts
-         *     rolling 1s chunks while listening.
-         */
-        post: operations["analyze_birds_analyze_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/analyze/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Analyze Health */
-        get: operations["analyze_health_birds_analyze_health_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/analyze/recent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Analyze Recent */
-        get: operations["analyze_recent_birds_analyze_recent_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/analyze/recompute": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Recompute Analyze
-         * @description Re-apply the range filter to already-stored detections (re-score by each
-         *     detection's place + time). Hides impossible species retroactively. Reversible.
-         */
-        post: operations["recompute_analyze_birds_analyze_recompute_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/analyze/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Analyze Settings
-         * @description Smart-detection tuning (confidence floor, range-filter strictness, new-
-         *     species consensus). Drives how aggressively false positives are suppressed.
-         */
-        get: operations["get_analyze_settings_birds_analyze_settings_get"];
-        put?: never;
-        /** Set Analyze Settings */
-        post: operations["set_analyze_settings_birds_analyze_settings_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/analyze/station": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Analyze Get Station */
-        get: operations["analyze_get_station_birds_analyze_station_get"];
-        put?: never;
-        /** Analyze Register Station */
-        post: operations["analyze_register_station_birds_analyze_station_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/app-summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * App Summary
-         * @description THE COUNT IS WHAT SAYS WHETHER THERE IS A FEED HERE YET.
-         *
-         *     The `available` flag on the yard summary is unconditionally true, so it
-         *     answers nothing; reading it meant a fresh instance rendered "0 species, 0
-         *     today" in the ok tone and the "no detections yet" branch was unreachable.
-         */
-        get: operations["app_summary_birds_app_summary_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/atlas": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Atlas Points Ep */
-        get: operations["atlas_points_ep_birds_atlas_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/atlas/clip/{clip_id}/audio": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Atlas Clip Audio Ep
-         * @description Stream an Atlas exemplar clip. PRIVATE only — never crosses publish.
-         */
-        get: operations["atlas_clip_audio_ep_birds_atlas_clip__clip_id__audio_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/atlas/cluster/{cluster_id}/clips": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Atlas Cluster Clips Ep */
-        get: operations["atlas_cluster_clips_ep_birds_atlas_cluster__cluster_id__clips_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/atlas/cluster/{cluster_id}/label": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Atlas Cluster Label Ep */
-        post: operations["atlas_cluster_label_ep_birds_atlas_cluster__cluster_id__label_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/atlas/insights": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Atlas Insights Ep */
-        get: operations["atlas_insights_ep_birds_atlas_insights_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/atlas/rebuild": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Atlas Rebuild Ep */
-        post: operations["atlas_rebuild_ep_birds_atlas_rebuild_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/atlas/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Atlas Settings Get */
-        get: operations["atlas_settings_get_birds_atlas_settings_get"];
-        put?: never;
-        /** Atlas Settings Set */
-        post: operations["atlas_settings_set_birds_atlas_settings_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/atlas/species": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Atlas Species Ep */
-        get: operations["atlas_species_ep_birds_atlas_species_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/atlas/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Atlas Status Ep */
-        get: operations["atlas_status_ep_birds_atlas_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/bird": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Bird Detail Ep */
-        get: operations["bird_detail_ep_birds_bird_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/clip/{note_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Clip
-         * @description Stream a detection's WAV. PRIVATE only. The public build never renders the
-         *     audio component and the public deploy has no route here at all.
-         */
-        get: operations["get_clip_birds_clip__note_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/confirm": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Confirm Ep */
-        post: operations["confirm_ep_birds_confirm_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/detection/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Detection Status Ep */
-        post: operations["detection_status_ep_birds_detection_status_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/detections": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Detections */
-        get: operations["get_detections_birds_detections_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/device": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Device Get */
-        get: operations["device_get_birds_device_get"];
-        put?: never;
-        /** Device Upsert */
-        post: operations["device_upsert_birds_device_post"];
-        /** Device Delete */
-        delete: operations["device_delete_birds_device_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/device/restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Device Restore */
-        post: operations["device_restore_birds_device_restore_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/devices": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Devices List */
-        get: operations["devices_list_birds_devices_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/forecast/week": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Birds Forecast Week Ep
-         * @description Per-day forecast for the next `days` days: light, weather, activity outlook.
-         */
-        get: operations["birds_forecast_week_ep_birds_forecast_week_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/friend": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Friend Set */
-        post: operations["friend_set_birds_friend_post"];
-        /** Friend Remove */
-        delete: operations["friend_remove_birds_friend_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/friends": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Friends List */
-        get: operations["friends_list_birds_friends_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/home": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Home Get */
-        get: operations["home_get_birds_home_get"];
-        put?: never;
-        /** Home Set */
-        post: operations["home_set_birds_home_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/live": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Live Get
-         * @description Active live feeds the viewer may see (optionally one location).
-         */
-        get: operations["live_get_birds_live_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/live/publish": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Live Publish
-         * @description A shared, listening device pushes its live spectrogram + detections here.
-         */
-        post: operations["live_publish_birds_live_publish_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/location": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Location Get */
-        get: operations["location_get_birds_location_get"];
-        put?: never;
-        /** Location Create Or Update */
-        post: operations["location_create_or_update_birds_location_post"];
-        /** Location Delete */
-        delete: operations["location_delete_birds_location_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/location/activity": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Location Activity Ep */
-        get: operations["location_activity_ep_birds_location_activity_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/location/merge": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Location Merge */
-        post: operations["location_merge_birds_location_merge_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/location/restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Location Restore */
-        post: operations["location_restore_birds_location_restore_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/location/species": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Location Species Ep */
-        get: operations["location_species_ep_birds_location_species_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/location/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Location Summary Ep */
-        get: operations["location_summary_ep_birds_location_summary_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/locations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Locations List */
-        get: operations["locations_list_birds_locations_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/new-count": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** New Count Ep */
-        get: operations["new_count_ep_birds_new_count_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/now": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Birds Now Ep
-         * @description Light + weather + today's early bird + what's-likely-now for a location.
-         */
-        get: operations["birds_now_ep_birds_now_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/public": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Public
-         * @description The sanitized dataset (what crosses to Cloudflare). Served here so the
-         *     publish job fetches the exact bytes and we can audit the boundary.
-         */
-        get: operations["get_public_birds_public_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/recordings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Recordings List Ep */
-        get: operations["recordings_list_ep_birds_recordings_get"];
-        put?: never;
-        post?: never;
-        /** Recordings Clear Ep */
-        delete: operations["recordings_clear_ep_birds_recordings_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/recordings/reconcile": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Recordings Reconcile Ep */
-        post: operations["recordings_reconcile_ep_birds_recordings_reconcile_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/recordings/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Recordings Settings Get */
-        get: operations["recordings_settings_get_birds_recordings_settings_get"];
-        put?: never;
-        /** Recordings Settings Set */
-        post: operations["recordings_settings_set_birds_recordings_settings_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/recordings/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Recordings Status Ep */
-        get: operations["recordings_status_ep_birds_recordings_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/recordings/{rec_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Recordings Delete Ep */
-        delete: operations["recordings_delete_ep_birds_recordings__rec_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/recordings/{rec_id}/audio": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Recordings Audio Ep
-         * @description Stream a saved clip. PRIVATE only — clips never cross the publish boundary.
-         */
-        get: operations["recordings_audio_ep_birds_recordings__rec_id__audio_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/recordings/{rec_id}/pin": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Recordings Pin Ep */
-        post: operations["recordings_pin_ep_birds_recordings__rec_id__pin_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/reject": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Reject Ep */
-        post: operations["reject_ep_birds_reject_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/species": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Species */
-        get: operations["get_species_birds_species_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/species-events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Species Events Ep */
-        get: operations["species_events_ep_birds_species_events_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/species/auto": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Species Auto Ep */
-        post: operations["species_auto_ep_birds_species_auto_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/species/mute": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Species Mute Ep */
-        post: operations["species_mute_ep_birds_species_mute_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/species/recording": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Species Recording Get */
-        get: operations["species_recording_get_birds_species_recording_get"];
-        put?: never;
-        /** Species Recording Set */
-        post: operations["species_recording_set_birds_species_recording_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/species/review": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Species Review Ep */
-        post: operations["species_review_ep_birds_species_review_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/species/unmute": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Species Unmute Ep */
-        post: operations["species_unmute_ep_birds_species_unmute_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/station/activity": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Station Activity */
-        get: operations["station_activity_birds_station_activity_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/station/species": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Station Species */
-        get: operations["station_species_birds_station_species_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/station/species-detail": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Station Species Detail */
-        get: operations["station_species_detail_birds_station_species_detail_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/station/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Station Summary */
-        get: operations["station_summary_birds_station_summary_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/stations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Stations List */
-        get: operations["stations_list_birds_stations_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/suggestions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Suggestions Ep */
-        get: operations["suggestions_ep_birds_suggestions_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Summary */
-        get: operations["get_summary_birds_summary_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/user": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** User Upsert */
-        post: operations["user_upsert_birds_user_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/users": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Users List */
-        get: operations["users_list_birds_users_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/birds/webhook": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Detection Webhook
-         * @description Receive one detection from BirdNET-Go, enrich with first-seen, fan out to
-         *     subscribed agents. Body shape is brain/webhook-template.json.
-         */
-        post: operations["detection_webhook_birds_webhook_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/branches": {
         parameters: {
             query?: never;
@@ -2757,129 +1693,6 @@ export interface paths {
          * @description Everything that happened to this tree, oldest first.
          */
         get: operations["branch_timeline_branches__worktree_id__timeline_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/budget": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Budget
-         * @description Full computed budget: plan + live balances merged + pacing + actuals.
-         *
-         *     Hot loads return instantly off cache. If the cache was stale a background
-         *     refresh is already running and `cache.stale` is True — the UI should re-poll
-         *     shortly to swap in fresh numbers. `?refresh=1` forces a blocking live pull.
-         */
-        get: operations["get_budget_budget_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/budget/categorize": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Run Categorize
-         * @description Run the Sonnet categorizer now over uncategorized/transfer txns in the
-         *     window and merge results into the override store. Also runs nightly.
-         */
-        post: operations["run_categorize_budget_categorize_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/budget/overrides": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Overrides
-         * @description The per-transaction category overrides the daily categorizer has written.
-         */
-        get: operations["get_overrides_budget_overrides_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/budget/plan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Plan
-         * @description Raw editable plan (no computation) — what the edit form loads.
-         */
-        get: operations["get_plan_budget_plan_get"];
-        /**
-         * Put Plan
-         * @description Persist an edited plan. Whole-document replace; the UI sends the full plan.
-         */
-        put: operations["put_plan_budget_plan_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Patch Plan
-         * @description Partial update for inline edits. Three shapes accepted:
-         *
-         *       {"section": "income", "field": "monthly", "value": 10500}
-         *         - mutates plan["income"][field]
-         *
-         *       {"section": "debts", "id": "citi", "field": "planned_monthly", "value": 950}
-         *         - mutates the row with matching id in plan[section]
-         *
-         *       {"section": "variable", "id": "groceries", "fields": {"target": 600, "name": "Food"}}
-         *         - bulk-update multiple fields on a single row
-         *
-         *     The allowed-field whitelist (_PATCH_FIELDS) keeps callers from touching
-         *     structural attributes (id, match[], account_mask, etc.) via this endpoint;
-         *     use PUT /plan for those.
-         */
-        patch: operations["patch_plan_budget_plan_patch"];
-        trace?: never;
-    };
-    "/budget/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Summary */
-        get: operations["get_summary_budget_summary_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2993,6 +1806,102 @@ export interface paths {
          *     the row it returns would make "why did this change" unanswerable.
          */
         post: operations["refresh_change_changes__change_id__refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat-access/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Chat Access
+         * @description `chat_access` from a turn's workshop tool server: read, and change, what
+         *     this chat may reach. Loopback only, with the chat's own token: a chat
+         *     changes its own settings and no other's.
+         */
+        post: operations["chat_access_chat_access__thread_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat-access/{thread_id}/options/{app_slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Chat App Options
+         * @description Which of an app's options this chat has on now (null for an app with
+         *     none), and whether the app shows what the chat does in it (`follow`), for
+         *     the app's own tool server during a turn (`page_link.options_headers`).
+         */
+        get: operations["chat_app_options_chat_access__thread_id__options__app_slug__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat-apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Chat Apps */
+        get: operations["list_chat_apps_chat_apps_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat-apps/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Grants */
+        get: operations["get_grants_chat_apps__thread_id__get"];
+        /** Put Grants */
+        put: operations["put_grants_chat_apps__thread_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat-place/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Chat Places */
+        get: operations["chat_places_chat_place__thread_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3165,6 +2074,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chat/model-defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Model Defaults
+         * @description Which model a chat runs on when it has picked none: the global default,
+         *     a default per scope, and the local model compactions are sent to.
+         */
+        get: operations["get_model_defaults_chat_model_defaults_get"];
+        put?: never;
+        /** Set Model Defaults */
+        post: operations["set_model_defaults_chat_model_defaults_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chat/prefs": {
         parameters: {
             query?: never;
@@ -3250,6 +2181,27 @@ export interface paths {
         put?: never;
         /** New Thread */
         post: operations["new_thread_chat_threads_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/threads/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Threads
+         * @description The live chats matching `q`, title matches first. Declared before
+         *     `/threads/{thread_id}` so "search" is never read as a thread id.
+         */
+        get: operations["search_threads_chat_threads_search_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3494,7 +2446,7 @@ export interface paths {
          *     read.
          *
          *     THE SCOPE'S WORKING STATE IS STILL WRITTEN, and it is a separate feature
-         *     that happened to ride on the fold's summary. See `_write_working_state`:
+         *     that happened to ride on the fold's summary. See `services/working_state`:
          *     one note per scope, so a chat that does not exist yet can continue from
          *     this one. It runs in the background off the transcript as it stands right
          *     now, and never delays or fails the compaction.
@@ -3855,6 +2807,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chat/threads/{thread_id}/model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Thread Model Choice
+         * @description Set the chat's model and effort on change, not only when a message is sent.
+         *
+         *     They used to be written by the send alone, so a pick made and then left
+         *     without sending was never stored and the picker snapped back on the next
+         *     load. Validated through the same resolver as a turn, so a level the model
+         *     does not honour is refused here exactly as it would be there.
+         */
+        post: operations["set_thread_model_choice_chat_threads__thread_id__model_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chat/threads/{thread_id}/operation/cancel": {
         parameters: {
             query?: never;
@@ -3883,6 +2860,27 @@ export interface paths {
          *     landed while this request was on the wire, which is a race, not a failure.
          */
         post: operations["cancel_thread_operation_chat_threads__thread_id__operation_cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/threads/{thread_id}/permission-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Permission Mode
+         * @description Set how much the chat asks before it acts, on change, and carry it into a
+         *     turn that is already running (`build_streaming.apply_mode_now`).
+         */
+        post: operations["set_permission_mode_chat_threads__thread_id__permission_mode_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3936,6 +2934,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chat/threads/{thread_id}/queued/{client_id}/when": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Queued Send Rule
+         * @description Change when one queued message goes out, or clear its rule to send it
+         *     now. Send now is the operator overriding every reason to wait, the usage
+         *     window included, so the drain is forced.
+         */
+        put: operations["set_queued_send_rule_chat_threads__thread_id__queued__client_id__when_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chat/threads/{thread_id}/rescope": {
         parameters: {
             query?: never;
@@ -3974,6 +2994,120 @@ export interface paths {
         put?: never;
         /** Restore */
         post: operations["restore_chat_threads__thread_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/threads/{thread_id}/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Scheduled */
+        get: operations["list_scheduled_chat_threads__thread_id__schedules_get"];
+        put?: never;
+        /** Create Schedule */
+        post: operations["create_schedule_chat_threads__thread_id__schedules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/threads/{thread_id}/schedules/{sid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Schedule */
+        delete: operations["delete_schedule_chat_threads__thread_id__schedules__sid__delete"];
+        options?: never;
+        head?: never;
+        /** Change Schedule */
+        patch: operations["change_schedule_chat_threads__thread_id__schedules__sid__patch"];
+        trace?: never;
+    };
+    "/chat/threads/{thread_id}/schedules/{sid}/again": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Schedule Again
+         * @description An ended schedule's message once more, now; it stays ended.
+         */
+        post: operations["send_schedule_again_chat_threads__thread_id__schedules__sid__again_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/threads/{thread_id}/schedules/{sid}/rearm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rearm Schedule
+         * @description Start it over: active, with this rule, nothing sent in the new run.
+         */
+        post: operations["rearm_schedule_chat_threads__thread_id__schedules__sid__rearm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/threads/{thread_id}/schedules/{sid}/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Schedule
+         * @description One send now: an app's at its turn end, or the operator's Send now.
+         *     409 with the reason when the schedule is paused, done or not started.
+         */
+        post: operations["send_schedule_chat_threads__thread_id__schedules__sid__send_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/threads/{thread_id}/schedules/{sid}/sends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Schedule Sends */
+        get: operations["schedule_sends_chat_threads__thread_id__schedules__sid__sends_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4254,6 +3388,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chat/threads/{thread_id}/unsend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unsend Message
+         * @description Take a message back: the line ends just before it again and the message
+         *     and its reply are removed, with no second line left behind. What a spoken
+         *     "cancel" after "send message" does once its turn has been stopped.
+         *
+         *     The stop that preceded this was the cancel's, not a Stop the operator
+         *     pressed, so the queue hold that stop set is released: anything typed ahead
+         *     goes out as it would have.
+         */
+        post: operations["unsend_message_chat_threads__thread_id__unsend_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/threads/{thread_id}/wakeups/{wake_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Cancel Wakeup */
+        delete: operations["cancel_wakeup_chat_threads__thread_id__wakeups__wake_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chat/threads/{thread_id}/work": {
         parameters: {
             query?: never;
@@ -4335,7 +3512,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/commute/alerts/check": {
+    "/client-errors": {
         parameters: {
             query?: never;
             header?: never;
@@ -4344,18 +3521,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Alerts Check
-         * @description Score + apply policy + maybe send. Standard cron-time endpoint.
-         */
-        post: operations["alerts_check_commute_alerts_check_post"];
+        /** Report */
+        post: operations["report_client_errors_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/commute/alerts/force": {
+    "/client-media": {
         parameters: {
             query?: never;
             header?: never;
@@ -4364,453 +3538,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Alerts Force
-         * @description Bypass cooldown + late-risk check. Operator-test only — keep this
-         *     behind operator-trusted auth IRL (single-user box: fine for now).
-         */
-        post: operations["alerts_force_commute_alerts_force_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/alerts/recent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Alerts Recent */
-        get: operations["alerts_recent_commute_alerts_recent_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/brief": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Send Brief
-         * @description Send a proactive status brief (not a late-risk alert) to the commute
-         *     channel. Cooldowned per (schedule, day, checkpoint) so retrying cron
-         *     invocations don't spam. `force=True` bypasses cooldown.
-         */
-        post: operations["send_brief_commute_brief_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/coords": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Set Coords
-         * @description Set home/work lat,lng on schedule.json. Operator pastes coords from
-         *     a map app — we don't geocode addresses externally because that would
-         *     leak residential location to a third party.
-         */
-        post: operations["set_coords_commute_coords_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/journeys": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Journeys */
-        get: operations["get_journeys_commute_journeys_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/journeys/finalize": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Finalize Journey */
-        post: operations["finalize_journey_commute_journeys_finalize_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/learn": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Learn All
-         * @description Cron convenience: refresh learned places + finalize any completed
-         *     journey. Cheap and idempotent.
-         */
-        post: operations["learn_all_commute_learn_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/legs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Legs */
-        get: operations["get_legs_commute_legs_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/llm/decide": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Llm Decide
-         * @description Run the LLM decision layer. If interject=True, ALSO dispatch through
-         *     the alerter (subject to cooldown). Returns the decision + dispatch result.
-         */
-        post: operations["llm_decide_commute_llm_decide_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/llm/recent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Llm Recent */
-        get: operations["llm_recent_commute_llm_recent_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Messages
-         * @description The in-app Now/Suggestions feed: canonical messages, newest-first,
-         *     paginated. Same objects Discord renders.
-         */
-        get: operations["get_messages_commute_messages_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/messages/latest": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Latest Message */
-        get: operations["get_latest_message_commute_messages_latest_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/patterns": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Patterns */
-        get: operations["get_patterns_commute_patterns_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/places": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Places */
-        get: operations["get_places_commute_places_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/places/label": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Label Place */
-        post: operations["label_place_commute_places_label_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/places/learn": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Learn Places */
-        post: operations["learn_places_commute_places_learn_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/poll": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Trigger Poll */
-        post: operations["trigger_poll_commute_poll_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/reason": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reason Now
-         * @description Compose ONE adaptive message from the live brief + learned patterns,
-         *     store it to the feed (deduped), and dispatch to Discord per policy. This is
-         *     the cron-driven path that replaces the rigid template brief.
-         */
-        post: operations["reason_now_commute_reason_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/schedule": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Schedule */
-        get: operations["get_schedule_commute_schedule_get"];
-        put?: never;
-        /** Post Schedule */
-        post: operations["post_schedule_commute_schedule_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/sources": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Sources */
-        get: operations["get_sources_commute_sources_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/state": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** State */
-        get: operations["state_commute_state_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Status */
-        get: operations["status_commute_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/stopmon": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Poll Stopmon
-         * @description Poll SIRI StopMonitoring for the LEARNED boarding stops only (best-effort
-         *     enrichment; gated to when we actually know the user's stops).
-         */
-        post: operations["poll_stopmon_commute_stopmon_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Summary */
-        get: operations["summary_commute_summary_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commute/targets": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Targets */
-        get: operations["get_targets_commute_targets_get"];
-        put?: never;
-        /** Post Targets */
-        post: operations["post_targets_commute_targets_post"];
+        /** Report */
+        post: operations["report_client_media_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4977,6 +3706,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dashboard/layout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Layout */
+        get: operations["get_layout_dashboard_layout_get"];
+        /** Put Layout */
+        put: operations["put_layout_dashboard_layout_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/documents": {
         parameters: {
             query?: never;
@@ -5026,46 +3773,6 @@ export interface paths {
          *     and the operator commits it on their own schedule.
          */
         put: operations["write_doc_documents_file_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/environment/astro": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Astro
-         * @description Sun/moon for a location + civil date (YYYY-MM-DD).
-         */
-        get: operations["astro_environment_astro_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/environment/conditions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Conditions
-         * @description Hourly weather for a location in [start, end].
-         */
-        get: operations["conditions_environment_conditions_get"];
-        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -5177,6 +3884,11 @@ export interface paths {
          *     was told about. Both cost one line and close the only way this route could
          *     run agent-authored markup as same-origin code.
          *
+         *     `media-src 'self'` is the one thing the policy lets back in. A browser
+         *     opening an audio or video file directly plays it through a media element
+         *     that this same policy governs, so without it the player draws and refuses
+         *     to load.
+         *
          *     No response model: the body is bytes, not a schema. That is the one shape
          *     ADR 0023 clause 6's "declare what you return" does not apply to.
          */
@@ -5233,189 +3945,6 @@ export interface paths {
         };
         /** File Tree */
         get: operations["file_tree_files_tree_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/balances": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Balances */
-        get: operations["get_balances_finance_balances_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/cache": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Cache Status
-         * @description Diagnostic: what's cached, how stale. UI's 'Last updated' reads this.
-         */
-        get: operations["cache_status_finance_cache_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/cache/invalidate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Cache Invalidate
-         * @description Force a refresh on next request. Prefix filters which keys to drop;
-         *     empty prefix drops everything.
-         */
-        post: operations["cache_invalidate_finance_cache_invalidate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/items": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Items
-         * @description The owner's linked institutions (no access tokens).
-         */
-        get: operations["list_items_finance_items_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/items/{item_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Remove Item
-         * @description Unlink an institution (removes it at Plaid + from the owner's store).
-         */
-        delete: operations["remove_item_finance_items__item_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/link/exchange": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Exchange
-         * @description Exchange the Link public_token for an access token, store it owner-scoped
-         *     (encrypted), and drop the finance cache so the new bank shows immediately.
-         */
-        post: operations["exchange_finance_link_exchange_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/link/token": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Link Token
-         * @description Create a Plaid Link token for the owner; the SPA opens Plaid Link with it.
-         */
-        post: operations["create_link_token_finance_link_token_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Summary
-         * @description A CARD MUST NOT REPORT AS FACT SOMETHING IT COULD NOT ASK ABOUT.
-         *
-         *     The balances read carries the answer, so a failure there fails the whole
-         *     line: substituting an empty roster rendered a 502 from the bank as the
-         *     sentence "0 accounts". Raising lets the shell say "unavailable" instead.
-         *
-         *     The cache read is diagnostics and supplies only the "updated" half, so
-         *     losing THAT drops that half and keeps the count.
-         */
-        get: operations["get_summary_finance_summary_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/transactions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Transactions */
-        get: operations["get_transactions_finance_transactions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5965,6 +4494,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/gpu/claims": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Claims */
+        get: operations["list_claims_gpu_claims_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/gpu/claims/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Claim */
+        put: operations["put_claim_gpu_claims__name__put"];
+        post?: never;
+        /** Delete Claim */
+        delete: operations["delete_claim_gpu_claims__name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/grants": {
         parameters: {
             query?: never;
@@ -6036,59 +4600,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/health/history": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get History */
-        get: operations["get_history_health_history_get"];
-        put?: never;
-        post?: never;
-        /** Delete History */
-        delete: operations["delete_history_health_history_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/health/ingest": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Ingest Help */
-        get: operations["ingest_help_health_ingest_get"];
-        put?: never;
-        /** Post Ingest */
-        post: operations["post_ingest_health_ingest_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/health/latest": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Latest */
-        get: operations["get_latest_health_latest_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -6123,8 +4634,10 @@ export interface paths {
          *     than re-read now.
          *
          *     UNAUTHENTICATED, so it carries app ids and one filesystem path and nothing
-         *     else -- no route table, no configuration, no data. That is the same
-         *     disclosure the launcher already makes to any caller.
+         *     else -- no route table, no configuration, no data. Even that is more than
+         *     the authenticated launcher tells a stranger, so the public edge refuses
+         *     `/healthz` (`workshop_public_app._BLOCKED_PREFIXES`) and the backend binds
+         *     loopback: the readers are local scripts.
          */
         get: operations["healthz_healthz_get"];
         put?: never;
@@ -6330,105 +4843,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/location/history": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get History */
-        get: operations["get_history_location_history_get"];
-        put?: never;
-        post?: never;
-        /** Delete History */
-        delete: operations["delete_history_location_history_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/location/latest": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Latest */
-        get: operations["get_latest_location_latest_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/location/owntracks": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Owntracks Help
-         * @description Browsers that GET this URL by accident get a clear hint instead of a
-         *     'method not allowed' wall. The real endpoint is POST-only, called by
-         *     Owntracks iOS in HTTP mode.
-         */
-        get: operations["owntracks_help_location_owntracks_get"];
-        put?: never;
-        /** Post Owntracks */
-        post: operations["post_owntracks_location_owntracks_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/location/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Summary
-         * @description A ping age is INFORMATION, NOT HEALTH.
-         *
-         *     Significant-change tracking only pings on movement, so hours old while
-         *     stationary is the normal resting state and must not read as a problem. The
-         *     ok tone is spent only on a genuinely recent fix; everything else is neutral.
-         */
-        get: operations["get_summary_location_summary_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/location/update": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Post Update */
-        post: operations["post_update_location_update_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/mcp/servers": {
         parameters: {
             query?: never;
@@ -6450,6 +4864,24 @@ export interface paths {
         get: operations["list_servers_mcp_servers_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp/workshop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** No Stream */
+        get: operations["no_stream_mcp_workshop_get"];
+        put?: never;
+        /** Call */
+        post: operations["call_mcp_workshop_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6726,99 +5158,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/notes-app/backlinks/{note_path}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Backlinks
-         * @description Notes whose wikilinks resolve to this note. 404 if the target is missing.
-         */
-        get: operations["get_backlinks_notes_app_backlinks__note_path__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/notes-app/capabilities": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Capabilities
-         * @description List the capabilities this provider exposes.
-         */
-        get: operations["capabilities_notes_app_capabilities_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/notes-app/notes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Notes
-         * @description List every note in the vault with cheap metadata.
-         */
-        get: operations["list_notes_notes_app_notes_get"];
-        put?: never;
-        /**
-         * Create Note
-         * @description Create a new note. 409 if it already exists, 400 on an unsafe path.
-         */
-        post: operations["create_note_notes_app_notes_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/notes-app/notes/{note_path}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Note
-         * @description Read one note plus its resolved outgoing wikilinks. 404 if missing.
-         */
-        get: operations["get_note_notes_app_notes__note_path__get"];
-        /**
-         * Update Note
-         * @description Overwrite an existing note. 404 if missing, 400 on an unsafe path.
-         */
-        put: operations["update_note_notes_app_notes__note_path__put"];
-        post?: never;
-        /**
-         * Delete Note
-         * @description Delete a note. 404 if missing, 400 on an unsafe path.
-         */
-        delete: operations["delete_note_notes_app_notes__note_path__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/notes-app/notes/{note_path}/rename": {
+    "/page-link/call": {
         parameters: {
             query?: never;
             header?: never;
@@ -6828,29 +5168,31 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Rename Note
-         * @description Move a note and rewrite referring wikilinks. 404 source, 409 dest, 400 unsafe.
+         * Page Call
+         * @description One page tool call from a turn's workshop tool server. The token names
+         *     the chat; the level is read again here, so lowering it mid-turn stops the
+         *     next call rather than the next turn.
          */
-        post: operations["rename_note_notes_app_notes__note_path__rename_post"];
+        post: operations["page_call_page_link_call_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/notes-app/search": {
+    "/page-link/links/{link_id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
+        get?: never;
         /**
-         * Search Notes
-         * @description Case-insensitive full-text search across the vault.
+         * Put Link Page
+         * @description `{page}`: what is beside this drawer now (an object, or null for none).
          */
-        get: operations["search_notes_notes_app_search_get"];
-        put?: never;
+        put: operations["put_link_page_page_link_links__link_id__put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -6858,7 +5200,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/plaid/webhook": {
+    "/page-link/links/{link_id}/results/{call_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -6867,8 +5209,58 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Plaid Webhook */
-        post: operations["plaid_webhook_plaid_webhook_post"];
+        /**
+         * Post Result
+         * @description False when the call had already been answered or had timed out.
+         */
+        post: operations["post_result_page_link_links__link_id__results__call_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/page-link/links/{link_id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page Link Stream
+         * @description Calls for the drawer's page to run, as `call` events. Holding this open
+         *     is what makes the page reachable: when it closes, no conversation has a
+         *     page beside it through this drawer any more.
+         */
+        get: operations["page_link_stream_page_link_links__link_id__stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/page-link/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Page Link */
+        get: operations["get_page_link_page_link__thread_id__get"];
+        /**
+         * Put Page Link
+         * @description `{level?}` sets the access level; `{view}` how the operator sees the
+         *     chat's work in an app (follow, show or hide; `{follow}` true or false is
+         *     follow or show), told to the apps that subscribe to `chat_view`; `{link}`
+         *     (a drawer's link id, or null) says which drawer the conversation is open
+         *     in. Any may come alone.
+         */
+        put: operations["put_page_link_page_link__thread_id__put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -7371,7 +5763,7 @@ export interface paths {
          *     `dir` IS REQUIRED IN PRACTICE even though the parameter is optional, and it
          *     is refused rather than defaulted. Runners are per tree: the lock and the
          *     pidfile are both keyed on it. A missing `dir` used to resolve to
-         *     WORKSHOP_ROOT, so a caller who had started a runner on `projects/birds` and
+         *     WORKSHOP_ROOT, so a caller who had started a runner on `projects/<slug>` and
          *     then stopped without naming it killed the PLATFORM repo's runner (or nothing
          *     at all) and got a "stopped" answer back. Start requires a named tree; a
          *     per-tree Start with a Stop that guesses is worse than either.
@@ -7534,10 +5926,63 @@ export interface paths {
         put?: never;
         /**
          * Execute Local
-         * @description Execute a task against the local Ollama Qwen model. Use this when classify
-         *     returned route=local, or when the caller wants to force local execution.
+         * @description Execute a task on the configured local model server. Use this when
+         *     classify returned route=local, or when the caller wants to force local
+         *     execution.
          */
         post: operations["execute_local_relay_local_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resources/leases/{lease_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Take */
+        put: operations["take_resources_leases__lease_id__put"];
+        post?: never;
+        /** Drop */
+        delete: operations["drop_resources_leases__lease_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resources/leases/{resource}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Holders */
+        get: operations["holders_resources_leases__resource__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resources/threads/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Thread Resources */
+        get: operations["thread_resources_resources_threads__thread_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -7555,6 +6000,343 @@ export interface paths {
         get: operations["list_services_services__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/speech/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Commands */
+        get: operations["get_commands_speech_commands_get"];
+        /** Put Commands */
+        put: operations["put_commands_speech_commands_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/speech/commands/labels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Labels */
+        put: operations["put_labels_speech_commands_labels_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/speech/commands/mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Mode */
+        put: operations["put_mode_speech_commands_mode_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/speech/commands/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset Commands */
+        post: operations["reset_commands_speech_commands_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/speech/dictations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Dictations Kept */
+        get: operations["dictations_kept_speech_dictations_get"];
+        put?: never;
+        /** Dictation Ended */
+        post: operations["dictation_ended_speech_dictations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/speech/dictations/{dictation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Dictation So Far */
+        put: operations["dictation_so_far_speech_dictations__dictation__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/speech/match": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Speech Match */
+        post: operations["speech_match_speech_match_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/speech/recordings/{dictation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Dictation Recording */
+        get: operations["dictation_recording_speech_recordings__dictation__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/speech/speak": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Speech Speak */
+        post: operations["speech_speak_speech_speak_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/speech/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Speech Status */
+        get: operations["speech_status_speech_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/speech/transcribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Speech Transcribe */
+        post: operations["speech_transcribe_speech_transcribe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/speech/voices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Speech Voices */
+        get: operations["speech_voices_speech_voices_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/speech/warm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Speech Warm */
+        post: operations["speech_warm_speech_warm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Storage
+         * @description The last scan, starting a fresh one when it is missing or over an hour
+         *     old; `scanning` says one is under way.
+         */
+        get: operations["read_storage_storage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Plan Cleanup
+         * @description What an applied retention pass would do now. Changes nothing.
+         */
+        get: operations["plan_cleanup_storage_cleanup_get"];
+        put?: never;
+        /**
+         * Start Cleanup
+         * @description Run the retention pass now, in the background, under the scheduled
+         *     pass's own lock; its receipt appears as `last_pass` on GET /storage.
+         */
+        post: operations["start_cleanup_storage_cleanup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Policy */
+        put: operations["put_policy_storage_policy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Scan */
+        post: operations["start_scan_storage_scan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/trash": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Trash */
+        get: operations["list_trash_storage_trash_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/trash/{entry_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Trash */
+        post: operations["restore_trash_storage_trash__entry_id__restore_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8492,6 +7274,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/usage/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Usage Limits */
+        get: operations["get_usage_limits_usage_limits_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/usage/timeseries": {
         parameters: {
             query?: never;
@@ -8598,6 +7397,24 @@ export interface paths {
         /** Voice Voices */
         get: operations["voice_voices_voice_voices_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Web Links */
+        get: operations["get_web_links_web_links_get"];
+        /** Put Web Links */
+        put: operations["put_web_links_web_links_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -8753,6 +7570,23 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AccessAnswer */
+        AccessAnswer: {
+            /** Text */
+            text: string;
+        };
+        /** AccessOption */
+        AccessOption: {
+            /**
+             * Default
+             * @default true
+             */
+            default: boolean;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+        };
         /** Activation */
         Activation: {
             /** Blocked By */
@@ -9447,6 +8281,11 @@ export interface components {
             /** Deleted */
             deleted: boolean;
         };
+        /** AppEventAccepted */
+        AppEventAccepted: {
+            /** Event */
+            event: string;
+        };
         /**
          * AppGrant
          * @description One app-to-app capability. `mode` is `read` or `rw`, and coerces to
@@ -9461,6 +8300,13 @@ export interface components {
             mode: string;
             /** To */
             to: string;
+        };
+        /** AppGrants */
+        AppGrants: {
+            /** Access */
+            access: {
+                [key: string]: string[];
+            };
         };
         /**
          * AppGrantsDocument
@@ -9561,6 +8407,13 @@ export interface components {
             /** Reachable Apps */
             reachable_apps: string[];
         };
+        /** AppPolicy */
+        AppPolicy: {
+            /** Cap Gb */
+            cap_gb?: number | null;
+            /** Protect */
+            protect: boolean;
+        };
         /** AppRunList */
         AppRunList: {
             /** Runs */
@@ -9607,6 +8460,16 @@ export interface components {
             source_id?: string | null;
         };
         /**
+         * AppScreen
+         * @description One screen an app serves: an exposed service of its manifest.
+         */
+        AppScreen: {
+            /** Label */
+            label: string;
+            /** Service */
+            service: string;
+        };
+        /**
          * AppStatus
          * @description Probed on every call, never cached, so the snapshot is current. `desired`
          *     and `deps` are absent on the stop path for an app the runner never held, and
@@ -9650,6 +8513,11 @@ export interface components {
             home: string;
             /** Project Slug */
             project_slug?: string | null;
+            /**
+             * Screens
+             * @default []
+             */
+            screens: components["schemas"]["AppScreen"][];
             /** Tabs */
             tabs: string[];
         };
@@ -9776,6 +8644,19 @@ export interface components {
             provider?: string | null;
             /** Styles */
             styles?: string[];
+        };
+        /** AppUsage */
+        AppUsage: {
+            /** Items */
+            items: components["schemas"]["UsageItem"][];
+            /** Kinds */
+            kinds: {
+                [key: string]: number;
+            };
+            /** Root */
+            root?: string | null;
+            /** Total */
+            total: number;
         };
         /** AssigneesOut */
         AssigneesOut: {
@@ -10050,287 +8931,14 @@ export interface components {
             text: string;
         };
         /**
-         * Backlink
-         * @description A note whose wikilink resolves here, and the line it does it on. At most
-         *     one entry per referring note, even when it links several times.
+         * Backlinks
+         * @description The "referenced by" read. An index lookup, not a scan.
          */
-        Backlink: {
-            /** Context */
-            context: string;
-            /** Line */
-            line: number;
-            /** Path */
-            path: string;
-        };
-        /** Body_analyze_birds_analyze_post */
-        Body_analyze_birds_analyze_post: {
-            /**
-             * Address
-             * @default
-             */
-            address: string;
-            /**
-             * Audio
-             * Format: binary
-             */
-            audio: string;
-            /**
-             * Device Name
-             * @default
-             */
-            device_name: string;
-            /**
-             * Lat
-             * @default
-             */
-            lat: string;
-            /**
-             * Location Id
-             * @default
-             */
-            location_id: string;
-            /**
-             * Lon
-             * @default
-             */
-            lon: string;
-            /**
-             * Min Conf
-             * @default 0.25
-             */
-            min_conf: number;
-            /**
-             * Mode
-             * @default adaptive
-             */
-            mode: string;
-            /**
-             * Station
-             * @default
-             */
-            station: string;
-            /**
-             * Token
-             * @default
-             */
-            token: string;
-        };
-        /** Body_analyze_register_station_birds_analyze_station_post */
-        Body_analyze_register_station_birds_analyze_station_post: {
-            /** Label */
-            label: string;
-            /** Token */
-            token: string;
-        };
-        /** Body_atlas_cluster_label_ep_birds_atlas_cluster__cluster_id__label_post */
-        Body_atlas_cluster_label_ep_birds_atlas_cluster__cluster_id__label_post: {
-            /** Label */
-            label?: string;
-        };
-        /** Body_atlas_settings_set_birds_atlas_settings_post */
-        Body_atlas_settings_set_birds_atlas_settings_post: {
-            /** Atlas Clip Save */
-            atlas_clip_save?: boolean;
-            /** Atlas Clip Storage Mb */
-            atlas_clip_storage_mb?: number;
-            /** Atlas Exemplars Per Cluster */
-            atlas_exemplars_per_cluster?: number;
-            /** Atlas Unknown Dist */
-            atlas_unknown_dist?: number;
-        };
-        /** Body_confirm_ep_birds_confirm_post */
-        Body_confirm_ep_birds_confirm_post: {
-            /** Ids */
-            ids: string;
-        };
-        /** Body_detection_status_ep_birds_detection_status_post */
-        Body_detection_status_ep_birds_detection_status_post: {
-            /** Id */
-            id: number;
-            /** Status */
-            status: string;
-        };
-        /** Body_device_restore_birds_device_restore_post */
-        Body_device_restore_birds_device_restore_post: {
-            /** Token */
-            token: string;
-        };
-        /** Body_device_upsert_birds_device_post */
-        Body_device_upsert_birds_device_post: {
-            /** Fixed Location Id */
-            fixed_location_id?: string;
-            /** Mode */
-            mode?: string;
-            /** Name */
-            name?: string;
-            /** Shared */
-            shared?: boolean | null;
-            /** Token */
-            token: string;
-            /**
-             * Update Only
-             * @default false
-             */
-            update_only: boolean;
-            /** User Agent */
-            user_agent?: string;
-        };
-        /** Body_exchange_finance_link_exchange_post */
-        Body_exchange_finance_link_exchange_post: {
-            /** Public Token */
-            public_token: string;
-        };
-        /** Body_friend_set_birds_friend_post */
-        Body_friend_set_birds_friend_post: {
-            /**
-             * Status
-             * @default accepted
-             */
-            status: string;
-            /** User A */
-            user_a: number;
-            /** User B */
-            user_b: number;
-        };
-        /** Body_home_set_birds_home_post */
-        Body_home_set_birds_home_post: {
-            /** Source */
-            source: string;
-        };
-        /** Body_location_create_or_update_birds_location_post */
-        Body_location_create_or_update_birds_location_post: {
-            /** Address */
-            address?: string;
-            /** Lat */
-            lat?: string;
-            /** Location Id */
-            location_id?: string;
-            /** Lon */
-            lon?: string;
-            /** Name */
-            name?: string;
-        };
-        /** Body_location_merge_birds_location_merge_post */
-        Body_location_merge_birds_location_merge_post: {
-            /** Dst */
-            dst: number;
-            /** Src */
-            src: number;
-        };
-        /** Body_location_restore_birds_location_restore_post */
-        Body_location_restore_birds_location_restore_post: {
-            /** Location Id */
-            location_id: number;
-        };
-        /** Body_recompute_analyze_birds_analyze_recompute_post */
-        Body_recompute_analyze_birds_analyze_recompute_post: {
-            /** Sf Thresh */
-            sf_thresh?: number;
-        };
-        /** Body_recordings_pin_ep_birds_recordings__rec_id__pin_post */
-        Body_recordings_pin_ep_birds_recordings__rec_id__pin_post: {
-            /** Pinned */
-            pinned: boolean;
-        };
-        /** Body_recordings_settings_set_birds_recordings_settings_post */
-        Body_recordings_settings_set_birds_recordings_settings_post: {
-            /** Rec Save */
-            rec_save?: boolean;
-            /** Rec Storage Mb */
-            rec_storage_mb?: number;
-            /** Rec When Full */
-            rec_when_full?: string;
-        };
-        /** Body_reject_ep_birds_reject_post */
-        Body_reject_ep_birds_reject_post: {
-            /** Ids */
-            ids: string;
-        };
-        /** Body_set_analyze_settings_birds_analyze_settings_post */
-        Body_set_analyze_settings_birds_analyze_settings_post: {
-            /** Min Conf */
-            min_conf?: number;
-            /** New Species Hits */
-            new_species_hits?: number;
-            /** Prior Floor */
-            prior_floor?: number;
-            /** Sensitivity */
-            sensitivity?: number;
-            /** Sf Thresh */
-            sf_thresh?: number;
-            /** Trust Radius Km */
-            trust_radius_km?: number;
-        };
-        /** Body_species_auto_ep_birds_species_auto_post */
-        Body_species_auto_ep_birds_species_auto_post: {
-            /**
-             * Common
-             * @default
-             */
-            common: string;
-            /** Lat */
-            lat: number;
-            /** Lon */
-            lon: number;
-            /** On */
-            on: boolean;
-            /** Sci */
-            sci: string;
-        };
-        /** Body_species_mute_ep_birds_species_mute_post */
-        Body_species_mute_ep_birds_species_mute_post: {
-            /**
-             * Common
-             * @default
-             */
-            common: string;
-            /** Lat */
-            lat: number;
-            /** Lon */
-            lon: number;
-            /** Sci */
-            sci: string;
-        };
-        /** Body_species_recording_set_birds_species_recording_post */
-        Body_species_recording_set_birds_species_recording_post: {
-            /** Save Mode */
-            save_mode: string;
-            /** Sci */
-            sci: string;
-        };
-        /** Body_species_review_ep_birds_species_review_post */
-        Body_species_review_ep_birds_species_review_post: {
-            /**
-             * Common
-             * @default
-             */
-            common: string;
-            /**
-             * Lat
-             * @default
-             */
-            lat: string;
-            /**
-             * Lon
-             * @default
-             */
-            lon: string;
-            /** Sci */
-            sci: string;
-        };
-        /** Body_species_unmute_ep_birds_species_unmute_post */
-        Body_species_unmute_ep_birds_species_unmute_post: {
-            /**
-             * Common
-             * @default
-             */
-            common: string;
-            /** Lat */
-            lat: number;
-            /** Lon */
-            lon: number;
-            /** Sci */
-            sci: string;
+        Backlinks: {
+            /** Ref */
+            ref: string;
+            /** Refs */
+            refs: string[];
         };
         /** Body_upload_attachment_chat_attachments_post */
         Body_upload_attachment_chat_attachments_post: {
@@ -10349,15 +8957,6 @@ export interface components {
              * @default
              */
             thread_id: string;
-        };
-        /** Body_user_upsert_birds_user_post */
-        Body_user_upsert_birds_user_post: {
-            /** Email */
-            email: string;
-            /** Name */
-            name?: string;
-            /** Role */
-            role?: string;
         };
         /**
          * Branch
@@ -10465,6 +9064,15 @@ export interface components {
             /** Snapshot Sha */
             snapshot_sha?: string | null;
         };
+        /** BranchFailure */
+        BranchFailure: {
+            /** Branch */
+            branch: string;
+            /** Error */
+            error: string;
+            /** Project Slug */
+            project_slug: string;
+        };
         /** BranchRecord */
         BranchRecord: {
             /** Branch */
@@ -10499,18 +9107,15 @@ export interface components {
             /** Project Slug */
             project_slug: string;
         };
-        /** BriefBody */
-        BriefBody: {
-            /**
-             * Checkpoint
-             * @default during
-             */
-            checkpoint: string;
-            /**
-             * Force
-             * @default false
-             */
-            force: boolean;
+        /**
+         * BranchService
+         * @description What the branch service's own merged-branch reaper did.
+         */
+        BranchService: {
+            /** Failed */
+            failed: components["schemas"]["BranchFailure"][];
+            /** Reaped */
+            reaped: number;
         };
         /** BudgetPatch */
         BudgetPatch: {
@@ -10570,14 +9175,19 @@ export interface components {
             /** Slug */
             slug: string;
         };
-        /**
-         * Capabilities
-         * @description What this provider exposes, in the "<app>.<verb>" shape used across the
-         *     Workshop. Every entry maps to a route in this file.
-         */
-        Capabilities: {
-            /** Provides */
-            provides: string[];
+        /** CallAnswer */
+        CallAnswer: {
+            /** Error */
+            error?: string | null;
+            /** Image */
+            image?: string | null;
+            /** Ok */
+            ok: boolean;
+            /**
+             * Text
+             * @default
+             */
+            text: string;
         };
         /**
          * CardState
@@ -10607,6 +9217,57 @@ export interface components {
             card_states: {
                 [key: string]: components["schemas"]["StoredCardState"];
             };
+        };
+        /** CatalogApp */
+        CatalogApp: {
+            /** Default */
+            default: boolean;
+            /** Description */
+            description: string;
+            /** Installed */
+            installed: boolean;
+            /** Name */
+            name: string;
+            /** On */
+            on: boolean;
+            /** Repo */
+            repo: string;
+            /** Running */
+            running: boolean;
+            /** Slug */
+            slug: string;
+        };
+        /** CatalogDefaults */
+        CatalogDefaults: {
+            /** Error */
+            error?: string | null;
+            /** Failed */
+            failed: {
+                [key: string]: string;
+            };
+            /** Started */
+            started: string[];
+        };
+        /** CatalogInstalled */
+        CatalogInstalled: {
+            /** Dir */
+            dir: string;
+            /** Slug */
+            slug: string;
+        };
+        /** CatalogList */
+        CatalogList: {
+            /** Apps */
+            apps: components["schemas"]["CatalogApp"][];
+            /** Configured */
+            configured: boolean;
+            /** Error */
+            error?: string | null;
+        };
+        /** CatalogToggle */
+        CatalogToggle: {
+            /** On */
+            on: boolean;
         };
         /** Change */
         Change: {
@@ -10787,12 +9448,56 @@ export interface components {
             /** Url */
             url?: string | null;
         };
+        /** ChatApp */
+        ChatApp: {
+            /**
+             * About
+             * @default
+             */
+            about: string;
+            /**
+             * Access
+             * @default []
+             */
+            access: components["schemas"]["AccessOption"][];
+            /**
+             * Follow
+             * @default false
+             */
+            follow: boolean;
+            /** Label */
+            label: string;
+            /** Slug */
+            slug: string;
+        };
         /** ChatModeSet */
         ChatModeSet: {
             /** Id */
             id: string;
             /** Mode */
             mode?: string | null;
+        };
+        /**
+         * ChatPlace
+         * @description One app's place for a chat: the app, a short name, the full title, the
+         *     Workshop page that shows it, and when the chat last worked there.
+         */
+        ChatPlace: {
+            /** App */
+            app: string;
+            /** App Label */
+            app_label: string;
+            /** At */
+            at?: number | null;
+            /** Label */
+            label: string;
+            /** Path */
+            path: string;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
         };
         /**
          * ChatPrefs
@@ -10980,6 +9685,26 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** ClaimBody */
+        ClaimBody: {
+            /**
+             * Device
+             * @default 0
+             */
+            device: number;
+            /** Kind */
+            kind: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Ttl S
+             * @default 15
+             */
+            ttl_s: number;
+        };
         /** CleanBody */
         CleanBody: {
             /**
@@ -11014,6 +9739,27 @@ export interface components {
             repo: string;
         };
         /**
+         * CleanupPlan
+         * @description A retention pass's result. Checkout rows carry `action` (remove, park or
+         *     keep); throwaway rows are all removals.
+         */
+        CleanupPlan: {
+            /** Applied */
+            applied: boolean;
+            branch_service?: components["schemas"]["BranchService"] | null;
+            /** Checkouts */
+            checkouts: components["schemas"]["Removal"][];
+            /** Seconds */
+            seconds: number;
+            /** Skipped */
+            skipped: components["schemas"]["Skipped"][];
+            /** Started At */
+            started_at: number;
+            /** Throwaway */
+            throwaway: components["schemas"]["Removal"][];
+            trash: components["schemas"]["TrashSweep"];
+        };
+        /**
          * CleanupResult
          * @description Branch slugs, not branch refs. A branch still ahead of the base is KEPT:
          *     cleanup is best-effort per branch and never discards unmerged work.
@@ -11023,6 +9769,11 @@ export interface components {
             kept: string[];
             /** Removed */
             removed: string[];
+        };
+        /** CleanupStarted */
+        CleanupStarted: {
+            /** Started */
+            started: boolean;
         };
         /**
          * ClearResult
@@ -11044,6 +9795,33 @@ export interface components {
             /** Session Reset */
             session_reset: boolean;
         };
+        /** ClientError */
+        ClientError: {
+            /**
+             * Component Stack
+             * @default
+             */
+            component_stack: string;
+            /** Message */
+            message: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** Path */
+            path: string;
+            /**
+             * Stack
+             * @default
+             */
+            stack: string;
+            /**
+             * User Agent
+             * @default
+             */
+            user_agent: string;
+        };
         /** ClientIdIn */
         ClientIdIn: {
             /**
@@ -11051,6 +9829,45 @@ export interface components {
              * @default
              */
             client_id: string;
+        };
+        /** ClientMedia */
+        ClientMedia: {
+            /**
+             * App
+             * @default
+             */
+            app: string;
+            /** Event */
+            event: string;
+            /** Held */
+            held?: boolean | null;
+            /** Muted */
+            muted?: boolean | null;
+            /**
+             * Page
+             * @default
+             */
+            page: string;
+            /**
+             * Shown App
+             * @default
+             */
+            shown_app: string;
+            /**
+             * Url
+             * @default
+             */
+            url: string;
+            /**
+             * User Agent
+             * @default
+             */
+            user_agent: string;
+            /**
+             * Visible
+             * @default true
+             */
+            visible: boolean;
         };
         /** CommitBody */
         CommitBody: {
@@ -11477,13 +10294,27 @@ export interface components {
                 [key: string]: string;
             };
         };
-        /** DecideBody */
-        DecideBody: {
+        /**
+         * CustomSpeechCommand
+         * @description The operator's own command: any of its phrases types `text`. A blank
+         *     id is given one.
+         */
+        CustomSpeechCommand: {
             /**
-             * Checkpoint
-             * @default during
+             * Id
+             * @default
              */
-            checkpoint: string;
+            id: string;
+            /** Phrases */
+            phrases: string[];
+            /** Text */
+            text: string;
+            /**
+             * When
+             * @default alone
+             * @enum {string}
+             */
+            when: "alone" | "trigger" | "off";
         };
         /** DefaultsBody */
         DefaultsBody: {
@@ -11534,6 +10365,11 @@ export interface components {
         DeletedOut: {
             /** Deleted */
             deleted: boolean;
+        };
+        /** Delivered */
+        Delivered: {
+            /** Delivered */
+            delivered: boolean;
         };
         /** DepSpec */
         DepSpec: {
@@ -11709,6 +10545,49 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** DictationDelivered */
+        DictationDelivered: {
+            /** Delivered */
+            delivered: number;
+            /** Subscribers */
+            subscribers: number;
+        };
+        /** DictationEnded */
+        DictationEnded: {
+            /** Ended At */
+            ended_at: string;
+            /** Id */
+            id: string;
+            /**
+             * Imported
+             * @default false
+             */
+            imported: boolean;
+            /** Pieces */
+            pieces?: components["schemas"]["Piece"][] | null;
+            /** Places */
+            places?: components["schemas"]["Place"][];
+            /** Started At */
+            started_at: string;
+            /**
+             * Status
+             * @default done
+             * @enum {string}
+             */
+            status: "done" | "cancelled";
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+        };
+        /** DictationSoFar */
+        DictationSoFar: {
+            /** Pieces */
+            pieces?: components["schemas"]["Piece"][];
+            /** Started At */
+            started_at: string;
+        };
         /**
          * DiffResult
          * @description `summary` is the `--shortstat` line ("" when nothing changed). `patch` is
@@ -11781,6 +10660,17 @@ export interface components {
              */
             keep_imported: boolean;
         };
+        /** Disk */
+        Disk: {
+            /** Free */
+            free: number;
+            /** Mount */
+            mount: string;
+            /** Total */
+            total: number;
+            /** Used */
+            used: number;
+        };
         /**
          * DocContent
          * @description Raw markdown. `mtime` is present on a write and absent on a read, which
@@ -11832,6 +10722,7 @@ export interface components {
             client_id: string;
             /** Key */
             key: string;
+            settings?: components["schemas"]["DraftSettings"] | null;
             /** Superseded */
             superseded?: boolean | null;
             /** Text */
@@ -11855,6 +10746,7 @@ export interface components {
              * @default
              */
             client_id: string;
+            settings?: components["schemas"]["DraftSettings"] | null;
             /**
              * Text
              * @default
@@ -11865,6 +10757,21 @@ export interface components {
              * @default 0
              */
             ts: number;
+        };
+        /**
+         * DraftSettings
+         * @description What was picked in a blank chat before any message existed. A field that
+         *     is absent was never chosen, which is not the same as the default's value.
+         */
+        DraftSettings: {
+            /** Effort */
+            effort?: string | null;
+            /** Mode */
+            mode?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Permission Mode */
+            permission_mode?: string | null;
         };
         /**
          * DraftTask
@@ -12292,6 +11199,11 @@ export interface components {
             branches: components["schemas"]["Branch"][];
             /** Queued Held */
             queued_held: number;
+            /**
+             * Rewound
+             * @default false
+             */
+            rewound: boolean;
         };
         /**
          * ForkThread
@@ -12425,12 +11337,23 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
-        /** HistoryRecord */
-        HistoryRecord: {
-            /** Payload */
-            payload: Record<string, never>;
-            /** Ts */
-            ts: string;
+        /** Holder */
+        Holder: {
+            /** Holder */
+            holder: string;
+            /** Id */
+            id: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /** Resource */
+            resource: string;
+            /** Scope */
+            scope?: string | null;
+            /** Since */
+            since?: number | null;
         };
         /** ImportProjectIn */
         ImportProjectIn: {
@@ -12483,20 +11406,6 @@ export interface components {
             /** Model */
             model: string;
         };
-        /** IngestHelp */
-        IngestHelp: {
-            /** Hint */
-            hint: string;
-            /** Viewer */
-            viewer: string;
-        };
-        /** IngestResult */
-        IngestResult: {
-            /** Metrics Seen */
-            metrics_seen: number;
-            /** Stored */
-            stored: boolean;
-        };
         /** InjectMessage */
         InjectMessage: {
             /** Attachments */
@@ -12515,6 +11424,9 @@ export interface components {
          * @description THE CHAT HAS THE MESSAGE either way -- it is in the log before any
          *     delivery is attempted, so re-sending would show it twice. `delivered` says
          *     whether the RUNNING turn took it; false means a fresh turn was started.
+         *     With no turn running there is no `turn_id`: `queued_for_turn` true means
+         *     it waits behind a compact or clear, false means it was NOT taken and goes
+         *     out as an ordinary turn.
          */
         InjectResult: {
             /** At Segment */
@@ -12531,7 +11443,7 @@ export interface components {
             /** Reason */
             reason: string;
             /** Turn Id */
-            turn_id: string;
+            turn_id?: string | null;
         };
         /** InstallIn */
         InstallIn: {
@@ -12829,12 +11741,28 @@ export interface components {
             /** Running */
             running: number;
         };
-        /** LabelBody */
-        LabelBody: {
+        /** KeptDictation */
+        KeptDictation: {
+            /** Ended At */
+            ended_at?: string | null;
             /** Id */
-            id: number;
-            /** Label */
-            label: string;
+            id: string;
+            /** Pieces */
+            pieces: components["schemas"]["Piece"][];
+            /** Started At */
+            started_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "live" | "done" | "cancelled" | "interrupted";
+            /** Updated At */
+            updated_at: string;
+        };
+        /** KeptDictations */
+        KeptDictations: {
+            /** Dictations */
+            dictations: components["schemas"]["KeptDictation"][];
         };
         /**
          * LabelCount
@@ -12897,6 +11825,34 @@ export interface components {
             apps: components["schemas"]["LauncherCard"][];
             /** Incomplete */
             incomplete?: string | null;
+        };
+        /** Layout */
+        Layout: {
+            /** Order */
+            order: string[];
+        };
+        /** LayoutBody */
+        LayoutBody: {
+            /** Order */
+            order: string[];
+        };
+        /** LeaseIn */
+        LeaseIn: {
+            /** Holder */
+            holder: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /** Pid */
+            pid?: number | null;
+            /** Resource */
+            resource: string;
+            /** Scope */
+            scope?: string | null;
+            /** Ttl S */
+            ttl_s?: number | null;
         };
         /**
          * LeaseList
@@ -13028,20 +11984,10 @@ export interface components {
             /** Preempt Grace Sec */
             preempt_grace_sec: number;
         };
-        /** LiveBody */
-        LiveBody: {
-            /**
-             * Cols
-             * @default []
-             */
-            cols: unknown[];
-            /**
-             * Hearing
-             * @default []
-             */
-            hearing: unknown[];
-            /** Token */
-            token: string;
+        /** LinkPage */
+        LinkPage: {
+            /** Ok */
+            ok: boolean;
         };
         /** LocalRequest */
         LocalRequest: {
@@ -13063,49 +12009,6 @@ export interface components {
             model: string;
             /** Response */
             response: string;
-        };
-        /** LocationBody */
-        LocationBody: {
-            /** Accuracy M */
-            accuracy_m?: number | null;
-            /** Altitude M */
-            altitude_m?: number | null;
-            /** Client Ts */
-            client_ts?: string | null;
-            /** Heading Deg */
-            heading_deg?: number | null;
-            /** Lat */
-            lat: number;
-            /** Lng */
-            lng: number;
-            /** Source */
-            source?: string | null;
-            /** Speed Mps */
-            speed_mps?: number | null;
-        };
-        /**
-         * LocationRecord
-         * @description One stored position ping, exactly as `services.location` persists it.
-         */
-        LocationRecord: {
-            /** Accuracy M */
-            accuracy_m?: number | null;
-            /** Altitude M */
-            altitude_m?: number | null;
-            /** Client Ts */
-            client_ts?: string | null;
-            /** Heading Deg */
-            heading_deg?: number | null;
-            /** Lat */
-            lat: number;
-            /** Lng */
-            lng: number;
-            /** Source */
-            source?: string | null;
-            /** Speed Mps */
-            speed_mps?: number | null;
-            /** Ts */
-            ts: string;
         };
         /** LoginBody */
         LoginBody: {
@@ -13583,7 +12486,8 @@ export interface components {
          * @description Every branch is an acceptance -- running now, handed to the turn in
          *     flight, or queued. `injected` means the bytes reached the running process,
          *     NOT that the model read them: measured, the model addresses a mid-turn
-         *     message at the end of its current plan.
+         *     message at the end of its current plan. `turn_id` is absent when the
+         *     message was queued on a chat with nothing running.
          */
         MessageAccepted: {
             /** At Segment */
@@ -13594,25 +12498,7 @@ export interface components {
             /** Queued */
             queued?: boolean | null;
             /** Turn Id */
-            turn_id: string;
-        };
-        /**
-         * MetricLatest
-         * @description One metric's most-recent reading. `qty` is `Any`: Health Auto Export's
-         *     own payload shape varies by metric (a bare number for most, a structured
-         *     object for some, e.g. blood pressure's systolic/diastolic pair), and this
-         *     route stores whatever it was handed rather than picking a schema HAE
-         *     itself does not commit to.
-         */
-        MetricLatest: {
-            /** Date */
-            date?: string | null;
-            /** Qty */
-            qty?: unknown;
-            /** Ts */
-            ts?: string | null;
-            /** Units */
-            units?: string | null;
+            turn_id?: string | null;
         };
         /** MintIn */
         MintIn: {
@@ -13643,13 +12529,67 @@ export interface components {
         /** ModelCaps */
         ModelCaps: {
             efforts: components["schemas"]["EffortCaps"];
+            modes?: components["schemas"]["ModesPayload"] | null;
             /** Vendor */
             vendor: string;
         };
         /**
+         * ModelDefaultsIn
+         * @description Only what is SENT is written, and "" clears, as for `ChatPrefs`.
+         *     `scope_models` maps a scope's context key to a model id, "" to clear it.
+         */
+        ModelDefaultsIn: {
+            /** Compaction Model */
+            compaction_model?: string | null;
+            /** Default Model */
+            default_model?: string | null;
+            /** Scope Compaction Models */
+            scope_compaction_models?: {
+                [key: string]: string;
+            } | null;
+            /** Scope Models */
+            scope_models?: {
+                [key: string]: string;
+            } | null;
+        };
+        /**
+         * ModelDefaultsOut
+         * @description The operator's model defaults with the choices for each. A null
+         *     `default_model` falls back to `deployment_model`; a null
+         *     `compaction_model` leaves every compaction on the chat's own model.
+         */
+        ModelDefaultsOut: {
+            /** Compaction Model */
+            compaction_model?: string | null;
+            /** Compaction Models */
+            compaction_models: components["schemas"]["ModelOption"][];
+            /** Default Model */
+            default_model?: string | null;
+            /** Deployment Model */
+            deployment_model: string;
+            /** Models */
+            models: components["schemas"]["ModelOption"][];
+            /** Scopes */
+            scopes: components["schemas"]["ScopeModelDefault"][];
+        };
+        /**
+         * ModelOption
+         * @description One model a default may name. `window` is 0 when nothing reported it.
+         */
+        ModelOption: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Provider Id */
+            provider_id: string;
+            /** Window */
+            window: number;
+        };
+        /**
          * ModesPayload
-         * @description Vendor-level, not per model: a permission mode is a property of the CLI
-         *     running the turn, not of the model answering it.
+         * @description Vendor-level: a permission mode is a property of the CLI running the
+         *     turn. A model served by a local server narrows it (`ModelCaps.modes`).
          */
         ModesPayload: {
             /** Default */
@@ -13719,31 +12659,17 @@ export interface components {
             unrestricted_tools: boolean;
         };
         /**
-         * Note
-         * @description One note in full, with its outgoing links already resolved so the reader
-         *     does not need a second call to render them.
+         * NoteDeleted
+         * @description `existed` is False when the note was already gone. Delete is idempotent
+         *     and this is how the caller tells the two apart without an error.
          */
-        Note: {
-            /** Content */
-            content: string;
-            /** Links */
-            links: components["schemas"]["NoteLink"][];
-            /** Modified */
-            modified: number;
-            /** Path */
-            path: string;
-            /** Title */
-            title: string;
-        };
-        /** NoteCreate */
-        NoteCreate: {
-            /**
-             * Content
-             * @default
-             */
-            content: string;
-            /** Path */
-            path: string;
+        NoteDeleted: {
+            /** Existed */
+            existed: boolean;
+            /** Note Id */
+            note_id: string;
+            /** Scope */
+            scope: string;
         };
         /**
          * NoteDetail
@@ -13768,44 +12694,6 @@ export interface components {
             scope: string;
         };
         /**
-         * NoteLink
-         * @description One outgoing wikilink. `raw` is what was written between the brackets,
-         *     `target` is it stripped of any `#heading` / `|alias`, and `resolved` is the
-         *     vault-relative path it points at -- null when nothing matches, which is what
-         *     makes a broken link visible rather than silently dropped.
-         */
-        NoteLink: {
-            /** Raw */
-            raw: string;
-            /** Resolved */
-            resolved?: string | null;
-            /** Target */
-            target?: string | null;
-        };
-        /** NoteList */
-        NoteList: {
-            /** Count */
-            count: number;
-            /** Notes */
-            notes: components["schemas"]["NoteMeta"][];
-        };
-        /**
-         * NoteMeta
-         * @description A note as the LIST sees it: cheap metadata, no content. `title` is the
-         *     note's first-line name, which is also what `update_note` syncs the filename
-         *     to.
-         */
-        NoteMeta: {
-            /** Modified */
-            modified: number;
-            /** Path */
-            path: string;
-            /** Size */
-            size: number;
-            /** Title */
-            title: string;
-        };
-        /**
          * NoteRef
          * @description What a write answers with: the address of the note, not the note. The
          *     caller already holds the content it just sent.
@@ -13815,11 +12703,6 @@ export interface components {
             note_id: string;
             /** Scope */
             scope: string;
-        };
-        /** NoteRename */
-        NoteRename: {
-            /** To */
-            to: string;
         };
         /**
          * NoteRow
@@ -13860,30 +12743,6 @@ export interface components {
             /** Updated */
             updated?: string | null;
         };
-        /** NoteUpdate */
-        NoteUpdate: {
-            /** Content */
-            content: string;
-        };
-        /**
-         * NoteWritten
-         * @description The result of a create, update or rename. `links_updated` and
-         *     `notes_rewritten` appear only when the write MOVED the file -- an explicit
-         *     rename, or an update whose new first line changed the name -- since only a
-         *     move rewrites referring wikilinks.
-         */
-        NoteWritten: {
-            /** Links Updated */
-            links_updated?: number | null;
-            /** Modified */
-            modified: number;
-            /** Notes Rewritten */
-            notes_rewritten?: number | null;
-            /** Path */
-            path: string;
-            /** Title */
-            title: string;
-        };
         /**
          * OkOut
          * @description ADR 0023 clause 7 bans `{"ok": true}` as a mutation body and this model
@@ -13907,6 +12766,42 @@ export interface components {
             cancelled: boolean;
             /** Operation */
             operation: string;
+        };
+        /** OptionsAnswer */
+        OptionsAnswer: {
+            /**
+             * Follow
+             * @default true
+             */
+            follow: boolean;
+            /** Options */
+            options: string[] | null;
+            /**
+             * View
+             * @default follow
+             */
+            view: string;
+        };
+        /** OverlayApp */
+        OverlayApp: {
+            /**
+             * Events
+             * @default []
+             */
+            events: string[];
+            /** Shortcut */
+            shortcut?: string | null;
+            /** Slug */
+            slug: string;
+            /** Title */
+            title: string;
+            /** Url */
+            url: string;
+        };
+        /** OverlayList */
+        OverlayList: {
+            /** Overlays */
+            overlays: components["schemas"]["OverlayApp"][];
         };
         /**
          * OverrideCleared
@@ -13957,22 +12852,59 @@ export interface components {
             /** Total */
             total?: number | null;
         };
-        /** Page[HistoryRecord] */
-        Page_HistoryRecord_: {
-            /** Items */
-            items: components["schemas"]["HistoryRecord"][];
-            page: components["schemas"]["PageMeta"];
+        /** PageState */
+        PageState: {
+            /** App */
+            app?: string | null;
+            /**
+             * Follow
+             * @default true
+             */
+            follow: boolean;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /** Level */
+            level: string;
+            /** Online */
+            online: boolean;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /**
+             * Tools
+             * @default []
+             */
+            tools: components["schemas"]["PageTool"][];
+            /**
+             * View
+             * @default follow
+             */
+            view: string;
+        };
+        /** PageTool */
+        PageTool: {
+            /**
+             * Acts
+             * @default true
+             */
+            acts: boolean;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Name */
+            name: string;
         };
         /** Page[Job] */
         Page_Job_: {
             /** Items */
             items: components["schemas"]["Job"][];
-            page: components["schemas"]["PageMeta"];
-        };
-        /** Page[LocationRecord] */
-        Page_LocationRecord_: {
-            /** Items */
-            items: components["schemas"]["LocationRecord"][];
             page: components["schemas"]["PageMeta"];
         };
         /** Page[Task] */
@@ -14011,6 +12943,59 @@ export interface components {
             permission_mode?: string | null;
             /** State */
             state: string;
+        };
+        /** Piece */
+        Piece: {
+            /** At */
+            at: string;
+            place: components["schemas"]["Place"];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "placed" | "waiting" | "clipboard" | "unplaced" | "sent";
+            /** Text */
+            text: string;
+        };
+        /**
+         * Place
+         * @description Where dictated words went: a field (`App › page › field`), a chat (its
+         *     title) or the clipboard, and the page it is on.
+         */
+        Place: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "field" | "chat" | "clipboard";
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Path
+             * @default
+             */
+            path: string;
+        };
+        /**
+         * PolicyChanges
+         * @description Only the keys present change. An app set to null drops its overrides.
+         */
+        PolicyChanges: {
+            /** Apps */
+            apps?: {
+                [key: string]: components["schemas"]["AppPolicy"] | null;
+            } | null;
+            /** Keep Free Gb */
+            keep_free_gb?: number | null;
+            /** Limit Gb */
+            limit_gb?: number | null;
+            /** Retention Days */
+            retention_days?: number | null;
+            /** Trash Days */
+            trash_days?: number | null;
         };
         /**
          * PortAllocation
@@ -14696,8 +13681,20 @@ export interface components {
             queue_error: string;
             /** Queue Held */
             queue_held: boolean;
+            queue_waiting?: components["schemas"]["QueueWaiting"] | null;
             /** Queued */
             queued: components["schemas"]["QueuedMessage"][];
+        };
+        /**
+         * QueueWaiting
+         * @description `reason` is a code (`usage_limit`); `until` is when it is expected to
+         *     pass, ISO UTC, if known.
+         */
+        QueueWaiting: {
+            /** Reason */
+            reason: string;
+            /** Until */
+            until?: string | null;
         };
         /**
          * QueuedMessage
@@ -14727,6 +13724,7 @@ export interface components {
             text: string;
             /** Ts */
             ts: string;
+            when?: components["schemas"]["SendRule"] | null;
         };
         /**
          * QuiesceResult
@@ -14817,23 +13815,25 @@ export interface components {
             /** Why */
             why: string;
         };
-        /** ReasonBody */
-        ReasonBody: {
-            /**
-             * Checkpoint
-             * @default during
-             */
-            checkpoint: string;
-            /**
-             * Dispatch
-             * @default no
-             */
-            dispatch: string;
-            /**
-             * Force Llm
-             * @default false
-             */
-            force_llm: boolean;
+        /**
+         * RearmIn
+         * @description The rule a schedule starts over with.
+         */
+        RearmIn: {
+            /** Every Min */
+            every_min?: number | null;
+            /** Label */
+            label?: string | null;
+            /** Max Sends */
+            max_sends?: number | null;
+            /** Repeat */
+            repeat?: ("after_reply" | "every" | "once") | null;
+            /** Start At */
+            start_at?: string | null;
+            /** Text */
+            text?: string | null;
+            /** Until At */
+            until_at?: string | null;
         };
         /** RecentEvents */
         RecentEvents: {
@@ -14950,6 +13950,35 @@ export interface components {
             /** Update Available */
             update_available: boolean;
         };
+        /**
+         * Removal
+         * @description One thing the retention pass removed or would remove. `done`, `error`,
+         *     `trash_id` and `saved_ref` are present once a pass has been applied.
+         */
+        Removal: {
+            /** Action */
+            action?: string | null;
+            /** App */
+            app: string;
+            /** Branch */
+            branch?: string | null;
+            /** Bytes */
+            bytes?: number | null;
+            /** Done */
+            done?: boolean | null;
+            /** Error */
+            error?: string | null;
+            /** Head */
+            head?: string | null;
+            /** Path */
+            path: string;
+            /** Saved Ref */
+            saved_ref?: string | null;
+            /** Trash Id */
+            trash_id?: string | null;
+            /** Why */
+            why: string;
+        };
         /** RenameBranch */
         RenameBranch: {
             /** Name */
@@ -15003,6 +14032,11 @@ export interface components {
             entries: components["schemas"]["StatusEntry"][];
             /** Repo */
             repo: string;
+        };
+        /** Reported */
+        Reported: {
+            /** Ok */
+            ok: boolean;
         };
         /** RescopeThread */
         RescopeThread: {
@@ -15266,10 +14300,119 @@ export interface components {
             /** Targets */
             targets: components["schemas"]["RunnerTarget"][];
         };
-        /** ScheduleBody */
-        ScheduleBody: {
-            /** Data */
-            data: Record<string, never>;
+        /** ScanStarted */
+        ScanStarted: {
+            /** Scanning */
+            scanning: boolean;
+            /** Started */
+            started: boolean;
+        };
+        /** Schedule */
+        Schedule: {
+            /** Created At */
+            created_at: string;
+            /**
+             * Driver
+             * @enum {string}
+             */
+            driver: "workshop" | "app";
+            /** Every Min */
+            every_min?: number | null;
+            /** Id */
+            id: string;
+            /** Label */
+            label?: string | null;
+            /** Last Sent At */
+            last_sent_at?: string | null;
+            /** Max Sends */
+            max_sends?: number | null;
+            /** Next At */
+            next_at?: string | null;
+            /**
+             * Repeat
+             * @enum {string}
+             */
+            repeat: "after_reply" | "every" | "once";
+            /**
+             * Sent
+             * @default 0
+             */
+            sent: number;
+            set_by: components["schemas"]["SetBy"];
+            /** Start At */
+            start_at?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "paused" | "done" | "deleted";
+            /** Text */
+            text: string;
+            /** Until At */
+            until_at?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+            /** Why */
+            why?: string | null;
+        };
+        /** ScheduleIn */
+        ScheduleIn: {
+            /** Every Min */
+            every_min?: number | null;
+            /** Href */
+            href?: string | null;
+            /** Label */
+            label?: string | null;
+            /** Max Sends */
+            max_sends?: number | null;
+            /**
+             * Repeat
+             * @default after_reply
+             * @enum {string}
+             */
+            repeat: "after_reply" | "every" | "once";
+            /** Start At */
+            start_at?: string | null;
+            /** Text */
+            text: string;
+            /** Until At */
+            until_at?: string | null;
+        };
+        /** SchedulePatch */
+        SchedulePatch: {
+            /** Every Min */
+            every_min?: number | null;
+            /** Label */
+            label?: string | null;
+            /** Max Sends */
+            max_sends?: number | null;
+            /** Repeat */
+            repeat?: ("after_reply" | "every" | "once") | null;
+            /** Start At */
+            start_at?: string | null;
+            /** Status */
+            status?: ("active" | "paused" | "done") | null;
+            /** Text */
+            text?: string | null;
+            /** Until At */
+            until_at?: string | null;
+            /** Why */
+            why?: string | null;
+        };
+        /**
+         * Scheduled
+         * @description Everything set to send into this chat. `count` is what the composer's
+         *     dot says: active schedules, messages waiting on a rule, wake-ups.
+         */
+        Scheduled: {
+            /** Count */
+            count: number;
+            /** Schedules */
+            schedules: components["schemas"]["Schedule"][];
+            /** Waiting */
+            waiting: number;
+            /** Wakeups */
+            wakeups: components["schemas"]["WakeUp"][];
         };
         /**
          * ScopeDefaults
@@ -15334,6 +14477,32 @@ export interface components {
             scope: string;
         };
         /**
+         * ScopeModelDefault
+         * @description One scope's model default. `model` is what the operator chose (null when
+         *     he has not); `fallback_model` is what runs without that choice and
+         *     `fallback_source` the resolution rung it comes from ("scope" when the scope
+         *     declares one, else "principal" or "deployment"). `compaction_model` is the
+         *     model its compactions go to when the operator chose one, and
+         *     `compaction_fallback` what applies without that choice (the global
+         *     compaction model, null for the chat's own).
+         */
+        ScopeModelDefault: {
+            /** Compaction Fallback */
+            compaction_fallback?: string | null;
+            /** Compaction Model */
+            compaction_model?: string | null;
+            /** Fallback Model */
+            fallback_model: string;
+            /** Fallback Source */
+            fallback_source: string;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Model */
+            model?: string | null;
+        };
+        /**
          * ScopeNode
          * @description The same keys as the flat list, shaped so a picker can convey containment
          *     by indentation alone without building a tree widget. `parent` is null when
@@ -15393,12 +14562,34 @@ export interface components {
             /** Scopes */
             scopes: string[];
         };
+        /** SearchHit */
+        SearchHit: {
+            /** Kind */
+            kind: string;
+            /** Ref */
+            ref: string;
+            /** Scope */
+            scope?: string | null;
+            /** Score */
+            score: number;
+            /**
+             * Status
+             * @default
+             */
+            status: string;
+            /** Text */
+            text: string;
+            /** Title */
+            title?: string | null;
+            /** Ts */
+            ts?: string | null;
+        };
         /** SearchResult */
         SearchResult: {
             /** Corpus */
             corpus: number;
             /** Hits */
-            hits: components["schemas"]["routes__memory__SearchHit"][];
+            hits: components["schemas"]["SearchHit"][];
             /** Mode */
             mode: string;
             /** Rebuilding */
@@ -15406,14 +14597,39 @@ export interface components {
             /** Searched */
             searched: number;
         };
-        /** SearchResults */
-        SearchResults: {
-            /** Count */
-            count: number;
-            /** Query */
-            query: string;
-            /** Results */
-            results: components["schemas"]["notes_app__routes__SearchHit"][];
+        /** Send */
+        Send: {
+            /** At */
+            at: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "sent" | "waiting";
+        };
+        /** SendIn */
+        SendIn: {
+            /** Text */
+            text?: string | null;
+        };
+        /**
+         * SendRule
+         * @description When a queued message may go out (services/send_rules). `kind` is one
+         *     of after_turn | at | usage_reset | after_thread | hold; `at` is ISO with a
+         *     zone, for `at` and a resolved `usage_reset`; `thread_id` for after_thread.
+         */
+        SendRule: {
+            /** At */
+            at?: string | null;
+            /** Kind */
+            kind: string;
+            /** Thread Id */
+            thread_id?: string | null;
+        };
+        /** Sends */
+        Sends: {
+            /** Sends */
+            sends: components["schemas"]["Send"][];
         };
         /**
          * ServiceLog
@@ -15570,6 +14786,61 @@ export interface components {
             /** Thread Id */
             thread_id?: string | null;
         };
+        /** SessionChanged */
+        SessionChanged: {
+            /** Changed */
+            changed: number;
+            /** Ok */
+            ok: boolean;
+        };
+        /** SessionLabelBody */
+        SessionLabelBody: {
+            /** Label */
+            label?: string | null;
+        };
+        /** SessionList */
+        SessionList: {
+            /** Sessions */
+            sessions: components["schemas"]["SessionRow"][];
+        };
+        /**
+         * SessionRow
+         * @description A signed-in browser, identified by a 12-character prefix of its session
+         *     hash. `label` is the operator's name for it; `current` is the asker.
+         */
+        SessionRow: {
+            /** Created At */
+            created_at?: string | null;
+            /**
+             * Current
+             * @default false
+             */
+            current: boolean;
+            /** Id */
+            id: string;
+            /** Label */
+            label?: string | null;
+            /** Last Seen */
+            last_seen?: string | null;
+            /** User Agent */
+            user_agent?: string | null;
+        };
+        /**
+         * SetBy
+         * @description `you` is the operator; `app` names the service token's holder; `chat`
+         *     is the chat the schedule sends into, which set it for itself.
+         */
+        SetBy: {
+            /** Href */
+            href?: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "you" | "app" | "chat";
+            /** Name */
+            name?: string | null;
+        };
         /** SetChatMode */
         SetChatMode: {
             /** Mode */
@@ -15588,6 +14859,15 @@ export interface components {
              */
             text: string;
         };
+        /** SetPermissionMode */
+        SetPermissionMode: {
+            /** Mode */
+            mode: string;
+        };
+        /** SetSendRuleIn */
+        SetSendRuleIn: {
+            when?: components["schemas"]["SendRule"] | null;
+        };
         /**
          * SetThreadArming
          * @description Either field, or both. An omitted field is LEFT ALONE; a field sent as
@@ -15604,6 +14884,13 @@ export interface components {
             /** Role */
             role?: string | null;
         };
+        /** SetThreadModel */
+        SetThreadModel: {
+            /** Effort */
+            effort?: string | null;
+            /** Model */
+            model?: string | null;
+        };
         /**
          * Signature
          * @description Whether the webhook proved it was who it said. `reason` names the
@@ -15613,6 +14900,13 @@ export interface components {
         Signature: {
             /** Ok */
             ok: boolean;
+            /** Reason */
+            reason: string;
+        };
+        /** Skipped */
+        Skipped: {
+            /** App */
+            app: string;
             /** Reason */
             reason: string;
         };
@@ -15741,6 +15035,158 @@ export interface components {
             /** Thread Id */
             thread_id: string;
         };
+        /** SpeakBody */
+        SpeakBody: {
+            /**
+             * Speed
+             * @default 1
+             */
+            speed: number;
+            /** Text */
+            text: string;
+            /** Voice */
+            voice?: string | null;
+        };
+        /** SpeechCommand */
+        SpeechCommand: {
+            /** Defaults */
+            defaults: string[];
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "inline" | "action";
+            /** Label */
+            label: string;
+            /** Phrases */
+            phrases: string[];
+            /** Takes Arg */
+            takes_arg: boolean;
+            /**
+             * When
+             * @enum {string}
+             */
+            when: "alone" | "trigger" | "off";
+        };
+        /** SpeechCommandChange */
+        SpeechCommandChange: {
+            /** Id */
+            id: string;
+            /** Phrases */
+            phrases: string[];
+            /**
+             * When
+             * @default alone
+             * @enum {string}
+             */
+            when: "alone" | "trigger" | "off";
+        };
+        /** SpeechCommands */
+        SpeechCommands: {
+            /**
+             * Back
+             * @enum {string}
+             */
+            back: "dictation" | "mixed";
+            /** Builtins */
+            builtins: components["schemas"]["SpeechCommand"][];
+            /** Custom */
+            custom: components["schemas"]["CustomSpeechCommand"][];
+            labels: components["schemas"]["SpeechLabels"];
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "dictation" | "mixed" | "commands";
+            /** Trigger */
+            trigger: string;
+        };
+        /** SpeechCommandsUpdate */
+        SpeechCommandsUpdate: {
+            /** Builtins */
+            builtins?: components["schemas"]["SpeechCommandChange"][];
+            /** Custom */
+            custom?: components["schemas"]["CustomSpeechCommand"][];
+        };
+        /**
+         * SpeechLabels
+         * @description How "show labels" numbers the page: `max`, the most at once.
+         */
+        SpeechLabels: {
+            /** Max */
+            max: number;
+        };
+        /**
+         * SpeechMatch
+         * @description `scores` follows `items`; null when the model is not available. A best
+         *     score of at least `act`, ahead of the next by `margin`, is a clear match;
+         *     from `ask` it is worth offering as a choice.
+         */
+        SpeechMatch: {
+            /** Act */
+            act: number;
+            /** Ask */
+            ask: number;
+            /** Margin */
+            margin: number;
+            /** Scores */
+            scores: number[] | null;
+        };
+        /** SpeechMatchBody */
+        SpeechMatchBody: {
+            /** Items */
+            items: string[];
+            /** Query */
+            query: string;
+        };
+        /**
+         * SpeechModeChange
+         * @description `writing`: back to the mode words were last written in.
+         */
+        SpeechModeChange: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "dictation" | "mixed" | "commands" | "writing";
+            /** Trigger */
+            trigger?: string | null;
+        };
+        /** SpeechPart */
+        SpeechPart: {
+            /** Available */
+            available: boolean;
+            /** Error */
+            error?: string | null;
+            /** State */
+            state: string;
+            /** Voice */
+            voice?: string | null;
+        };
+        /** SpeechStatus */
+        SpeechStatus: {
+            /** Device */
+            device: string;
+            /** Mode */
+            mode: string;
+            /** Provider */
+            provider: string;
+            stt: components["schemas"]["SpeechPart"];
+            tts: components["schemas"]["SpeechPart"];
+        };
+        /** SpeechVoice */
+        SpeechVoice: {
+            /** Gender */
+            gender?: ("female" | "male") | null;
+            /** Id */
+            id: string;
+            /** Language */
+            language: string;
+            /** Name */
+            name: string;
+        };
         /**
          * SquashableCheckpoint
          * @description One checkpoint commit old enough to squash and not pointed at by a tag.
@@ -15786,7 +15232,7 @@ export interface components {
             /** Service */
             service?: string | null;
             /** Started At */
-            started_at?: string | null;
+            started_at?: string | number | null;
             /** Url */
             url?: string | null;
         } & {
@@ -15812,6 +15258,7 @@ export interface components {
             permission_mode?: string | null;
             /** Sent At */
             sent_at?: string | null;
+            when?: components["schemas"]["SendRule"] | null;
         };
         /**
          * StatusEntry
@@ -15868,6 +15315,39 @@ export interface components {
             slug?: string | null;
         } & {
             [key: string]: unknown;
+        };
+        /** StoragePolicy */
+        StoragePolicy: {
+            /** Apps */
+            apps: {
+                [key: string]: components["schemas"]["AppPolicy"];
+            };
+            /** Keep Free Gb */
+            keep_free_gb?: number | null;
+            /** Limit Gb */
+            limit_gb?: number | null;
+            /** Retention Days */
+            retention_days: number;
+            /** Trash Days */
+            trash_days: number;
+        };
+        /**
+         * StorageSummary
+         * @description `limit_bytes` is null when only each disk's keep-free floor bounds
+         *     storage; `keep_free_bytes` is that floor per mount of the last scan.
+         */
+        StorageSummary: {
+            /** Keep Free Bytes */
+            keep_free_bytes: {
+                [key: string]: number;
+            };
+            last_pass?: components["schemas"]["CleanupPlan"] | null;
+            /** Limit Bytes */
+            limit_bytes?: number | null;
+            policy: components["schemas"]["StoragePolicy"];
+            /** Scanning */
+            scanning: boolean;
+            usage?: components["schemas"]["Usage"] | null;
         };
         /**
          * StoreCatalog
@@ -16803,8 +16283,44 @@ export interface components {
             queue_error: string;
             /** Queue Held */
             queue_held: boolean;
+            queue_waiting?: components["schemas"]["QueueWaiting"] | null;
             /** Queued */
             queued: components["schemas"]["QueuedMessage"][];
+        };
+        /** ThreadModelSet */
+        ThreadModelSet: {
+            /** Effort */
+            effort?: string | null;
+            /** Id */
+            id: string;
+            /** Model */
+            model?: string | null;
+        };
+        /**
+         * ThreadResources
+         * @description `needs` empty means the chat's model runs elsewhere and never waits.
+         */
+        ThreadResources: {
+            /** Busy */
+            busy: components["schemas"]["Holder"][];
+            /** Coordinator */
+            coordinator: string;
+            /** Needs */
+            needs: string[];
+        };
+        /**
+         * ThreadSearchHit
+         * @description One chat matching a search, best first (`services/chat_search`). `where`
+         *     says whether the words were in the title or only in the messages; a
+         *     message match carries the passage it was found in.
+         */
+        ThreadSearchHit: {
+            /** Id */
+            id: string;
+            /** Snippet */
+            snippet?: string | null;
+            /** Where */
+            where: string;
         };
         /**
          * ThreadSettings
@@ -17151,6 +16667,7 @@ export interface components {
             queue_error: string;
             /** Queue Held */
             queue_held: boolean;
+            queue_waiting?: components["schemas"]["QueueWaiting"] | null;
             /** Queued */
             queued: components["schemas"]["QueuedMessage"][];
             /** Role */
@@ -17422,6 +16939,39 @@ export interface components {
             /** Tools */
             tools: components["schemas"]["ToolRecord"][];
         };
+        /** Transcript */
+        Transcript: {
+            /** Text */
+            text: string;
+        };
+        /** TrashEntry */
+        TrashEntry: {
+            /** App */
+            app: string;
+            /** Bytes */
+            bytes: number;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Origin */
+            origin: string;
+            /** Reason */
+            reason: string;
+            /** Slot */
+            slot: string;
+            /** Trashed At */
+            trashed_at: number;
+        };
+        /** TrashSweep */
+        TrashSweep: {
+            /** Bytes */
+            bytes?: number | null;
+            /** Removed */
+            removed?: string[] | null;
+            /** Would Remove */
+            would_remove?: string[] | null;
+        };
         /**
          * TreeNode
          * @description One entry in a working-tree listing. Recursive: `children` is present on
@@ -17549,6 +17099,69 @@ export interface components {
             removed: number;
         };
         /**
+         * UnsendMessage
+         * @description `message` is the file-event id of one of the operator's messages.
+         */
+        UnsendMessage: {
+            /** Message */
+            message: string;
+        };
+        /**
+         * UnsendResult
+         * @description `branched` is true when another line still reached the message, so it
+         *     was left there and this line went back to before it instead.
+         */
+        UnsendResult: {
+            branch: components["schemas"]["CurrentBranch"];
+            /** Branched */
+            branched: boolean;
+            /**
+             * Rewound
+             * @default false
+             */
+            rewound: boolean;
+        };
+        /** Usage */
+        Usage: {
+            /** Apps */
+            apps: {
+                [key: string]: components["schemas"]["AppUsage"];
+            };
+            /** Disks */
+            disks: components["schemas"]["Disk"][];
+            /** Scanned At */
+            scanned_at: number;
+            /** Seconds */
+            seconds: number;
+            /** Skipped */
+            skipped: components["schemas"]["Skipped"][];
+        };
+        /** UsageItem */
+        UsageItem: {
+            /** Bytes */
+            bytes: number;
+            /** Kind */
+            kind: string;
+            /** Newest */
+            newest: number;
+            /** Path */
+            path: string;
+        };
+        /**
+         * UsageLimits
+         * @description The subscription's own windows as the CLI last reported them
+         *     (services/usage_limits). `blocked_until` is set while one is exhausted;
+         *     `next_reset` is what "when the usage limit resets" means right now.
+         */
+        UsageLimits: {
+            /** Blocked Until */
+            blocked_until?: string | null;
+            /** Next Reset */
+            next_reset?: string | null;
+            /** Windows */
+            windows: components["schemas"]["UsageWindow"][];
+        };
+        /**
          * UsagePoint
          * @description One interval of the usage chart. `t` is the only fixed key: the remaining
          *     columns are PROJECT SLUGS mapped to that interval's token count, so they
@@ -17609,6 +17222,20 @@ export interface components {
             /** Window S */
             window_s: number;
         };
+        /** UsageWindow */
+        UsageWindow: {
+            /** Name */
+            name: string;
+            /** Resets At */
+            resets_at?: string | null;
+            /**
+             * Status
+             * @default
+             */
+            status: string;
+            /** Utilization */
+            utilization?: number | null;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -17638,6 +17265,13 @@ export interface components {
             perception: components["schemas"]["Perception"];
             stt: components["schemas"]["EngineStatus"];
             tts: components["schemas"]["EngineStatus"];
+        };
+        /** VoiceList */
+        VoiceList: {
+            /** Default */
+            default: string;
+            /** Voices */
+            voices: components["schemas"]["SpeechVoice"][];
         };
         /**
          * VoicePrefs
@@ -17699,6 +17333,45 @@ export interface components {
             thread_id?: string | null;
             /** Warmed */
             warmed: boolean;
+        };
+        /** WakeUp */
+        WakeUp: {
+            /** Armed At */
+            armed_at?: string | null;
+            /** Due At */
+            due_at: string;
+            /** Id */
+            id: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
+        /** WebLinkChoice */
+        WebLinkChoice: {
+            /** App */
+            app?: string | null;
+        };
+        /** WebLinkHandler */
+        WebLinkHandler: {
+            /** App */
+            app: string;
+            /** Label */
+            label: string;
+            /**
+             * Native Pages
+             * @default false
+             */
+            native_pages: boolean;
+            /** Route */
+            route: string;
+        };
+        /** WebLinks */
+        WebLinks: {
+            chosen?: components["schemas"]["WebLinkHandler"] | null;
+            /** Handlers */
+            handlers: components["schemas"]["WebLinkHandler"][];
         };
         /**
          * Withheld
@@ -18099,121 +17772,6 @@ export interface components {
              */
             title: string;
         };
-        /**
-         * AppSummary
-         * @description The line this app's launcher card shows, in the shape the shell reads.
-         *
-         *     Declared in `workshop.app.json` as `ui.status.endpoint` and fetched with the
-         *     roster, so the card is drawn without loading a byte of this app's bundle.
-         *     It used to be a function inside the frontend module the platform compiled,
-         *     which is why the platform had to compile this app at all.
-         *
-         *     Named `app-summary` rather than `summary` because `/birds/summary` is the
-         *     yard's own totals and was here first.
-         */
-        birds_app__routes__AppSummary: {
-            /** Text */
-            text: string;
-            /** Tone */
-            tone: string;
-        };
-        /**
-         * AppSummary
-         * @description The line this app's launcher card shows, in the shape the shell reads.
-         *
-         *     Declared in `workshop.app.json` as `ui.status.endpoint` and fetched with the
-         *     roster, so the card is drawn without loading a byte of this app's bundle.
-         *     It used to be a function inside the frontend module the platform compiled,
-         *     which is why the platform had to compile this app at all.
-         *
-         *     A tone of `muted` means the line is a description rather than a state: what
-         *     this app is for is constant, and a constant is not a signal, so it must not
-         *     take a status colour.
-         */
-        budget_app__routes__AppSummary: {
-            /** Text */
-            text: string;
-            /** Tone */
-            tone: string;
-        };
-        /**
-         * AppSummary
-         * @description The line this app's launcher card shows, in the shape the shell reads.
-         *
-         *     Declared in `workshop.app.json` as `ui.status.endpoint` and fetched with the
-         *     roster, so the card is drawn without loading a byte of this app's bundle.
-         *     It used to be a function inside the frontend module the platform compiled,
-         *     which is why the platform had to compile this app at all.
-         *
-         *     A tone of `muted` means the line is a description rather than a state: what
-         *     this app is for is constant, and a constant is not a signal, so it must not
-         *     take a status colour.
-         */
-        commute_app__routes__AppSummary: {
-            /** Text */
-            text: string;
-            /** Tone */
-            tone: string;
-        };
-        /**
-         * AppSummary
-         * @description The line this app's launcher card shows, in the shape the shell reads.
-         *
-         *     Declared in `workshop.app.json` as `ui.status.endpoint` and fetched with the
-         *     roster, so the card is drawn without loading a byte of this app's bundle.
-         *     It used to be a function inside the frontend module the platform compiled,
-         *     which is why the platform had to compile this app at all.
-         */
-        finance_app__routes__AppSummary: {
-            /** Text */
-            text: string;
-            /** Tone */
-            tone: string;
-        };
-        /**
-         * AppSummary
-         * @description The line this app's launcher card shows, in the shape the shell reads.
-         *
-         *     Declared in `workshop.app.json` as `ui.status.endpoint` and fetched with the
-         *     roster, so the card is drawn without loading a byte of this app's bundle.
-         *     It used to be a function inside the frontend module the platform compiled,
-         *     which is why the platform had to compile this app at all.
-         */
-        location_app__routes__AppSummary: {
-            /** Text */
-            text: string;
-            /** Tone */
-            tone: string;
-        };
-        /** Backlinks */
-        notes_app__routes__Backlinks: {
-            /** Backlinks */
-            backlinks: components["schemas"]["Backlink"][];
-            /** Count */
-            count: number;
-            /** Path */
-            path: string;
-        };
-        /** NoteDeleted */
-        notes_app__routes__NoteDeleted: {
-            /** Deleted */
-            deleted: boolean;
-            /** Path */
-            path: string;
-        };
-        /**
-         * SearchHit
-         * @description One MATCHING LINE, not one matching note: a note that matches twice
-         *     appears twice, which is why `limit` bounds lines rather than files.
-         */
-        notes_app__routes__SearchHit: {
-            /** Line */
-            line: number;
-            /** Path */
-            path: string;
-            /** Snippet */
-            snippet: string;
-        };
         /** RegisterBody */
         routes__auth__RegisterBody: {
             /** Email */
@@ -18408,41 +17966,6 @@ export interface components {
             /** Until */
             until?: string | null;
         };
-        /**
-         * NoteDeleted
-         * @description `existed` is False when the note was already gone. Delete is idempotent
-         *     and this is how the caller tells the two apart without an error.
-         */
-        routes__knowledge__NoteDeleted: {
-            /** Existed */
-            existed: boolean;
-            /** Note Id */
-            note_id: string;
-            /** Scope */
-            scope: string;
-        };
-        /** SearchHit */
-        routes__memory__SearchHit: {
-            /** Kind */
-            kind: string;
-            /** Ref */
-            ref: string;
-            /** Scope */
-            scope?: string | null;
-            /** Score */
-            score: number;
-            /**
-             * Status
-             * @default
-             */
-            status: string;
-            /** Text */
-            text: string;
-            /** Title */
-            title?: string | null;
-            /** Ts */
-            ts?: string | null;
-        };
         /** CredentialIn */
         routes__model_providers_routes__CredentialIn: {
             /** Value */
@@ -18462,16 +17985,6 @@ export interface components {
             platform: string;
             /** Token */
             token: string;
-        };
-        /**
-         * Backlinks
-         * @description The "referenced by" read. An index lookup, not a scan.
-         */
-        routes__refs__Backlinks: {
-            /** Ref */
-            ref: string;
-            /** Refs */
-            refs: string[];
         };
         /** ResolveIn */
         routes__refs__ResolveIn: {
@@ -19363,6 +18876,41 @@ export interface operations {
             };
         };
     };
+    raise_event_app_events__event__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                event: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppEventAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_apps_apps_get: {
         parameters: {
             query?: {
@@ -19424,6 +18972,143 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_catalog_apps_catalog_get: {
+        parameters: {
+            query?: {
+                refresh?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_defaults_apps_catalog_defaults_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogDefaults"];
+                };
+            };
+        };
+    };
+    toggle_app_apps_catalog__slug__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CatalogToggle"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogApp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    install_app_apps_catalog__slug__install_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogInstalled"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_overlays_apps_overlays_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OverlayList"];
                 };
             };
         };
@@ -19919,6 +19604,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sessions_auth_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionList"];
+                };
+            };
+        };
+    };
+    revoke_session_auth_sessions__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionChanged"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_session_auth_sessions__session_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionLabelBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionChanged"];
                 };
             };
             /** @description Validation Error */
@@ -20933,2390 +20704,6 @@ export interface operations {
             };
         };
     };
-    get_daily_birds_activity_daily_get: {
-        parameters: {
-            query?: {
-                days?: number;
-                include_nonbird?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_hourly_birds_activity_hourly_get: {
-        parameters: {
-            query?: {
-                days?: number;
-                include_nonbird?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    analyze_birds_analyze_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_analyze_birds_analyze_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    analyze_health_birds_analyze_health_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    analyze_recent_birds_analyze_recent_get: {
-        parameters: {
-            query: {
-                station: string;
-                limit?: number;
-                since?: string | null;
-                include_nonbird?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    recompute_analyze_birds_analyze_recompute_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_recompute_analyze_birds_analyze_recompute_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_analyze_settings_birds_analyze_settings_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    set_analyze_settings_birds_analyze_settings_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_set_analyze_settings_birds_analyze_settings_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    analyze_get_station_birds_analyze_station_get: {
-        parameters: {
-            query: {
-                token: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    analyze_register_station_birds_analyze_station_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_analyze_register_station_birds_analyze_station_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    app_summary_birds_app_summary_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["birds_app__routes__AppSummary"];
-                };
-            };
-        };
-    };
-    atlas_points_ep_birds_atlas_get: {
-        parameters: {
-            query?: {
-                scope?: string;
-                species?: string | null;
-                location_id?: number | null;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    atlas_clip_audio_ep_birds_atlas_clip__clip_id__audio_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                clip_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    atlas_cluster_clips_ep_birds_atlas_cluster__cluster_id__clips_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path: {
-                cluster_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    atlas_cluster_label_ep_birds_atlas_cluster__cluster_id__label_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                cluster_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_atlas_cluster_label_ep_birds_atlas_cluster__cluster_id__label_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    atlas_insights_ep_birds_atlas_insights_get: {
-        parameters: {
-            query?: {
-                days?: number;
-                include_nonbird?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    atlas_rebuild_ep_birds_atlas_rebuild_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    atlas_settings_get_birds_atlas_settings_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    atlas_settings_set_birds_atlas_settings_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_atlas_settings_set_birds_atlas_settings_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    atlas_species_ep_birds_atlas_species_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    atlas_status_ep_birds_atlas_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    bird_detail_ep_birds_bird_get: {
-        parameters: {
-            query: {
-                sci: string;
-                location_id?: number | null;
-                device?: string | null;
-                days?: number;
-                status?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_clip_birds_clip__note_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                note_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    confirm_ep_birds_confirm_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_confirm_ep_birds_confirm_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    detection_status_ep_birds_detection_status_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_detection_status_ep_birds_detection_status_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_detections_birds_detections_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                species?: string | null;
-                date?: string | null;
-                min_conf?: number;
-                include_nonbird?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    device_get_birds_device_get: {
-        parameters: {
-            query: {
-                token: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    device_upsert_birds_device_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_device_upsert_birds_device_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    device_delete_birds_device_delete: {
-        parameters: {
-            query: {
-                token: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    device_restore_birds_device_restore_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_device_restore_birds_device_restore_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    devices_list_birds_devices_get: {
-        parameters: {
-            query?: {
-                archived?: boolean;
-                viewer_id?: number | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    birds_forecast_week_ep_birds_forecast_week_get: {
-        parameters: {
-            query: {
-                location_id: number;
-                days?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    friend_set_birds_friend_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_friend_set_birds_friend_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    friend_remove_birds_friend_delete: {
-        parameters: {
-            query: {
-                user_a: number;
-                user_b: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    friends_list_birds_friends_get: {
-        parameters: {
-            query: {
-                user_id: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    home_get_birds_home_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    home_set_birds_home_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_home_set_birds_home_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    live_get_birds_live_get: {
-        parameters: {
-            query?: {
-                location_id?: number | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    live_publish_birds_live_publish_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LiveBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    location_get_birds_location_get: {
-        parameters: {
-            query: {
-                location_id: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    location_create_or_update_birds_location_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_location_create_or_update_birds_location_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    location_delete_birds_location_delete: {
-        parameters: {
-            query: {
-                location_id: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    location_activity_ep_birds_location_activity_get: {
-        parameters: {
-            query: {
-                location_id: number;
-                include_nonbird?: boolean;
-                status?: string | null;
-                device?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    location_merge_birds_location_merge_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_location_merge_birds_location_merge_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    location_restore_birds_location_restore_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_location_restore_birds_location_restore_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    location_species_ep_birds_location_species_get: {
-        parameters: {
-            query: {
-                location_id: number;
-                include_nonbird?: boolean;
-                status?: string | null;
-                device?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    location_summary_ep_birds_location_summary_get: {
-        parameters: {
-            query: {
-                location_id: number;
-                include_nonbird?: boolean;
-                status?: string | null;
-                device?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    locations_list_birds_locations_get: {
-        parameters: {
-            query?: {
-                include_nonbird?: boolean;
-                archived?: boolean;
-                viewer_id?: number | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    new_count_ep_birds_new_count_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    birds_now_ep_birds_now_get: {
-        parameters: {
-            query: {
-                location_id: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_public_birds_public_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    recordings_list_ep_birds_recordings_get: {
-        parameters: {
-            query?: {
-                sci?: string | null;
-                location_id?: number | null;
-                pinned?: boolean | null;
-                limit?: number;
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    recordings_clear_ep_birds_recordings_delete: {
-        parameters: {
-            query: {
-                sci: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    recordings_reconcile_ep_birds_recordings_reconcile_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    recordings_settings_get_birds_recordings_settings_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    recordings_settings_set_birds_recordings_settings_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_recordings_settings_set_birds_recordings_settings_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    recordings_status_ep_birds_recordings_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    recordings_delete_ep_birds_recordings__rec_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                rec_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    recordings_audio_ep_birds_recordings__rec_id__audio_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                rec_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    recordings_pin_ep_birds_recordings__rec_id__pin_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                rec_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_recordings_pin_ep_birds_recordings__rec_id__pin_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reject_ep_birds_reject_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_reject_ep_birds_reject_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_species_birds_species_get: {
-        parameters: {
-            query?: {
-                include_nonbird?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    species_events_ep_birds_species_events_get: {
-        parameters: {
-            query: {
-                sci: string;
-                location_id?: number | null;
-                status?: string | null;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    species_auto_ep_birds_species_auto_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_species_auto_ep_birds_species_auto_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    species_mute_ep_birds_species_mute_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_species_mute_ep_birds_species_mute_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    species_recording_get_birds_species_recording_get: {
-        parameters: {
-            query: {
-                sci: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    species_recording_set_birds_species_recording_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_species_recording_set_birds_species_recording_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    species_review_ep_birds_species_review_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_species_review_ep_birds_species_review_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    species_unmute_ep_birds_species_unmute_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_species_unmute_ep_birds_species_unmute_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    station_activity_birds_station_activity_get: {
-        parameters: {
-            query: {
-                station: string;
-                include_nonbird?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    station_species_birds_station_species_get: {
-        parameters: {
-            query: {
-                station: string;
-                include_nonbird?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    station_species_detail_birds_station_species_detail_get: {
-        parameters: {
-            query: {
-                station: string;
-                sci: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    station_summary_birds_station_summary_get: {
-        parameters: {
-            query: {
-                station: string;
-                include_nonbird?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stations_list_birds_stations_get: {
-        parameters: {
-            query?: {
-                include_nonbird?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    suggestions_ep_birds_suggestions_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                offset?: number;
-                include_nonbird?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_summary_birds_summary_get: {
-        parameters: {
-            query?: {
-                include_nonbird?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    user_upsert_birds_user_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": components["schemas"]["Body_user_upsert_birds_user_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    users_list_birds_users_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    detection_webhook_birds_webhook_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
     list_branches_branches_get: {
         parameters: {
             query?: {
@@ -23448,195 +20835,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_budget_budget_get: {
-        parameters: {
-            query?: {
-                days?: number;
-                refresh?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    run_categorize_budget_categorize_post: {
-        parameters: {
-            query?: {
-                days?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_overrides_budget_overrides_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_plan_budget_plan_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    put_plan_budget_plan_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": Record<string, never>;
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    patch_plan_budget_plan_patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": Record<string, never>;
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_summary_budget_summary_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["budget_app__routes__AppSummary"];
                 };
             };
         };
@@ -23855,6 +21053,194 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Change"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    chat_access_chat_access__thread_id__post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-page-token"?: string;
+            };
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessAnswer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    chat_app_options_chat_access__thread_id__options__app_slug__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-workshop-options-token"?: string;
+            };
+            path: {
+                thread_id: string;
+                app_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptionsAnswer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_chat_apps_chat_apps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatApp"][];
+                };
+            };
+        };
+    };
+    get_grants_chat_apps__thread_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppGrants"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_grants_chat_apps__thread_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppGrants"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppGrants"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    chat_places_chat_place__thread_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatPlace"][];
                 };
             };
             /** @description Validation Error */
@@ -24241,6 +21627,59 @@ export interface operations {
             };
         };
     };
+    get_model_defaults_chat_model_defaults_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelDefaultsOut"];
+                };
+            };
+        };
+    };
+    set_model_defaults_chat_model_defaults_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelDefaultsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelDefaultsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_chat_prefs_chat_prefs_get: {
         parameters: {
             query?: never;
@@ -24377,6 +21816,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ThreadDocument"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_threads_chat_threads_search_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                context?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadSearchHit"][];
                 };
             };
             /** @description Validation Error */
@@ -25088,6 +22559,41 @@ export interface operations {
             };
         };
     };
+    set_thread_model_choice_chat_threads__thread_id__model_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetThreadModel"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadModelSet"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     cancel_thread_operation_chat_threads__thread_id__operation_cancel_post: {
         parameters: {
             query?: never;
@@ -25106,6 +22612,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OperationCancelled"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_permission_mode_chat_threads__thread_id__permission_mode_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetPermissionMode"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatModeSet"];
                 };
             };
             /** @description Validation Error */
@@ -25182,6 +22723,42 @@ export interface operations {
             };
         };
     };
+    set_queued_send_rule_chat_threads__thread_id__queued__client_id__when_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetSendRuleIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     rescope_thread_chat_threads__thread_id__rescope_post: {
         parameters: {
             query?: never;
@@ -25235,6 +22812,276 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ThreadSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_scheduled_chat_threads__thread_id__schedules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Scheduled"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_schedule_chat_threads__thread_id__schedules_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_schedule_chat_threads__thread_id__schedules__sid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_schedule_chat_threads__thread_id__schedules__sid__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SchedulePatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_schedule_again_chat_threads__thread_id__schedules__sid__again_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rearm_schedule_chat_threads__thread_id__schedules__sid__rearm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RearmIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_schedule_chat_threads__thread_id__schedules__sid__send_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    schedule_sends_chat_threads__thread_id__schedules__sid__sends_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Sends"];
                 };
             };
             /** @description Validation Error */
@@ -25680,6 +23527,73 @@ export interface operations {
             };
         };
     };
+    unsend_message_chat_threads__thread_id__unsend_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnsendMessage"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnsendResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_wakeup_chat_threads__thread_id__wakeups__wake_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+                wake_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WakeUp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     thread_work_chat_threads__thread_id__work_get: {
         parameters: {
             query?: never;
@@ -25773,89 +23687,7 @@ export interface operations {
             };
         };
     };
-    alerts_check_commute_alerts_check_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    alerts_force_commute_alerts_force_post: {
-        parameters: {
-            query?: {
-                reason?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    alerts_recent_commute_alerts_recent_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    send_brief_commute_brief_post: {
+    report_client_errors_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -25864,7 +23696,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["BriefBody"];
+                "application/json": components["schemas"]["ClientError"];
             };
         };
         responses: {
@@ -25874,7 +23706,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["Reported"];
                 };
             };
             /** @description Validation Error */
@@ -25888,7 +23720,7 @@ export interface operations {
             };
         };
     };
-    set_coords_commute_coords_post: {
+    report_client_media_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -25897,7 +23729,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": Record<string, never>;
+                "application/json": components["schemas"]["ClientMedia"];
             };
         };
         responses: {
@@ -25907,566 +23739,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_journeys_commute_journeys_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    finalize_journey_commute_journeys_finalize_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    learn_all_commute_learn_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    get_legs_commute_legs_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    llm_decide_commute_llm_decide_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DecideBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    llm_recent_commute_llm_recent_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_messages_commute_messages_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_latest_message_commute_messages_latest_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    get_patterns_commute_patterns_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    get_places_commute_places_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    label_place_commute_places_label_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LabelBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    learn_places_commute_places_learn_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    trigger_poll_commute_poll_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    reason_now_commute_reason_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReasonBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_schedule_commute_schedule_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    post_schedule_commute_schedule_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ScheduleBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_sources_commute_sources_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    state_commute_state_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    status_commute_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    poll_stopmon_commute_stopmon_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    summary_commute_summary_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["commute_app__routes__AppSummary"];
-                };
-            };
-        };
-    };
-    get_targets_commute_targets_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    post_targets_commute_targets_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ScheduleBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["Reported"];
                 };
             };
             /** @description Validation Error */
@@ -26686,6 +23959,59 @@ export interface operations {
             };
         };
     };
+    get_layout_dashboard_layout_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Layout"];
+                };
+            };
+        };
+    };
+    put_layout_dashboard_layout_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LayoutBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Layout"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_docs_documents_get: {
         parameters: {
             query?: never;
@@ -26758,73 +24084,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocContent"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    astro_environment_astro_get: {
-        parameters: {
-            query: {
-                location_id: number;
-                date: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    conditions_environment_conditions_get: {
-        parameters: {
-            query: {
-                location_id: number;
-                /** @description ISO-8601 UTC */
-                start: string;
-                /** @description ISO-8601 UTC */
-                end: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -27070,244 +24329,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FileTree"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_balances_finance_balances_get: {
-        parameters: {
-            query?: {
-                refresh?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cache_status_finance_cache_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    cache_invalidate_finance_cache_invalidate_post: {
-        parameters: {
-            query?: {
-                prefix?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_items_finance_items_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    remove_item_finance_items__item_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                item_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    exchange_finance_link_exchange_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["Body_exchange_finance_link_exchange_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_link_token_finance_link_token_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_summary_finance_summary_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["finance_app__routes__AppSummary"];
-                };
-            };
-        };
-    };
-    get_transactions_finance_transactions_get: {
-        parameters: {
-            query?: {
-                days?: number;
-                refresh?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -28310,6 +25331,92 @@ export interface operations {
             };
         };
     };
+    list_claims_gpu_claims_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+        };
+    };
+    put_claim_gpu_claims__name__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaimBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_claim_gpu_claims__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_grants_grants_get: {
         parameters: {
             query?: never;
@@ -28425,129 +25532,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_history_health_history_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Page_HistoryRecord_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_history_health_history_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    ingest_help_health_ingest_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IngestHelp"];
-                };
-            };
-        };
-    };
-    post_ingest_health_ingest_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IngestResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_latest_health_latest_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: components["schemas"]["MetricLatest"];
-                    };
                 };
             };
         };
@@ -28842,180 +25826,6 @@ export interface operations {
             };
         };
     };
-    get_history_location_history_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Page_LocationRecord_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_history_location_history_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    get_latest_location_latest_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LocationRecord"] | null;
-                };
-            };
-        };
-    };
-    owntracks_help_location_owntracks_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-        };
-    };
-    post_owntracks_location_owntracks_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_summary_location_summary_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["location_app__routes__AppSummary"];
-                };
-            };
-        };
-    };
-    post_update_location_update_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LocationBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LocationRecord"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_servers_mcp_servers_get: {
         parameters: {
             query?: {
@@ -29043,6 +25853,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    no_stream_mcp_workshop_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    call_mcp_workshop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
@@ -29355,7 +26205,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["routes__knowledge__NoteDeleted"];
+                    "application/json": components["schemas"]["NoteDeleted"];
                 };
             };
             /** @description Validation Error */
@@ -29507,120 +26357,20 @@ export interface operations {
             };
         };
     };
-    get_backlinks_notes_app_backlinks__note_path__get: {
+    page_call_page_link_call_post: {
         parameters: {
             query?: never;
-            header?: never;
-            path: {
-                note_path: string;
+            header?: {
+                "x-page-token"?: string;
             };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["notes_app__routes__Backlinks"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    capabilities_notes_app_capabilities_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Capabilities"];
-                };
-            };
-        };
-    };
-    list_notes_notes_app_notes_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NoteList"];
-                };
-            };
-        };
-    };
-    create_note_notes_app_notes_post: {
-        parameters: {
-            query?: never;
-            header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["NoteCreate"];
+                "application/json": Record<string, never>;
             };
         };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NoteWritten"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_note_notes_app_notes__note_path__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                note_path: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -29628,7 +26378,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Note"];
+                    "application/json": components["schemas"]["CallAnswer"];
                 };
             };
             /** @description Validation Error */
@@ -29642,18 +26392,18 @@ export interface operations {
             };
         };
     };
-    update_note_notes_app_notes__note_path__put: {
+    put_link_page_page_link_links__link_id__put: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                note_path: string;
+                link_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["NoteUpdate"];
+                "application/json": Record<string, never>;
             };
         };
         responses: {
@@ -29663,7 +26413,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NoteWritten"];
+                    "application/json": components["schemas"]["LinkPage"];
                 };
             };
             /** @description Validation Error */
@@ -29677,49 +26427,19 @@ export interface operations {
             };
         };
     };
-    delete_note_notes_app_notes__note_path__delete: {
+    post_result_page_link_links__link_id__results__call_id__post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                note_path: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["notes_app__routes__NoteDeleted"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rename_note_notes_app_notes__note_path__rename_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                note_path: string;
+                link_id: string;
+                call_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["NoteRename"];
+                "application/json": Record<string, never>;
             };
         };
         responses: {
@@ -29729,7 +26449,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NoteWritten"];
+                    "application/json": components["schemas"]["Delivered"];
                 };
             };
             /** @description Validation Error */
@@ -29743,43 +26463,13 @@ export interface operations {
             };
         };
     };
-    search_notes_notes_app_search_get: {
-        parameters: {
-            query: {
-                q: string;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SearchResults"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    plaid_webhook_plaid_webhook_post: {
+    page_link_stream_page_link_links__link_id__stream_get: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                link_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -29791,6 +26481,81 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_page_link_page_link__thread_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_page_link_page_link__thread_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -30778,7 +27543,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["routes__refs__Backlinks"];
+                    "application/json": components["schemas"]["Backlinks"];
                 };
             };
             /** @description Validation Error */
@@ -30957,6 +27722,134 @@ export interface operations {
             };
         };
     };
+    take_resources_leases__lease_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lease_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LeaseIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Holder"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    drop_resources_leases__lease_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lease_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    holders_resources_leases__resource__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                resource: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Holder"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    thread_resources_resources_threads__thread_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadResources"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_services_services__get: {
         parameters: {
             query?: {
@@ -30975,6 +27868,570 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ServiceRegistry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_commands_speech_commands_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeechCommands"];
+                };
+            };
+        };
+    };
+    put_commands_speech_commands_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpeechCommandsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeechCommands"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_labels_speech_commands_labels_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpeechLabels"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeechCommands"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_mode_speech_commands_mode_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpeechModeChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeechCommands"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_commands_speech_commands_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeechCommands"];
+                };
+            };
+        };
+    };
+    dictations_kept_speech_dictations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeptDictations"];
+                };
+            };
+        };
+    };
+    dictation_ended_speech_dictations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DictationEnded"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DictationDelivered"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dictation_so_far_speech_dictations__dictation__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dictation: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DictationSoFar"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    speech_match_speech_match_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpeechMatchBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeechMatch"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dictation_recording_speech_recordings__dictation__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dictation: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    speech_speak_speech_speak_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpeakBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    speech_status_speech_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeechStatus"];
+                };
+            };
+        };
+    };
+    speech_transcribe_speech_transcribe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transcript"];
+                };
+            };
+        };
+    };
+    speech_voices_speech_voices_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceList"];
+                };
+            };
+        };
+    };
+    speech_warm_speech_warm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    read_storage_storage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageSummary"];
+                };
+            };
+        };
+    };
+    plan_cleanup_storage_cleanup_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CleanupPlan"];
+                };
+            };
+        };
+    };
+    start_cleanup_storage_cleanup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CleanupStarted"];
+                };
+            };
+        };
+    };
+    put_policy_storage_policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyChanges"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_scan_storage_scan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanStarted"];
+                };
+            };
+        };
+    };
+    list_trash_storage_trash_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrashEntry"][];
+                };
+            };
+        };
+    };
+    restore_trash_storage_trash__entry_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrashEntry"];
                 };
             };
             /** @description Validation Error */
@@ -32352,6 +29809,26 @@ export interface operations {
             };
         };
     };
+    get_usage_limits_usage_limits_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageLimits"];
+                };
+            };
+        };
+    };
     get_usage_timeseries_usage_timeseries_get: {
         parameters: {
             query?: {
@@ -32505,6 +29982,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VoiceCatalog"];
+                };
+            };
+        };
+    };
+    get_web_links_web_links_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebLinks"];
+                };
+            };
+        };
+    };
+    put_web_links_web_links_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebLinkChoice"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebLinks"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

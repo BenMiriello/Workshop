@@ -266,9 +266,9 @@ def worker_for(root: str | Path) -> str | None:
         # ASKED THROUGH `makers`, NOT RE-DERIVED HERE, and the first version of
         # this function got that wrong in a way worth recording. It compared the
         # agent's `project_slug` against the scope key directly. Those are two
-        # different spellings: the registry stores a BARE slug (`notes-app`)
+        # different spellings: the registry stores a BARE slug (`<slug>`)
         # and `task_scope.key_for_root` returns a PREFIXED key
-        # (`project:notes-app`). The comparison was therefore false for every
+        # (`project:<slug>`). The comparison was therefore false for every
         # project scope and true only for `development`, whose key happens to
         # have no prefix -- so it appeared to work on the one scope it was
         # tested against and would have refused to start a runner on all the

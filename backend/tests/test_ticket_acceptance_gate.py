@@ -28,7 +28,10 @@ def roots(tmp_path):
 
 
 @pytest.fixture
-def client(roots, monkeypatch):
+def client(roots, monkeypatch, tmp_path):
+    # The create and patch routes wake the queue runner by touching
+    # `<_WORKSHOP_ROOT>/.runtime/queue-runner.wake`; aim that at the tmp tree.
+    monkeypatch.setattr(tasks_all, "_WORKSHOP_ROOT", tmp_path)
     monkeypatch.setattr(tasks_all, "_root_for_scope", lambda s: roots.get(s))
     monkeypatch.setattr(tasks_all, "_scope_roots", lambda: list(roots.items()))
     monkeypatch.setattr(tasks_all, "scope_roots", lambda: list(roots.items()),

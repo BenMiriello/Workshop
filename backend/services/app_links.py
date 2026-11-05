@@ -9,8 +9,7 @@ Two registries, still unlinked on disk
 (docs/platform-redesign/app-is-the-entity-2026-08-20.md sec 2.1):
 `.runtime/installed-apps.json` (`services.installed_apps`) says which apps
 this instance has; `.runtime/projects.json` (`routes.projects`) says which
-working trees it has. Five slugs -- budget, birds, location, commute,
-notes-app, measured at design time -- exist in both today, and the design's
+working trees it has. Five slugs, measured at design time, exist in both today, and the design's
 diagnosis is that each is ONE thing wearing two records, not two things that
 happen to share a name.
 
@@ -140,14 +139,13 @@ def linked_project_slug(app_slug: str) -> str | None:
     Two ways an app slug resolves to a project:
 
       1. It names BOTH an installed app and a project -- the coincidence
-         sec 2.1 documents by name (budget, birds, location, commute,
-         notes-app at design time).
+         sec 2.1 documents (five apps at design time).
       2. It is itself a bare project slug with no catalog entry -- a project
          the operator made that was never registered as an app card. It
          still owns its own tree, so it is still linked to itself.
 
-    An installed app with no matching project (`finance`, `health`,
-    `wearables` at design time) returns None: it genuinely has no working
+    An installed app with no matching project (three at design time)
+    returns None: it genuinely has no working
     tree, no ticket queue and no deploys, and every stage-B route for it
     returns an honest empty list rather than borrowing another app's data.
     """

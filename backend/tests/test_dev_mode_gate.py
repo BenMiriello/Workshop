@@ -462,6 +462,12 @@ class TestDeveloperModeOn:
         assert "development" in keys
 
     def test_development_sorts_above_workshop(self, dev_mode_on):
+        # The workshop queue is listed only once it has a store, and the session
+        # runtime is a throwaway one (tests/instance_isolation), so give it one.
+        root = tasks_all._root_for_scope("workshop")
+        root.mkdir(parents=True, exist_ok=True)
+        if not (root / tasks_all.tasks.STORE_NAME).exists():
+            (root / tasks_all.tasks.STORE_NAME).write_text('{"tasks": []}')
         keys = [k for k, _ in tasks_all.scope_roots()]
         assert keys.index("development") < keys.index("workshop")
 

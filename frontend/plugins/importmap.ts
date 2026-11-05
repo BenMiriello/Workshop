@@ -24,6 +24,7 @@
 //   for `react` in the browser's module map, in both modes, and the token
 //   problem cannot arise because no map value contains one.
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import type { Plugin } from "vite";
 import { SHARED } from "@workshop/app-build";
@@ -131,12 +132,47 @@ export function builtImportMap(
   });
 }
 
+const STAR = /^export \* from "([^"]+)";?$/gm;
+const IDENT = /^[A-Za-z_$][\w$]*$/;
+
+/** The specifiers a shim re-exports with `export * from`. */
+export function starReexports(code: string): string[] {
+  return [...code.matchAll(STAR)].map((m) => m[1]);
+}
+
+/** The names a CommonJS module exports, read from the module itself. */
+export function commonjsNames(spec: string, fromFile: string): string[] {
+  const mod = createRequire(fromFile)(spec) as Record<string, unknown>;
+  return Object.keys(mod).filter((n) => n !== "default" && n !== "__esModule" && IDENT.test(n));
+}
+
 export function importmapPlugin(): Plugin {
   let base = "/";
+  let build = false;
   return {
     name: "workshop-importmap",
     configResolved(config) {
       base = config.base || "/";
+      build = config.command === "build";
+    },
+    // `export * from "react"` re-exports NOTHING in a build: rollup gives a
+    // CommonJS module synthetic named exports, and a star re-export does not
+    // carry those, so an app's `import { useState } from "react"` would find
+    // no such export. The dev server pre-bundles these to real ESM and never
+    // shows it. So in a build, a shim re-exporting a module rollup reads as
+    // CommonJS names that module's exports, read from the installed package.
+    async transform(code, id) {
+      if (!build || !id.startsWith(SHARED_DIR() + path.sep)) return null;
+      const lines: string[] = [];
+      for (const spec of starReexports(code)) {
+        const resolved = await this.resolve(spec, id);
+        if (!resolved || resolved.external) continue;
+        const info = await this.load(resolved);
+        if (!info.meta?.commonjs?.isCommonJS) continue;
+        const names = commonjsNames(spec, id);
+        if (names.length) lines.push(`export { ${names.join(", ")} } from ${JSON.stringify(spec)};`);
+      }
+      return lines.length ? { code: `${code}\n${lines.join("\n")}\n`, map: null } : null;
     },
     transformIndexHtml: {
       // `post` so a build's hook receives the finished bundle and can therefore

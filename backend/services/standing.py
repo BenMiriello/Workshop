@@ -439,7 +439,7 @@ def _approx_tokens(text: str) -> int:
 
 def block(scope: str = "workshop", *, max_entries: int = _MAX_BLOCK_ENTRIES,
           max_tokens: int = _BLOCK_TOKEN_BUDGET, role: str | None = None,
-          private: str | None = None) -> str:
+          private: str | None = None, layers: list[str] | None = None) -> str:
     """The standing notes this scope READS, as prompt text, inside the budget.
 
     THE READ-UNION, not one scope. `knowledge.read_layers` already answers "what
@@ -453,12 +453,15 @@ def block(scope: str = "workshop", *, max_entries: int = _MAX_BLOCK_ENTRIES,
     once) and then by how recently the note was written, which is the file's own
     mtime and needs no second timestamp. Reading does NOT write: see the module
     docstring on why `last_used` is not here.
+
+    `layers` replaces the read-union when the caller has a narrower one (an
+    app's own assistant, `chat_context.knowledge_layers`).
     """
     from services import knowledge
     rows: list[dict] = []
     seen_ids: set[tuple[str, str]] = set()
     try:
-        layers = knowledge.read_layers(scope, role, private)
+        layers = layers or knowledge.read_layers(scope, role, private)
     except Exception:
         layers = [scope]
     for layer in layers:

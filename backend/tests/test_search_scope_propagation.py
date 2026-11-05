@@ -32,7 +32,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import (agent_authority, auth_store,  # noqa: E402
+from services import (agent_authority, app_registry, auth_store,  # noqa: E402
                       build_streaming as bs, chat_store, llm_router,
                       ownership)
 from wsplatform import paths  # noqa: E402
@@ -83,15 +83,15 @@ class TestTheRealTurnHandsDownTheRealChatsScope:
         monkeypatch.setattr(chat_store, "get_thread",
                             lambda tid: {"context_key": "development"})
         doc = _config_of(bs._build_cmd(_meta("thread-1"))[0])
-        env = doc["mcpServers"]["workshop"].get("env") or {}
+        env = app_registry.spec_context(doc["mcpServers"]["workshop"])
         assert env.get("WORKSHOP_QUERY_SCOPE") == "development"
 
     def test_a_project_chats_context_key_rides_the_launch_env(self, monkeypatch):
         monkeypatch.setattr(chat_store, "get_thread",
-                            lambda tid: {"context_key": "project:birds"})
+                            lambda tid: {"context_key": "project:widgets"})
         doc = _config_of(bs._build_cmd(_meta("thread-2"))[0])
-        env = doc["mcpServers"]["workshop"].get("env") or {}
-        assert env.get("WORKSHOP_QUERY_SCOPE") == "project:birds"
+        env = app_registry.spec_context(doc["mcpServers"]["workshop"])
+        assert env.get("WORKSHOP_QUERY_SCOPE") == "project:widgets"
 
     def test_no_thread_omits_the_var_rather_than_guessing_workshop(self, monkeypatch):
         """No context_key known (a thread that vanished between claiming the
@@ -102,7 +102,7 @@ class TestTheRealTurnHandsDownTheRealChatsScope:
         down, exactly like an unpinned owner falling back to the operator."""
         monkeypatch.setattr(chat_store, "get_thread", lambda tid: None)
         doc = _config_of(bs._build_cmd(_meta(None))[0])
-        env = doc["mcpServers"]["workshop"].get("env") or {}
+        env = app_registry.spec_context(doc["mcpServers"]["workshop"])
         assert "WORKSHOP_QUERY_SCOPE" not in env
 
     def test_a_thread_lookup_that_raises_does_not_kill_the_turn(self, monkeypatch):
@@ -130,7 +130,7 @@ class TestTheRealTurnHandsDownTheRealChatsScope:
             "thread-4", allowed_tools=[agent_authority.SEARCH_TOOL],
             mcp_servers=["workshop"]))
         doc = _config_of(cmd)
-        env = doc["mcpServers"]["workshop"].get("env") or {}
+        env = app_registry.spec_context(doc["mcpServers"]["workshop"])
         assert env.get("WORKSHOP_QUERY_SCOPE") == "development"
 
 
@@ -144,10 +144,10 @@ class TestTheBackendProcesssOwnEnvironmentIsNeverConsulted:
         real context_key may decide it now."""
         monkeypatch.setenv("WORKSHOP_QUERY_SCOPE", "development")
         monkeypatch.setattr(chat_store, "get_thread",
-                            lambda tid: {"context_key": "project:birds"})
+                            lambda tid: {"context_key": "project:widgets"})
         doc = _config_of(bs._build_cmd(_meta("thread-5"))[0])
-        env = doc["mcpServers"]["workshop"].get("env") or {}
-        assert env.get("WORKSHOP_QUERY_SCOPE") == "project:birds"
+        env = app_registry.spec_context(doc["mcpServers"]["workshop"])
+        assert env.get("WORKSHOP_QUERY_SCOPE") == "project:widgets"
 
 
 class TestABackgroundPassNeverDefaultsToDevelopment:
@@ -160,7 +160,7 @@ class TestABackgroundPassNeverDefaultsToDevelopment:
         was."""
         doc = json.loads(llm_router.mcp_config_json(
             ["workshop"], owner_id=auth_store.operator_id()))
-        env = doc["mcpServers"]["workshop"].get("env") or {}
+        env = app_registry.spec_context(doc["mcpServers"]["workshop"])
         assert "WORKSHOP_QUERY_SCOPE" not in env
 
     def test_an_explicit_context_key_still_rides_through_mcp_config_json(self):
@@ -171,5 +171,5 @@ class TestABackgroundPassNeverDefaultsToDevelopment:
         doc = json.loads(llm_router.mcp_config_json(
             ["workshop"], owner_id=auth_store.operator_id(),
             context_key="development"))
-        env = doc["mcpServers"]["workshop"].get("env") or {}
+        env = app_registry.spec_context(doc["mcpServers"]["workshop"])
         assert env.get("WORKSHOP_QUERY_SCOPE") == "development"

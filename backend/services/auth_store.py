@@ -22,11 +22,13 @@ another user's personal data.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import hmac
 import os
 import secrets
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -86,6 +88,17 @@ def _connect() -> sqlite3.Connection:
 
 
 def init_db() -> None:
+    """Bring the database up to schema, once per file per process.
+
+    Every authenticated request resolves its credential through this module, and
+    each call used to open a connection just to re-run the CREATE TABLE / CREATE
+    INDEX set and the column check before its real query. Keyed by path, because
+    tests point DB_PATH at a fresh file."""
+    _ensure_schema(str(DB_PATH))
+
+
+@functools.lru_cache(maxsize=None)
+def _ensure_schema(_path: str) -> None:
     with _connect() as conn:
         conn.execute(
             """
@@ -143,10 +156,15 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute("CREATE TABLE IF NOT EXISTS login_failures (at REAL NOT NULL)")
         for tbl in ("sessions", "device_tokens", "service_tokens"):
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{tbl}_user ON {tbl}(user_id)"
             )
+        scols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
+        for col in ("label", "last_seen"):
+            if col not in scols:
+                conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
 
 
 # ---------------------------------------------------------------- passwords
@@ -321,6 +339,33 @@ def verify_credentials(email: str, password: str) -> Optional[dict[str, Any]]:
     return _row_to_user(row)
 
 
+# Password login is the one unauthenticated door that takes a guess, so failed
+# guesses are capped instance-wide. Not per caller: every request reaches the
+# backend through the loopback edge, so there is no caller address to key on.
+# Kept in the auth DB rather than in memory, so every worker and a restart see
+# the same count.
+_LOGIN_FAIL_LIMIT = 10
+_LOGIN_LOCKOUT_SECONDS = 300
+
+
+def login_locked_out() -> bool:
+    init_db()
+    with _connect() as conn:
+        conn.execute("DELETE FROM login_failures WHERE at < ?",
+                     (time.time() - _LOGIN_LOCKOUT_SECONDS,))
+        n = conn.execute("SELECT COUNT(*) FROM login_failures").fetchone()[0]
+    return n >= _LOGIN_FAIL_LIMIT
+
+
+def note_login_result(ok: bool) -> None:
+    init_db()
+    with _connect() as conn:
+        if ok:
+            conn.execute("DELETE FROM login_failures")
+        else:
+            conn.execute("INSERT INTO login_failures (at) VALUES (?)", (time.time(),))
+
+
 # ---------------------------------------------------------------- sessions (cookie)
 
 
@@ -346,9 +391,10 @@ def session_user(raw_token: Optional[str]) -> Optional[dict[str, Any]]:
         return None
     init_db()
     with _connect() as conn:
+        th = _hash_token(raw_token)
         row = conn.execute(
-            "SELECT user_id, expires_at, revoked FROM sessions WHERE token_hash = ?",
-            (_hash_token(raw_token),),
+            "SELECT user_id, expires_at, revoked, last_seen FROM sessions WHERE token_hash = ?",
+            (th,),
         ).fetchone()
         if row is None or row["revoked"]:
             return None
@@ -357,6 +403,9 @@ def session_user(raw_token: Optional[str]) -> Optional[dict[str, Any]]:
                 return None
         except ValueError:
             return None
+        # At most once a minute, for the same reason as device_user.
+        if _seen_over(row["last_seen"], 60):
+            conn.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (_now(), th))
         urow = conn.execute("SELECT * FROM users WHERE id = ?", (row["user_id"],)).fetchone()
     return _row_to_user(urow)
 
@@ -369,6 +418,50 @@ def revoke_session(raw_token: Optional[str]) -> None:
         conn.execute(
             "UPDATE sessions SET revoked = 1 WHERE token_hash = ?", (_hash_token(raw_token),)
         )
+
+
+def list_sessions(user_id: int, current_raw: Optional[str] = None) -> list[dict[str, Any]]:
+    """The account's live browser sessions, one per signed-in device, newest use
+    first. `id` is a 12-character prefix of the token hash; `current` marks the
+    session that asked."""
+    init_db()
+    current = _hash_token(current_raw) if current_raw else None
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT token_hash, label, user_agent, created_at, last_seen FROM sessions "
+            "WHERE user_id = ? AND revoked = 0 AND expires_at > ? "
+            "ORDER BY COALESCE(last_seen, created_at) DESC",
+            (user_id, now),
+        ).fetchall()
+    return [
+        {"id": r["token_hash"][:12], "label": r["label"], "user_agent": r["user_agent"],
+         "created_at": r["created_at"], "last_seen": r["last_seen"],
+         "current": r["token_hash"] == current}
+        for r in rows
+    ]
+
+
+def rename_session(user_id: int, id_prefix: str, label: Optional[str]) -> int:
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE sessions SET label = ? "
+            "WHERE user_id = ? AND substr(token_hash,1,12) = ? AND revoked = 0",
+            ((label or "").strip()[:120] or None, user_id, id_prefix),
+        )
+        return cur.rowcount
+
+
+def revoke_session_by_prefix(user_id: int, id_prefix: str) -> int:
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE sessions SET revoked = 1 "
+            "WHERE user_id = ? AND substr(token_hash,1,12) = ? AND revoked = 0",
+            (user_id, id_prefix),
+        )
+        return cur.rowcount
 
 
 # ---------------------------------------------------------------- device tokens (native)
@@ -407,6 +500,17 @@ def create_device_token(user_id: int, label: Optional[str] = None) -> str:
     return raw
 
 
+def _seen_over(last_seen: Optional[str], seconds: float) -> bool:
+    """True when `last_seen` is missing, unreadable, or older than `seconds`."""
+    if not last_seen:
+        return True
+    try:
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(last_seen)
+    except (ValueError, TypeError):
+        return True
+    return age.total_seconds() > seconds
+
+
 def device_user(raw_token: Optional[str]) -> Optional[dict[str, Any]]:
     """Resolve a device token to its user (touching last_seen), or None."""
     if not raw_token:
@@ -415,11 +519,14 @@ def device_user(raw_token: Optional[str]) -> Optional[dict[str, Any]]:
     th = _hash_token(raw_token)
     with _connect() as conn:
         row = conn.execute(
-            "SELECT user_id, revoked FROM device_tokens WHERE token_hash = ?", (th,)
+            "SELECT user_id, revoked, last_seen FROM device_tokens WHERE token_hash = ?", (th,)
         ).fetchone()
         if row is None or row["revoked"]:
             return None
-        conn.execute("UPDATE device_tokens SET last_seen = ? WHERE token_hash = ?", (_now(), th))
+        # At most once a minute: every request from a device resolves here, and
+        # each touch was a write and a sync of the auth database.
+        if _seen_over(row["last_seen"], 60):
+            conn.execute("UPDATE device_tokens SET last_seen = ? WHERE token_hash = ?", (_now(), th))
         urow = conn.execute("SELECT * FROM users WHERE id = ?", (row["user_id"],)).fetchone()
     return _row_to_user(urow)
 
@@ -462,7 +569,7 @@ def revoke_device_by_prefix(user_id: int, id_prefix: str) -> int:
 
 def create_service_token(user_id: int, scope: str, label: Optional[str] = None) -> str:
     """Mint an opaque service token bound to a user AND a scope (e.g.
-    'ingest:location', 'automation:commute'). Returns the raw token once."""
+    'ingest:<domain>', 'automation:<app>'). Returns the raw token once."""
     if not scope:
         raise ValueError("a service token requires a scope")
     init_db()
@@ -477,13 +584,14 @@ def create_service_token(user_id: int, scope: str, label: Optional[str] = None) 
 
 
 def service_identity(raw_token: Optional[str]) -> Optional[dict[str, Any]]:
-    """Resolve a service token to {user, scope}, or None. The caller checks scope."""
+    """Resolve a service token to {user, scope, name}, or None. The caller checks
+    scope; `name` is the label it was minted with, for attributing its writes."""
     if not raw_token:
         return None
     init_db()
     with _connect() as conn:
         row = conn.execute(
-            "SELECT user_id, scope, revoked FROM service_tokens WHERE token_hash = ?",
+            "SELECT user_id, scope, label, revoked FROM service_tokens WHERE token_hash = ?",
             (_hash_token(raw_token),),
         ).fetchone()
         if row is None or row["revoked"]:
@@ -492,7 +600,17 @@ def service_identity(raw_token: Optional[str]) -> Optional[dict[str, Any]]:
     user = _row_to_user(urow)
     if user is None:
         return None
-    return {"user": user, "scope": row["scope"]}
+    return {"user": user, "scope": row["scope"], "name": row["label"] or row["scope"]}
+
+
+def revoke_service_token(raw_token: Optional[str]) -> None:
+    if not raw_token:
+        return
+    init_db()
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE service_tokens SET revoked = 1 WHERE token_hash = ?", (_hash_token(raw_token),)
+        )
 
 
 def revoke_all_for_user(user_id: int) -> None:

@@ -14,6 +14,8 @@ import {
 
 import * as auth from "../lib/auth";
 import type { AuthUser } from "../lib/auth";
+import { pauseForRetry } from "../lib/retryPause";
+import { probeSession } from "../lib/sessionProbe";
 import { setCurrentUser } from "../lib/storage";
 
 type Status = "loading" | "authed" | "anon";
@@ -36,8 +38,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const me = await auth.fetchMe();
-      if (!alive) return;
+      // The splash holds until the server ANSWERS who is signed in. A restart
+      // or a dropped connection is asked again rather than read as signed out.
+      const me = await probeSession(auth.fetchMe, pauseForRetry, () => alive);
+      if (me === undefined || !alive) return;
       setUser(me);
       setStatus(me ? "authed" : "anon");
       // Namespaces every browser storage key to this user, and migrates any

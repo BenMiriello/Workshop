@@ -322,7 +322,7 @@ class App(Base, Timestamps, SoftDelete):
     # See the class docstring. Populated by the stage-A backfill wherever a
     # slug names both an installed app and a row in the project registry --
     # "the same thing, two records" the design doc calls out by name (sec
-    # 2.1: budget, birds, location, commute, notes-app). NULL means this app
+    # 2.1, five apps at design time). NULL means this app
     # has no working tree of its own (an installed-only app with no repo).
     project_slug: Mapped[str | None] = mapped_column(String(64))
     dev_only: Mapped[bool] = mapped_column(Boolean, nullable=False,
@@ -1399,7 +1399,12 @@ MESSAGE_ROLES = ("user", "assistant")
 # `run`/`title` from the file log's KINDS are NOT here: a run is `chat_turn`, and
 # a title is a column on the thread.
 MESSAGE_KINDS = ("message", "boundary", "scope")
-BOUNDARY_MODES = ("clear", "compact")
+# Every `mode` a boundary event in the file log can carry, because the mirror
+# copies it verbatim. `clear`/`compact` are cuts; `reset`/`auto` are markers that
+# move no cut (`chat_store.note_session_reset`, `note_auto_compact`) but still
+# hold a position the transcript draws a divider at. Adding a value here means a
+# migration for `ck_chat_message_boundary_mode` too; see revision e3b7a2d94c61.
+BOUNDARY_MODES = ("clear", "compact", "reset", "auto")
 TURN_STATUSES = ("running", "finished", "lost", "error", "stopped")
 
 # Documented for the reader; NOT constrained, because segments are a JSONB

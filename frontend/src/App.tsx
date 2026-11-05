@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { lazyPage, RouteSkeleton } from "./lib/lazyPage";
 import { runHref } from "./lib/jobs";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
@@ -10,12 +11,12 @@ import Tickets from "./pages/Tickets";
 import TicketDetail from "./pages/TicketDetail";
 import FocusedChat from "./pages/FocusedChat";
 import { BreadcrumbProvider } from "@workshop/ui";
-import { QueryClientProvider } from "@tanstack/react-query";
-import { queryClient } from "./lib/queryClient";
 import { Shell } from "./components/shell/Shell";
 import { AppProviders, AppSuspense, appRoutes, appRedirects } from "./apps/registry";
 import { useAppDeclarations } from "./apps/declarations";
+import { purgeAbsentApps } from "./lib/appStorage";
 import { useAppPlacesState } from "./apps/useAppPlaces";
+import { isEmbedPath } from "./components/chat/chatEmbed";
 
 // LAZY BY ROUTE. Each of these is a page the app does not need to render its
 // first screen, and several drag heavy libraries behind them (Usage pulls
@@ -27,6 +28,9 @@ import { useAppPlacesState } from "./apps/useAppPlaces";
 // landing surfaces, and a suspense flash on the way into the chat is worse
 // than the bytes.
 const AgentDetail = lazyPage(() => import("./pages/AgentDetail"));
+const EmbedChat = lazyPage(() => import("./pages/EmbedChat"));
+const EmbedChats = lazyPage(() => import("./pages/EmbedChats"));
+const EmbedOverlay = lazyPage(() => import("./pages/EmbedOverlay"));
 const ProjectNew = lazyPage(() => import("./pages/ProjectNew"));
 
 // A project's own page is now its app's Overview. The slug is the same in both
@@ -35,7 +39,13 @@ function ProjectSlugRedirect() {
   const { slug = "" } = useParams();
   return <Navigate to={`/apps/${encodeURIComponent(slug)}/overview`} replace />;
 }
-const AppPreview = lazyPage(() => import("./pages/AppPreview"));
+/** The old framed-preview address. An app's screens live inside it now
+ *  (app-screens-2026-09-23.md), and its bare path opens on the first. */
+function ProjectRunRedirect() {
+  const { slug = "" } = useParams();
+  return <Navigate to={`/apps/${encodeURIComponent(slug)}`} replace />;
+}
+const AppScreen = lazyPage(() => import("./pages/apps/tabs/AppScreen"));
 const Grants = lazyPage(() => import("./pages/settings/Grants"));
 // Trackers and McpServers are no longer routed: they are SECTIONS now, of
 // Settings > Apps and Settings > Tools and MCP respectively, and each is
@@ -156,6 +166,11 @@ function VoiceRedirect() {
 // content on a desktop, two toolbars and the content on a phone. The two width
 // modifiers (--chatfull, --appfull) moved there with it and are still the ONLY
 // per-route width logic there is. Do not reintroduce a route-by-route list.
+
+// AN EMBED HAS NO SHELL. `/embed/...` is a Workshop surface framed by another
+// page (an app showing its own chat), so it mounts outside the dock, the page
+// column and the app-declared providers, and has no route table beyond itself.
+//
 // A TAB THAT HAS BEEN OPEN ALL DAY IS RUNNING THE BUILD IT LOADED. The edge
 // already stops a FRESH load from getting a stale bundle (index.html goes out
 // no-cache with an ETag); nothing was closing the other half, so a fix could
@@ -163,18 +178,27 @@ function VoiceRedirect() {
 // operator, in an open tab, was still looking at the previous one and
 // correctly saying it was not fixed. Measured 2026-09-01. No banner: it
 // reloads on the next navigation and says nothing. See lib/newBuild.ts.
-//
-// A COMPONENT RATHER THAN A CALL IN `App`, because the read is on the query
-// layer and `App` IS the component that mounts `QueryClientProvider`: a hook
-// called in the body of the provider's own owner runs OUTSIDE the context it
-// is about to create, and `useQuery` there throws on the first render. It
-// renders nothing; it is mounted for its effect, inside the provider.
-function FreshBuildWatch() {
+export default function App() {
+  const { pathname } = useLocation();
   useFreshBuild();
-  return null;
+  return isEmbedPath(pathname) ? <EmbedApp /> : <ShellApp />;
 }
 
-export default function App() {
+function EmbedApp() {
+  return (
+    <AppSuspense>
+      <Routes>
+        <Route path="/embed/chat/:scope" element={<EmbedChat />} />
+        <Route path="/embed/chats/:scope" element={<EmbedChats />} />
+        {/* The Mac app's paste panel, over any app on the Mac. */}
+        <Route path="/embed/overlay" element={<EmbedOverlay />} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </AppSuspense>
+  );
+}
+
+function ShellApp() {
   // WHICH APPS THIS INSTALLATION HAS, asked of the platform rather than
   // compiled in. The read starts on mount and the routed area waits for it:
   // mounting the route table first would 404 a deep link into an app for one
@@ -184,14 +208,8 @@ export default function App() {
   // immediately, and an unreachable endpoint yields no apps rather than an
   // error thrown into render (apps/declarations.tsx).
   const apps = useAppDeclarations();
+  useEffect(() => { void purgeAbsentApps(); }, []);
   return (
-    // The query cache sits ABOVE every route, so moving between screens does
-    // not throw away what was already read, and INSIDE `AuthProvider` (which
-    // wraps this component in main.tsx), so every query runs with a token.
-    // main.tsx mounts `BrowserRouter` above `AuthProvider`, so "outside the
-    // router" can only mean above the route tree, which is what this is.
-    <QueryClientProvider client={queryClient}>
-    <FreshBuildWatch />
     <AppProviders>
     <BreadcrumbProvider>
     <Shell>
@@ -257,7 +275,7 @@ export default function App() {
           <Route path="/projects" element={<Navigate to="/apps" replace />} />
           <Route path="/projects/new" element={<ProjectNew />} />
           <Route path="/projects/:slug" element={<ProjectSlugRedirect />} />
-          <Route path="/projects/:slug/run" element={<AppPreview />} />
+          <Route path="/projects/:slug/run" element={<ProjectRunRedirect />} />
           <Route path="/settings/grants" element={<Grants />} />
           <Route path="/settings/trackers" element={<Navigate to="/settings/connectors" replace />} />
           {/* Tools and MCP are one page now (places.ts). The routes stay as
@@ -280,6 +298,7 @@ export default function App() {
               app's static route above wins on specificity, so this never
               shadows one. */}
           <Route path="/apps/:appSlug" element={<AppHomeRedirect />} />
+          <Route path="/apps/:appSlug/ui/:service/*" element={<AppScreen />} />
           <Route path="/apps/:appSlug/work" element={<AppWorkTab />} />
           <Route path="/apps/:appSlug/overview" element={<AppOverviewTab />} />
           <Route path="/apps/:appSlug/chats" element={<AppChats />} />
@@ -312,6 +331,7 @@ export default function App() {
           <Route path="/settings" element={<Settings tab="account" />} />
           <Route path="/settings/appearance" element={<Settings tab="appearance" />} />
           <Route path="/settings/chat" element={<Settings tab="chat" />} />
+          <Route path="/settings/speech" element={<Settings tab="speech" />} />
           <Route path="/settings/memory" element={<Settings tab="memory" />} />
           <Route path="/settings/connectors" element={<Settings tab="connectors" />} />
           {/* NOT a redirect. /settings/apps still exists and still renders the
@@ -352,6 +372,5 @@ export default function App() {
     </Shell>
     </BreadcrumbProvider>
     </AppProviders>
-    </QueryClientProvider>
   );
 }

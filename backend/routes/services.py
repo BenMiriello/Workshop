@@ -7,7 +7,7 @@ state, not a stale cache.
 Two sources, because there are two kinds of process. The PLATFORM's own are
 listed here. An app that runs out of process (a separate backend, a worker, a
 dashboard) declares its own on its AppSpec, so its probes exist exactly while it
-is installed and a fresh instance does not report three wearables services down
+is installed and a fresh instance does not report another app's services down
 because it inherited someone else's roster.
 
 This route also carries `credentials`, which are NOT services and are kept in
@@ -26,6 +26,7 @@ from dataclasses import dataclass
 import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
+from services import local_model_provider
 
 
 router = APIRouter(prefix="/services", tags=["services"])
@@ -47,8 +48,6 @@ PLATFORM_SERVICES: list[Service] = [
             os.environ.get("WORKSHOP_BACKEND_URL", "http://127.0.0.1:8000"), "/healthz"),
     Service("workshop-frontend", "core",
             os.environ.get("WORKSHOP_FRONTEND_URL", "http://127.0.0.1:5173"), "/"),
-    Service("ollama", "models",
-            os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434"), "/api/tags"),
 ]
 
 
@@ -57,6 +56,9 @@ def services() -> list[Service]:
     from services import app_registry
 
     out = list(PLATFORM_SERVICES)
+    local = local_model_provider.configured_provider()
+    if local is not None:
+        out.append(Service("local-models", "models", local.base_url, "/v1/models"))
     for name, category, url, probe_path, expect in app_registry.installed_service_probes():
         out.append(Service(name, category, url, probe_path, expect_status=expect))
     return out

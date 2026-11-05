@@ -324,7 +324,8 @@ class TestTheThreadIsLeftConsistent:
 
         assert chat_log.read_events(tid) == before
         assert not [m for m in chat_store.get_thread(tid)["messages"]
-                    if m["content"] == chat_store.LOST_TURN_TEXT]
+                    if m["content"] in (chat_store.LOST_TURN_TEXT,
+                                        chat_store.LOST_TURN_RESUMING_TEXT)]
 
     def test_the_journal_is_cleaned_up(self, thread):
         tid = thread["id"]
@@ -345,7 +346,8 @@ class TestALostRunIsWordedDifferently:
 
         last = chat_store.get_thread(tid)["messages"][-1]
         assert last["meta"]["stopped"] == chat_store.STOPPED_INTERRUPTED
-        assert last["content"] == chat_store.LOST_TURN_TEXT
+        assert last["content"] in (chat_store.LOST_TURN_TEXT,
+                                   chat_store.LOST_TURN_RESUMING_TEXT)
 
     def test_the_two_values_are_distinct(self):
         assert chat_store.STOPPED_BY_OPERATOR != chat_store.STOPPED_INTERRUPTED

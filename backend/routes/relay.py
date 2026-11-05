@@ -1,23 +1,35 @@
-"""Privacy relay — routes prompts to local Qwen (Ollama) for boilerplate work,
+"""Privacy relay — routes prompts to the configured local model server for boilerplate work,
 keeps Claude reserved for architecture-class reasoning. Skeleton implementation;
 classification is heuristic for now and can be upgraded to a small fine-tuned
 classifier later."""
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from typing import Literal
 
-import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from services import llm_contract, local_model_provider
 from wsplatform import paths
 
 
 router = APIRouter(prefix="/relay", tags=["relay"])
 
-OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-LOCAL_MODEL = os.environ.get("RELAY_LOCAL_MODEL", "qwen2.5:32b")
+
+
+def _local_model() -> str:
+    """`RELAY_LOCAL_MODEL` when set, else the local model with the largest
+    context window (the server's list order changes with what is loaded)."""
+    chosen = os.environ.get("RELAY_LOCAL_MODEL", "").strip()
+    if chosen:
+        return chosen
+    provider = local_model_provider.configured_provider()
+    models = provider.models() if provider else []
+    if not models:
+        return ""
+    return max(models, key=lambda m: m.capabilities.context_tokens).id
 
 # Keywords that suggest "boilerplate / mechanical / local-suitable" work.
 BOILERPLATE_HINTS = [
@@ -62,13 +74,13 @@ def _classify(task: str) -> RouteDecision:
     local_hits = sum(1 for k in BOILERPLATE_HINTS if k in t)
     cloud_hits = sum(1 for k in ARCHITECTURE_HINTS if k in t)
     if cloud_hits > local_hits:
-        return RouteDecision(route="cloud", reason=f"architecture_hints={cloud_hits} > boilerplate_hints={local_hits}", local_model=LOCAL_MODEL)
+        return RouteDecision(route="cloud", reason=f"architecture_hints={cloud_hits} > boilerplate_hints={local_hits}", local_model=_local_model())
     if local_hits > 0 and cloud_hits == 0:
-        return RouteDecision(route="local", reason=f"boilerplate_hints={local_hits}, no architecture_hints", local_model=LOCAL_MODEL)
+        return RouteDecision(route="local", reason=f"boilerplate_hints={local_hits}, no architecture_hints", local_model=_local_model())
     # Short tasks default local (cheap to try); longer ones go cloud
     if len(re.findall(r"\w+", task)) < 30:
-        return RouteDecision(route="local", reason="short task (<30 words), default local", local_model=LOCAL_MODEL)
-    return RouteDecision(route="cloud", reason="default for non-trivial task with no clear local signal", local_model=LOCAL_MODEL)
+        return RouteDecision(route="local", reason="short task (<30 words), default local", local_model=_local_model())
+    return RouteDecision(route="cloud", reason="default for non-trivial task with no clear local signal", local_model=_local_model())
 
 
 RELAY_CORPUS = str(paths.env_path("WORKSHOP_RELAY_CORPUS", "relay-corpus.jsonl"))
@@ -102,28 +114,23 @@ async def classify(req: RouteRequest) -> RouteDecision:
 
 @router.post("/local", response_model=LocalResponse)
 async def execute_local(req: LocalRequest) -> LocalResponse:
-    """Execute a task against the local Ollama Qwen model. Use this when classify
-    returned route=local, or when the caller wants to force local execution."""
-    import time
+    """Execute a task on the configured local model server. Use this when
+    classify returned route=local, or when the caller wants to force local
+    execution."""
+    provider = local_model_provider.configured_provider()
+    model = _local_model()
+    if provider is None or not model:
+        raise HTTPException(status_code=503, detail="no local model server is configured")
     prompt = req.task if not req.context else f"{req.context}\n\n---\n\n{req.task}"
-    t0 = time.monotonic()
-    async with httpx.AsyncClient(timeout=120.0) as c:
-        r = await c.post(
-            f"{OLLAMA_BASE_URL}/api/generate",
-            json={
-                "model": LOCAL_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"num_predict": req.max_tokens},
-            },
-        )
-    if r.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"ollama error {r.status_code}: {r.text[:200]}")
-    data = r.json()
+    try:
+        out = await asyncio.to_thread(
+            provider.run_turn, prompt, model=model, max_tokens=req.max_tokens)
+    except llm_contract.ProviderCallFailed as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
     return LocalResponse(
-        model=LOCAL_MODEL,
-        response=data.get("response", ""),
-        duration_ms=int((time.monotonic() - t0) * 1000),
+        model=out["model"],
+        response=out["text"],
+        duration_ms=int(out["elapsed_s"] * 1000),
     )
 
 

@@ -166,3 +166,38 @@ def test_trailing_blank_lines_ignored(journal):
     journal.joinpath("stream.jsonl").write_text(
         _json.dumps({"type": "result", "subtype": "success"}) + "\n\n\n")
     assert bs._journal_terminal_result("run-1") is not None
+
+
+# --- an adopted turn's stream opens with the view it already has ---------------
+# A client attaching to a turn rewinds and rebuilds from the stream's first
+# event. An adopted turn's event list holds only what came after the resume, so
+# without the snapshot every viewer showed "working" over an empty reply.
+
+def test_the_adopted_stream_opens_with_the_restored_view(journal, monkeypatch):
+    _live(monkeypatch, {"turn_id": "run-1", "journal_offset": 120,
+                        "meta": {"segments": SEGS, "cut_head": ["m-7"]}})
+    t = _turn()
+    assert bs._resume_from(t) == 120
+    bs._push_snapshot(t)
+    first = t.events[0]
+    assert first.kind == "snapshot"
+    assert first.payload == {"segments": SEGS, "cut_head": ["m-7"]}
+
+
+def test_later_output_does_not_leak_into_the_snapshot(journal, monkeypatch):
+    """The drive loop keeps folding into `turn.segments`; a replay that carried
+    those folds inside the snapshot AND as their own deltas would show them twice."""
+    _live(monkeypatch, {"turn_id": "run-1", "journal_offset": 120,
+                        "meta": {"segments": [dict(s) for s in SEGS]}})
+    t = _turn()
+    bs._resume_from(t)
+    bs._push_snapshot(t)
+    t.segments.append({"t": "text", "text": "after the restart"})
+    t.segments[0]["text"] = "mutated"
+    assert t.events[0].payload["segments"] == SEGS
+
+
+def test_the_drive_loop_pushes_it_only_when_it_resumed():
+    import inspect
+    src = inspect.getsource(bs._drive_turn)
+    assert "offset = _resume_from(turn)\n    if offset:\n        _push_snapshot(turn)" in src

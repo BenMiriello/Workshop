@@ -89,6 +89,18 @@ def reachable_networks() -> tuple[str, ...]:
     return _csv("WORKSHOP_REACHABLE_NETWORKS") or ("loopback (127.0.0.1)",)
 
 
+def sandbox_excluded_commands() -> tuple[str, ...]:
+    """Commands this installation's chats run outside the turn sandbox, beyond
+    the platform's host tools (`turn_sandbox.EXCLUDED`): its own apply or
+    restart scripts, for example. Patterns in the CLI's `Bash(...)` syntax."""
+    return _csv("WORKSHOP_SANDBOX_EXCLUDED_COMMANDS")
+
+
+def sandbox_write_paths() -> tuple[str, ...]:
+    """Paths outside a chat's own tree that its sandboxed commands may write."""
+    return _csv("WORKSHOP_SANDBOX_WRITE_PATHS")
+
+
 def git_forge() -> str:
     """The git hosting vendor this installation publishes to. Empty when
     undeclared: the branching rule then says "remote" and names nobody."""
@@ -126,6 +138,48 @@ def declared_origins() -> tuple[str, ...]:
         if value and value not in out:
             out.append(value)
     return tuple(out)
+
+
+RESERVED_PORTS_ENV = "WORKSHOP_RESERVED_PORTS"
+
+
+def reserved_ports() -> tuple[int, ...]:
+    """Ports this machine's own services use that the app runner must never hand
+    out: WORKSHOP_RESERVED_PORTS, comma separated. Unset means none beyond the
+    platform's own (`services/port_registry.RESERVED`)."""
+    out = []
+    for part in os.environ.get(RESERVED_PORTS_ENV, "").split(","):
+        part = part.strip()
+        if part.isdigit() and 0 < int(part) < 65536:
+            out.append(int(part))
+    return tuple(out)
+
+
+DEFAULT_DEV_PORT = 5173
+
+
+def dev_port() -> int:
+    """The port the Vite dev server listens on: WORKSHOP_VITE_PORT, the same
+    variable scripts/frontends_watchdog.sh launches it with, else 5173."""
+    raw = (os.environ.get("WORKSHOP_VITE_PORT") or "").strip()
+    try:
+        port = int(raw)
+    except ValueError:
+        return DEFAULT_DEV_PORT
+    return port if 0 < port < 65536 else DEFAULT_DEV_PORT
+
+
+def dev_origins() -> tuple[str, ...]:
+    """The loopback origins a browser uses to reach the dev server.
+
+    The standard port is always included, so a checkout that has not declared a
+    port still works; a declared WORKSHOP_VITE_PORT adds its own pair.
+    """
+    ports = [DEFAULT_DEV_PORT]
+    if dev_port() not in ports:
+        ports.append(dev_port())
+    return tuple(f"http://{host}:{p}" for p in ports
+                 for host in ("localhost", "127.0.0.1"))
 
 
 def public_origin() -> str:
@@ -277,3 +331,41 @@ def reject_blocked(*strings: str | None) -> None:
                 raise ValueError(
                     f"{name!r} is out of scope for this installation "
                     f"({BLOCKED_OWNERS_ENV}): refusing owner/name/remote containing it")
+
+
+def storage_quota_gb() -> float | None:
+    """The storage this installation's plan pays for, in GB.
+
+    Declared with WORKSHOP_STORAGE_QUOTA_GB. Unset means a local install whose
+    only bound is its own disk; the operator's limit in the storage settings may
+    sit below a quota but never above it."""
+    raw = os.environ.get("WORKSHOP_STORAGE_QUOTA_GB", "").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+APP_CATALOG_ENV = "WORKSHOP_APP_CATALOG_URL"
+
+
+def app_catalog_url() -> str:
+    """The git repository holding the app catalog (`catalog.json`) this
+    installation installs apps from, declared with WORKSHOP_APP_CATALOG_URL.
+
+    Any URL `git clone` takes; a private one works through the machine's own
+    git credentials. Empty means no catalog: Settings > Apps lists nothing and
+    no default app is installed. The URL names an account, so it is declared
+    here rather than written into tracked source."""
+    return os.environ.get(APP_CATALOG_ENV, "").strip()
+
+
+def backend_port() -> int | None:
+    """The port this backend was started on (`WORKSHOP_BACKEND_PORT`, else the
+    `PORT` the launcher passes), or None when nothing says."""
+    for var in ("WORKSHOP_BACKEND_PORT", "PORT"):
+        raw = os.environ.get(var, "").strip()
+        if raw.isdigit():
+            return int(raw)
+    return None

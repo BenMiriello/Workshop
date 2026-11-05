@@ -106,6 +106,23 @@ class TestAdmissionRespectsThePendingOp:
         entries = chat_queue.read(tid)
         assert [e["text"] for e in entries] == ["typed mid-fold"]
 
+    def test_every_no_turn_answer_fits_the_response_model(self, thread):
+        """Calling the handler directly skips FastAPI's response validation, so
+        an idle chat's answer (`turn_id: None`) passed every test here while the
+        live endpoint answered 500 on `('response', 'turn_id')`. Validate the
+        answer the way the route does: `response_model=cm.InjectResult`."""
+        import routes.chat as rc
+        from routes import chat_models as cm
+        tid = thread["id"]
+
+        idle = asyncio.run(rc.inject_into_thread(tid, rc.InjectMessage(content="hello")))
+        assert idle["queued_for_turn"] is False
+        assert cm.InjectResult.model_validate(idle).turn_id is None
+
+        thread_ops.begin(tid, "compact")
+        queued = asyncio.run(rc.inject_into_thread(tid, rc.InjectMessage(content="mid-fold")))
+        assert cm.InjectResult.model_validate(queued).queued is True
+
     def test_ending_the_op_kicks_the_drain(self, thread, monkeypatch):
         tid = thread["id"]
         kicked = []

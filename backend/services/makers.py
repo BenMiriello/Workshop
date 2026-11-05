@@ -59,7 +59,7 @@ SEVERAL MAKERS ON ONE SCOPE IS LEGAL, AND IS NOT RESOLVED BY SORT ORDER.
 EXEMPTS `maker` -- its comment says so, because several makers on one scope is
 the concurrency case, governed by `touches` disjointness and the claim fence.
 An earlier version of this header claimed one-per-scope was "ENFORCED HERE". It
-was not, and on the live install `birds` and `budget` each had two, with the
+was not, and on the live install two apps each had two, with the
 one the UI showed decided by which filename sorted first. So this module does
 not enforce it and does not pretend to: `makers_for_scope` returns ALL of them,
 `maker_for_scope` returns one only when there IS one, and `prompt_block` injects
@@ -261,7 +261,7 @@ def makers_for_scope(scope: str, *, include_retired: bool = False,
     The list is the honest answer because the registry ALLOWS several. Slug
     order is a display order and nothing else -- explicitly not a precedence
     rule, because that is what filename sort order was when it silently decided
-    which of the two Birds makers the UI showed.
+    which of an app's two makers the UI showed.
 
     `roster` is a list `list_agents()` already produced. The roster route reads
     it once for the whole page and hands it down, because otherwise drawing N

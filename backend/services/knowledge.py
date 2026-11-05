@@ -333,7 +333,10 @@ def enforce_index_cap(scope_key: str, max_lines: int = 200) -> dict:
     {"scope", "demoted", "index_lines"}. A cheap no-op while under the cap."""
     _parse_scope(scope_key)
     entries = _read_index(scope_key)
-    total = _INDEX_HEADER_LINES + len(entries)
+    # A thread's own working state is not in the prompt index (`index_block`
+    # skips it), so it neither counts against the cap nor is demoted by it.
+    thread_states = sum(1 for nid in entries if is_thread_working_state(nid))
+    total = _INDEX_HEADER_LINES + len(entries) - thread_states
     if total <= max_lines:
         return {"scope": scope_key, "demoted": 0, "index_lines": total}
 
@@ -355,7 +358,8 @@ def enforce_index_cap(scope_key: str, max_lines: int = 200) -> dict:
     # It is rewritten on every fold, so in practice it is always among the most
     # recent anyway; this is the guarantee, not the common case.
     _RESERVED = (ARCHIVE_NOTE_ID, WORKING_STATE_NOTE_ID, MANIFEST_NOTE_ID)
-    demotable = sorted((nid for nid in entries if nid not in _RESERVED), key=_recency)
+    demotable = sorted((nid for nid in entries if nid not in _RESERVED
+                        and not is_thread_working_state(nid)), key=_recency)
     keep = max(0, max_lines - _INDEX_HEADER_LINES - len(_RESERVED))
     to_demote = demotable[: max(0, len(demotable) - keep)]
     if not to_demote:
@@ -556,7 +560,8 @@ GOVERNANCE_FLOOR_FRACTION = 0.4
 
 def layered_index_block(scope_key: str, role: str | None = None,
                         private: str | None = None,
-                        total_tokens: int = DEFAULT_LAYERED_INDEX_TOKEN_BUDGET
+                        total_tokens: int = DEFAULT_LAYERED_INDEX_TOKEN_BUDGET,
+                        layers: list[str] | None = None
                         ) -> tuple[str, list[str]]:
     """`index_block` over the read-union, under ONE total token budget for the
     whole block. Returns (text, scopes_used).
@@ -594,8 +599,11 @@ def layered_index_block(scope_key: str, role: str | None = None,
     as the sentence saying it exists, that content is shown instead - printing
     a same-length sentence that says a note exists, in place of the note
     itself, is pure loss.
+
+    `layers` replaces the read-union when the caller has a narrower one; its
+    first element is then the one served first.
     """
-    layers = read_layers(scope_key, role, private)
+    layers = layers or read_layers(scope_key, role, private)
     if not layers:
         return "", []
 
@@ -764,7 +772,12 @@ def index_block(scope_key: str, max_tokens: int = DEFAULT_INDEX_TOKEN_BUDGET) ->
     the tiebreak within a type. When the scope has more notes than fit the
     budget, the last line declares how many were left out."""
     try:
-        notes = _ranked_notes(scope_key)
+        # No working state is listed: the scope's arrives in full in its own
+        # prompt block (`chat_context.working_state_block`), and a thread's own
+        # is that chat's, not the scope's.
+        notes = [n for n in _ranked_notes(scope_key)
+                 if n["id"] != WORKING_STATE_NOTE_ID
+                 and not is_thread_working_state(n["id"])]
     except Exception:
         return ""
     if not notes:
@@ -1233,8 +1246,28 @@ WORKING_STATE_TITLE = "Working state (auto-written at compaction)"
 WORKING_STATE_HOOK = ("the last session's handoff for this scope: objective, "
                       "decisions and why, done, not done, shortcuts owed, open questions")
 
+# PER THREAD, for a scope whose chats are separate pieces of work (an app's own
+# assistant). One note per scope there meant whichever chat compacted last
+# overwrote it and every new chat inherited it, so a chat began inside another
+# chat's work. Such a chat's handoff is `working-state/<thread id>`: its own,
+# never read by another chat, and kept out of the scope's prompt index, which
+# lists what every chat in the scope may want.
+_THREAD_WORKING_STATE_PREFIX = WORKING_STATE_NOTE_ID + "/"
+THREAD_WORKING_STATE_HOOK = ("this chat's handoff from its last compaction: "
+                             "objective, decisions and why, done, not done, "
+                             "shortcuts owed, open questions")
+
+
+def working_state_note_id(thread_id: str = "") -> str:
+    """The scope's working-state note id, or one thread's when `thread_id`."""
+    return f"{_THREAD_WORKING_STATE_PREFIX}{thread_id}" if thread_id else WORKING_STATE_NOTE_ID
+
+
+def is_thread_working_state(note_id: str) -> bool:
+    return note_id.startswith(_THREAD_WORKING_STATE_PREFIX)
+
 # The six sections, in order. Exported because three places must agree on them:
-# the summarizer prompt that asks for them (`routes/chat._summary_prompt`), the
+# the summarizer prompt that asks for them (`working_state._summary_prompt`), the
 # reader that trims within them (`_bound_working_state`), and the tests that
 # check a fold round-trips them. A seventh section invented by the model is not
 # an improvement, it is the free prose this replaced coming back in disguise.
@@ -1284,6 +1317,16 @@ continue the work without the old transcript.
 
 Edit it freely to correct what is wrong: the corrected text is what the next
 chat reads. But it is a snapshot of work in progress, not a durable record, so
+anything that must outlive this piece of work belongs in a note of its own.
+
+"""
+
+_THREAD_WORKING_STATE_HEADER = """Written automatically when one chat compacts, and overwritten by its next
+compaction. It is the handoff that chat reads to continue its work without the
+old transcript; no other chat reads it.
+
+Edit it freely to correct what is wrong: the corrected text is what the chat
+reads. But it is a snapshot of work in progress, not a durable record, so
 anything that must outlive this piece of work belongs in a note of its own.
 
 """
@@ -1348,9 +1391,10 @@ def _sections_only(body: str) -> str:
 
 
 def write_working_state(scope_key: str, sections: str, *, author: str = "",
-                        chat_id: str = "") -> dict:
-    """Write (or overwrite) this scope's working-state note. Synchronous, so
-    the fold's landing can call it without an event loop of its own.
+                        chat_id: str = "", thread_id: str = "") -> dict:
+    """Write (or overwrite) this scope's working-state note, or one thread's
+    when `thread_id` is given. Synchronous, so the fold's landing can call it
+    without an event loop of its own.
 
     `sections` is the structured text the summarizer produced. It is bounded
     here, before it reaches disk, so a runaway summary cannot leave a note that
@@ -1363,6 +1407,13 @@ def write_working_state(scope_key: str, sections: str, *, author: str = "",
     text = _bound_working_state(_sections_only(sections))
     if not text:
         raise ValueError("refusing to write an empty working state")
+    if thread_id:
+        return _put_note_sync(
+            scope_key, working_state_note_id(thread_id),
+            f"Working state of chat {thread_id[:8]} (auto-written at compaction)",
+            _THREAD_WORKING_STATE_HEADER + text + "\n",
+            hook=THREAD_WORKING_STATE_HOOK, author=author, chat_id=chat_id,
+        )
     return _put_note_sync(
         scope_key, WORKING_STATE_NOTE_ID, WORKING_STATE_TITLE,
         _WORKING_STATE_HEADER + text + "\n",
@@ -1371,8 +1422,9 @@ def write_working_state(scope_key: str, sections: str, *, author: str = "",
     )
 
 
-def read_working_state(scope_key: str) -> tuple[str, str]:
-    """(sections, originating chat id) for this scope's working state.
+def read_working_state(scope_key: str, thread_id: str = "") -> tuple[str, str]:
+    """(sections, originating chat id) for this scope's working state, or for
+    one thread's when `thread_id` is given.
 
     `("", "")` when there is none, which is the normal state of a scope that
     has never compacted. Bounded again on the way out: the note is editable by
@@ -1385,10 +1437,11 @@ def read_working_state(scope_key: str) -> tuple[str, str]:
     case that chat already carries this text verbatim as its own compaction
     summary, and injecting it a second time would spend the budget saying the
     same thing twice."""
-    body = get_note(scope_key, WORKING_STATE_NOTE_ID)
+    note_id = working_state_note_id(thread_id)
+    body = get_note(scope_key, note_id)
     if not body or not body.strip():
         return "", ""
-    _author, _reach, chat = _stored_meta(scope_key, WORKING_STATE_NOTE_ID)
+    _author, _reach, chat = _stored_meta(scope_key, note_id)
     return _bound_working_state(_sections_only(body)), chat
 
 

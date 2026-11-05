@@ -13,6 +13,8 @@ So the table moved here rather than being duplicated. Callers:
 """
 from __future__ import annotations
 
+from services import local_model_provider
+
 # Context window per model. This is the DENOMINATOR of the composer meter, and
 # it was wrong for every Claude model except Haiku: the table said 200k across
 # the board, but the whole 4.6-and-later generation is 1M. A real chat holding
@@ -29,6 +31,7 @@ CONTEXT_WINDOW = {
     "claude-opus-4-6": 1_000_000,
     "claude-fable-5-1": 1_000_000,
     "claude-fable-5": 1_000_000,
+    "claude-sonnet-5-5": 1_000_000,
     "claude-sonnet-5": 1_000_000,
     "claude-sonnet-4-6": 1_000_000,
     "claude-haiku-4-5": 200_000,
@@ -37,6 +40,18 @@ CONTEXT_WINDOW = {
 
 # Smallest-to-largest, for the self-correction in `window_for`.
 WINDOW_TIERS = (200_000, 1_000_000)
+
+
+def _reported_window(model: str) -> int:
+    """The window the local model server reported for `model`, 0 when it
+    reported none.
+
+    A local server states its loaded context length; a guess at the size of a
+    model the platform has never heard of is only the fallback for one that
+    stated nothing."""
+    return next((m.capabilities.context_tokens
+                 for m in local_model_provider.probe().models
+                 if m.id == model), 0)
 
 
 def window_for(model: str | None, measured: int = 0) -> int:
@@ -56,7 +71,7 @@ def window_for(model: str | None, measured: int = 0) -> int:
         # older, and every current family except Haiku is 1M.
         window = 1_000_000
     elif model:
-        window = 32_768  # local / Ollama
+        window = _reported_window(model) or 32_768
     else:
         window = 1_000_000
     if measured > window:

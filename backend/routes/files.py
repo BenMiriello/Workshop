@@ -157,6 +157,11 @@ async def file_raw(workspace: str = Query(...), path: str = Query(...)) -> FileR
     was told about. Both cost one line and close the only way this route could
     run agent-authored markup as same-origin code.
 
+    `media-src 'self'` is the one thing the policy lets back in. A browser
+    opening an audio or video file directly plays it through a media element
+    that this same policy governs, so without it the player draws and refuses
+    to load.
+
     No response model: the body is bytes, not a schema. That is the one shape
     ADR 0023 clause 6's "declare what you return" does not apply to.
     """
@@ -174,7 +179,8 @@ async def file_raw(workspace: str = Query(...), path: str = Query(...)) -> FileR
         media_type=media,
         headers={
             "Content-Disposition": "inline",
-            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+            "Content-Security-Policy": (
+                "default-src 'none'; media-src 'self'; style-src 'unsafe-inline'"),
             "X-Content-Type-Options": "nosniff",
         },
     )

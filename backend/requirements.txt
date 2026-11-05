@@ -9,8 +9,8 @@ protobuf>=4.25,<8
 PyJWT[crypto]==2.9.0
 
 # Multipart form parsing. NOT imported by our code: FastAPI raises at APP IMPORT
-# when a route declares Form/UploadFile, which routes/birds.py and routes/voice.py
-# both do. Without it the backend does not start at all, so it is a hard
+# when a route declares Form/UploadFile, which routes/voice.py
+# (and app routes) do. Without it the backend does not start at all, so it is a hard
 # requirement despite looking like a feature dependency.
 python-multipart==0.0.32
 
@@ -41,6 +41,13 @@ mammoth==1.12.1
 openpyxl==3.1.5
 python-pptx==1.0.2
 
+# HTML to markdown, for an installed app that brings documents in from an HTML
+# export. App runtime libraries live here rather than in the app's own install
+# (scripts/install_apps.py installs apps with --no-deps), so one app cannot move
+# a pin the platform relies on. Both pure-Python.
+beautifulsoup4==4.15.0
+markdownify==1.2.3
+
 # Text embeddings (semantic search + task dedup). fastembed runs a small ONNX
 # model (bge-small-en-v1.5, 384-d) in-process via onnxruntime: no daemon, no
 # network at inference, self-contained in every deployment. Replaced the Ollama
@@ -48,3 +55,17 @@ python-pptx==1.0.2
 # onnxruntime, which voice keeps out of the core install, but embeddings ARE
 # core so it lives here.
 fastembed==0.8.0
+
+# Speech to text and text to speech (services/speech/). Small on top of the
+# onnxruntime embeddings already pull in; the models themselves are fetched on
+# first use, or ahead of time by scripts/setup_speech.sh.
+onnx-asr==0.12.0
+kokoro-onnx==0.6.1
+# Caps the command classifier's training to a couple of threads
+# (services/speech/meaning.py): numpy's own default is one per core.
+threadpoolctl==3.7.0
+
+# The machine's RAM room (services/machine_room_broker). Joining it is opt-in
+# (WORKSHOP_MACHINE_ROOM_REDIS); the import is lazy, so an installation that
+# never declares the broker runs without it.
+redis==8.1.0

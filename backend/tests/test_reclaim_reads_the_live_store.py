@@ -30,7 +30,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import tasks  # noqa: E402
+from services import proc_liveness, tasks  # noqa: E402
 
 
 def _stale_doing(task_id: str = "stale-1") -> dict:
@@ -62,6 +62,12 @@ def stores(monkeypatch):
     # The lease table is a separate store again; releasing is not what is under
     # test here and needs no database.
     monkeypatch.setattr(tasks, "_release_ticket_lease", lambda *a, **k: None)
+    # The fixture's claim is an hour old. On a host up for less than an hour
+    # that reads as "host rebooted", a different release than the one under
+    # test, so the boot is placed well before it.
+    monkeypatch.setattr(proc_liveness, "current_boot_id", lambda: None)
+    monkeypatch.setattr(proc_liveness, "boot_time",
+                        lambda: (datetime.now(timezone.utc) - timedelta(days=1)).timestamp())
     return state
 
 

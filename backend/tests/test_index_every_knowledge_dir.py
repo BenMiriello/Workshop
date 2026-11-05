@@ -179,8 +179,10 @@ class TestStaleness:
         assert set(si.rebuild_kinds()) >= set(si.DEFAULT_KINDS)
 
     def test_an_opted_in_kind_survives_a_rebuild_it_did_not_ask_for(self, tree, monkeypatch):
-        monkeypatch.setattr(si, "load", lambda: ([{"kind": "vault"}], None))
-        assert "vault" in si.rebuild_kinds()
+        # An installed app declaring a corpus it leaves out of the defaults.
+        monkeypatch.setattr(si, "_app_collectors", lambda: ({"opt-in": lambda: []}, set()))
+        monkeypatch.setattr(si, "load", lambda: ([{"kind": "opt-in"}], None))
+        assert "opt-in" in si.rebuild_kinds()
 
     def test_a_failed_rebuild_leaves_the_marker_so_the_next_search_retries(
             self, tree, monkeypatch):

@@ -69,8 +69,11 @@ def test_every_state_path_follows_a_relocated_root(module_name, attr, monkeypatc
     # verbatim and the chat_cwd case failed for everyone who had that variable
     # exported and passed for everyone who did not. A gate whose verdict depends
     # on who ran it teaches people to ignore the gate.
+    # WORKSHOP_RUNTIME is set by the whole session (tests/instance_isolation),
+    # so it is cleared here for the same reason.
     for override in ("WORKSHOP_CHAT_CWD", "WORKSHOP_PROJECTS_ROOT",
-                     "WORKSHOP_PROJECTS_REGISTRY", "WORKSHOP_RUNTIME_DIR"):
+                     "WORKSHOP_PROJECTS_REGISTRY", "WORKSHOP_RUNTIME_DIR",
+                     "WORKSHOP_RUNTIME"):
         monkeypatch.delenv(override, raising=False)
     # These are module-level constants, so the module has to be re-imported for
     # the new root to be read. That is also the real-world behaviour: the value
@@ -208,3 +211,26 @@ def test_list_branches_refuses_a_tree_it_cannot_find(monkeypatch, tmp_path):
 
     with pytest.raises(ValueError):
         worktrees.list_branches("gone")
+
+
+def test_a_dirless_self_row_names_the_branch_it_is_on(monkeypatch, tmp_path):
+    """The live `self: true` row stores no `dir`. The record lookup used to
+    reject it as "project not found", so `default_ref` fell back to `HEAD`
+    and every platform chat's branch pill read HEAD."""
+    import subprocess
+
+    from services import worktrees
+
+    here = tmp_path / "here"
+    here.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "trunk", str(here)], check=True)
+    subprocess.run(["git", "-C", str(here), "-c", "user.name=t", "-c",
+                    "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"],
+                   check=True)
+    reg = tmp_path / "projects.json"
+    reg.write_text(json.dumps({"projects": {"development": {"self": True}}}),
+                   encoding="utf-8")
+    monkeypatch.setenv("WORKSHOP_ROOT", str(here))
+    monkeypatch.setattr(worktrees, "PROJECTS_REGISTRY", reg)
+
+    assert worktrees.default_ref("development") == "trunk"

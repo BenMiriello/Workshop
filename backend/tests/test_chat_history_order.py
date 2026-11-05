@@ -167,7 +167,7 @@ class TestEveryPathThatShowsTheModelAHistory:
     ]
 
     def test_the_summarizer_folds_the_true_order(self):
-        from routes.chat import _fmt_for_summary
+        from services.working_state import _fmt_for_summary
         out = _fmt_for_summary(self.HISTORY)
         assert out.index("I'll look into X.") < out.index("also do Y") < out.index("Done both.")
 

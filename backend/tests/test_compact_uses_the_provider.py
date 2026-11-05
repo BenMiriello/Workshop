@@ -24,7 +24,7 @@ import asyncio
 
 import pytest
 
-from services import chat_store, ownership
+from services import chat_store, ownership, working_state
 
 
 @pytest.fixture()
@@ -59,7 +59,7 @@ def sent(monkeypatch):
     monkeypatch.setattr(rc, "_send", fake_send)
     # The working-state note is fired and not awaited, and it reads the notes
     # store. It is not what these tests are about.
-    monkeypatch.setattr(rc, "_spawn_working_state", lambda *a, **kw: None)
+    monkeypatch.setattr(working_state, "spawn", lambda *a, **kw: None)
     return calls
 
 
@@ -104,7 +104,7 @@ def test_queued_is_an_acceptance_not_a_refusal(thread, monkeypatch):
         return {"queued": True}
 
     monkeypatch.setattr(rc, "_send", queued)
-    monkeypatch.setattr(rc, "_spawn_working_state", lambda *a, **kw: None)
+    monkeypatch.setattr(working_state, "spawn", lambda *a, **kw: None)
 
     assert asyncio.run(rc.compact_thread(tid)) == {"queued": True}
 
@@ -119,7 +119,7 @@ def test_a_failure_to_start_is_reported_not_a_500(thread, monkeypatch):
         raise RuntimeError("no session")
 
     monkeypatch.setattr(rc, "_send", boom)
-    monkeypatch.setattr(rc, "_spawn_working_state", lambda *a, **kw: None)
+    monkeypatch.setattr(working_state, "spawn", lambda *a, **kw: None)
 
     assert asyncio.run(rc.compact_thread(tid)) == {"error": "no session"}
 

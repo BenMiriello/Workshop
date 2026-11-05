@@ -13,7 +13,9 @@ WHY RETRYING A WRITE IS SAFE HERE, and it is the point of the last test:
 `_RETRYABLE` is exactly the failures that prove the backend never saw the
 request. A ReadError or ReadTimeout is excluded, because those can mean the
 backend read it and was working on it. Widening that set would turn this from a
-recovery into a double-write, so it is asserted rather than trusted.
+recovery into a double-write, so it is asserted rather than trusted. A GET,
+HEAD or OPTIONS is the exception: it is retried on a ReadError too, because it
+cannot have changed anything (the last two tests).
 """
 from __future__ import annotations
 
@@ -118,3 +120,23 @@ def test_the_retryable_set_still_excludes_read_failures():
     assert httpx.ReadTimeout not in edge._RETRYABLE
     assert httpx.ConnectError in edge._RETRYABLE
     assert httpx.RemoteProtocolError in edge._RETRYABLE
+
+
+@pytest.mark.anyio
+async def test_a_read_dropped_by_a_restart_is_retried_for_a_get(monkeypatch):
+    """A restart drops every request in flight on a pooled connection with a
+    ReadError (measured 2026-10-04: 13 page reads, 13 instant 502s). A GET
+    cannot have changed anything, so it waits the restart out like a connect."""
+    ok = httpx.Response(200)
+    calls = _install(monkeypatch, [httpx.ReadError(""), httpx.ConnectError("down"), ok])
+    got = await edge._send_upstream(_Req("GET"), "/api/chat/threads", {}, b"", stream=False)
+    assert got is ok
+    assert calls["n"] == 3
+
+
+@pytest.mark.anyio
+async def test_a_dropped_read_on_a_write_is_still_not_retried(monkeypatch):
+    calls = _install(monkeypatch, [httpx.ReadError(""), httpx.Response(200)])
+    with pytest.raises(httpx.ReadError):
+        await edge._send_upstream(_Req("PUT"), "/api/chat/drafts/k", {}, b"{}", stream=False)
+    assert calls["n"] == 1

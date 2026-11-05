@@ -16,6 +16,7 @@ os.environ.setdefault("WORKSHOP_OPERATOR_EMAIL", "")
 os.environ["WORKSHOP_REGISTRATION_OPEN"] = "1"
 
 import pytest
+from fastapi import Depends, FastAPI, Request
 from fastapi.testclient import TestClient
 
 import deps_user
@@ -131,11 +132,31 @@ def test_device_token_roundtrip_and_revoke(db):
 
 def test_service_token_carries_scope(db):
     u = auth_store.create_user("svc@example.com", "password1")
-    raw = auth_store.create_service_token(u["id"], "ingest:location", "owntracks")
+    raw = auth_store.create_service_token(u["id"], "ingest:example", "tracker")
     ident = auth_store.service_identity(raw)
     assert ident["user"]["id"] == u["id"]
-    assert ident["scope"] == "ingest:location"
+    assert ident["scope"] == "ingest:example"
+    assert ident["name"] == "tracker"
     assert auth_store.service_identity("nope") is None
+
+
+def test_request_auth_names_how_the_caller_signed_in(db):
+    """A route behind require_user can tell a machine caller from a person, and
+    which token it holds, so it can confine what that caller may change."""
+    probe = FastAPI()
+
+    @probe.get("/who", dependencies=[Depends(deps_user.require_user)])
+    def who(request: Request):
+        return deps_user.request_auth(request)
+
+    u = auth_store.create_user("who@example.com", "password1")
+    raw = auth_store.create_service_token(u["id"], "reader:things", "Reader")
+    c = TestClient(probe)
+    svc = c.get("/who", headers={"Authorization": f"Bearer {raw}"}).json()
+    assert svc == {"method": "service", "scope": "reader:things", "name": "Reader", "user_id": u["id"]}
+    dev = auth_store.create_device_token(u["id"], "phone")
+    got = c.get("/who", headers={"Authorization": f"Bearer {dev}"}).json()
+    assert got["method"] == "device" and got["scope"] is None and got["name"] is None
 
 
 def test_revoke_all_sweeps_sessions_and_devices(db):
@@ -180,6 +201,24 @@ def test_login_wrong_password(client):
     assert client.post("/auth/login", json={"email": "b@example.com", "password": "WRONG"}).status_code == 401
 
 
+def test_repeated_wrong_passwords_lock_login_even_for_the_right_one(client):
+    client.post("/auth/register", json={"email": "c@example.com", "password": "password1"})
+    for _ in range(auth_store._LOGIN_FAIL_LIMIT):
+        r = client.post("/auth/login", json={"email": "c@example.com", "password": "WRONG"})
+        assert r.status_code == 401
+    r = client.post("/auth/login", json={"email": "c@example.com", "password": "password1"})
+    assert r.status_code == 429
+
+
+def test_a_good_login_clears_earlier_failures(client):
+    client.post("/auth/register", json={"email": "d@example.com", "password": "password1"})
+    for _ in range(auth_store._LOGIN_FAIL_LIMIT - 1):
+        client.post("/auth/login", json={"email": "d@example.com", "password": "WRONG"})
+    assert client.post("/auth/login", json={"email": "d@example.com", "password": "password1"}).status_code == 200
+    assert client.post("/auth/login", json={"email": "d@example.com", "password": "WRONG"}).status_code == 401
+    assert client.post("/auth/login", json={"email": "d@example.com", "password": "password1"}).status_code == 200
+
+
 def test_cookie_mutation_requires_csrf_header(client):
     client.post("/auth/register", json={"email": "csrf@example.com", "password": "password1"})
     # Cookie present, but no X-Workshop-Client header on a mutating request -> 403.
@@ -220,3 +259,45 @@ def test_device_token_issue_and_use(client):
     # A fresh client (no cookie) authenticates with the device token as a bearer.
     bare = TestClient(app)
     assert bare.get("/auth/me", headers={"Authorization": f"Bearer {raw}"}).status_code == 200
+
+
+# ----------------------------------------------------------------- browser sessions
+
+
+def _signed_in(email: str) -> TestClient:
+    c = TestClient(app)
+    assert c.post("/auth/login", json={"email": email, "password": "password1"}).status_code == 200
+    return c
+
+
+def test_sessions_lists_each_signed_in_device_and_marks_the_asker(client):
+    client.post("/auth/register", json={"email": "s@example.com", "password": "password1"})
+    phone, laptop = _signed_in("s@example.com"), _signed_in("s@example.com")
+    rows = phone.get("/auth/sessions").json()["sessions"]
+    assert len(rows) == 3  # the registration session plus the two logins
+    assert [r["current"] for r in rows].count(True) == 1
+    mine = next(r for r in rows if r["current"])
+    assert mine["id"] not in [r["id"] for r in laptop.get("/auth/sessions").json()["sessions"] if r["current"]]
+
+
+def test_a_session_can_be_named_and_signed_out_from_another_device(client):
+    client.post("/auth/register", json={"email": "r@example.com", "password": "password1"})
+    phone, laptop = _signed_in("r@example.com"), _signed_in("r@example.com")
+    phone_id = next(r["id"] for r in phone.get("/auth/sessions").json()["sessions"] if r["current"])
+    r = laptop.patch(f"/auth/sessions/{phone_id}", json={"label": "Phone"}, headers=CSRF)
+    assert r.status_code == 200
+    labels = {r["id"]: r["label"] for r in laptop.get("/auth/sessions").json()["sessions"]}
+    assert labels[phone_id] == "Phone"
+    assert laptop.delete(f"/auth/sessions/{phone_id}", headers=CSRF).status_code == 200
+    assert phone.get("/auth/me").status_code == 401
+    assert laptop.get("/auth/me").status_code == 200
+
+
+def test_another_accounts_session_cannot_be_touched(client):
+    client.post("/auth/register", json={"email": "a1@example.com", "password": "password1"})
+    client.post("/auth/register", json={"email": "a2@example.com", "password": "password1"})
+    one, two = _signed_in("a1@example.com"), _signed_in("a2@example.com")
+    one_id = next(r["id"] for r in one.get("/auth/sessions").json()["sessions"] if r["current"])
+    assert two.delete(f"/auth/sessions/{one_id}", headers=CSRF).status_code == 404
+    assert two.patch(f"/auth/sessions/{one_id}", json={"label": "x"}, headers=CSRF).status_code == 404
+    assert one.get("/auth/me").status_code == 200

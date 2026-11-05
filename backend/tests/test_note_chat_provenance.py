@@ -154,7 +154,7 @@ def _block(payload: str) -> str:
 def test_apply_note_block_threads_the_thread_id_into_the_note(chat_root):
     cleaned, labels, refs = asyncio.run(task_scope.apply_note_block(
         "workshop",
-        _block('{"title": "Ports are squatted", "body": "8012 fakes healthy.", '
+        _block('{"title": "Ports are squatted", "body": "9100 fakes healthy.", '
                '"scope": "workshop"}'),
         thread_id="thread-abc",
     ))

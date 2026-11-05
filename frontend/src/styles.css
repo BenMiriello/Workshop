@@ -41,7 +41,7 @@ body {
    `.ws-iconbtn` went with them: nothing rendered it (TicketFilters uses
    `.ws-iconbtn-lg`, which is a different rule in the kit). */
 
-/* Linked-app switcher (Finance ⇄ Budget, Location ⇄ Commute). Lives inline in
+/* Linked-app switcher (between two apps that declare each other). Lives inline in
    the PageHeader actions row, left of Refresh — compact pills, no own row. */
 .ws-appgroup { gap: var(--space-1); }
 .ws-appgroup a { padding: 0.25rem 0.6rem; font-size: var(--fs-sm); }
@@ -141,40 +141,10 @@ label {
 }
 
 /* App-owned styles live in the app that owns them:
- *   pages/apps/birds/birds.css, pages/apps/budget/budget.css
- * `.tabs` and `.sec-h` moved to budget.css on 2026-08-20 -- they were only ever
- * used by Budget.tsx and budget/Projection.tsx, so "generic legacy classes
- * several pages share" was true of the set but not of those two.
- *
- * `.num-in` and the range sliders stay, and are the honest remainder: `.num-in`
- * is used by BOTH birds and budget, so moving it to either app's sheet breaks
- * the other and copying it into both guarantees drift. It is a numeric field
- * and its real home is a kit primitive alongside Input/Select. Until then it
- * lives here on purpose, not by omission. */
-
-/* Compact numeric input used in the edit form and simulator controls. */
-/* Legacy field class, still used by the birds sub-app (migrated last per
-   frontend/CLAUDE.md). It no longer REDEFINES a field — it borrows the design
-   system's field surface, so there is one description of what a field looks
-   like instead of two that drift. New code uses Input/Select from src/ui. */
-/* `background-color`, never the `background` shorthand: the shorthand resets
-   the caret that `select.num-in` below paints with background-image. Same bug
-   as the kit's `.ws-select`, written up at the top of that block in
-   packages/ui/src/styles/components.css. */
-.num-in {
-  width: 100%; padding: 0.4rem 0.6rem; font-family: inherit; font-size: 0.9rem;
-  color: var(--fg); background-color: var(--field-bg);
-  border: 1px solid transparent; border-radius: var(--radius-md);
-}
-.num-in:hover { background-color: var(--bg-inset); }
-.num-in:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-/* Real select styling: drop the native OS chrome for a custom caret. */
-select.num-in {
-  appearance: none; -webkit-appearance: none; cursor: pointer;
-  padding-right: 1.9rem;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23999999' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
-  background-repeat: no-repeat; background-position: right 0.55rem center; background-size: 1rem;
-}
+ *   pages/apps/<slug>/<slug>.css
+ * `.tabs` and `.sec-h` moved to one app's sheet on 2026-08-20 -- they were only ever
+ * used by that app's pages, so "generic legacy classes
+ * several pages share" was true of the set but not of those two. */
 
 /* Range slider — themed, used by the simulator. */
 input[type="range"].slider { width: 100%; accent-color: var(--accent); }
@@ -208,49 +178,6 @@ input[type="range"].grad::-moz-range-thumb {
 .scn-btns button.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 
 
-/* ---- Inline click-to-edit fields ----
-   Renders any value as a hairline-underlined button; on click swaps to an
-   <input> with the original font sizing inherited from the surrounding line.
-   The dotted underline + subtle hover background are the only affordances —
-   keeps the read view uncluttered while still being discoverable. */
-.inline-edit {
-  background: none; border: none; padding: 0 1px; margin: 0;
-  font: inherit; color: inherit; cursor: text;
-  border-radius: 3px;
-  border-bottom: 1px dashed color-mix(in srgb, var(--muted) 50%, transparent);
-  transition: background 0.12s, border-color 0.12s;
-}
-.inline-edit:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-bottom-color: var(--accent);
-}
-.inline-edit:focus-visible {
-  outline: none; box-shadow: var(--focus-ring);
-}
-.inline-edit-wrap { display: inline-flex; align-items: center; gap: 0.25rem; }
-.inline-edit-input {
-  font: inherit; color: var(--fg);
-  /* Same field surface as everything else; the accent used to be spent on a
-     border here, which made this the one editable control with a coloured box. */
-  background: var(--field-bg); border: 1px solid transparent; border-radius: var(--radius-sm);
-  padding: 0 4px; min-width: 4.5em; max-width: 12em;
-  /* Hide native spinner — the operator types numbers, not clicks tiny arrows. */
-  -moz-appearance: textfield; appearance: textfield;
-}
-.inline-edit-input::-webkit-outer-spin-button,
-.inline-edit-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.inline-edit-dot {
-  width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
-  animation: inline-pulse 0.9s ease-in-out infinite;
-}
-.inline-edit-err {
-  color: var(--err); font-weight: 700; cursor: help;
-}
-@keyframes inline-pulse {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
-}
-
 /* Stat tiles under the chart. */
 .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; }
 .stat-row .stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; }
@@ -275,8 +202,10 @@ input[type="range"].grad::-moz-range-thumb {
 /* ---- Toolbar: a single row of compact controls ---- */
 .chat-toolbar {
   display: flex; align-items: center; gap: var(--space-2);
-  /* Same horizontal inset as every page's content — see --page-pad-x. */
-  padding: var(--space-2) var(--page-pad-x);
+  /* The inset the page's content has (--page-pad-x), less the 8px of empty
+     hover box round each icon, so the first and last GLYPH line up with the
+     transcript and the composer under them instead of sitting 8px inside. */
+  padding: var(--space-2) calc(var(--page-pad-x) - var(--space-2));
   border-bottom: 1px solid var(--border);
   /* ONE ROW AT EVERY WIDTH. The bar is a fixed set of controls in a fixed
      order, and the operator's instruction is that it stay that way: everything
@@ -304,9 +233,12 @@ input[type="range"].grad::-moz-range-thumb {
    carries one (the Tickets trigger doesn't either), so the icon + label is
    the whole affordance; a menu is one tap away either way. */
 .chat-tb__picker {
-  flex: 0 1 auto; min-width: 0;
-  display: inline-flex; align-items: center; gap: 0.25rem;
-  height: 2rem; padding: 0 0.4rem;
+  /* NEVER SHRINKS. A label squeezed to "DE" says nothing, so it is whole or it
+     is gone: `useRowFit` drops it (data-fit) when the name needs the room.
+     Icon-only it is the same 2rem square as every other button on the bar. */
+  flex: 0 0 auto; min-width: 2rem; justify-content: center;
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  height: 2rem; padding: 0 var(--space-2);
   font-size: var(--fs-sm); line-height: 1; font-weight: var(--fw-semi);
   color: var(--fg); background: transparent;
   border: none; border-radius: var(--radius-md);
@@ -317,12 +249,21 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-tb__picker.is-static { cursor: default; }
 .chat-tb__picker.is-static:hover { background: transparent; }
 .chat-tb__picker-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-tb__picker > svg { flex: 0 0 auto; }
 /* A label that a narrow toolbar drops. Only for triggers whose icon already
    names the value — the word still appears in the menu, where you are choosing
    and actually need to read it. */
 @media (max-width: 640px) {
   .chat-tb__picker-val--wide { display: none; }
 }
+/* THE BAR GIVES UP LABELS WHEN ITS OWN WIDTH SAYS SO, not only when the window
+   is narrow: `useRowFit` sets `data-fit` on `.chat-toolbar` once the chat's name
+   has been squeezed too far to read (the chat beside a page is narrow in a wide
+   window). 1 drops the place and line names and keeps their icons; 2 tightens
+   the gaps. The name is the last thing to give. */
+.chat-toolbar:not([data-fit="0"]) .chat-tb__picker-val--wide { display: none; }
+.chat-toolbar:is([data-fit="2"], [data-fit="3"]) .chat-tb__branch .chat-tb__picker-val { display: none; }
+.chat-toolbar[data-fit="3"] { gap: var(--space-1); }
 /* THE BRANCH PILL NAMES THE EXCEPTION, NOT THE DEFAULT, which is why it
    does not simply take `--wide` and why it does not simply ignore it either.
    Measured at 390px: the toolbar has room for about 46px of chat title once
@@ -350,7 +291,7 @@ input[type="range"].grad::-moz-range-thumb {
      branch keeps both: there the glyph is what distinguishes it from the trunk
      at a glance. (The conversation-line picker beside it no longer wears a
      branch glyph at all -- see ChatToolbar and BranchPicker.) */
-  .chat-tb__branch--shared > svg { display: none; }
+  .chat-toolbar:is([data-fit="0"], [data-fit="1"]) .chat-tb__branch--shared > svg { display: none; }
   .chat-tb__branch .chat-tb__picker-val { max-width: 11ch; }
 }
 /* The dot is a mark, not a chip: no label beside it (the pill's own word is the
@@ -367,9 +308,11 @@ input[type="range"].grad::-moz-range-thumb {
   border: 1px solid var(--border);
   background: var(--bg-inset);
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-xs); font-weight: var(--fw-normal);
   color: var(--muted);
-  padding: 0 var(--space-2);
+  /* A pill is a label, not a button: shorter than the 2rem square it sits
+     among, so it reads as a tag and not a fifth control. */
+  height: 1.5rem; min-width: 0; padding: 0 0.5rem; gap: 0.25rem;
 }
 .chat-tb__branch:hover {
   background: var(--card-hover);
@@ -442,8 +385,8 @@ input[type="range"].grad::-moz-range-thumb {
    Shrinking happens only once a line has overflowed; it is not what fills spare
    room, so `flex-shrink: 1` cannot clip a name while the bar has space in it.
    That was the real cause of the old clipping this note used to describe, and it
-   was never about shrink: the fix was giving `.chat-tb__spacer` the room to
-   grow. A short name is left whole because the row is not over-full and there
+   was never about shrink: the fix was letting spare room go to the gap before
+   `.chat-tb__actions`. A short name is left whole because the row is not over-full and there
    is nothing to shrink; a long one is ellipsised because it is, which is
    exactly what the old `max-width` was reaching for.
 
@@ -470,6 +413,31 @@ input[type="range"].grad::-moz-range-thumb {
    row height without nesting a button inside a button (invalid HTML). The pencil
    intercepts pointer events before they reach the title button; the title button's
    padding-right is widened to avoid text running under the pencil. */
+/* The chats menu: search pinned at the top, All chats pinned at the foot, and
+   the rows scrolling between, loading more as they near the bottom. The kit's
+   flat 28rem cap is lifted and the height is bounded by the room under the
+   trigger instead (--rcm-room, set on open). The width is fixed so rows loading
+   in cannot widen a list already placed against the screen edge. */
+.chat-tb__titlemenu .ws-menu__list { max-height: none; overflow: visible; width: min(20rem, 80vw); }
+.rcm-body {
+  display: flex; flex-direction: column;
+  max-height: min(var(--rcm-room, 30rem), 30rem);
+}
+.rcm-search { flex: none; display: flex; margin-bottom: var(--space-2); }
+.rcm-scroll { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* The dot sits the same distance from the scope icon (the menu's own gap plus
+   this margin) as from the name, and only exists while the chat is running. */
+/* Half a row of extra air above every heading but the first, so a day's run of
+   chats reads as ended before the next one starts. */
+.rcm-scroll > div + div { margin-top: var(--space-4); }
+.rcm-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+/* `flex: none` holds the dot at its size: as a plain flex item it was shrunk
+   whenever the name beside it was long. */
+.rcm-row .ws-chat-row__state { flex: none; margin-left: calc(var(--space-2) - var(--space-1)); }
+.rcm-row__text { display: flex; flex-direction: column; min-width: 0; }
+.rcm-row__name, .rcm-row__snip { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The passage a message match was found in, under the chat's name. */
+.rcm-row__snip { font-size: var(--fs-xs); color: var(--muted); }
 .rcm-title-row { position: relative; }
 .rcm-title-row .ws-menu__item { padding-right: 2.25rem; }
 .rcm-title-row__pencil {
@@ -480,7 +448,10 @@ input[type="range"].grad::-moz-range-thumb {
 }
 .rcm-title-row__pencil:hover { color: var(--fg); background: var(--card-hover); }
 .rcm-title-row__pencil:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.chat-tb__spacer { flex: 1 1 var(--space-2); min-width: 0; }
+.chat-tb__actions {
+  flex: 0 0 auto; margin-left: auto;
+  display: flex; align-items: center; gap: inherit;
+}
 .chat-tb__btn {
   flex: 0 0 auto; position: relative;
   display: inline-flex; align-items: center; justify-content: center;
@@ -493,6 +464,39 @@ input[type="range"].grad::-moz-range-thumb {
 /* Participant tags carry a slug, so they size to their text. */
 .chat-tb__btn:hover { color: var(--fg); background: var(--card-hover); }
 .chat-tb__btn.is-active { color: var(--accent); background: var(--accent-soft); }
+/* Where the chat is working (ChatPlace): a control, so neutral, naming the
+   page it goes to; the dot is LIVE while the chat works there. */
+.chat-tb__place {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  height: 2rem; padding: 0 var(--space-2);
+  border: 0; border-radius: var(--radius-md);
+  background: transparent; color: var(--muted);
+  font: inherit; font-size: var(--fs-sm); cursor: pointer;
+}
+.chat-tb__place:hover { color: var(--fg); background: var(--card-hover); }
+.chat-tb__place-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 14ch; }
+.chat-tb__place-live {
+  flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--live); animation: chat-tb-live 1.6s ease-in-out infinite;
+}
+@keyframes chat-tb-live { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .chat-tb__place-live { animation: none; } }
+@media (max-width: 480px) { .chat-tb__place-label { max-width: 11ch; } }
+/* The drawer is narrow at every width: leave the chat's name some room. */
+.ws-beside .chat-tb__place-label { max-width: 9ch; }
+/* Back to the page a chat was opened full screen from: a control, so neutral,
+   and named, because "back" alone does not say the chat goes with you. */
+.chat-tb__back {
+  flex: 0 1 auto; min-width: 0;
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  height: 2rem; padding: 0 var(--space-2) 0 var(--space-1);
+  border: 0; border-radius: var(--radius-md);
+  background: transparent; color: var(--muted);
+  font: inherit; font-size: var(--fs-sm); cursor: pointer;
+}
+.chat-tb__back > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12ch; }
+.chat-tb__back:hover { color: var(--fg); background: var(--card-hover); }
 /* TOOLBAR MENUS DO NOT SCROLL. The kit's global max-height cap exists for menus
    that hold hundreds of rows; toolbar menus are row-count-bounded in code
    (RECENT_LIMIT, MAX_ROWS, VISIBLE_BRANCHES). Removing the cap here means the
@@ -628,7 +632,9 @@ input[type="range"].grad::-moz-range-thumb {
    it used to push the composer down while visible, which moved the one
    control the operator was about to reach for the moment new content arrived. */
 .chat-jump {
-  position: absolute; left: 50%; bottom: var(--space-3);
+  /* Clear of the working line, which sticks to the foot of the log while a
+     turn runs (see .chat-working below) and carries Stop and the clock. */
+  position: absolute; left: 50%; bottom: calc(var(--space-3) + 2rem);
   transform: translateX(-50%); z-index: var(--z-dropdown);
   display: inline-flex; align-items: center; gap: 0.35rem;
   padding: 0.4rem 0.8rem;
@@ -799,7 +805,9 @@ input[type="range"].grad::-moz-range-thumb {
    over-reserving by half a rem of every last line, and a wider reserve makes
    the wrap below more likely, not less. Plus 0.25rem so the text does not touch
    the icon. */
-.chat-bubble--copyable { --chat-actions-gap: 1.2rem; }
+/* A bubble with text carries two icons, Read aloud and Copy, since both exist
+   exactly when there is text. */
+.chat-bubble--copyable { --chat-actions-gap: 2.65rem; }
 
 /* Copy the message. Absolutely placed so it costs no vertical space: with no
    expand control it sits at the corner of the last text row, and when a Show
@@ -825,6 +833,23 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-msg.user .chat-copy:hover,
 .chat-msg.user .chat-copy:focus-visible { color: var(--accent-fg); }
 
+/* Read the message aloud. Copy's twin, one step to its left; the same button
+   stops the reading while this message is the one being read. */
+.chat-read {
+  position: absolute; right: 1.95rem; bottom: 0.5rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.15rem; height: 1.15rem; padding: 0;
+  background: none; border: none; border-radius: 5px;
+  color: color-mix(in srgb, var(--muted) 50%, var(--card)); cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.chat-read:hover, .chat-read[aria-pressed="true"] { color: var(--fg); }
+.chat-read:focus-visible { color: var(--fg); box-shadow: var(--focus-ring); }
+.chat-msg.user .chat-read { color: color-mix(in srgb, var(--accent-fg) 50%, var(--accent)); }
+.chat-msg.user .chat-read:hover,
+.chat-msg.user .chat-read[aria-pressed="true"],
+.chat-msg.user .chat-read:focus-visible { color: var(--accent-fg); }
+
 /* Go back to this message and carry on from it. Sits immediately left of the
    copy button, in the same padding corner and at the same size and resting
    tone: they are two actions on one message and neither outranks the other.
@@ -839,7 +864,7 @@ input[type="range"].grad::-moz-range-thumb {
   color: color-mix(in srgb, var(--muted) 50%, var(--card)); cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out);
 }
-.chat-bubble--copyable .chat-branch { right: 1.95rem; }
+.chat-bubble--copyable .chat-branch { right: 3.4rem; }
 .chat-branch:hover:enabled { color: var(--fg); }
 .chat-branch:focus-visible { color: var(--fg); box-shadow: var(--focus-ring); }
 /* Not right now (a turn is in flight), as opposed to never: an action that
@@ -862,7 +887,7 @@ input[type="range"].grad::-moz-range-thumb {
   color: color-mix(in srgb, var(--muted) 50%, var(--card)); cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out);
 }
-.chat-bubble--copyable .chat-cancel { right: 1.95rem; }
+.chat-bubble--copyable .chat-cancel { right: 3.4rem; }
 .chat-cancel:hover { color: var(--fg); }
 .chat-cancel:focus-visible { color: var(--fg); box-shadow: var(--focus-ring); }
 /* The accent tint, same as Copy/Branch: a `sending` bubble is still filled
@@ -882,11 +907,14 @@ input[type="range"].grad::-moz-range-thumb {
    later in the file to win a source-order tie. A `sending` bubble is still
    accent-filled and keeps the tint above unchanged. */
 .chat-msg.user .chat-bubble--unsent .chat-copy,
+.chat-msg.user .chat-bubble--unsent .chat-read,
 .chat-msg.user .chat-bubble--unsent .chat-cancel {
   color: color-mix(in srgb, var(--muted) 50%, var(--card));
 }
 .chat-msg.user .chat-bubble--unsent .chat-copy:hover,
 .chat-msg.user .chat-bubble--unsent .chat-copy:focus-visible,
+.chat-msg.user .chat-bubble--unsent .chat-read:hover,
+.chat-msg.user .chat-bubble--unsent .chat-read:focus-visible,
 .chat-msg.user .chat-bubble--unsent .chat-cancel:hover,
 .chat-msg.user .chat-bubble--unsent .chat-cancel:focus-visible {
   color: var(--fg);
@@ -931,13 +959,13 @@ input[type="range"].grad::-moz-range-thumb {
   margin-bottom: var(--space-5);
 }
 .chat-bubble--branchable { --chat-actions-gap: 1.2rem; }
-.chat-bubble--branchable.chat-bubble--copyable { --chat-actions-gap: 2.65rem; }
+.chat-bubble--branchable.chat-bubble--copyable { --chat-actions-gap: 4.1rem; }
 /* Cancel is Branch's opposite number on a not-yet-sent message: same one icon
    of reserve alone, same two-icon reserve beside Copy. Never combined with
    `--branchable` — a pending send cannot be branched (see branchable.ts's own
    comment: none of a pending/queued/live block is IN the conversation yet). */
 .chat-bubble--cancelable { --chat-actions-gap: 1.2rem; }
-.chat-bubble--cancelable.chat-bubble--copyable { --chat-actions-gap: 2.65rem; }
+.chat-bubble--cancelable.chat-bubble--copyable { --chat-actions-gap: 4.1rem; }
 /* THREE ROWS, THEN IT SCROLLS. The operator asked for exactly this: a picker
    that stays a small target no matter how many times a conversation has been
    branched. The kit's menu already scrolls at 16rem; this is the tighter cap
@@ -1092,6 +1120,18 @@ input[type="range"].grad::-moz-range-thumb {
      in a bubble should set its own vertical rhythm. */
   line-height: inherit;
 }
+/* STOP STAYS ON SCREEN. A long live reply puts its working line, and the Stop
+   at its head, thousands of pixels below wherever the operator is reading
+   (4000px in an embedded chat on 2026-10-03). Sticky to the foot of the log
+   while any of the reply is in view, so the control is always just above the
+   composer. Not in the composer row itself: that was tried and moved out
+   (StopButton.tsx). The fill is the bubble's own, so stuck text does not
+   show through. The offset is the log's own bottom padding: a sticky box
+   stops at the padding edge, and the reply showed through the strip below it. */
+.chat-msg.assistant .chat-working {
+  position: sticky; bottom: calc(-1 * var(--space-4)); z-index: 1;
+  background: var(--card);
+}
 
 /* ---- The bottom row of a bubble -----------------------------------------
    "Working", "Show more" and "Show less" are the same thing structurally: the
@@ -1192,6 +1232,9 @@ input[type="range"].grad::-moz-range-thumb {
 }
 .chat-reveal.is-shown { grid-template-rows: 1fr; }
 .chat-reveal__inner { overflow: hidden; min-height: 0; }
+/* Kept in the DOM for find while closed (Reveal.tsx). No box at all, not even
+   the rail, the same as when it is not rendered. */
+.chat-reveal__inner[hidden] { display: none; }
 /* A change the machine made, not the operator. Skipping the frames in JS is not
    enough on its own: the row would still transition from wherever it was. */
 .chat-reveal.is-instant { transition: none; }
@@ -1240,26 +1283,18 @@ input[type="range"].grad::-moz-range-thumb {
 }
 .chat-work__meta { flex: 0 0 auto; opacity: 0.8; }
 .chat-work__list { display: flex; flex-direction: column; gap: 0.2rem; }
-/* THE REASONING FOLD. Same neutral, muted disclosure as the work toggle: the
-   model's thinking is not the answer and not something it said to the operator,
-   so it sits closed with a Brain icon and a chevron, both neutral at rest, and
-   opens onto the reasoning. Mirrors .chat-work__toggle so the two folds read as
-   the same kind of control. */
-.chat-think__toggle {
-  display: flex; align-items: center; gap: 0.3rem; width: 100%; min-width: 0;
-  background: none; border: none; padding: 0.15rem 0; margin: 0;
-  color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer;
-  text-align: left;
-}
-.chat-think__toggle:hover { color: var(--fg); }
-.chat-think__chev { flex: 0 0 auto; transition: transform var(--dur-fast) var(--ease-in-out); }
-.chat-think.is-open .chat-think__chev { transform: rotate(90deg); }
-@media (prefers-reduced-motion: reduce) { .chat-think__chev { transition: none; } }
-.chat-think__icon { flex: 0 0 auto; }
-.chat-think__label { flex: 0 0 auto; }
-/* Reasoning renders muted, a step in from the toggle, so it reads as an aside
-   rather than as more of the answer. */
-.chat-think__body { color: var(--muted); font-size: var(--fs-sm); padding-left: 1rem; }
+/* The model's reasoning: always shown, muted and a size down so it reads as an
+   aside rather than as more of the answer. Hidden only with the whole work
+   block, whose collapsed row then previews its first line in the fainter ink.
+   Same trailing gap and `.ws-md` colour rule as narration below: without the
+   gap a thought sat flush against the step run after it while the run before
+   it kept its margin, so the spacing around every thought was lopsided. */
+.chat-think { font-size: var(--fs-sm); }
+.chat-think .ws-md { color: var(--muted); }
+.chat-think:not(:last-child) { margin-bottom: var(--space-2); }
+.chat-think .ws-md code,
+.chat-think .ws-md strong { color: inherit; }
+.chat-work__preview.is-thought { color: var(--faint); }
 /* Interim narration is a block like any other in TurnWork's list (WorkText next
    to StepRun), but it carried no spacing of its own: `.chat-work` gets a bottom
    margin when it isn't last, `.chat-work__text` got none at all. Two narration
@@ -1759,8 +1794,10 @@ button.ws-ref--trigger:hover > svg { color: var(--you); }
   gap: var(--space-2);
   /* Same horizontal inset as the transcript above it and every other page. */
   padding: var(--space-3) var(--page-pad-x);
-  /* keep the composer above the iOS keyboard / home indicator on mobile */
-  padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
+  /* keep the composer above the iOS keyboard / home indicator on mobile;
+     `--edge-inset-b` is 0 in a frame that ends above the screen's bottom
+     (lib/frameEdge), where there is no home bar to clear */
+  padding-bottom: max(var(--space-3), var(--edge-inset-b, env(safe-area-inset-bottom)));
   border-top: 1px solid var(--border);
 }
 /* The box and its expand control. Positioning context only: the wrapper adds no
@@ -1849,7 +1886,6 @@ button.ws-ref--trigger:hover > svg { color: var(--you); }
   background: var(--field-bg); color: var(--fg);
   border: none; border-radius: var(--radius-md);
 }
-.chat-input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 /* On a phone, when the on-screen keyboard is up it sits directly below the
    composer and covers the home-indicator inset, so the bottom padding becomes a
    dead row between the buttons and the keyboard. Collapse it while the keyboard
@@ -1873,7 +1909,7 @@ button.ws-ref--trigger:hover > svg { color: var(--you); }
        so nothing changes when there is no keyboard. */
     padding-bottom: max(
       var(--space-1),
-      calc(max(var(--space-3), env(safe-area-inset-bottom)) - var(--app-kb, 0px))
+      calc(max(var(--space-3), var(--edge-inset-b, env(safe-area-inset-bottom))) - var(--app-kb, 0px))
     );
   }
 }
@@ -1974,25 +2010,37 @@ button.ws-ref--trigger:hover > svg { color: var(--you); }
 .chat-mode[aria-expanded="true"] { color: var(--fg); background: var(--card-hover); }
 .chat-mode__val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* The row is already crowded. Below the small breakpoint each of the two label
-   controls drops its LESS informative half, and they are not the same half.
+/* THE ROW GIVES THINGS UP IN ORDER, AND THE ROW DECIDES WHEN. `useRowFit`
+   measures `.chat-actions` itself and sets `data-fit` to the first level at
+   which nothing overflows, so the same steps apply in a phone, a full page and
+   the chat beside a page at a third of the window. They used to be a media
+   query on the window, which cannot see how wide the chat is.
 
-   Mode keeps its icon and drops its label: the labels ("Manual", "Edit
-   automatically") are long, and each mode has a distinct glyph that carries it.
+   1  Mode keeps its icon and drops its label: the labels ("Manual", "Edit
+      automatically") are long, and each mode has a glyph that carries it. The
+      model does the opposite and drops its icon, keeping its name, because its
+      icon is the same at every setting and the name ("Opus 5") is the content.
+   2  The context reading drops its percentage and keeps the ring.
+   3  The model drops its name and keeps the icon. The menu names it. The name
+      outlasts the percentage because it is the more useful of the two.
+   4  The gaps, the spacer and the buttons tighten.
+   5  The row wraps rather than run off the edge.
 
-   The model does the opposite — it drops its icon and keeps its label. Its icon
-   is the same one at every setting, so it says only "this is the model picker",
-   which the name beside it already said; the label ("Opus 5", "Haiku 4.5") is
-   the whole content of the control and is short enough to keep.
-
-   The effort bars keep their full tap target either way: a control that shrinks
-   to nothing disappears exactly when the screen is small. */
-@media (max-width: 30rem) {
-  .chat-mode__val { display: none; }
-  .chat-mode { padding: 0 0.45rem; }
-  .chat-model > svg { display: none; }
-  .chat-model { padding: 0 0.45rem; }
+   The effort bars, attach, voice, send later and Send never shrink: a control
+   that shrinks to nothing disappears exactly when the space is smallest. */
+.chat-actions:not([data-fit="0"]) .chat-mode__val { display: none; }
+.chat-actions:not([data-fit="0"]) .chat-mode { padding: 0 0.45rem; }
+.chat-actions:not([data-fit="0"]) .chat-model > svg { display: none; }
+.chat-actions:not([data-fit="0"]) .chat-model { padding: 0 0.45rem; }
+.chat-actions:is([data-fit="2"], [data-fit="3"], [data-fit="4"], [data-fit="5"]) .chat-context-meter__pct { display: none; }
+.chat-actions:is([data-fit="3"], [data-fit="4"], [data-fit="5"]) .chat-model > svg { display: inline; }
+.chat-actions:is([data-fit="3"], [data-fit="4"], [data-fit="5"]) .chat-model__val { display: none; }
+.chat-actions:is([data-fit="4"], [data-fit="5"]) { gap: 0.2rem; }
+.chat-actions:is([data-fit="4"], [data-fit="5"]) .chat-actions__spacer { min-width: 0; }
+.chat-actions:is([data-fit="4"], [data-fit="5"]) :is(.chat-send, .chat-slash-btn) {
+  width: 1.9rem; height: 1.9rem;
 }
+.chat-actions[data-fit="5"] { flex-wrap: wrap; }
 
 /* An approval: the turn has stopped and is asking. It is the only thing in the
    transcript that is BLOCKING, so it gets a filled surface rather than the
@@ -2046,6 +2094,101 @@ button.ws-ref--trigger:hover > svg { color: var(--you); }
    `not-allowed` — the design system bans that cursor outright (rule 10), and
    check_design.sh fails on it. */
 .chat-send:disabled { opacity: 0.4; cursor: default; }
+/* Send later keeps its full size: the context meter is what yields. */
+.chat-actions > .ws-menu.chat-send-later { flex: none; }
+/* The rule the next message will go out under, picked with nothing typed. */
+.chat-armed-rule {
+  display: flex; align-items: center; gap: var(--space-1);
+  padding: 0 var(--space-1) var(--space-1); font-size: 0.78rem; color: var(--muted);
+}
+.chat-armed-rule > svg { flex: none; }
+.chat-armed-rule .chat-slash-btn {
+  width: 1.5rem; height: 1.5rem; background: none; border-color: transparent;
+}
+.chat-armed-rule .chat-slash-btn:hover { background: var(--card-hover); }
+/* Something is set to send into this chat, until it is done or cleared
+   (Scheduled in the Send later menu lists it). The `you` tone: it is the
+   operator's to see and to stop, and it holds while it stands. */
+.chat-send-later .chat-slash-btn { position: relative; }
+.chat-sched-dot {
+  position: absolute; top: var(--space-1); right: var(--space-1);
+  width: 0.4rem; height: 0.4rem; border-radius: 50%;
+  background: var(--you); box-shadow: 0 0 0 2px var(--bg-inset);
+}
+/* The Scheduled dialog: rows that open a schedule's own view. */
+.chat-sched-title { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; max-width: 100%; }
+.chat-sched-title__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-sched-back {
+  display: inline-flex; flex: none; padding: var(--space-1); margin-left: calc(-1 * var(--space-1));
+  border: none; background: none; color: var(--muted); cursor: pointer; border-radius: var(--radius-sm);
+}
+.chat-sched-back:hover { color: var(--fg); }
+/* The list: one tab per state, then a card of rows split by hairlines, every
+   row the same height (the full text is in the schedule's own view). No
+   overflow clip on the card: a row's menu measures its clipping ancestor, and
+   the card would be too small for it to open into. The list holds one height
+   across tabs, so switching does not resize the dialog and a row's menu always
+   has room inside the dialog's scroller to open into (it flips up near the
+   bottom) instead of stretching it. */
+.chat-sched-list { display: flex; flex-direction: column; gap: var(--space-3); min-height: min(24rem, 55vh); }
+.chat-sched-rows {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card);
+}
+.chat-sched-row {
+  display: flex; align-items: center; gap: var(--space-1); height: 3.5rem;
+  padding-right: var(--space-2);
+}
+.chat-sched-row + .chat-sched-row { border-top: 1px solid var(--border); }
+.chat-sched-row:first-child { border-top-left-radius: inherit; border-top-right-radius: inherit; }
+.chat-sched-row:last-child { border-bottom-left-radius: inherit; border-bottom-right-radius: inherit; }
+.chat-sched-row:has(> button.chat-sched-row__main:hover) { background: var(--card-hover); }
+.chat-sched-row__main {
+  display: flex; align-items: center; gap: var(--space-3); flex: 1; min-width: 0; align-self: stretch;
+  padding: 0 var(--space-1) 0 var(--space-3); border: none; border-radius: inherit;
+  background: none; color: var(--fg); text-align: left; font: inherit;
+}
+button.chat-sched-row__main { cursor: pointer; }
+.chat-sched-row__main:focus-visible { outline-offset: -2px; }
+.chat-sched-row__icon { display: inline-flex; flex: none; color: var(--muted); }
+.chat-sched-row__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.chat-sched-row__name, .chat-sched-row__meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-sched-row__name { font-weight: var(--fw-medium); }
+.chat-sched-row__meta { font-size: var(--fs-xs); color: var(--muted); }
+.chat-sched-row__go { flex: none; color: var(--muted); }
+.chat-sched-row__more {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 2.25rem; height: 2.25rem; border: none; border-radius: var(--radius-sm);
+  background: none; color: var(--muted); cursor: pointer;
+}
+.chat-sched-row__more:hover, .chat-sched-row__more[aria-expanded="true"] { color: var(--fg); background: var(--card-hover); }
+/* One schedule: state and owner, the message as its own block, then fields
+   top to bottom (the message is long and the rest short). */
+.chat-sched-view { display: flex; flex-direction: column; gap: var(--space-4); }
+.chat-sched-view__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.chat-sched-view__by { font-size: var(--fs-sm); color: var(--muted); }
+.chat-sched-message {
+  padding: var(--space-3); border-radius: var(--radius-md); background: var(--bg-inset);
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow-y: auto;
+}
+.chat-sched-message__app { color: var(--muted); }
+.chat-sched-next { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+/* What it sent, under its count: one muted time per line, newest first. */
+.chat-sched-sends { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); margin-top: var(--space-2); }
+.chat-sched-sends__list {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  margin: 0; padding: 0; list-style: none; font-size: var(--fs-sm); color: var(--muted);
+}
+.chat-sched-sends__waiting { color: var(--fg); }
+/* A choice and the value it asks for sit side by side where there is room; the
+   value takes the wider share, since a date and time is the longest field. */
+.chat-sched-pair { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.chat-sched-pair > * { flex: 1 1 10rem; min-width: 0; }
+.chat-sched-pair > * + * { flex: 1 1 15rem; }
+.chat-sched-pair > .chat-sched-when { flex: 0 0 auto; }
+.chat-sched-every { display: flex; gap: var(--space-2); }
+.chat-sched-every > .ws-input { width: 6rem; flex: none; }
+.chat-byline a { color: inherit; }
 
 /* Context-usage meter: a small circular ring under the composer showing how full
    the chat's context is, with the % to its right. One neutral tone: it does not
@@ -2057,11 +2200,17 @@ button.ws-ref--trigger:hover > svg { color: var(--you); }
    it was. Operator, 2026-08-12. The arc takes --fg against the --border track,
    so the reading is the emphasis and the number beside it stays --muted. */
 .chat-context-meter {
-  /* Yields first: of everything in this row it is the only thing that is pure
-     information, so it is what gives way when space runs out. */
-  flex: 0 1 auto; min-width: 0; overflow: hidden;
+  /* Never shrinks: squeezed under the buttons it was a few pixels wide and
+     unreadable. When space runs out it gives up its percentage instead
+     (`.chat-actions[data-fit]`), and only after the labels have gone. */
+  flex: 0 0 auto;
   display: flex; align-items: center; gap: var(--space-2);
-  padding: 0 0.1rem;
+  /* The same 2.1rem row box as the model picker and the buttons, so the ring
+     is centred by the box it shares with them and not by its own 18px. */
+  height: 2.1rem; padding: 0 0.1rem;
+}
+button.chat-context-meter {
+  background: transparent; border: none; color: inherit; font: inherit; cursor: pointer;
 }
 .chat-context-meter__ring {
   flex: 0 0 auto;
@@ -2442,6 +2591,14 @@ button.chat-attach {
 .chat-slash-desc { color: var(--muted); font-size: 0.78rem; }
 /* Queued user messages (typed while a turn is streaming). */
 .chat-bubble--queued { opacity: 0.55; }
+/* What a Send later message is waiting for, under its bubble. Neutral ink:
+   it states a plan, not an outcome. */
+.chat-queued-rule {
+  display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap;
+  gap: var(--space-1); margin-top: var(--space-1);
+  font-size: 0.78rem; color: var(--muted);
+}
+.chat-queued-rule > svg { flex: none; }
 /* Sent during the turn above and already handed to it, but not yet folded
    into the persisted transcript — same treatment as --queued (same opacity,
    same "hasn't landed yet" meaning), just for a message that was actually
@@ -3522,6 +3679,10 @@ p.chat-workpanel__note { margin: 0; }
   color: var(--faint); text-decoration: none; white-space: nowrap;
 }
 .ws-dashcard__link:hover { color: var(--accent); }
+.ws-dashcard__head .ws-btn--ghost {
+  --_fg: var(--muted); font-family: var(--font-mono); font-size: var(--fs-xs);
+}
+.ws-dashcard__head .ws-btn--ghost:hover { --_fg: var(--fg); }
 /* THE BODY IS THE SCROLLER. min-height:0 is what makes that work: without it a
    flex child refuses to shrink below its content and the card grows past its
    grid row instead of scrolling inside it.
@@ -3637,15 +3798,20 @@ p.chat-workpanel__note { margin: 0; }
 .ws-dashapps {
   list-style: none; margin: 0; padding: 0;
   flex: 1 1 auto; min-height: 0;
-  display: flex; flex-wrap: wrap; align-content: flex-start;
-  gap: 14px 16px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  align-content: start;
 }
-/* Wide enough for a name. The tile was 62px against a 46px glyph, so the label
-   had ~62px for a word: "Development" rendered "Developm...", and it did that
-   in a card with an empty half beside it. The tiles wrap, so widening them
-   costs nothing until the row is genuinely full. */
+/* A TILE IS A SQUARE THAT MEETS ITS NEIGHBOURS. While arranging, a tap on a
+   tile enters a digit of the code, so the tiles are a keypad, and a keypad with
+   gaps between its keys drops every tap that lands in one. The grid has no gap:
+   each tile fills its cell edge to edge and is as tall as it is wide, so the
+   whole card is tappable and the glyph and name inside look as they did. The
+   90px floor keeps four columns in a desktop card beside its scrollbar gutter
+   (each lands near the old 86px tile plus its 16px gap) and three on a phone. */
 .ws-dashapps__tile {
-  width: 86px; display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+  width: 100%; aspect-ratio: 1; padding: 0 var(--space-2);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--space-2);
   text-decoration: none; color: inherit;
 }
 .ws-dashapps__tile:hover { opacity: 0.78; }
@@ -3662,6 +3828,23 @@ p.chat-workpanel__note { margin: 0; }
   text-align: center; overflow: hidden; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
 }
+/* Arranging (AppsCard): the tiles become handles. No touch scrolling, text
+   selection or callout on them, so a press is always a tap or a drag. */
+.ws-dashapps--arranging .ws-dashapps__tile {
+  background: none; border: 0; font: inherit; cursor: grab;
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.ws-dashapps--arranging .ws-dashapps__glyph { border-style: dashed; }
+.ws-dashapps__tile.is-dragging {
+  position: relative; z-index: 5; cursor: grabbing; transition: none;
+  transform: translate(var(--dx), var(--dy)) scale(1.08);
+}
+.ws-dashapps__tile.is-dragging.is-settling { transition: transform 160ms ease; transform: translate(0, 0) scale(1); }
+.ws-dashapps__tile.is-dragging:hover { opacity: 1; }
+@media (prefers-reduced-motion: no-preference) {
+  .ws-dashapps--arranging .ws-dashapps__glyph { animation: ws-dashapps-jiggle 0.3s ease-in-out infinite alternate; }
+}
+@keyframes ws-dashapps-jiggle { from { transform: rotate(-1.5deg); } to { transform: rotate(1.5deg); } }
 
 /* ---- phone ---------------------------------------------------------------- */
 /* The cards stack in source order and each one is a little shorter. No page
@@ -3680,8 +3863,10 @@ p.chat-workpanel__note { margin: 0; }
     gap: 11px;
   }
   .ws-dashcard { padding: 14px; max-height: 300px; }
-  /* Tighter, so more than one row of tiles is on screen at a phone width. */
-  .ws-dashapps { gap: 10px 14px; }
+  /* Arranging lifts the cap. The tiles take every touch while arranging, so
+     the card cannot be scrolled by touch, and the tenth place is a digit that
+     has to be on screen to be tapped. */
+  .ws-dashcard:has(.ws-dashapps--arranging) { max-height: none; }
   .ws-dashapps__tile { gap: var(--space-1); }
   .ws-dashapps__name { font-size: 11px; }
   /* The scope chip is the first thing to go when the row is narrow: the ask

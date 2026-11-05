@@ -87,6 +87,44 @@ class TestProjectSlugTraversal:
         with pytest.raises(ctx.ProjectOutsideRoot):
             ctx.contained_project_dir("escape")
 
+    def test_a_symlink_into_a_configured_extra_root_is_allowed(self, ctx, tmp_path, monkeypatch):
+        root = tmp_path / "projects"
+        root.mkdir()
+        extra_root = tmp_path / "extra-root"
+        (extra_root / "big").mkdir(parents=True)
+        (root / "big").symlink_to(extra_root / "big")
+        monkeypatch.setattr(ctx, "_projects_root", lambda: root)
+        monkeypatch.setenv("WORKSHOP_PROJECTS_EXTRA_ROOTS", str(extra_root))
+        assert ctx.contained_project_dir("big") == (extra_root / "big").resolve()
+
+    def test_an_extra_root_does_not_open_anything_else(self, ctx, tmp_path, monkeypatch):
+        root = tmp_path / "projects"
+        root.mkdir()
+        (tmp_path / "extra-root").mkdir()
+        (tmp_path / "elsewhere").mkdir()
+        (root / "escape").symlink_to(tmp_path / "elsewhere")
+        monkeypatch.setattr(ctx, "_projects_root", lambda: root)
+        monkeypatch.setenv("WORKSHOP_PROJECTS_EXTRA_ROOTS", str(tmp_path / "extra-root"))
+        with pytest.raises(ctx.ProjectOutsideRoot):
+            ctx.contained_project_dir("escape")
+
+
+class TestProviderListSurvivesARefusedProject:
+    def test_one_refused_project_does_not_take_the_list_down(self, ctx, tmp_path, monkeypatch):
+        """`GET /chat/providers` feeds the model, effort and scope pickers of
+        every chat, so one project the containment check refuses must cost
+        that project's entry, not the whole list."""
+        root = tmp_path / "projects"
+        root.mkdir()
+        (tmp_path / "elsewhere").mkdir()
+        (root / "refused").symlink_to(tmp_path / "elsewhere")
+        monkeypatch.setattr(ctx, "_projects_root", lambda: root)
+        monkeypatch.setattr(ctx, "_project_slugs", lambda: ["refused"])
+        monkeypatch.delenv("WORKSHOP_PROJECTS_EXTRA_ROOTS", raising=False)
+        keys = [e["key"] for e in ctx.list_providers()]
+        assert "project:refused" not in keys
+        assert keys, "the rest of the list must still be served"
+
 
 class TestBuildAgentUnknownSlug:
     def test_an_unregistered_slug_never_gets_the_platform_repo(self, ctx, monkeypatch):

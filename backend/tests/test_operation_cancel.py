@@ -22,7 +22,8 @@ import asyncio
 
 import pytest
 
-from services import build_streaming, chat_log, chat_store, ownership, thread_ops
+from services import (build_streaming, chat_log, chat_store, ownership, thread_ops,
+                      working_state)
 
 
 @pytest.fixture()
@@ -135,7 +136,7 @@ def test_compaction_has_no_operation_to_cancel(chatty, monkeypatch):
         return {"turn_id": "t-1"}
 
     monkeypatch.setattr(rc, "_send", fake_send)
-    monkeypatch.setattr(rc, "_spawn_working_state", lambda *a: None)
+    monkeypatch.setattr(working_state, "spawn", lambda *a: None)
     asyncio.run(rc.compact_thread(chatty))
 
     assert sent["content"] == "/compact"

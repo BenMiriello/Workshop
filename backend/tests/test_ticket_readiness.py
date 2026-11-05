@@ -109,6 +109,9 @@ def client(tmp_path, monkeypatch):
     # `development` since ADR 0014: the root queue's scope key. `workshop`
     # is the inbox and is deliberately not a launch scope, so a run test
     # pointed at it now asserts the wrong thing.
+    # `development` exists only in developer mode, so the test turns it on
+    # rather than inheriting whatever the installation running it has set.
+    monkeypatch.setenv("WORKSHOP_DEV_MODE", "1")
     monkeypatch.setattr(tasks_all, "_root_for_scope",
                         lambda scope: tmp_path if scope == "development" else None)
     # Stub the PROCESS LAUNCH, not `launch_task_run`. The readiness gate lives

@@ -5,7 +5,7 @@ CURATION, NOT CONFINEMENT. Per SEC-A2 (the 2026-07-18 agents security audit
 A2, and `scope_tree`'s own module docstring), this box runs as one uid: any
 process here can already read any file directly. `share` never restricts what a
 process may read. It restricts one thing only -- what a SEARCH surfaces -- so
-that a birds chat's search does not fill up with finance transcripts and a
+that one app's chat search does not fill up with another app's transcripts and a
 project's search does not fill up with a sibling project's working notes. Do not
 describe this module, in a docstring, a log line or the UI, as security,
 permission or access control.

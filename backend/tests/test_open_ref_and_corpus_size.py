@@ -454,7 +454,7 @@ class TestTheTurnIdReachesTheSubprocess:
         from services import app_registry
         app_registry.set_current_query_turn("turn-9")
         try:
-            env = app_registry._platform_mcp_servers()["workshop"].get("env") or {}
+            env = app_registry.spec_context(app_registry._platform_mcp_servers()["workshop"])
             assert env.get("WORKSHOP_QUERY_TURN") == "turn-9"
         finally:
             app_registry.set_current_query_turn(None)
@@ -462,7 +462,7 @@ class TestTheTurnIdReachesTheSubprocess:
     def test_no_turn_omits_the_var_rather_than_guessing(self, monkeypatch):
         from services import app_registry
         app_registry.set_current_query_turn(None)
-        env = app_registry._platform_mcp_servers()["workshop"].get("env") or {}
+        env = app_registry.spec_context(app_registry._platform_mcp_servers()["workshop"])
         assert "WORKSHOP_QUERY_TURN" not in env
 
 

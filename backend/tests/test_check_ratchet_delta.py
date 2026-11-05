@@ -264,7 +264,11 @@ class TestNoHardcodingDelta:
         return subprocess.run(
             ["bash", str(repo / "scripts" / self.SCRIPT), *args],
             cwd=repo, capture_output=True, text=True,
-            env={**os.environ, "WORKSHOP": str(repo)},
+            # The machine's instance.env is needles too, and any of its values
+            # can occur in the fixture: one did, six times, in the copied
+            # `_ratchet_delta.py`, turning three references into nine.
+            env={**os.environ, "WORKSHOP": str(repo),
+                 "WORKSHOP_CONFIG_DIR": str(repo.parent / "no-config")},
         )
 
     @pytest.fixture()

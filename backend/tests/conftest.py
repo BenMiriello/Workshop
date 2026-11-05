@@ -25,6 +25,27 @@ import json
 
 import pytest
 
+# FIRST, before anything below can import a platform module: every path this
+# installation keeps its state under is moved to a session temp dir, writes to
+# the real one are refused, and the session fails if one happened anyway.
+from tests import instance_isolation as _isolation, real_state_guard as _guard
+
+_isolation.install()
+
+
+@pytest.fixture(autouse=True)
+def _real_state_is_unreachable():
+    """Redirect the frozen paths of any module imported since the last test."""
+    _isolation.redirect_frozen_paths()
+
+
+def pytest_collection_finish(session):
+    _isolation.redirect_frozen_paths()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _guard.report(session)
+
 
 def requires_registry():
     """Skip unless this instance has a projects registry.

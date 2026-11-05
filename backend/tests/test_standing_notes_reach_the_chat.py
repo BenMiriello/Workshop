@@ -36,6 +36,9 @@ def store(tmp_path, monkeypatch):
     into the live global store, where it would have ridden into every prompt in
     the workspace, and it had to be removed by hand.
     """
+    # These tests read the `development` scope, which exists only in
+    # developer mode; turn it on rather than inherit the installation's.
+    monkeypatch.setenv("WORKSHOP_DEV_MODE", "1")
     dirs: dict[str, object] = {}
 
     def scope_dir(key, create=False):

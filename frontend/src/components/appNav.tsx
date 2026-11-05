@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { useLocation } from "react-router-dom";
 import { useBreadcrumbOverride, type Crumb } from "@workshop/ui";
 import { appCrumbs, onAppsChanged } from "../apps/registry";
@@ -81,10 +81,17 @@ const PLATFORM_NODES: Record<string, RouteNode> = { ...NODES };
 // NODES, because `resolveCrumbs` closes over both.
 const NODE_KEYS: string[] = [];
 
+// Bumped on every refresh, so a trail already drawn is drawn again when an app
+// declared at runtime arrives. Without it the first page of such an app keeps
+// the empty trail it rendered with, and the trail appears only after the next
+// navigation, moving the page down under the reader.
+let nodesVersion = 0;
+
 function refreshNodes(): void {
   for (const key of Object.keys(NODES)) delete NODES[key];
   Object.assign(NODES, PLATFORM_NODES, appCrumbs());
   NODE_KEYS.splice(0, NODE_KEYS.length, ...Object.keys(NODES).sort((a, b) => b.length - a.length));
+  nodesVersion += 1;
 }
 
 refreshNodes();
@@ -140,11 +147,15 @@ export function resolveCrumbs(pathname: string): Crumb[] {
 export function useCrumbs(): Crumb[] {
   const { pathname } = useLocation();
   const override = useBreadcrumbOverride();
+  // `refreshNodes` subscribed at module init, so it has run by the time this
+  // listener reads the version.
+  const readVersion = () => nodesVersion;
+  const version = useSyncExternalStore(onAppsChanged, readVersion, readVersion);
   return useMemo<Crumb[]>(() => {
     const base = override.trail?.length ? override.trail.slice() : resolveCrumbs(pathname);
     if (override.leafLabel && base.length) {
       base[base.length - 1] = { ...base[base.length - 1], label: override.leafLabel };
     }
     return base;
-  }, [pathname, override]);
+  }, [pathname, override, version]);
 }

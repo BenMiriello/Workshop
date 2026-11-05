@@ -160,6 +160,19 @@ class TestRaw:
         assert r.headers["content-security-policy"].startswith("default-src 'none'")
         assert r.headers["x-content-type-options"] == "nosniff"
 
+    def test_an_audio_file_opened_directly_can_play(self, client, tree):
+        # A browser plays a directly opened mp3 through a media element that the
+        # page's own policy governs, so the policy must allow same-origin media
+        # while still allowing no script.
+        (tree / "clip.mp3").write_bytes(b"ID3\x03\x00")
+        r = client.get("/files/raw",
+                       params={"workspace": "project:widgets", "path": "clip.mp3"})
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "audio/mpeg"
+        policy = r.headers["content-security-policy"]
+        assert "media-src 'self'" in policy
+        assert "script-src" not in policy and policy.startswith("default-src 'none'")
+
     def test_an_unknown_extension_is_a_byte_stream_rather_than_a_guess(self, client, tree):
         (tree / "thing.zzz").write_bytes(b"\x00\x01")
         r = client.get("/files/raw",

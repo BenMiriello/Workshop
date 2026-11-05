@@ -30,7 +30,7 @@ const permissionsPolicyMiddleware = (): PluginOption => ({
 // JS reads the wrong field (e.g. AgentConfig reading `metadata_` instead of
 // `metadata`) and won't pick up the new bundle even on pull-to-refresh,
 // visiting `/clear` returns Clear-Site-Data which wipes cache + storage for
-// this origin. Same pattern as apps/commute/vite.config.ts.
+// this origin. Same pattern an app's own vite config can use.
 const CLEAR_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>Cleared</title>
 <meta http-equiv="refresh" content="2; url=/">
 <style>body{font-family:system-ui;background:#0b0f17;color:#e7eaee;padding:2rem;text-align:center}</style>
@@ -43,7 +43,7 @@ const CLEAR_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>Clea
 </script>
 </body></html>`;
 
-// Service-worker kill-switch (same pattern as commute app). Catches any
+// Service-worker kill-switch (same pattern an app can use). Catches any
 // residual SW from earlier builds and unregisters it on the next page load.
 const KILL_SWITCH_SW = `// Service-worker kill-switch — unregister + drop caches.
 self.addEventListener('install', (e) => { self.skipWaiting(); });
@@ -89,11 +89,15 @@ const serviceWorkerKillSwitchMiddleware = (): PluginOption => ({
 // Per-deployment origin config. Empty by default so a fresh clone runs locally
 // without bouncing to some other instance's hostname.
 //   WORKSHOP_CANONICAL_ORIGIN — browser-facing HTTPS origin (e.g. a Tailscale
-//     Serve URL like https://<host>.ts.net:8443) the dev server redirects to.
+//     Serve URL like https://<host>:8443) the dev server redirects to.
 //   WORKSHOP_TAILNET_HOST — the magicdns host that is already canonical, so
 //     requests arriving there (or on loopback) are not redirected.
 const CANONICAL_ORIGIN = (process.env.WORKSHOP_CANONICAL_ORIGIN || "").replace(/\/$/, "");
 const TAILNET_HOST = process.env.WORKSHOP_TAILNET_HOST || "";
+// This instance's backend port — default 8000 matches the default install;
+// a deployment whose backend listens elsewhere must set this or /api calls
+// from the dev server silently proxy to nothing.
+const BACKEND_PORT = process.env.WORKSHOP_BACKEND_PORT || "8000";
 
 // HTTP-IP → HTTPS-magicdns redirect. iOS Safari refuses geolocation on an
 // insecure origin (raw Tailscale IP over HTTP), so bounce stale bookmarks to
@@ -215,6 +219,12 @@ export default defineConfig({
         index: path.resolve(__dirname, "index.html"),
         ...sharedInputs(),
       },
+      // An app imports these entries BY NAME (`import { Editor } from
+      // "@workshop/ui/editor"`), so each must export the names it re-exports.
+      // Vite's app-build default is `false`, which lets rollup rename them to
+      // `a`, `b`, `C`: the dev server serves source and never shows it, and
+      // every app bundle fails in the built origin on its first named import.
+      preserveEntrySignatures: "exports-only",
     },
   },
   // A nested copy of any of these under node_modules must not be able to win a
@@ -302,16 +312,19 @@ export default defineConfig({
   server: {
     // Bound to loopback, NOT 0.0.0.0: this dev server proxies /api to the
     // finance/agent backend, so a LAN-reachable bind exposed bank data to the
-    // whole subnet. Remote access is via Tailscale Serve (:8443 -> 127.0.0.1:5173),
+    // whole subnet. Remote access is via a Tailscale Serve mapping to this
+    // loopback port (per-deployment),
     // which connects from loopback, so tailnet access is unaffected.
     host: "127.0.0.1",
-    port: 5173,
+    // Default 5173; override with WORKSHOP_DEV_PORT when another instance on
+    // the same box already holds it.
+    port: Number(process.env.WORKSHOP_DEV_PORT || 5173),
     allowedHosts: TAILNET_HOST ? [TAILNET_HOST] : [],
     // Allow serving the sibling sources we alias above (@shared).
     fs: { allow: [path.resolve(__dirname, "..")] },
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8000",
+        target: `http://127.0.0.1:${BACKEND_PORT}`,
         changeOrigin: true,
         // Voice mode runs over a WebSocket under /api. Vite does NOT proxy an
         // upgrade unless this is set, so without it the socket fails on the dev

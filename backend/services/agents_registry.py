@@ -4,9 +4,9 @@ One Agent concept, TYPED BY `role` (the closed enum below). A definition is a
 markdown file with YAML frontmatter:
 
     ---
-    name: Commute builder
+    name: Widgets builder
     role: maker                 # maker | reviewer | triager | keeper | broker
-    purpose: keep the commute app shipping
+    purpose: keep the widgets app shipping
     capabilities: []            # grant refs (Phase 4 fills these)
     triggers:                   # normalized triggers (services.triggers shape)
       - kind: cron
@@ -14,7 +14,7 @@ markdown file with YAML frontmatter:
     limits:
       max_iterations: 20
       budget: {max_wall_s: 3000}
-    project_slug: commute       # link / project scope (optional)
+    project_slug: widgets       # link / project scope (optional)
     ---
     <markdown body: persona / instructions>
 
@@ -93,7 +93,7 @@ TEMPLATES_DIR = Path(os.environ.get(
     "WORKSHOP_AGENT_TEMPLATES_DIR", str(_USER_AGENTS_DEFAULT / "_templates")))
 GROUPS_DIR = TEMPLATES_DIR / "groups"
 
-# Built-in app assistants (the Budget/Accounts/Commute/Location chat personas).
+# Built-in app assistants (the per-app chat personas).
 # Same file format and same parser as everything else here — that is the entire
 # point of the directory existing. They used to be Python: a ContextProvider
 # subclass with the persona as a concatenated string literal, the tool list as a

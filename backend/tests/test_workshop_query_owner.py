@@ -30,14 +30,14 @@ class TestSpawnSideHandsDownTheRealCaller:
     def test_the_pinned_owner_rides_in_the_launch_env(self, owned):
         ownership.set_current_owner(42)
         spec = app_registry._platform_mcp_servers()["workshop"]
-        assert spec["env"]["WORKSHOP_QUERY_OWNER"] == "42"
+        assert app_registry.spec_context(spec)["WORKSHOP_QUERY_OWNER"] == "42"
 
     def test_no_owner_pinned_omits_the_var_rather_than_guessing(self, owned):
         # No set_current_owner() call: nothing pinned. A background pass with
         # no per-request caller falls through to the subprocess's own
         # operator fallback (see below), which is correct there.
         spec = app_registry._platform_mcp_servers()["workshop"]
-        assert "WORKSHOP_QUERY_OWNER" not in spec["env"]
+        assert "WORKSHOP_QUERY_OWNER" not in app_registry.spec_context(spec)
 
 
 class TestSubprocessSidePinsWhoeverWasHandedDown:

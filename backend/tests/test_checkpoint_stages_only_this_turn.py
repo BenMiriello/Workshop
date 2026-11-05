@@ -133,6 +133,12 @@ def test_platform_repo_is_never_auto_committed_from_a_subdirectory():
             continue
         assert dev_mode.is_in_self_repo(p) is True, f"{p} must be protected"
         checked += 1
+    projects = root / "projects"
+    for p in sorted(projects.iterdir()) if projects.is_dir() else ():
+        if p.is_dir() and _is_its_own_tree(p):
+            assert dev_mode.is_in_self_repo(p) is False, \
+                f"{p} is its own git tree and must not be treated as this repo"
+            nested += 1
     assert checked, "no plain subdirectory of the platform repo was checked"
     assert nested, ("no nested repo was checked -- `projects/` or `apps/` should "
                     "be one, and without one this test only proves half its point")

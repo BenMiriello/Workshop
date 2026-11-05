@@ -12,26 +12,41 @@ from deps_user import (
 )
 from middleware.compression import SSEAwareGZipMiddleware
 
-# Platform-core routers only — the shell. App routers (finance/budget/commute/
-# location/birds/health/…) are NOT imported here; they mount from the installed-
+# Platform-core routers only — the shell. App routers are NOT imported here; they mount from the installed-
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
-from routes import agents, projects, base_apps, relay, services, events, jobs, push, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers, refs as refs_routes, memory_policy as memory_policy_routes, memory as memory_routes, memory_compat
+from routes import agents, projects, base_apps, base_apps_ws, relay, services, events, jobs, push, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, grants, usage, tasks_all, notes_all, docs_index, inbox, client_errors, client_media, trackers, refs as refs_routes, memory_policy as memory_policy_routes, memory as memory_routes, memory_compat
 from routes import files as files_routes
 from routes import mcp as mcp_routes
+from routes import mcp_workshop as mcp_workshop_routes
 from routes import model_providers_routes
+from routes import local_llm
+from routes import page_link as page_link_routes
+from routes import chat_place as chat_place_routes
+from routes import web_links as web_links_routes
+from routes import speech as speech_routes
+from routes import speech_live
+from routes import speech_commands, speech_dictations
+from routes import gpu_claims as gpu_claims_routes
+from routes import resources as resources_routes
+from routes import chat_schedules as chat_schedules_routes
 from routes import github_identity_routes
+from routes import dashboard_order as dashboard_order_routes
+from routes import storage as storage_routes
 from routes import tools as tools_routes
 from routes import stores as stores_routes
 from routes import apps as apps_routes
+from routes import app_catalog as app_catalog_routes
 from routes import git as git_routes
 from routes import changes as changes_routes
 from routes import branches as branches_routes
 from routes import presence as presence_routes
 from routes import control as control_routes
 from routes import leases as leases_routes
+from routes import app_events as app_events_routes
 from services import app_registry
 from services import app_mount_record
+from services import installation
 # Imported HERE rather than inside `lifespan` like its neighbours: this module is
 # a timer around two shell commands (stdlib plus `wsplatform.paths`), so there is
 # no heavy import to defer and no cycle to break, and a function-local import
@@ -41,6 +56,7 @@ import asyncio
 import datetime as _dt
 import logging
 import os
+import sys
 
 # MODULE SCOPE, not inside `_live_schema_revision`. `db.engine` builds its
 # engine lazily (`_engine = None` until `engine()` is called), so importing it
@@ -52,6 +68,14 @@ from sqlalchemy import text as _sa_text
 from db.engine import engine as _db_engine
 
 log = logging.getLogger("workshop.main")
+
+# THE EVENT LOOP GETS THE GIL BACK SOONER. Every request is served from one
+# thread, and while a worker thread runs Python (an index rebuild, a reconcile,
+# a sync route) the loop waits a whole switch interval for the GIL after each
+# syscall it makes: measured 2026-10-04 at 75ms for one turn's draft persist
+# with one busy thread at the default 5ms, 12ms at 1ms. The cost is a little
+# more switching between busy threads, which this I/O-bound server can afford.
+sys.setswitchinterval(0.001)
 
 
 @asynccontextmanager
@@ -82,7 +106,7 @@ async def lifespan(app: FastAPI):
                      "partition", moved)
     _model_credentials.require_encryption_in_multi_user()
     # Installed apps: run each installed app's startup hooks + background loops
-    # (finance prewarm/categorize, birds env-refresh/atlas). A fresh instance with
+    # (cache prewarms, periodic refreshes). A fresh instance with
     # no apps installed starts none of these. Adding an app never edits this file.
     app.state._app_bg = []
     for spec in app_registry.installed_specs():
@@ -93,16 +117,41 @@ async def lifespan(app: FastAPI):
                 log.warning("app %s startup hook failed: %s", spec.id, e)
         for loop in spec.background:
             app.state._app_bg.append(asyncio.create_task(loop()))
-    # App platform: free the ports of processes that have died. Apps themselves are
-    # kept alive by docker's restart policy, not by us.
+    # App platform: free the ports of processes that have died. Containers are
+    # kept alive by docker's restart policy; a process-mode app that should be
+    # running is started again here, because nothing else outlives this process.
     from services import port_registry
     app.state._bg_port_reconcile = asyncio.create_task(port_registry.reconcile_loop())
+    # A SUBPROCESS app has no restart policy behind it: an instance that pins
+    # WORKSHOP_APP_BACKEND=subprocess relies on app_monitor to bring a crashed
+    # service back. It skips container apps itself, so on a docker box it idles.
+    # The restore runs BEFORE the monitor starts. Both bring back an app the
+    # reboot left failed, and run concurrently they started it twice: the
+    # monitor's restart took the port, the restore's start failed on it, and
+    # the app was recorded failed after a reboot that should have restored it.
+    from services import app_runner as _app_runner
+    try:
+        restored = await asyncio.to_thread(_app_runner.restore_desired_running)
+    except Exception as e:  # noqa: BLE001 - a restore never blocks a boot
+        log.warning("app restore skipped: %s", e)
+    else:
+        if restored:
+            log.info("restarting app(s) that should be running: %s", ", ".join(restored))
+    # Default apps from the app catalog, installed and started once each. A
+    # clone can take a while and the network may be down, so it runs beside
+    # the boot rather than in it.
+    from services import app_catalog_apply
+    app.state._bg_app_catalog = asyncio.create_task(
+        asyncio.to_thread(app_catalog_apply.apply_defaults_quietly))
+    from services import app_monitor
+    app.state._bg_app_monitor = asyncio.create_task(app_monitor.monitor_loop())
     # Job liveness: close Jobs left `running` by a process that died. Its only
     # shell caller never fires (the dispatcher exits early while autonomy is
     # engaged), so a crashed run used to read `running` forever. The backend
     # outlives every run, so it reaps.
     from services import jobs as jobs_svc
-    app.state._bg_job_reconcile = asyncio.create_task(jobs_svc.reconcile_loop())
+    app.state._bg_job_reconcile = asyncio.create_task(
+        jobs_svc.reconcile_loop(scope_roots=tasks_all.scope_roots))
     # Background work loop: make the worker MECHANISM follow the execution
     # INTENT. Arming a scope (services/scope_execution) is the only control;
     # this ensures a resident queue runner exists for every armed scope and
@@ -223,7 +272,7 @@ async def lifespan(app: FastAPI):
         # chat is never left waiting on something that will never answer.
         build_streaming.reconcile_threads()
     except Exception:
-        pass
+        log.exception("turn recovery failed at startup; running turns may not be re-attached")
     try:
         # Cache each thread's resolved context cut. Threads cleared before the
         # cache existed carry a boundary and no count, and the sync endpoint
@@ -262,6 +311,7 @@ async def lifespan(app: FastAPI):
         pass
     for t in [*getattr(app.state, "_app_bg", []),
               getattr(app.state, "_bg_port_reconcile", None),
+              getattr(app.state, "_bg_app_monitor", None),
               getattr(app.state, "_bg_job_reconcile", None),
               getattr(app.state, "_bg_queue_drain", None),
               # Named explicitly rather than left to asyncio's exit-time sweep:
@@ -386,10 +436,7 @@ async def strip_api_prefix(request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173", "http://127.0.0.1:5173",
-        "http://localhost:5174", "http://127.0.0.1:5174",
-    ],
+    allow_origins=list(installation.dev_origins()),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -412,13 +459,17 @@ app.include_router(jobs.router, dependencies=_OPERATOR)  # top-level Job feed (/
 app.include_router(tasks_all.router, dependencies=_OPERATOR)  # cross-scope task feed (/tasks)
 app.include_router(trackers.router, dependencies=_OPERATOR)  # external tracker connection + triage (/trackers)
 app.include_router(notes_all.router, dependencies=_OPERATOR)  # cross-scope notes feed (/memory/notes)
+app.include_router(app_catalog_routes.router, dependencies=_OPERATOR)  # /apps/catalog, /apps/overlays: before /apps/{app_id}
 app.include_router(apps_routes.router, dependencies=_OPERATOR)  # the app entity + its collections (/apps)
 app.include_router(inbox.router, dependencies=_OPERATOR)      # agent inbox (/inbox)
+app.include_router(client_errors.router, dependencies=_OPERATOR)  # UI crash reports (/client-errors)
+app.include_router(client_media.router, dependencies=_OPERATOR)  # sound heard off screen (/client-media)
 app.include_router(docs_index.router, dependencies=_OPERATOR)  # docs index, read + write (/docs)
 app.include_router(files_routes.router, dependencies=_OPERATOR)  # one file API over a resolved workspace root (/files)
 app.include_router(refs_routes.router, dependencies=_OPERATOR)  # ref resolve + backlinks (/refs)
 app.include_router(memory_policy_routes.router, dependencies=_OPERATOR)  # what other chats see (/memory-policy)
 app.include_router(memory_routes.router, dependencies=_OPERATOR)         # semantic search + index status (/memory)
+app.include_router(storage_routes.router, dependencies=_OPERATOR)  # usage by app and kind, retention settings (/storage)
 app.include_router(agents.router, prefix="/agents", tags=["agents"], dependencies=_OPERATOR)
 app.include_router(projects.router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)
 # ONE PREFIX FOR ONE CONCEPT (MEM-15). This was `/knowledge`, alongside
@@ -471,6 +522,9 @@ app.include_router(leases_routes.router, dependencies=_OPERATOR)  # /leases
 # answered by `scripts/apply.sh --check` from a terminal, which is where it was
 # always answered. Do not reintroduce a global drift warning in any form.
 app.include_router(base_apps.router, prefix="/base-apps", tags=["base-apps"], dependencies=_OPERATOR)
+# Its WebSocket half, on the same paths. Gated inside the handler, as the voice
+# socket is: _OPERATOR is typed for an HTTP Request.
+app.include_router(base_apps_ws.router, prefix="/base-apps", tags=["base-apps"])
 # Grants + Stores (Phase 4). /base-apps/grants stays as a thin alias in base_apps
 # until Phase 5; this is the real grants router (/grants, /grants/mint,
 # /grants/revoke, /stores).
@@ -488,6 +542,7 @@ app.include_router(stores_routes.router, dependencies=_OPERATOR)
 # and it starts from an empty seat on purpose.
 app.include_router(autonomy.router, dependencies=_OPERATOR)
 app.include_router(usage.router, dependencies=_OPERATOR)  # rolling-window token usage (/usage)
+app.include_router(resources_routes.router, dependencies=_OPERATOR)  # what a chat's model runs on, who holds it (/resources)
 # Settings -> MCP: which MCP servers exist, whether they connect, what they
 # cost. Machine-wide facts, so it hangs off settings rather than a chat.
 app.include_router(mcp_routes.router, dependencies=_OPERATOR)
@@ -521,6 +576,8 @@ app.include_router(github_identity_routes.callback_router)
 # are the shell (chat, voice, push), NOT apps: apps build on them, so they mount
 # unconditionally.
 app.include_router(chat.router, prefix="/chat", tags=["chat"], dependencies=_USER)
+# What is set to send into a chat: its schedules, waiting messages and wake-ups.
+app.include_router(chat_schedules_routes.router, prefix="/chat", dependencies=_USER)
 # Voice mode — local STT/TTS for the chat surface, per-owner prefs.
 app.include_router(voice.router, tags=["voice"], dependencies=_USER)
 # The voice socket authenticates inside the handler: _USER is typed for an
@@ -528,7 +585,17 @@ app.include_router(voice.router, tags=["voice"], dependencies=_USER)
 # rule, plus an Origin check (a WebSocket is not covered by the same-origin
 # policy but does carry cookies).
 app.include_router(voice_stream.router, tags=["voice"])
+# Dictation and read-aloud for every page, on the same engine as voice mode.
+app.include_router(speech_routes.router, dependencies=_USER)
+app.include_router(speech_commands.router, dependencies=_USER)
+app.include_router(speech_dictations.router, dependencies=_USER)
+# Live dictation's socket, signed in inside the handler like the voice socket.
+app.include_router(speech_live.router, tags=["speech"])
 app.include_router(push.router, dependencies=_USER)
+app.include_router(app_events_routes.router, dependencies=_USER)  # tell subscribed apps (/app-events)
+app.include_router(page_link_routes.router, dependencies=_USER)  # the page beside a chat, its grants (/page-link, /chat-apps)
+app.include_router(chat_place_routes.router, dependencies=_USER)  # where a chat is working (/chat-place)
+app.include_router(web_links_routes.router, dependencies=_USER)  # where a chat's web links open (/web-links)
 
 # Installed apps mount from the built-in catalog (services/app_registry), gated
 # by this instance's installed-app registry. A fresh clone installs nothing and
@@ -573,13 +640,24 @@ app.state.apps = _mount_installed_apps(app)
 
 # Internal machine-to-machine infra — loopback only, no personal data, not public.
 app.include_router(relay.router, dependencies=_LOOPBACK)
+app.include_router(page_link_routes.call_router, dependencies=_LOOPBACK)  # a turn's tool server calls the page (/page-link/call)
+app.include_router(mcp_workshop_routes.router)  # every turn's workshop tools over HTTP; the signed turn claims are the auth (/mcp/workshop)
+app.include_router(local_llm.router, dependencies=_LOOPBACK)
+# Job and guest claims on a GPU, for apps' own servers on this machine.
+app.include_router(gpu_claims_routes.router, dependencies=_LOOPBACK)
+# A dictation's recording, for subscribed apps' servers to copy.
+app.include_router(speech_dictations.recordings_router, dependencies=_LOOPBACK)
+# Leases on shared machine resources, for any process on this machine.
+app.include_router(resources_routes.machine_router, dependencies=_LOOPBACK)
+# The machine's RAM room: the holder's footprint/yield/resume calls and the
+# hold state an app reads. Loopback only; the public edge refuses the prefix.
 # OPERATOR-AUTHED, not loopback-gated (changed 2026-08-20). This router is a
 # read-only health prober: it has one GET, no ingest, and no unauthenticated
 # surface. Gating it on network position was the anti-pattern the public edge's
 # own comment says was removed for every other platform router, and it had a
 # measured cost: /services is on the edge blocklist, so the endpoint 404'd on
 # the origin the operator actually uses, which silently broke the Apps
-# launcher's per-app status AND made Commute's settings say the 511 API key was
+# launcher's per-app status AND made one app's settings say its API key was
 # "missing" whether or not it was set. Identity gates it on either origin now.
 app.include_router(services.router, dependencies=_OPERATOR)
 app.include_router(events.router, dependencies=_LOOPBACK)
@@ -588,6 +666,7 @@ app.include_router(events.router, dependencies=_LOOPBACK)
 
 # Public auth entry (register/login/logout/me) — no gate; it establishes identity.
 app.include_router(auth.router)
+app.include_router(dashboard_order_routes.router)
 
 
 # Browser-facing origin for the Workshop SPA (e.g. a Tailscale Serve HTTPS URL).
@@ -692,14 +771,19 @@ async def healthz():
     than re-read now.
 
     UNAUTHENTICATED, so it carries app ids and one filesystem path and nothing
-    else -- no route table, no configuration, no data. That is the same
-    disclosure the launcher already makes to any caller.
+    else -- no route table, no configuration, no data. Even that is more than
+    the authenticated launcher tells a stranger, so the public edge refuses
+    `/healthz` (`workshop_public_app._BLOCKED_PREFIXES`) and the backend binds
+    loopback: the readers are local scripts.
     """
     return {
         "ok": True,
         "source_id": _SOURCE_ID,
         "started_at": _STARTED_AT,
         "pid": os.getpid(),
-        "schema": _live_schema_revision(),
+        # On a worker thread: a query held on the loop froze every other request
+        # whenever the pool was slow to hand out a connection (4 of the dumped
+        # event-loop stalls on 2026-10-03 were this line).
+        "schema": await asyncio.to_thread(_live_schema_revision),
         "apps": getattr(app.state, "apps", None) or app_mount_record.unmounted(),
     }
