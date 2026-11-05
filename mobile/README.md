@@ -26,9 +26,16 @@ native/
   secureStore.ts ........... expo-secure-store
   auth.ts .................. bearer token for off-tailnet API calls
   liveActivity.ts .......... optional native Live Activity module (graceful no-op until built)
+  pages.ts ................. native page views (WKWebViews above the WebView, one data store per profile; iOS 17+)
+  readSelection.ts ......... page side of "Read aloud" in the system selection menu (Mac app too)
+  appearance.ts ............ page background -> top inset color and status bar text (light/dark)
 modules/workshop-live-activity/  local Expo module: ActivityKit start/update/end (app target)
+modules/workshop-pages/ .... local Expo module behind pages.ts (contract: ../shared/native-pages.ts)
+modules/workshop-selection-menu/  local Expo view around the WebView: adds "Read aloud" to the selection menu, system items kept
 targets/WorkshopWidgets/ ... WidgetKit extension sources (lock screen / Dynamic Island UI)
+targets/WorkshopKeyboard/ .. keyboard extension: recent clips, tap to type one in
 plugins/withLiveActivity.js  config plugin: NSSupportsLiveActivities
+plugins/withKeyboardExtension.js  config plugin: adds the keyboard target and the app group at every prebuild
 ```
 
 The shared wire contract lives in `../shared/native-bridge.ts` (imported by both
@@ -71,9 +78,11 @@ backend trusts the peer.
 
 ## Live Activity setup (one manual Xcode step)
 
-The lock-screen / Dynamic Island commute countdown needs a Widget Extension
-target, which a config plugin can't create reliably. The Swift sources are ready;
-add the target once:
+The Live Activity (one generic activity any app can start through
+`liveActivities()` in `@workshop/ui`; contract in
+`shared/native-live-activity.ts`) needs a Widget Extension target, which a
+config plugin can't create reliably. The Swift sources are ready; add the target
+once:
 
 1. `npx expo prebuild` (generates `ios/`).
 2. Open `ios/workshopmobile.xcworkspace` in Xcode.
@@ -81,13 +90,28 @@ add the target once:
    Name it `WorkshopWidgets`, set deployment target to **iOS 16.2**.
 4. Replace the generated files with / add to the target:
    `targets/WorkshopWidgets/WorkshopWidgetsBundle.swift`,
-   `CommuteLiveActivity.swift`, and `Info.plist`.
-5. Add `modules/workshop-live-activity/ios/CommuteActivityAttributes.swift` to
+   `WorkshopActivityWidget.swift`, and `Info.plist`.
+5. Add `modules/workshop-live-activity/ios/WorkshopActivityAttributes.swift` to
    **both** the app target and the `WorkshopWidgets` target membership (the shared type).
 6. Rebuild (`npx expo run:ios`).
 
-Until this is done, `liveActivity.*` is a graceful no-op and everything else
-works. Verify on-device from the Diagnostics screen (`liveActivity.isSupported`).
+`scripts/mobile-sidestore.sh` does not do this: it regenerates `ios/` with
+`expo prebuild --clean` whenever `modules/` or `plugins/` change, so a SideStore
+build has no widget extension, and an activity it starts shows nowhere.
+Until the target is in the build, `liveActivity.isSupported` (Diagnostics
+screen) still reports whether the system allows Live Activities, not whether
+this build can draw one.
+
+## Workshop keyboard
+
+`targets/WorkshopKeyboard` is a custom keyboard listing the clipboard's recent
+clips; a tap types one into the field. `plugins/withKeyboardExtension.js` adds
+the target at every prebuild, with an app group shared by the app and the
+keyboard (`group.<bundle id>`), and the SideStore build signs each bundle with
+its entitlements file so SideStore registers the group. On the phone, once:
+Settings > General > Keyboard > Keyboards > Add New Keyboard > Workshop, then
+tap it and turn on Allow Full Access. Open the app once after that (signed in)
+so it leaves its sign-in for the keyboard.
 
 ## Going paid later (remote push)
 

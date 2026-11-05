@@ -1,0 +1,7 @@
+{
+  "name": "workshop-pages",
+  "version": "1.0.0",
+  "description": "Native page views: WKWebViews placed above the shell's WebView, one data store per profile.",
+  "main": "index.ts",
+  "private": true
+}

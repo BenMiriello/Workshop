@@ -16,6 +16,9 @@
 // would otherwise ship pointing at whoever built it.
 
 import Constants from "expo-constants";
+import { Platform } from "react-native";
+
+import type { NativeEngine } from "@shared/native-bridge";
 
 type Extra = { serverUrl?: string; webUrl?: string; tier?: "free" | "paid" };
 
@@ -56,4 +59,11 @@ export const API_BASE: string = `${SERVER_URL}/api`;
 
 export function apiUrl(path: string): string {
   return `${API_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
+}
+
+/** On iOS every web view is the system's WebKit, so its Safari release is the
+ *  OS release ("26.0" from "26.0.1"). */
+export function nativeEngine(): NativeEngine {
+  const [major, minor = "0"] = String(Platform.Version).split(".");
+  return major ? { safariVersion: `${major}.${minor}` } : {};
 }

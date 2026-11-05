@@ -1,6 +1,5 @@
-// Local (on-device) notifications. FREE — no APNs, no paid program. Used for
-// schedule-derived commute alerts ("leave by 7:11"); the web app computes the
-// fire time and we hand it to iOS, which shows it even if the app never runs
+// Local (on-device) notifications. FREE — no APNs, no paid program. An app
+// computes the fire time and we hand it to iOS, which shows it even if the app never runs
 // again. Remote/server push is the deferred paid feature (see services/push).
 
 import * as Notifications from "expo-notifications";

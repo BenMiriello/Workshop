@@ -112,7 +112,7 @@ export async function startBackgroundTracking(opts?: BackgroundTrackingOptions):
   await Location.startLocationUpdatesAsync(LOCATION_TASK, {
     accuracy: mode === "active" ? Location.Accuracy.High : Location.Accuracy.Balanced,
     distanceInterval: opts?.distanceM ?? (mode === "active" ? 25 : 120),
-    // Low-power, OwnTracks-like behaviour when not in an active commute.
+    // Low-power, OwnTracks-like behaviour outside "active" mode.
     deferredUpdatesInterval: mode === "active" ? 0 : 60_000,
     pausesUpdatesAutomatically: mode !== "active",
     activityType: Location.ActivityType.OtherNavigation,

@@ -5,6 +5,8 @@
 
 import type WebView from "react-native-webview";
 import {
+  APP_SCOPED_CAPS,
+  isBridgeHello,
   isBridgeRequest,
   RECV_FN,
   type BridgeEvent,
@@ -14,9 +16,12 @@ import {
 } from "@shared/native-bridge";
 
 import * as audio from "./audio";
+import * as clipboard from "./clipboard";
 import * as liveActivity from "./liveActivity";
 import * as location from "./location";
+import * as mic from "./mic";
 import * as notify from "./notify";
+import * as pages from "./pages";
 import * as secureStore from "./secureStore";
 import * as speech from "./speech";
 
@@ -47,6 +52,7 @@ const ROUTES: Record<Capability, Record<string, Handler>> = {
     permissionStatus: notify.permissionStatus,
     requestPermission: notify.requestPermission,
   },
+  // Each handler takes the request's `app` first, like pages below.
   liveActivity: {
     isSupported: liveActivity.isSupported,
     start: liveActivity.start,
@@ -66,6 +72,62 @@ const ROUTES: Record<Capability, Record<string, Handler>> = {
       return secureStore.set(key, value);
     },
   },
+  // Page views are separate WKWebViews without this bridge, so nothing loaded
+  // in one can call back in here. Each handler takes the request's `app`
+  // first; the module refuses one without it.
+  pages: {
+    isSupported: pages.isSupported,
+    open: pages.open,
+    close: pages.close,
+    closeAll: pages.closeAll,
+    setRect: pages.setRect,
+    show: pages.show,
+    hide: pages.hide,
+    bringToFront: pages.bringToFront,
+    adopt: pages.adopt,
+    navigate: pages.navigate,
+    back: pages.back,
+    forward: pages.forward,
+    reload: pages.reload,
+    stop: pages.stop,
+    run: pages.run,
+    snapshot: pages.snapshot,
+    setContentMode: pages.setContentMode,
+    setZoom: pages.setZoom,
+    setMuted: pages.setMuted,
+    setCutouts: pages.setCutouts,
+    "contentRules.set": pages.setContentRules,
+    "contentRules.remove": pages.removeContentRules,
+    "contentRules.list": pages.listContentRules,
+    "contentRules.setLifted": pages.setLiftedContentRules,
+    "userScripts.set": pages.setUserScript,
+    "userScripts.remove": pages.removeUserScript,
+    "navigationRules.set": pages.setNavigationRules,
+    "navigationRules.remove": pages.removeNavigationRules,
+    "commands.set": pages.setCommands,
+    "cookies.export": pages.exportCookies,
+    "cookies.import": pages.importCookies,
+    "profiles.list": pages.listProfiles,
+    "profiles.remove": pages.removeProfile,
+  },
+  mic: {
+    status: mic.status,
+    request: mic.request,
+    openSettings: mic.openSettings,
+  },
+  // The app in front decides which page views are drawn and playing, and the
+  // web UI's own layers are cut out of every page; the phone has no menu bar
+  // to route page commands with.
+  shell: {
+    foreground: pages.setForeground,
+    overlays: pages.setOverlays,
+  },
+  // The watch is looked at on coming to the front; see native/clipboard.ts.
+  clipboard: {
+    write: clipboard.write,
+    "watch.get": clipboard.watchGet,
+    "watch.set": clipboard.watchSet,
+  },
 };
 
 export interface Dispatcher {
@@ -73,7 +135,15 @@ export interface Dispatcher {
   emit(topic: BridgeEventTopic, payload: unknown): void;
 }
 
-export function createDispatcher(getWebView: () => WebView | null): Dispatcher {
+/**
+ * `onDocument` runs each time the injected client installs into a new top
+ * document (first load, reload, full navigation), so native state that belongs
+ * to the previous document can be dropped.
+ */
+export function createDispatcher(
+  getWebView: () => WebView | null,
+  onDocument?: () => void,
+): Dispatcher {
   function send(obj: BridgeResponse | BridgeEvent): void {
     const wv = getWebView();
     if (!wv) return;
@@ -87,16 +157,20 @@ export function createDispatcher(getWebView: () => WebView | null): Dispatcher {
     } catch {
       return; // not ours
     }
+    if (isBridgeHello(msg)) {
+      onDocument?.();
+      return;
+    }
     if (!isBridgeRequest(msg)) return;
 
-    const { id, cap, method, args } = msg;
+    const { id, cap, method, args, app } = msg;
     const handler = ROUTES[cap]?.[method];
     if (!handler) {
       send({ t: "res", id, ok: false, error: `unknown method ${cap}.${method}` });
       return;
     }
     try {
-      const result = await handler(...args);
+      const result = await handler(...(APP_SCOPED_CAPS.includes(cap) ? [app ?? "", ...args] : args));
       send({ t: "res", id, ok: true, result });
     } catch (e) {
       send({ t: "res", id, ok: false, error: e instanceof Error ? e.message : String(e) });

@@ -1,0 +1,7 @@
+{
+  "name": "workshop-keyboard-rows",
+  "version": "1.0.0",
+  "description": "No rows above the keyboard in the app's web views: no Previous / Next / Done bar and no suggestions row.",
+  "main": "index.ts",
+  "private": true
+}

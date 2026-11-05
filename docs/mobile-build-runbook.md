@@ -99,6 +99,36 @@ mid-2024 and the Mac's Xcode 26 / Swift toolchain is ~2 years newer.**
    the Release bundle failed (`Unable to resolve module @shared/native-bridge`).
    The config adds `../shared` to `watchFolders` and maps the `@shared` prefix.
 
+## Alternative: build on a Mac over SSH, install with SideStore
+
+`scripts/mobile-sidestore.sh` builds the app **unsigned** on a Mac reached
+over SSH and publishes it as a SideStore (AltStore-format) source under the
+public origin's `/sidestore/`, written to `frontend/public/sidestore/` (keep
+that folder out of git). SideStore signs the app on the phone with the
+owner's free Apple ID, so the Mac needs no signing setup and no cable.
+
+- Settings in `~/.config/workshop/instance.env`: `WORKSHOP_MOBILE_MAC`
+  (ssh target), `WORKSHOP_MOBILE_MAC_KEY`, `WORKSHOP_MOBILE_BUNDLE`.
+- The Mac account needs Remote Login (the main switch, not only its access
+  list), Xcode with an iphoneos SDK, and Node and CocoaPods on
+  `/opt/homebrew/bin`. A separate standard account keeps the build away from
+  the owner's files.
+- `--prebuild` regenerates the native project; it also happens when the
+  native config or local modules change.
+- Installing on the phone: SideStore installs only on **Wi-Fi** with
+  **LocalDevVPN** connected, and iOS runs one VPN at a time, so a tailnet VPN
+  is off during the install. Download the `.ipa` in Safari first (tailnet
+  on), then install it from Files in SideStore (LocalDevVPN on). The weekly
+  refresh is the same: LocalDevVPN, Refresh All, tailnet back on.
+- Updating at home without the two-step: `scripts/sidestore-lan-serve.py`
+  serves the same folder over HTTPS on a home-network address, with a
+  certificate the phone already trusts for that address. Set
+  `WORKSHOP_MOBILE_LAN_ORIGIN` and each build also writes
+  `source-home.json` listing it. Add that source in SideStore once and
+  install from it; later updates are LocalDevVPN, then Update. The host's
+  firewall must allow the port from the home network.
+- Only native changes need a new build; the web UI loads from the server.
+
 ## Free Personal Team vs Apple Developer Program ($99/yr)
 
 Currently **free** (`app.json` `extra.tier: "free"`). Limits of the free tier:

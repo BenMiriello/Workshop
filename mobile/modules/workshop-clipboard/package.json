@@ -1,0 +1,7 @@
+{
+  "name": "workshop-clipboard",
+  "version": "1.0.0",
+  "description": "Writes text to the system pasteboard for the shell's web UI, with no user gesture.",
+  "main": "index.ts",
+  "private": true
+}

@@ -6,6 +6,6 @@ import WidgetKit
 @main
 struct WorkshopWidgetsBundle: WidgetBundle {
     var body: some Widget {
-        CommuteLiveActivity()
+        WorkshopActivityWidget()
     }
 }

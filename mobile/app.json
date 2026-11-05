@@ -7,9 +7,17 @@
     "userInterfaceStyle": "automatic",
     "scheme": "workshop",
     "ios": {
-      "supportsTablet": false,
+      "supportsTablet": true,
       "bundleIdentifier": "com.example.workshop",
       "infoPlist": {
+        "UISupportedInterfaceOrientations~ipad": [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationPortraitUpsideDown",
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ],
+        "UIRequiresFullScreen": false,
+        "UIViewControllerBasedStatusBarAppearance": true,
         "UIBackgroundModes": ["location", "audio", "fetch"],
         "NSLocationWhenInUseUsageDescription": "Workshop uses your location for apps you have installed that ask for it.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Workshop tracks your location in the background for apps you have installed that ask for it, such as travel alerts and location history.",
@@ -26,7 +34,7 @@
         "expo-location",
         {
           "isIosBackgroundLocationEnabled": true,
-          "locationAlwaysAndWhenInUsePermission": "Workshop tracks your location in the background to power commute alerts and location history."
+          "locationAlwaysAndWhenInUsePermission": "Workshop tracks your location in the background for apps you have installed that ask for it."
         }
       ],
       [
@@ -44,7 +52,9 @@
         "expo-build-properties",
         { "ios": { "deploymentTarget": "16.2" } }
       ],
-      "./plugins/withLiveActivity"
+      "./plugins/withLiveActivity",
+      "./plugins/withClipboardIntent",
+      "./plugins/withKeyboardExtension"
     ],
     "extra": {
       "comment:notifications": "Remote push is disabled on the free tier: the expo-notifications CONFIG PLUGIN was removed from plugins[] because it injects the 'aps-environment' entitlement, which a free Apple Personal Team cannot sign (and forces the Push Notifications capability to reappear on every prebuild). The expo-notifications PACKAGE stays installed, so LOCAL notifications still work. To enable remote push after Apple Developer Program enrolment: add \"expo-notifications\" back into plugins[], set tier to 'paid', prebuild, and add the Push Notifications capability in Xcode signing.",
