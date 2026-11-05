@@ -11,3 +11,7 @@
   and read the value from the environment.
 - No stubs (TODO/FIXME/NotImplementedError/pass # stub/...). Mark `[~] BLOCKED`
   if a task is too big to finish in one tick.
+- Other chats can be given this app's chat tools: describe them with `chat.about`
+  and the parts of the data a chat may reach with `chat.options` in
+  `workshop.app.json`, and enforce the `X-Workshop-Access` header on every tool
+  (the Workshop's docs/chat-beside-a-page.md).

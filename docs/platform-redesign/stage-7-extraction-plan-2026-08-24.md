@@ -735,7 +735,7 @@ is untouched and still open; it was not pre-empted with a symlink.
 One correction to the text below: it says seven apps. There are eight. Wearables
 declares itself like the rest and is in the catalog, and the earlier count
 predates it being scanned at all (`959a264e` widened the app-name gate's roster
-from a subset to every registry, which is also how `gengui` first appeared).
+from a subset to every registry, which is also how `<app>` first appeared).
 
 ### 4.1 The recommendation: one overlay repo now, individual repos later
 

@@ -5,7 +5,6 @@
     "tests/test_db_schema.py::test_no_composite_set_null_nulls_its_discriminator",
     "tests/test_db_tenancy.py::test_verify_rls_actually_detects_a_broken_table",
     "tests/test_dev_mode_gate.py::TestDoor3SelfProjectRow::test_it_is_still_addressable_by_slug",
-    "tests/test_dev_mode_gate.py::TestDoor6AutonomyRunEndpoint::test_it_refuses_before_opening_a_job",
     "tests/test_dev_mode_gate.py::TestDoor6AutonomyRunEndpoint::test_the_endpoint_refuses_with_a_reason_the_ui_can_show",
     "tests/test_doc_status.py::TestRealDocsRegression::test_none_of_the_corrected_docs_still_read_as_misleading",
     "tests/test_ticket_producers_state_acceptance.py::TestTheDistiller::test_the_prompt_asks_for_the_same_four_fields",

@@ -301,7 +301,7 @@ same file).
 
 **Resolved deps are captured at build time, not read at runtime.** Today
 `compose_gen._load_dep_block` reads the project's own `docker-compose.yml` from
-the working tree every time an app starts (measured: gengui's manifest points at
+the working tree every time an app starts (measured: <app>'s manifest points at
 `core/docker-compose.yml` for postgres, redis and falkordb). That is a serving-path
 read of the operator's tree and it must stop. The builder reads that file once,
 sanitizes each block exactly as `_sanitize_dep_block` does, and stores the result
@@ -550,7 +550,7 @@ Corrected:
   claim is true and vacuous.
 - **Serving a `site` IS hosting**, and it is what tier 1 should have meant: a
   static tree at its own origin, reachable by people who are not the operator.
-  Measured: no app in this repo has one today. gengui is closest and currently
+  Measured: no app in this repo has one today. <app> is closest and currently
   runs a vite DEV server, not a built site (section 7).
 - Therefore the hosting design's step 2 ("Tier 1 only") is two separate pieces of
   work with almost nothing in common, and the one it names (the loader) is the
@@ -641,36 +641,36 @@ catalog: it never enumerates which apps exist.
 
 ---
 
-## 7. The local provider, and how gengui survives
+## 7. The local provider, and how <app> survives
 
 ### 7.1 What is running right now, measured
 
 - One container, `64008f127ca3`, up since 2026-07-21, running `bun run dev --
-  --port 8080 --strictPort --host 0.0.0.0 --base /base-apps/run/gengui/proxy/frontend/`.
-- Compose project `ws_gengui`, from `.runtime/compose/gengui.yml`, mtime
+  --port 8080 --strictPort --host 0.0.0.0 --base /base-apps/run/<app>/proxy/frontend/`.
+- Compose project `ws_<app>`, from `.runtime/compose/<app>.yml`, mtime
   2026-07-05 21:48.
 - Bind mount `~/workshop/projects/<slug>/frontend:/app`.
 - Published to `127.0.0.1:8799`. One port allocation in the whole registry.
-- Two of gengui's three services are `enabled: false` and all three deps are
+- Two of <app>'s three services are `enabled: false` and all three deps are
   `ok: false`.
 - The generated compose file **predates** the `security_opt` / `cap_drop` /
   `user: nobody` hardening that is in `compose_gen` today.
 
 ### 7.2 The finding that decides section 7
 
-**gengui's one enabled service is a development server.** `bun run dev` with
+**<app>'s one enabled service is a development server.** `bun run dev` with
 `--strictPort` and a `--base` derived from `$WORKSHOP_PROXY_BASE`. A vite dev
 server exists to watch a source tree and rebuild on change. An immutable artifact
 of a dev server is a contradiction: freeze the tree and the only feature it has
 stops working.
 
-So the honest answer is not "migrate gengui to an artifact". It is: **the
+So the honest answer is not "migrate <app> to an artifact". It is: **the
 platform has two run modes and it has always had two, and the current code hides
 that behind one Start button.**
 
     DEV RUN      binds the source tree, hot reloads, never produces a release,
                  never gets an address beyond loopback and the tailnet.
-                 This is what gengui is doing and it is legitimate.
+                 This is what <app> is doing and it is legitimate.
 
     RELEASE RUN  builds a release, extracts it read-only, runs it, gets a
                  deployment record and an address.
@@ -684,23 +684,23 @@ the confusion.
 Making the mode explicit and declared is the smallest change that lets the
 artifact path exist without breaking the one thing that is running.
 
-### 7.3 gengui's migration, step by step, with nothing stopped
+### 7.3 <app>'s migration, step by step, with nothing stopped
 
 1. **Nothing changes on day one.** The running container is a dev run. Classify
    it as one. `mode: "dev"` is recorded on its runner state; no build, no release,
    no artifact. The container is not touched, not recreated, not regenerated.
    This is the whole of the compatibility story and it costs one field.
-2. gengui's manifest gains `deploy: { kinds: ["site"], site: { build: "bun run
+2. <app>'s manifest gains `deploy: { kinds: ["site"], site: { build: "bun run
    build", dir: "frontend/dist", index: "index.html", spa: true } }`. Declared,
    not inferred. Nothing acts on it yet.
 3. A build runs: worktree at `.runtime/builds/<id>/src`, `bun install && bun run
-   build` in `frontend/`, tar `frontend/dist`, store the blob, write `gengui@r1`.
+   build` in `frontend/`, tar `frontend/dist`, store the blob, write `<app>@r1`.
    The dev container is unaffected throughout; the build does not touch
-   `projects/gengui`.
-4. A release run deploys `gengui@r1` to a NEW compose project (`ws_gengui__<n>`)
+   `projects/<app>`.
+4. A release run deploys `<app>@r1` to a NEW compose project (`ws_<app>__<n>`)
    on a NEW port. Both run at once, because they are different compose projects
    with different published ports. Compare them side by side.
-5. When it looks right, `docker compose -p ws_gengui down`. If it does not, do
+5. When it looks right, `docker compose -p ws_<app> down`. If it does not, do
    nothing; the dev run is still up.
 
 Step 4 is also the rollback mechanism, which is the point: a release run is
@@ -708,7 +708,7 @@ brought up beside the current one, not in place of it.
 
 ### 7.4 The concrete hazard, stated so it is not discovered at 2am
 
-The first time anything regenerates a compose file for gengui, the new file will
+The first time anything regenerates a compose file for <app>, the new file will
 carry `security_opt: [no-new-privileges:true]`, `cap_drop: [ALL]` and
 `user: nobody`, which the running container does not have. Measured. Two
 consequences:
@@ -718,9 +718,9 @@ consequences:
   worked for seven weeks can fail on its first restart for a reason that has
   nothing to do with any of this work.
 - This is a live latent defect today, independent of the artifact change. Anyone
-  who presses Restart on gengui hits it now.
+  who presses Restart on <app> hits it now.
 
-Mitigation, and it is one line in the plan: do not regenerate gengui's compose
+Mitigation, and it is one line in the plan: do not regenerate <app>'s compose
 file as a side effect of anything. When a regeneration is genuinely wanted, do it
 deliberately, expect the uid mismatch, and fix it with an explicit `user:` from
 the manifest rather than by removing the hardening.
@@ -758,7 +758,7 @@ No ticket is filed for any of these. Each one changes what gets built, not how.
    attached.
 2. **Retention numbers.** N = 10 releases per app and 30 days are proposals, not
    measurements. The whole artifact store on this box is currently zero bytes; a
-   gengui `site` release is likely single-digit MB and a `ui-bundle` is likely
+   <app> `site` release is likely single-digit MB and a `ui-bundle` is likely
    hundreds of KB, so a generous N costs little. Pick numbers, or accept these.
 3. **Do the four in-process Python apps ever become `service` artifacts?**
    Measured: `birds`, `budget`, `commute` and `location` are Python modules that
@@ -769,10 +769,10 @@ No ticket is filed for any of these. Each one changes what gets built, not how.
    extensions indefinitely and does not strand them. Whether they should is a
    product call about how much of the current product is meant to be hostable.
 4. **Does the dev-run mode survive long term, or is it a migration affordance?**
-   Section 7 makes it a declared first-class mode because gengui needs it today.
+   Section 7 makes it a declared first-class mode because <app> needs it today.
    A defensible alternative is to fold dev runs into `dev_servers.py` (which
    already owns exactly this concept, for agents) and let the app runner do
-   release runs only. That is a bigger change and it would move gengui, so it is
+   release runs only. That is a bigger change and it would move <app>, so it is
    not proposed here.
 5. **Does the `ui-bundle` ever move to a CDN?** Stage 5 section 9.2 already flags
    where UI assets are served from as his call. This spec's answer (serve from

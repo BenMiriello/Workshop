@@ -21,8 +21,7 @@ is the thing the committed types are supposed to match.
 TWO THINGS MAKE THE OUTPUT INSTANCE-INDEPENDENT, and both are load-bearing
 because the generated file is committed and diffed in review:
 
-1. THE FULL APP CATALOG IS MOUNTED. App routers (finance/budget/commute/
-   location/birds/health/wearables/notes) mount only when the app appears in
+1. THE FULL APP CATALOG IS MOUNTED. App routers mount only when the app appears in
    this instance's installed-apps registry (`services/installed_apps`), which
    is `.runtime/` state and gitignored. Generating against whatever this box
    happens to have installed would mean two developers regenerate the same
@@ -31,6 +30,12 @@ because the generated file is committed and diffed in review:
    to the entire built-in catalog. The schema then covers every route the
    source tree can serve, which is also the right answer for a frontend that
    ships all the app screens regardless of install state.
+
+   AND ONLY THE TREE'S OWN CATALOG. An app installed as a package (the
+   `workshop.apps` entry point group) lives outside this tree and ships its
+   own client. Mounting it would write whichever apps this machine has
+   installed into the platform's committed file, which is the same instance
+   dependence as the roster, one level down. So that group reads as empty here.
 
 2. EVERY WRITE IS REDIRECTED TO A TEMPORARY DIRECTORY. Importing the app is
    not free of side effects: `main` calls `app_registry.ensure_identity_
@@ -142,6 +147,16 @@ def build_schema() -> dict:
         # The catalog is known only after `app_registry` imports, and the roster
         # has to be on disk before `main` imports (that is where the mount loop
         # runs). So: import the catalog, write the roster, then import the app.
+        import importlib.metadata as _metadata
+        _all_entry_points = _metadata.entry_points
+
+        def _platform_entry_points(**kw):
+            if kw.get("group") == "workshop.apps":
+                return []
+            return _all_entry_points(**kw)
+
+        _metadata.entry_points = _platform_entry_points
+
         from services import app_registry, installed_apps
 
         roster = sorted(app_registry.BUILTIN_APPS)

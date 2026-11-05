@@ -155,12 +155,15 @@ if [ -f "$VITE" ]; then
   fi
 fi
 
-hdr "9. Backend must not be bound to a public interface"
-if ss -tlnp 2>/dev/null | grep -qE '0\.0\.0\.0:8000|:::8000'; then
-  fail "backend :8000 bound to 0.0.0.0 (LAN-reachable)" "bind uvicorn to 127.0.0.1"
+hdr "9. Nothing listens off-host except the tailnet and declared ports"
+EXPO="$(mktemp)"
+if bash "$WORKSHOP/scripts/check_exposure.sh" >"$EXPO" 2>&1; then
+  pass "$(tail -1 "$EXPO")"
 else
-  pass "backend :8000 not on 0.0.0.0"
+  fail "$(grep -c OPEN "$EXPO") listener(s) reachable off-host: $(grep OPEN "$EXPO" | awk '{print $2}' | tr '\n' ' ')" \
+       "bind to 127.0.0.1, or declare the port in WORKSHOP_EXPOSURE_ALLOW (scripts/check_exposure.sh)"
 fi
+rm -f "$EXPO"
 
 hdr "10. No secrets committed to the workshop git repo"
 if git -C "$WORKSHOP" log --all -p -- . 2>/dev/null \

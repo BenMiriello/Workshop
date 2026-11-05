@@ -66,7 +66,7 @@ Builders run in a box with a network-egress filter: external `git clone` /
 `npm install` to hosts like github.com and registry.npmjs.org are blocked at the
 box level (the the bridge agent egress-guard hook plus box network policy), while loopback and
 the tailnet are allowed. A builder that does not know this promises a clone and then
-fails opaquely (what happened to `gengui-builder-1`).
+fails opaquely (what happened to `<app>-builder-1`).
 
 Fix: the builder role preamble includes the egress facts ("external network is
 blocked for git/npm/curl; loopback and tailnet are allowed; if a task needs an

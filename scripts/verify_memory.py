@@ -36,8 +36,6 @@ _BACKEND = Path(__file__).resolve().parents[1] / "backend"
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
-OWNER = 6
-
 # EVERY SEARCH CHECK BELOW RUNS SCOPED. `semantic_index._keep_mask` skips the
 # whole `share` policy layer when `from_scope` is absent, and every real agent
 # passes it (`mcp/workshop_query_server._run_search` always does), so a harness
@@ -458,14 +456,18 @@ RETRIEVAL_CHECKS = {
 
 def main(argv: list[str] | None = None) -> int:
     from services import ownership
-    ownership.set_current_owner(OWNER)
+    owner = ownership.pin_operator()
+    if owner is None:
+        print("memory acceptance check: this installation has no operator account",
+              file=sys.stderr)
+        return 2
 
     argv = list(sys.argv[1:] if argv is None else argv)
     retrieval_only = "--retrieval" in argv
     checks = [(n, f) for n, f in CHECKS
               if not retrieval_only or n in RETRIEVAL_CHECKS]
 
-    print(f"memory acceptance check, owner {OWNER}"
+    print(f"memory acceptance check, owner {owner}"
           + (" (retrieval only)" if retrieval_only else "") + "\n")
     for name, fn in checks:
         _try(name, fn)

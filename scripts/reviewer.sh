@@ -12,6 +12,9 @@
 #     "typecheck":  {"py": "ok|fail|skipped", "ts": "ok|fail|skipped"},
 #     "verdict":    "approve|reject|block-for-decision",
 #     "ambiguous":  [string, ...],                 // checks that COULD NOT run
+#     "timed_out":  [string, ...],                 // sub-checks that hit their time limit, as
+#                                                  // <VAR>:<limit>; each is also in "ambiguous"
+#     "elapsed_seconds": N,
 #     "blocked_reason": string|null,
 #     "criteria":   [{criterion, cmd, expect, pass, evidence}, ...],  // executed, if any
 #     "reasons":    [string, ...]
@@ -131,6 +134,42 @@
 
 set -u
 
+# A REVIEW THAT HANGS IS WORSE THAN ONE THAT SAYS NO. A caller that kills this
+# script on its own clock (done_gate.py gives it 1200s) gets no JSON at all, and
+# "produced no JSON" names nothing. So every check below runs under `_bounded`,
+# a per-check limit inside an overall budget that is shorter than any caller's,
+# and a check that hits either is RECORDED as timed out and lands in `ambiguous`
+# -- which can never approve -- instead of being waited on forever. Measured
+# 2026-10-31 on a docs-only diff: the two whole-tree scans (no_app_names,
+# fresh_clone) were ~150s of the run on an idle box and scale with load.
+# Limits are overridable per run: REVIEWER_BUDGET_SECONDS, REVIEWER_CHECK_SECONDS.
+REVIEWER_BUDGET=${REVIEWER_BUDGET_SECONDS:-1000}
+REVIEWER_CHECK_LIMIT=${REVIEWER_CHECK_SECONDS:-420}
+REVIEW_STARTED=$SECONDS
+TIMED_OUT=()
+TIMED_OUT_VARS=()
+
+# _bounded VAR cmd...  -- run cmd under the limit. Returns cmd's status, or 124
+# after recording VAR as timed out. BOUND_LIMIT=N overrides the per-check limit
+# for one call.
+_bounded() {
+  local var="$1"; shift
+  local left=$(( REVIEWER_BUDGET - (SECONDS - REVIEW_STARTED) ))
+  local limit=${BOUND_LIMIT:-$REVIEWER_CHECK_LIMIT}
+  (( left < limit )) && limit=$left
+  if (( limit < 5 )); then
+    TIMED_OUT+=("${var}:not_run_budget_exhausted"); TIMED_OUT_VARS+=("$var")
+    return 124
+  fi
+  timeout -k 5 "$limit" "$@"
+  local rc=$?
+  if (( rc == 124 || rc == 137 )); then
+    TIMED_OUT+=("${var}:${limit}s"); TIMED_OUT_VARS+=("$var")
+    return 124
+  fi
+  return $rc
+}
+
 # ADDING A DELTA-CAPABLE CHECKER (2026-08-23). Seven checkers now follow the
 # same pattern: they accept `--since <ref>`, scan the whole tree at that ref
 # (via `git archive` through `scripts/_ratchet_delta.py`), and fail only when
@@ -156,6 +195,7 @@ _delta_check() {
   local varname="$1"
   local script="$2"
   local baseline="${3:-}"
+  shift 3 2>/dev/null || shift $#
   local script_path="$WORKSHOP/scripts/$script"
   local label="${script%.py}"
   label="${label%.sh}"
@@ -172,7 +212,7 @@ _delta_check() {
   local runner="python3"
   [[ "$script" == *.sh ]] && runner="bash"
 
-  if $runner "$script_path" --since "$WS_BASELINE" >/dev/null 2>&1; then
+  if _bounded "$varname" $runner "$script_path" --since "$WS_BASELINE" "$@" >/dev/null 2>&1; then
     printf -v "$varname" "ok"
   else
     printf -v "$varname" "fail"
@@ -187,7 +227,7 @@ export WORKSHOP
 # the tooling home (venv mypy, tsc, check_design.sh).
 ROOT=${REVIEWER_ROOT:-$WORKSHOP}
 BASELINE=${1:-HEAD}
-LOG=$WORKSHOP/.runtime/reviewer.log
+LOG=${WORKSHOP_RUNTIME:-$WORKSHOP/.runtime}/reviewer.log
 
 # A BASELINE THE WORKSHOP REPO CAN RESOLVE. Most gates below inspect $ROOT, but
 # the three whole-tree ones (no-hardcoding, module-layout, no-app-names) measure
@@ -213,6 +253,30 @@ mkdir -p "$(dirname "$LOG")"
 ts() { date -Iseconds; }
 
 cd "$ROOT" 2>/dev/null || { echo '{"complete":false,"reasons":["root_unreachable"]}'; exit 0; }
+
+# ALWAYS EMIT A VERDICT. If this script is killed or dies before the real JSON is
+# printed, say so in JSON rather than leaving the caller with nothing. It can
+# never read as an approval: complete is false and the verdict asks for a decision.
+#
+# FD 3 IS THE ORIGINAL STDOUT. A trap that fires while a check runs under
+# `>/dev/null 2>&1` writes into that redirection, so the fallback would be
+# printed to nowhere.
+exec 3>&1
+JSON_EMITTED=0
+_emit_aborted() {
+  [[ "$JSON_EMITTED" == 1 ]] && return
+  JSON_EMITTED=1
+  local why="${1:-exited_before_verdict}" t="" first=1 item
+  for item in "${TIMED_OUT[@]:-}"; do
+    [[ -z "$item" ]] && continue
+    (( first )) || t+=","
+    first=0; t+="\"${item//[^A-Za-z0-9_:.]/}\""
+  done
+  printf '{"complete":false,"verdict":"block-for-decision","diff_files":%s,"stub_hits":[],"reasons":["reviewer_aborted:%s"],"ambiguous":["reviewer_did_not_finish"],"timed_out":[%s],"blocked_reason":"the review did not finish (%s), so completeness is unestablished","elapsed_seconds":%s}\n' \
+    "${DIFF_FILES:-0}" "$why" "$t" "$why" "$(( SECONDS - REVIEW_STARTED ))" >&3
+}
+trap '_emit_aborted killed_by_signal; exit 143' TERM INT HUP
+trap '_emit_aborted exited_before_verdict' EXIT
 
 # Checks that HAD input to judge but no tooling to judge it with — the reviewer's
 # "I don't know" (see the AMBIGUITY note above). Empty on a normal run.
@@ -300,13 +364,13 @@ if [[ -n "$PY_FILES" ]]; then
   # Prefer backend venv mypy. Fall back to py_compile.
   MYPY=$WORKSHOP/backend/.venv/bin/mypy
   if [[ -x "$MYPY" ]]; then
-    if echo "$PY_FILES" | xargs -r "$MYPY" --no-error-summary --ignore-missing-imports >/dev/null 2>&1; then
+    if _bounded PY_CHECK xargs -r "$MYPY" --no-error-summary --ignore-missing-imports <<<"$PY_FILES" >/dev/null 2>&1; then
       PY_CHECK="ok"
     else
       PY_CHECK="fail"
     fi
   elif [[ -x "$WORKSHOP/backend/.venv/bin/python" ]]; then
-    if echo "$PY_FILES" | xargs -r "$WORKSHOP/backend/.venv/bin/python" -m py_compile >/dev/null 2>&1; then
+    if _bounded PY_CHECK xargs -r "$WORKSHOP/backend/.venv/bin/python" -m py_compile <<<"$PY_FILES" >/dev/null 2>&1; then
       PY_CHECK="ok"
     else
       PY_CHECK="fail"
@@ -358,7 +422,7 @@ fi
 DESIGN_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(frontend|packages/ui)/src/.*\.tsx$'; then
   if [[ -x "$WORKSHOP/scripts/check_design.sh" ]]; then
-    if bash "$WORKSHOP/scripts/check_design.sh" --added "$BASELINE" >/dev/null 2>&1; then
+    if _bounded DESIGN_CHECK bash "$WORKSHOP/scripts/check_design.sh" --added "$BASELINE" >/dev/null 2>&1; then
       DESIGN_CHECK="ok"
     else
       DESIGN_CHECK="fail"
@@ -416,7 +480,7 @@ BACKEND_TESTS_CHECK="skipped"
 # check_backend_tests.py sets this for its pytest subprocess; see its own note.
 if [[ -n "$PY_FILES" && -z "${WORKSHOP_BACKEND_TESTS_RUNNING:-}" ]]; then
   if [[ -f "$WORKSHOP/scripts/check_backend_tests.py" && -f "$WORKSHOP/scripts/backend_tests_baseline.json" ]]; then
-    if python3 "$WORKSHOP/scripts/check_backend_tests.py" --quiet >/dev/null 2>&1; then
+    if BOUND_LIMIT=${REVIEWER_TESTS_SECONDS:-800} _bounded BACKEND_TESTS_CHECK python3 "$WORKSHOP/scripts/check_backend_tests.py" --quiet --since "$WS_BASELINE" --timeout 600 >/dev/null 2>&1; then
       BACKEND_TESTS_CHECK="ok"
     else
       BACKEND_TESTS_CHECK="fail"
@@ -451,7 +515,7 @@ fi
 # for identity references that existed at its own base commit.
 HARDCODE_CHECK="skip"
 if [[ -x "$WORKSHOP/scripts/check_no_hardcoding.sh" ]]; then
-  if bash "$WORKSHOP/scripts/check_no_hardcoding.sh" --since "$WS_BASELINE" >/dev/null 2>&1; then
+  if _bounded HARDCODE_CHECK bash "$WORKSHOP/scripts/check_no_hardcoding.sh" --since "$WS_BASELINE" >/dev/null 2>&1; then
     HARDCODE_CHECK="ok"
   else
     HARDCODE_CHECK="fail"
@@ -485,7 +549,7 @@ export HARDCODE_CHECK
 # is meant to be run and meant to be able to fail.
 HARDCODE_DOCS_CHECK="skip"
 if [[ -x "$WORKSHOP/scripts/check_no_hardcoding.sh" ]]; then
-  if bash "$WORKSHOP/scripts/check_no_hardcoding.sh" --all --since "$WS_BASELINE" >/dev/null 2>&1; then
+  if _bounded HARDCODE_DOCS_CHECK bash "$WORKSHOP/scripts/check_no_hardcoding.sh" --all --since "$WS_BASELINE" >/dev/null 2>&1; then
     HARDCODE_DOCS_CHECK="ok"
   else
     HARDCODE_DOCS_CHECK="fail"
@@ -506,7 +570,7 @@ ONE_DEF_CHECK="skipped"
 ONE_DEF_COUNT=0
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(backend/.*\.py|frontend/src/.*\.tsx?|packages/ui/src/.*\.tsx?)$'; then
   if [[ -f "$WORKSHOP/scripts/check_one_definition.py" ]]; then
-    ONE_DEF_JSON=$(python3 "$WORKSHOP/scripts/check_one_definition.py" --only-changed "$BASELINE" --json 2>/dev/null)
+    ONE_DEF_JSON=$(timeout 120 python3 "$WORKSHOP/scripts/check_one_definition.py" --only-changed "$BASELINE" --json 2>/dev/null)
     if [[ -n "$ONE_DEF_JSON" ]]; then
       ONE_DEF_COUNT=$(printf '%s' "$ONE_DEF_JSON" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('gating_groups', [])))" 2>/dev/null || echo 0)
       if [[ "$ONE_DEF_COUNT" -gt 0 ]]; then
@@ -573,7 +637,7 @@ fi
 RATCHETS_NOT_LOOSENED_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^scripts/.*baseline.*\.json$'; then
   if [[ -f "$WORKSHOP/scripts/check_ratchets_not_loosened.py" ]]; then
-    if python3 "$WORKSHOP/scripts/check_ratchets_not_loosened.py" --baseline "$BASELINE" >/dev/null 2>&1; then
+    if _bounded RATCHETS_NOT_LOOSENED_CHECK python3 "$WORKSHOP/scripts/check_ratchets_not_loosened.py" --baseline "$BASELINE" >/dev/null 2>&1; then
       RATCHETS_NOT_LOOSENED_CHECK="ok"
     else
       RATCHETS_NOT_LOOSENED_CHECK="fail"
@@ -652,7 +716,7 @@ _delta_check NO_APP_NAMES_CHECK "check_no_app_names.py" "no_app_names_baseline.j
 # and is empty; check_ratchets_not_loosened.py blocks re-pinning inside a review.
 PROMPT_LAYERS_CHECK="skipped"
 if [[ -f "$WORKSHOP/scripts/check_prompt_layers.py" ]]; then
-  if python3 "$WORKSHOP/scripts/check_prompt_layers.py" >/dev/null 2>&1; then
+  if _bounded PROMPT_LAYERS_CHECK python3 "$WORKSHOP/scripts/check_prompt_layers.py" >/dev/null 2>&1; then
     PROMPT_LAYERS_CHECK="ok"
   else
     PROMPT_LAYERS_CHECK="fail"
@@ -679,7 +743,7 @@ fi
 # definition; see check_config_duplicate_keys.py's own header.
 CONFIG_DUPLICATE_KEYS_CHECK="skipped"
 if [[ -f "$WORKSHOP/scripts/check_config_duplicate_keys.py" ]]; then
-  if python3 "$WORKSHOP/scripts/check_config_duplicate_keys.py" >/dev/null 2>&1; then
+  if _bounded CONFIG_DUPLICATE_KEYS_CHECK python3 "$WORKSHOP/scripts/check_config_duplicate_keys.py" >/dev/null 2>&1; then
     CONFIG_DUPLICATE_KEYS_CHECK="ok"
   else
     CONFIG_DUPLICATE_KEYS_CHECK="fail"
@@ -708,7 +772,7 @@ fi
 PROMPT_SIZE_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/(services/(chat_context|orientation|custom_instructions|app_persona|knowledge|standing|workspace_digest|skills)|routes/chat)\.py$'; then
   if [[ -f "$WORKSHOP/scripts/check_prompt_size.py" ]]; then
-    if python3 "$WORKSHOP/scripts/check_prompt_size.py" >/dev/null 2>&1; then
+    if _bounded PROMPT_SIZE_CHECK python3 "$WORKSHOP/scripts/check_prompt_size.py" >/dev/null 2>&1; then
       PROMPT_SIZE_CHECK="ok"
     else
       PROMPT_SIZE_CHECK="fail"
@@ -741,7 +805,7 @@ fi
 # plan, because it makes inaction look like diligence.
 PLAN_LANDED_CHECK="skipped"
 if [[ -f "$WORKSHOP/scripts/check_plan_landed.py" && -f "$WORKSHOP/scripts/plan_landed.json" ]]; then
-  if python3 "$WORKSHOP/scripts/check_plan_landed.py" --quiet >/dev/null 2>&1; then
+  if _bounded PLAN_LANDED_CHECK python3 "$WORKSHOP/scripts/check_plan_landed.py" --quiet >/dev/null 2>&1; then
     PLAN_LANDED_CHECK="ok"
   else
     PLAN_LANDED_CHECK="fail"
@@ -772,7 +836,7 @@ fi
 TICKET_ACCEPTANCE_CHECK="skipped"
 if [[ -f "$WORKSHOP/scripts/check_ticket_acceptance.py" \
       && -f "$WORKSHOP/scripts/ticket_acceptance_baseline.json" ]]; then
-  if python3 "$WORKSHOP/scripts/check_ticket_acceptance.py" >/dev/null 2>&1; then
+  if _bounded TICKET_ACCEPTANCE_CHECK python3 "$WORKSHOP/scripts/check_ticket_acceptance.py" >/dev/null 2>&1; then
     TICKET_ACCEPTANCE_CHECK="ok"
   else
     TICKET_ACCEPTANCE_CHECK="fail"
@@ -890,7 +954,15 @@ _delta_check RESPONSE_TYPES_CHECK "check_response_types.py" "response_types_base
 # visible edit. The 80 seconds arrive on the day the pin is deleted, which is
 # the day this starts being able to catch something.
 FRESH_CLONE_CHECK="skipped"
-_delta_check FRESH_CLONE_CHECK "check_fresh_clone.sh" "fresh_clone_baseline.json"
+# The build and the boot (npm ci, two bundles, a venv, a throwaway cluster) are
+# most of this check's cost and read nothing under docs/, so a diff confined to
+# docs/ keeps the three tree counts (which DO read docs) and skips those two.
+# Any other file in the diff runs everything, as before.
+FRESH_CLONE_ARGS=()
+if [[ -n "$CHANGED_ALL" ]] && ! printf '%s\n' "$CHANGED_ALL" | grep -qv '^docs/'; then
+  FRESH_CLONE_ARGS=(--tree-only)
+fi
+_delta_check FRESH_CLONE_CHECK "check_fresh_clone.sh" "fresh_clone_baseline.json" ${FRESH_CLONE_ARGS[@]+"${FRESH_CLONE_ARGS[@]}"}
 
 # 4.6b-iv dev_only catalog gate — the development app is absent from GET /apps
 # when WORKSHOP_DEV_MODE is not '1'. Proven by check_dev_mode_off.sh, which
@@ -909,7 +981,7 @@ _delta_check DEV_MODE_OFF_CHECK "check_dev_mode_off.sh"
 RESPONSE_MODEL_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/routes/.*\.py$'; then
   if [[ -f "$WORKSHOP/scripts/check_response_model.py" && -f "$WORKSHOP/scripts/response_model_baseline.json" ]]; then
-    if python3 "$WORKSHOP/scripts/check_response_model.py" --only-changed "$BASELINE" >/dev/null 2>&1; then
+    if _bounded RESPONSE_MODEL_CHECK python3 "$WORKSHOP/scripts/check_response_model.py" --only-changed "$BASELINE" >/dev/null 2>&1; then
       RESPONSE_MODEL_CHECK="ok"
     else
       RESPONSE_MODEL_CHECK="fail"
@@ -929,7 +1001,7 @@ fi
 NO_RAW_STORAGE_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(frontend/src|mobile)/.*\.tsx?$'; then
   if [[ -f "$WORKSHOP/scripts/check_no_raw_storage.py" ]]; then
-    if python3 "$WORKSHOP/scripts/check_no_raw_storage.py" >/dev/null 2>&1; then
+    if _bounded NO_RAW_STORAGE_CHECK python3 "$WORKSHOP/scripts/check_no_raw_storage.py" >/dev/null 2>&1; then
       NO_RAW_STORAGE_CHECK="ok"
     else
       NO_RAW_STORAGE_CHECK="fail"
@@ -953,7 +1025,7 @@ fi
 DUPLICATE_HELPERS_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(frontend/src|packages/ui/src)/.*\.tsx?$'; then
   if [[ -f "$WORKSHOP/scripts/check_duplicate_helpers.py" && -f "$WORKSHOP/scripts/duplicate_helpers_baseline.json" ]]; then
-    if python3 "$WORKSHOP/scripts/check_duplicate_helpers.py" --only-changed "$BASELINE" >/dev/null 2>&1; then
+    if _bounded DUPLICATE_HELPERS_CHECK python3 "$WORKSHOP/scripts/check_duplicate_helpers.py" --only-changed "$BASELINE" >/dev/null 2>&1; then
       DUPLICATE_HELPERS_CHECK="ok"
     else
       DUPLICATE_HELPERS_CHECK="fail"
@@ -987,7 +1059,7 @@ if printf '%s\n' "$CHANGED_ALL" \
    | grep -vE '^backend/tests/' \
    | grep -qE '^(backend/|scripts/gen_openapi\.py|frontend/src/api/)'; then
   if [[ -f "$WORKSHOP/scripts/check_generated_client.py" ]]; then
-    if python3 "$WORKSHOP/scripts/check_generated_client.py" >/dev/null 2>&1; then
+    if _bounded GENERATED_CLIENT_CHECK python3 "$WORKSHOP/scripts/check_generated_client.py" >/dev/null 2>&1; then
       GENERATED_CLIENT_CHECK="ok"
     else
       GENERATED_CLIENT_CHECK="fail"
@@ -1062,8 +1134,9 @@ MEMORY_REACHABLE_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" \
    | grep -qE '^(backend/services/(semantic_index|memory_policy|knowledge|scope_tree)\.py|backend/mcp/workshop_query_server\.py|scripts/verify_memory\.py)$'; then
   if [[ -x "$WORKSHOP/backend/.venv/bin/python" && -f "$WORKSHOP/scripts/verify_memory.py" ]]; then
-    if (cd "$WORKSHOP/backend" && "$WORKSHOP/backend/.venv/bin/python" \
-          "$WORKSHOP/scripts/verify_memory.py" --retrieval) >/dev/null 2>&1; then
+    if _bounded MEMORY_REACHABLE_CHECK bash -c 'cd "$1" && exec "$2" "$3" --retrieval' _ \
+          "$WORKSHOP/backend" "$WORKSHOP/backend/.venv/bin/python" \
+          "$WORKSHOP/scripts/verify_memory.py" >/dev/null 2>&1; then
       MEMORY_REACHABLE_CHECK="ok"
     else
       MEMORY_REACHABLE_CHECK="fail"
@@ -1082,7 +1155,7 @@ fi
 OCCUPANCY_NOTICE=""
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/(db/(models|ticket_sync)\.py|services/(tasks|jobs|chat_store|learnings)\.py)$'; then
   if [[ -x "$WORKSHOP/backend/.venv/bin/python" && -f "$WORKSHOP/scripts/field_occupancy_baseline.json" ]]; then
-    OCC_OUT=$(cd "$WORKSHOP/backend" && "$WORKSHOP/backend/.venv/bin/python" "$WORKSHOP/scripts/field_occupancy.py" --fail-on-new-zero 2>/dev/null)
+    OCC_OUT=$(cd "$WORKSHOP/backend" && timeout 120 "$WORKSHOP/backend/.venv/bin/python" "$WORKSHOP/scripts/field_occupancy.py" --fail-on-new-zero 2>/dev/null)
     OCC_RC=$?
     if [[ $OCC_RC -eq 1 ]]; then
       OCCUPANCY_NOTICE="$OCC_OUT"
@@ -1093,7 +1166,7 @@ fi
 DOC_STATUS_NOTICE=""
 if printf '%s\n' "$CHANGED_ALL" | grep -q '^docs/platform-redesign/.*\.md$'; then
   if [[ -f "$WORKSHOP/scripts/doc_status.py" ]]; then
-    DOC_STATUS_JSON=$(python3 "$WORKSHOP/scripts/doc_status.py" --json 2>/dev/null)
+    DOC_STATUS_JSON=$(timeout 120 python3 "$WORKSHOP/scripts/doc_status.py" --json 2>/dev/null)
     if [[ -n "$DOC_STATUS_JSON" ]]; then
       # Only surface docs the DIFF actually touches — the other ~60 docs'
       # pre-existing no-status/misleading state is not this diff's problem.
@@ -1149,6 +1222,15 @@ PYEOF
 )
   fi
 fi
+
+# A check that timed out has no verdict: overwrite whatever its `if` recorded
+# (which read the kill as a failure) and surface it as an ambiguity.
+for _v in "${TIMED_OUT_VARS[@]:-}"; do
+  [[ -z "$_v" ]] && continue
+  printf -v "$_v" "timeout"
+  _label="${_v%_CHECK}"
+  AMBIGUOUS+=("$(printf '%s' "$_label" | tr 'A-Z' 'a-z')_timed_out")
+done
 
 # 5. Decide.
 REASONS=()
@@ -1342,6 +1424,9 @@ COMPLETE_BOOL=$([[ "$COMPLETE" == "true" ]] && echo 1 || echo 0)
 TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK BACKEND_TESTS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON AMBIGUOUS_JSON
+TIMED_OUT_JSON=$(printf '%s\n' "${TIMED_OUT[@]:-}" | python3 -c "import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")
+ELAPSED_SECONDS=$(( SECONDS - REVIEW_STARTED ))
+export TIMED_OUT_JSON ELAPSED_SECONDS
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
 export DEAD_SURFACE_CHECK
 export PLAN_LANDED_CHECK TICKET_ACCEPTANCE_CHECK FRESH_CLONE_CHECK DEV_MODE_OFF_CHECK FRONTEND_STATE_CHECK RESPONSE_TYPES_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK PROMPT_SIZE_CHECK EXPLAINER_CHECK MEMORY_REACHABLE_CHECK CONFIG_DUPLICATE_KEYS_CHECK
@@ -1442,6 +1527,10 @@ out = {
     # in `blocked_reason`, verbatim, so the block is legible without re-deriving it.
     "verdict":   os.environ["VERDICT"],
     "ambiguous": json.loads(os.environ["AMBIGUOUS_JSON"]),
+    # Sub-checks that hit their time limit, as `<VAR>:<limit>`. Each is also in
+    # `ambiguous`, so a run with any of them cannot approve.
+    "timed_out": json.loads(os.environ["TIMED_OUT_JSON"]),
+    "elapsed_seconds": int(os.environ["ELAPSED_SECONDS"]),
     "blocked_reason": os.environ.get("BLOCKED_REASON") or None,
     "ts":        os.environ["TS_NOW"],
     "baseline":  os.environ["BASELINE"],
@@ -1449,7 +1538,10 @@ out = {
 print(json.dumps(out))
 PYEOF
 )
-printf '%s\n' "$RESULT_JSON"
+if [[ -n "$RESULT_JSON" ]]; then
+  JSON_EMITTED=1
+  printf '%s\n' "$RESULT_JSON"
+fi
 
 # Also log a one-liner for humans.
 echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK backend_tests=$BACKEND_TESTS_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK config_duplicate_keys=$CONFIG_DUPLICATE_KEYS_CHECK ticket_acceptance=$TICKET_ACCEPTANCE_CHECK plan_landed=$PLAN_LANDED_CHECK explainer_text=$EXPLAINER_CHECK frontend_state=$FRONTEND_STATE_CHECK dead_surface=$DEAD_SURFACE_CHECK response_types=$RESPONSE_TYPES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK dev_mode_off=$DEV_MODE_OFF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"

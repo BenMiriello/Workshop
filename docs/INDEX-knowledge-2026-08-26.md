@@ -27,9 +27,8 @@ Three durable stores, three different failure modes:
 - `role:reviewer`: 1 note (`shared/knowledge/roles/reviewer/`)
 
 Empty knowledge directories, i.e. scopes that exist and have learned nothing:
-`apps/<slug>`, `projects/<slug>`, `projects/<slug>`, `projects/<slug>`,
-`projects/gengui`, `projects/notes-app`, `.runtime/agents/development-maker`,
-`.runtime/agents/notes-app-maker`.
+several `apps/<slug>` and `projects/<slug>` directories,
+`.runtime/agents/development-maker`, and another maker agent's directory.
 
 Two-thirds of everything is in one scope. `workshop` is the layer
 `read_layers` puts into every prompt, so it is also the scope where a wrong

@@ -797,7 +797,14 @@ MCP_JSON=$( (cd "$WORKSHOP/backend" && .venv/bin/python -m services.llm_router \
   mcp-config --server workshop --stdout 2>>"$LOG") || true)
 MCP_FLAGS=()
 MCP_STATUS="not applied: llm_router emitted no inline mcp-config"
-if [[ -n "$MCP_JSON" && "${MCP_JSON:0:1}" == "{" ]]; then
+MCP_OK=0
+if [[ "$MCP_JSON" == *'"type": "http"'* ]]; then
+  # Served by the backend over loopback (routes/mcp_workshop.py): there is no
+  # interpreter or script path in the spec to root at $DIR or to check, and the
+  # worker reaches it from inside any sandbox.
+  MCP_OK=1
+  MCP_STATUS="enabled (served by the backend over http)"
+elif [[ -n "$MCP_JSON" && "${MCP_JSON:0:1}" == "{" ]]; then
   # ROOT THE SPEC AT $DIR, THE TREE THE WORKER ACTUALLY RUNS IN. The emitter
   # above runs in $WORKSHOP/backend, so the document it prints names THAT
   # checkout's interpreter, server script and PYTHONPATH -- correct only when the
@@ -850,11 +857,15 @@ if [[ -n "$MCP_JSON" && "${MCP_JSON:0:1}" == "{" ]]; then
   elif [[ -z "$SPEC_SRV" || ! -f "$SPEC_SRV" ]]; then
     MCP_STATUS="not applied: server script ${SPEC_SRV:-<none>} does not exist under ${DIR:-$WORKSHOP}"
   else
+    MCP_OK=1
+    MCP_STATUS="enabled (inline mcp-config; server $SPEC_SRV)"
+  fi
+fi
+if [[ "$MCP_OK" == 1 ]]; then
     # Placed so the next token in the spawn is always a flag (--max-turns or the
     # redirect): `--mcp-config` is variadic and would otherwise eat a following
     # non-flag token. Additive, never --strict-mcp-config (see comment above).
     MCP_FLAGS=(--mcp-config "$MCP_JSON")
-    MCP_STATUS="enabled (inline mcp-config; server $SPEC_SRV)"
     # Told to the model only when the tool is actually there. A prompt that
     # describes a tool the CLI was never given is worse than silence: the model
     # spends a turn calling it and reads the failure as its own mistake.
@@ -871,7 +882,6 @@ do not have: 'have we decided this before', 'why is this built this way', 'what
 did we say about X'. An empty result is a real answer, not a malfunction: it
 means there is no prior art here and you should proceed on the ticket alone.
 Do not re-run the same query hoping for a different result."
-  fi
 fi
 log "workshop search tool: $MCP_STATUS"
 

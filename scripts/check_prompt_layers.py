@@ -63,8 +63,8 @@ answer must not depend on where this script happens to run:
     default posture (`services/scoped_exec`: "CONFINED BY DEFAULT ... the floor,
     not an opt-in"). A build turn's real cwd is then the managed mountpoint, and
     a prompt that names a host cwd is both a leak and a wrong instruction. `=0`
-    is an operator's deliberate choice to run unconfined, and there the prompt
-    naming a real directory is correct rather than a violation.
+    changes nothing a prompt says: `scoped_exec.spawn_argv` refuses a turn it
+    cannot confine, so every turn that runs sees the mountpoint.
   * A SCOPE'S OWN AGENTS.md / CLAUDE.md IS STUBBED OUT. `_agent_rules` splices a
     repo's own rules file into L2, and that file is explicitly exempt from this
     rule -- it is the place an installation fact is SUPPOSED to live. Rendering
@@ -278,6 +278,17 @@ def _stub_provider(cls, cc, paths):
     return p
 
 
+def _chat_declaration(paths):
+    """An app's `chat` block with no persona file, so what renders is the
+    platform's own fallback persona: the file, when an app has one, is that
+    app's text and not the platform's."""
+    from services import app_chat
+    return app_chat.ChatDeclaration(
+        app_slug=_RENDER_SLUG, project=_RENDER_SLUG,
+        root=paths.projects_root() / _RENDER_SLUG, label="Example",
+        persona_file=None, mcp_service="api", mcp_path="/mcp", model=None)
+
+
 def _providers(cc, paths) -> dict[str, object]:
     """A representative instance of EVERY ContextProvider subclass in the chat
     module, keyed by class name.
@@ -304,6 +315,7 @@ def _providers(cc, paths) -> dict[str, object]:
                   "cwd": str(paths.projects_root() / _RENDER_SLUG)}
         attempts = (lambda c=cls: c(), lambda c=cls: c(_RENDER_SLUG),
                     lambda c=cls: c(_RENDER_SLUG, record),
+                    lambda c=cls: c(_chat_declaration(paths)),
                     lambda c=cls: _stub_provider(c, cc, paths))
         last: Exception | None = None
         for build in attempts:
@@ -349,6 +361,12 @@ def _render() -> dict[str, dict[str, str]]:
     chat: dict[str, str] = {"platform_kernel": cc.platform_kernel()}
     for tools in (True, False):
         chat[f"role_preamble[tools={tools}]"] = cc.role_preamble(tools_active=tools)
+    # Handed the host cwd the way routes/chat.py hands it, so a WORKSPACE line
+    # that echoed it would render the synthetic home path and be caught.
+    chat["agent_self_preamble"] = cc.agent_self_preamble(
+        name="Example", slug=_RENDER_SLUG, role="maker",
+        scope=f"project:{_RENDER_SLUG}",
+        cwd=str(paths.projects_root() / _RENDER_SLUG), tools=["Read"])
     for name, provider in _providers(cc, paths).items():
         chat[f"persona[{name}]"] = provider.persona()
         chat[f"runtime_briefing[{name}]"] = cc.runtime_briefing(provider)
@@ -378,7 +396,11 @@ def _render() -> dict[str, dict[str, str]]:
     from routes import chat as chat_routes
     out["backend/routes/chat.py"] = {
         "distill_prompt": chat_routes._DISTILL_PROMPT,
-        "summary_prompt": chat_routes._summary_prompt("(previous summary)", []),
+    }
+
+    from services import working_state
+    out["backend/services/working_state.py"] = {
+        "summary_prompt": working_state._summary_prompt("(previous summary)", []),
     }
     return out
 

@@ -122,6 +122,10 @@ from _ratchet_delta import extracted_tree  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "scripts" / "no_app_names_baseline.json"
+# The sticky roster is a list of THIS installation's apps, so it lives beside the
+# other instance registries in `.runtime/`, never in the tracked baseline: a
+# re-pin used to write every installed app's name into a file every clone gets.
+WATCHED = ROOT / ".runtime" / "no_app_names_watched.json"
 
 # THE WHOLE TRACKED TREE IS SCANNED, since 2026-08-27.
 #
@@ -267,6 +271,15 @@ _AMBIGUOUS: dict[str, tuple[str, ...]] = {
     "notes": (r"notes_all", r"notes and docs", r"knowledge", r"release notes",
               r"/api/notes(?!-app)", r"""router\.\w+\("/notes[/"']"""),
     "environment": (r"environment variable", r"deployment target", r"\benv\b", r"environments are"),
+    # The SYSTEM clipboard, not the clipboard app (docs/dictation-and-clipboard.md):
+    # the dictation destination kind "clipboard" beside "field" and "chat", and
+    # the native-bridge capability of that name (write, and the Mac's watch of
+    # copies), mirrored from shared/native-bridge.ts like `location` above.
+    "clipboard": (
+        r'kind\s*(?:===|:)\s*"clipboard"', r'"chat"\s*\|\s*"clipboard"', r'"chat",\s*"clipboard"',
+        r'return "clipboard";',
+        r'has\("clipboard"\)', r'handle\("clipboard"', r'"mic",\s*"clipboard"',
+    ),
     "commute": (),
     "birds": (),
     "finance": (),
@@ -342,6 +355,20 @@ _HOME_PATH_TOOLCHAIN: dict[str, str] = {
         "settings/McpServers.tsx names it so the operator knows which file to "
         "go edit. Same path on every machine with the CLI installed; not a "
         "property of this install. Sibling of ~/.claude/, already allowed."
+    ),
+    ".npm": (
+        "npm's own download cache. services/turn_sandbox.py makes it writable "
+        "inside a turn's sandbox so an install there can reuse it. Same path "
+        "on every machine with npm."
+    ),
+    ".cargo": (
+        "cargo's own registry and build cache, made writable in a turn's "
+        "sandbox by services/turn_sandbox.py for the same reason as .npm."
+    ),
+    "go": (
+        "the Go toolchain's default GOPATH, holding its module cache, made "
+        "writable in a turn's sandbox by services/turn_sandbox.py for the same "
+        "reason as .npm."
     ),
 }
 
@@ -452,21 +479,29 @@ def roster(baseline: dict) -> list[str]:
     THE ROSTER IS THE WHOLE GATE. An app that is not on it is not scanned, so
     its name in platform source counts zero and the total reads clean for a
     violation that is sitting right there. That is not hypothetical: on
-    2026-09-03 this function read one registry, `gengui` was declared only in
+    2026-09-03 this function read one registry, an app was declared only in
     another, and seven platform files naming it counted nothing.
 
     Three sources, unioned, because this tree has three registries that do not
     agree with each other (app-is-the-entity-2026-08-20.md section 9 is the
     merge, and it is not built):
 
-      1. the app DECLARATIONS in the tree  -- what the catalog can build
+      1. the app DECLARATIONS in the tree  -- what the catalog can build,
+                                              and each `projects/*` manifest
       2. `.runtime/installed-apps.json`    -- what is mounted here
       3. `.runtime/projects.json`          -- what has a working tree here
 
-    Plus `watched` from the baseline, which is sticky on purpose so an app that
-    leaves the catalog is still scanned for the leftovers it left behind.
+    Plus `watched`, which is sticky on purpose so an app that leaves the
+    catalog is still scanned for the leftovers it left behind. It is read from
+    `.runtime/no_app_names_watched.json` (instance-local) and from the
+    baseline's own `watched` key, which a tracked baseline leaves empty.
     """
     names: set[str] = set(baseline.get("watched", []))
+    if WATCHED.exists():
+        try:
+            names.update(json.loads(WATCHED.read_text()).get("watched", []))
+        except (ValueError, OSError, AttributeError):
+            pass
 
     # 1. The declarations, wherever they currently are.
     #
@@ -490,24 +525,29 @@ def roster(baseline: dict) -> list[str]:
             found_declarations += 1
 
     # An EXTRACTED app declares itself in its own manifest, which is the file
-    # the platform already reads to render its card.
-    apps_dir = ROOT / "apps"
-    if apps_dir.is_dir():
-        for manifest in sorted(apps_dir.glob("*/workshop.app.json")):
-            try:
-                name = (json.loads(manifest.read_text()) or {}).get("name")
-            except (ValueError, OSError):
-                continue          # a broken manifest is the app's problem
-            if name:
-                names.add(name)
-                found_declarations += 1
+    # the platform already reads to render its card. A project's working tree
+    # (`projects/<slug>/`, gitignored, its own repo) carries the same manifest,
+    # and an app built there may be named in neither instance registry.
+    # `projects/_templates/` holds templates one level deeper, so this glob
+    # does not reach them.
+    manifests = [*sorted((ROOT / "apps").glob("*/workshop.app.json")),
+                 *sorted((ROOT / "projects").glob("*/workshop.app.json"))]
+    for manifest in manifests:
+        try:
+            name = (json.loads(manifest.read_text()) or {}).get("name")
+        except (ValueError, OSError):
+            continue          # a broken manifest is the app's problem
+        if name:
+            names.add(name)
+            found_declarations += 1
 
     if not found_declarations:
         print("check_no_app_names: WARNING -- no app DECLARATION was found in "
-              "backend/services/*_app.py or apps/*/workshop.app.json. The roster "
-              "is running on `watched` alone, so an app installed since the last "
-              "re-pin is NOT being scanned. This is how the gate went blind on "
-              "2026-09-03; fix the source rather than trusting the count.",
+              "backend/services/*_app.py, apps/*/workshop.app.json or "
+              "projects/*/workshop.app.json. The roster is running on `watched` "
+              "alone, so an app installed since the last re-pin is NOT being "
+              "scanned. This is how the gate went blind on 2026-09-03; fix the "
+              "source rather than trusting the count.",
               file=sys.stderr)
 
     # 2 and 3. The two instance registries.
@@ -541,6 +581,10 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
     files = tracked_files(root)
     content_pat = {a: _app_content_patterns(a) for a in apps}
     import_short = {a: re.escape(a.removesuffix("-app")) for a in apps}
+    # Every pattern below needs the app's short name in the text, in some case,
+    # so a line or file without it cannot match; testing for it first skips the
+    # regexes without changing a result.
+    shorts = {a: a.removesuffix("-app").lower() for a in apps}
     literal_pat = {a: _literal_patterns(a) for a in apps}
     # Keyed by the full app id AND by the short form the frontend uses, because
     # they differ for exactly the app whose name is an ordinary English word:
@@ -598,8 +642,11 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
         if len(body) > 2_000_000:  # generated bundles, lockfiles
             continue
 
+        body_low = body.lower()
         for app in apps:
             if app == owner:
+                continue
+            if shorts[app] not in body_low:
                 continue
             if _imports_app_module(body, import_short[app]):
                 imports.append({"file": rel, "app": app})
@@ -621,8 +668,11 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
             for name in _home_path_allowlisted(line):
                 home_allowlisted.append({"file": rel, "line": i, "name": name})
 
+            line_low = line.lower()
             for app in apps:
                 if app == owner:  # an app's own file naming itself
+                    continue
+                if shorts[app] not in line_low:
                     continue
                 if not any(p.search(line) for p in literal_pat[app]):
                     continue
@@ -725,7 +775,8 @@ def main() -> int:
                 "extraction (stage 7), imports at the AppSpec seams (stage 4), "
                 "home_path_sites when every path in $HOME comes from config. "
                 "`watched` is sticky on purpose, so an app that leaves the catalog "
-                "is still scanned for leftovers. "
+                "is still scanned for leftovers; it names this installation's "
+                "apps, so it is kept in .runtime/no_app_names_watched.json. "
                 "NOTE 2026-08-27: content/imports/literals were re-pinned at a "
                 "HIGHER measured value on this date, once, because the scan area "
                 "was widened from six directories to the tracked tree and an "
@@ -734,7 +785,7 @@ def main() -> int:
                 "See `raised` below for the full reason, which prints on every run "
                 "until each count comes back down."
             ),
-            "watched": result["watched"],
+            "watched": [],
             "content_files": result["content_files"],
             "import_sites": result["import_sites"],
             "literal_sites": result["literal_sites"],
@@ -755,6 +806,8 @@ def main() -> int:
             if keep:
                 payload["raised"] = keep
         BASELINE.write_text(json.dumps(payload, indent=2) + "\n")
+        WATCHED.parent.mkdir(parents=True, exist_ok=True)
+        WATCHED.write_text(json.dumps({"watched": result["watched"]}, indent=2) + "\n")
         print(f"baseline written: {BASELINE.relative_to(ROOT)}")
         for k, v in sorted(payload.get("raised", {}).items()):
             print(f"  RAISED {k} {v['from']} -> {v['to']}: {v['because']}")

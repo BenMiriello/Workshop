@@ -255,7 +255,7 @@ what would turn this into mush. A notes-reviewing keeper should be neither.
 3. **Secrets proxy.** Worth building the credential-proxy shape, or is
    "grants gate which MCP servers spawn" sufficient for a single operator?
    The current exposure is real: agents inherit an environment that can reach
-   `~/.config/clawdbot/` (Plaid tokens, Google OAuth, the auth token).
+   `<bridge-config>/` (Plaid tokens, Google OAuth, the auth token).
 4. **Inbox learning loop.** Do operator answers to question/review items get
    written back as scoped notes automatically?
 5. **Does the assistant get told an agent replied?** D3 says it does not answer,

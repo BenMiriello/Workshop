@@ -14,16 +14,50 @@
       "why": "L2 for built-in app assistants"
     },
     {
+      "path": "backend/services/app_chat.py",
+      "why": "L2 for runner apps that declare a chat in their manifest"
+    },
+    {
       "path": "backend/mcp/workshop_query_server.py",
       "why": "MCP tool names/descriptions/schemas reach the model identically to L2"
     },
     {
+      "path": "backend/mcp/page_tools.py",
+      "why": "the page tools' names, descriptions and schemas on the workshop tool server"
+    },
+    {
+      "path": "backend/mcp/access_tool.py",
+      "why": "chat_access, the tool a chat uses to see and change its own access"
+    },
+    {
+      "path": "backend/mcp/ops_tools.py",
+      "why": "the operation verbs (app_status, app_logs, app_control) on the workshop tool server"
+    },
+    {
+      "path": "backend/services/connections_prompt.py",
+      "why": "the per-turn PAGE AND APPS block a chat beside a page or with granted apps receives"
+    },
+    {
       "path": "backend/routes/chat.py",
       "symbols": [
-        "_DISTILL_PROMPT",
+        "_DISTILL_PROMPT"
+      ],
+      "why": "the ticket distiller; the rest of this module is route code, not prompt text"
+    },
+    {
+      "path": "backend/services/working_state.py",
+      "symbols": [
         "_summary_prompt"
       ],
-      "why": "the ticket distiller and the working-state fold; the rest of this module is route code, not prompt text"
+      "why": "the working-state fold; the rest of this module schedules and stores it"
+    },
+    {
+      "path": "backend/services/turn_trash.py",
+      "why": "the SessionStart context a turn with a shell is given about how deleting works there"
+    },
+    {
+      "path": "backend/services/tool_policy.py",
+      "why": "the reasons the policy hook gives the model when it refuses or asks about a delete"
     }
   ],
   "patterns": {

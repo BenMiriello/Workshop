@@ -28,10 +28,10 @@
 # produced over a narrower set simply does not match and the turn stays blocked.
 #
 # The same script is wired as a Stop hook (`--stop-hook`, see
-# .claude/settings.json), so an unattended run cannot end by declaring itself
-# finished. The hook does not re-run this gate — it recomputes the fingerprint
-# of the turn's files and checks that the evidence on disk describes exactly
-# that state, which costs about a fifth of a second.
+# .claude/settings.json). The hook never holds a turn open: when the turn's
+# files have no evidence yet it starts this gate in its own background service
+# (one at a time, at most once per chat every ten minutes) and returns. A
+# failure reaches that chat with its next prompt (`--prompt-hook`).
 #
 # Rationale, and why this is a mechanism rather than another paragraph in
 # CLAUDE.md: see the header of scripts/done_gate.py.

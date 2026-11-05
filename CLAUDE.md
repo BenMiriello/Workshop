@@ -10,9 +10,36 @@ Personal-ops monorepo: `backend/` (FastAPI + Letta), `frontend/` (Vite + React +
 - Ephemeral files (smoke tests, throwaway probes, scraped output, ad-hoc working notes) go in a `scratch/` or `tmp/` folder (anywhere in the tree — both are gitignored). Do NOT drop stray `test_*` / `tmp_*` files into source dirs. Per-project working trees (`projects/*`, `build-agents/`, `branches/`) are gitignored too, and so are the registries: `.runtime/projects.json` and `.runtime/build_agents.json` are instance-local and NOT tracked. Only `projects/_templates/` is tracked. Durable docs belong in `docs/`.
 - Commit your own work as you go; never leave it uncommitted. When a background agent's unrelated WIP is in the tree, stage only your files so commits stay isolated.
 
-### Finished a change? Run `bash scripts/apply.sh`
+### Where things go, and how anything is operated
 
-That is the whole instruction. It compares what is running against what is on
+Three kinds of place, and a rule that decides every case: **if a second
+installation would want it, it is platform; if only one app wants it, it is
+that app's; if it is a fact about this machine or this person, it is
+installation state.**
+
+- **The platform** (`backend/`, `frontend/`, `packages/`, `scripts/`, `docs/`)
+  is written from the development scope only, and names no app.
+- **An app** is one folder with its own repo and its own `workshop.app.json`,
+  under `projects/` (runner apps) or `apps/` (in-process apps). Everything
+  particular to the app lives there, including how it is built, restarted,
+  tested and checked.
+- **Installation state** (`.runtime/`, `~/.config/workshop/`, the database) is
+  written by the platform through its tools and routes, never by hand.
+
+**Operations are tools, not scripts.** In a Workshop chat, running anything is a
+verb on the workshop tool server: `app_status`, `app_logs`, `app_control`
+(start, stop, restart), `app_apply` (make a finished change live), `app_build`,
+`app_test` (always memory-capped), `app_check`, `app_env`. The platform itself
+is the app `workshop`. An app declares its particulars (`reload`, `preflight`,
+`setup`, `test`, `checks`, `migrate`) in its manifest and the verbs run them.
+A repeated operation becomes a declaration or a verb, never a new script that
+one chat knows about; throwaway work stays in `tmp/`. Design of record:
+[`docs/platform-redesign/operations-and-boundaries-2026-11-04.md`](docs/platform-redesign/operations-and-boundaries-2026-11-04.md).
+
+### Finished a change? `app_apply` on `workshop`
+
+In a shell without the workshop tools, the same step is `bash scripts/apply.sh`,
+which is what `app_apply` runs. It compares what is running against what is on
 disk and fixes only what drifted: the built bundle the operator's origin serves,
 the backend, the Vite dev server, the public edge. It takes no arguments, it is
 idempotent, and it is **safe to run at any time, from any agent, concurrently
@@ -111,21 +138,25 @@ here.
 
 - **There is no separate deployment.** Your edits change the app the operator is
   using right now. Don't pick ports or start servers — they are already running.
-- **The apply step is `bash scripts/apply.sh`**, run once as your FINAL action
-  after all editing. `--check` reports drift without acting. See the section
-  above and [`docs/applying-changes.md`](docs/applying-changes.md).
+- **The apply step is `app_apply` on `workshop`** (`bash scripts/apply.sh`
+  from a bare shell), run once as your FINAL action after all editing.
+  `--check` reports drift without acting. See the section above and
+  [`docs/applying-changes.md`](docs/applying-changes.md).
 - **Nothing reloads on its own.** Vite's hot reload covers only the `:5173` dev
   origin, which is not the origin the operator is on; the backend does not
   auto-reload at all. A restart is a pause, not a break: in-flight turns are
   adopted again on the way back up.
-- **Built-in apps** live in `frontend/src/pages/apps/<app>`, with their backend
-  logic in `backend/services/<app>`.
+- **Apps** live in their own folders and repos (`projects/<app>`,
+  `apps/<app>`), never inside platform source. `frontend/src/pages/apps/`
+  holds only the platform's generic app-page shell.
 - **The `@workshop/ui` kit** at `packages/ui` is platform-owned and compiles
   INTO the bundle, so editing it needs a rebuild too. Import by package name;
   see [`packages/ui/CONTRIBUTING.md`](packages/ui/CONTRIBUTING.md) and
   [`frontend/CLAUDE.md`](frontend/CLAUDE.md).
-- **Validate before claiming done:** `npm run typecheck` from the repo root plus
-  `bash scripts/check_design.sh` for UI; a quick import check for backend.
+- **Validate before claiming done:** `app_check` on `workshop` (typecheck,
+  design system, prompt layers, the gates) and `app_test` for what you
+  changed; from a bare shell, `npm run typecheck` plus
+  `bash scripts/check_design.sh`.
 - **Commits:** real repo, real history, unrelated work in progress. Never
   `git add -A`. Stage only the files you changed.
 
@@ -199,7 +230,7 @@ command's exit code and nothing else" cuts both ways.** It clones HEAD and
 inspects the resulting TREE, so it is structurally blind to four things measured
 on 2026-09-16, all of which are real and none of which it can ever see:
 
-- **Git history.** The operator's own `commute/*.json` (home and work addresses)
+- **Git history.** One app's config files holding the operator's home and work addresses
   and the Plaid MCP server are reachable from `origin/main` and five other
   remote branches. Deferred once on 2026-07-12 and unmentioned for nine weeks.
   Ticket `43dec530`, which also adds the history assertion.

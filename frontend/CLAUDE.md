@@ -24,6 +24,7 @@ Both stylesheets are imported in `src/main.tsx` **before** `styles.css`. `styles
 6. **Hierarchy from position, scale, weight, color — not borders.** `PageHeader` (one per screen) → status band → content grouped under `SectionLabel` (the uppercase motif). Cards float on shadow (light) / a faint ring (dark). 4px spacing grid (`--space-1..8`); use the steps, never invent `13px`.
 7. **Editability model, not tap-to-edit.** Anything that writes config or money uses `useEditMode` + a sticky `ActionBar` (Save primary / Cancel ghost, "unsaved" pill while dirty). View prefs (theme, filters, reveal/hide, source `<select>`) commit **on change**. Config/money commit **on explicit Save**. See "When does a control commit?" below.
 8. **Destructive actions get `ConfirmDialog`.** `danger` treatment + a dialog naming the consequence and that it can't be undone. Never bare red text, never one-tap delete.
+   **Every dialog and picker is a centered `Modal`, at every width, phones included.** Never a bottom sheet or drawer by default: `Modal sheet`, `Sheet` and any app's own bottom pane are only for a surface the operator asked to have one.
 9. **Every list/page ships four states.** loading (`Skeleton`), empty (`StateBlock` — always with an instructional hint, e.g. "POST to `/api/events/<source>` to populate"), error (`StateBlock variant="error"` with the failing endpoint + retry), overflow (paginate / `TableScroll`). **`StateBlock` is a REGION and belongs only where content is absent** — see "A region or a line" below; a failure beside content that is still on screen is a `Notice`.
 10. **Accessibility + motion.** WCAG AA contrast both themes; visible focus ring via `:focus-visible` (handled by `components.css`); dialogs trap focus + Esc + restore (handled by `Modal`); cursors are `default`/`pointer`/`text` only — never `not-allowed`/`wait`; everything respects `prefers-reduced-motion`.
 
@@ -350,11 +351,11 @@ highlighted. This is non-negotiable: it is what keeps an app navigable and stops
 sub-pages from feeling like they replaced the home page.
 
 Rules:
-1. **One header, every page.** Each app has exactly one header component (Birds: `BirdsHeader`).
+1. **One header, every page.** Each app has exactly one header component (e.g. `WidgetsHeader`).
    Every page of that app renders it as its top element. Do not hand-roll a per-page
    `<h2>` header or a bespoke toolbar.
 2. **One source of sections.** The navigable sections live in a single exported list
-   (Birds: `BIRDS_NAV` in `BirdsHeader.tsx`). To add a page: add a `<Route>` to that app's
+   (e.g. `WIDGETS_NAV` in `WidgetsHeader.tsx`). To add a page: add a `<Route>` to that app's
    entry in `src/apps/registry.tsx` AND one entry to the section list. Never scatter
    one-off section links in page bodies as the way to reach a section (a contextual CTA
    is fine, but it is not the nav).
@@ -367,11 +368,11 @@ Rules:
    in CI rather than in the browser.
 3. **Active section is highlighted.** The header marks the current section (`is-active`
    + `aria-current="page"`) so "you are here" is always clear.
-4. **Home is always reachable** from the header (Birds: the bird icon → dashboard).
+4. **Home is always reachable** from the header (e.g. the app icon → dashboard).
 
 When you add or move a page and the nav doesn't update automatically from the section
 list, that's the bug — fix the list, not the page.
 
 ## Migration status
 
-The shell + token foundation are live. Pages are migrated to the primitives incrementally; when you touch a page that still uses legacy classes (`.card`, `.muted`, `.pill`, `.btn`, ad-hoc inline styles), migrate the part you touch to `ws-*`/primitives rather than extending the old idiom. As pages migrate, delete the now-dead rules they leave behind in `styles.css` (handoff step 9). The `birds` sub-app has its own established calm UI and is migrated last.
+The shell + token foundation are live. Pages are migrated to the primitives incrementally; when you touch a page that still uses legacy classes (`.card`, `.muted`, `.pill`, `.btn`, ad-hoc inline styles), migrate the part you touch to `ws-*`/primitives rather than extending the old idiom. As pages migrate, delete the now-dead rules they leave behind in `styles.css` (handoff step 9). An app with its own established UI may be migrated last.

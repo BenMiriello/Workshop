@@ -5,16 +5,15 @@ long-lived branch of `<owner>/Workshop`:
 
 | Branch | Instance | Owner / box |
 |---|---|---|
-| `main` | the primary deployment (`workshop.<your-domain>`) | the service user's Debian |
-| `simonsays-local` | this box's independent instance (tailnet-only) | simonsays' Debian |
-| _(future)_ | any other operator's instance | its own box |
+| `main` | the primary deployment (`workshop.<your-domain>`) | its operator's box |
+| `<instance>-local` | an independent instance (e.g. tailnet-only) | that operator's box |
 
 `main` is the **upstream** — the shared source of truth for the *platform*.
 Every instance branch is a **permanent downstream fork** (not a feature branch):
 it carries its own config, customizations, and app roster forever, and
-periodically pulls the platform forward from `main`. See
-[`simonsays-local-instance.md`](simonsays-local-instance.md) for this instance's
-specifics (ports, origin, local-only features).
+periodically pulls the platform forward from `main`. An instance keeps its own
+specifics (ports, origin, local-only features) in untracked files on its own
+branch's checkout, never in a tracked doc.
 
 ---
 
@@ -35,7 +34,7 @@ Generic improvements with no instance-specific assumptions:
 
 ### Local change → stays on the instance branch forever (never upstream)
 Anything that only makes sense for this deployment:
-- The PIN login / re-lock (single-operator convenience, explicitly non-upstream).
+- Single-operator conveniences the instance adds for itself.
 - Removing another operator's personal apps; our app roster; operator identity.
 - Our tailnet origin/ports, runtime paths, `.runtime/`-based registries, the
   committed env *values*.
@@ -82,11 +81,9 @@ Local commits sit on top and rarely conflict. Resolve any conflict in favor of
 
 ## Shared app repos are NOT forked per instance
 
-Apps live in their own repos (`swipe-save`, `intergen`, `lovelace`, …) and are
-**shared** — every instance runs the same app `main`. A fix there benefits all
-instances directly: commit to the app repo's `main`, and each instance just pulls.
-(Example: the swipe-save proxy-navigation + media-modal fixes went to
-`swipe-save@main`; the service user's instance gets them by pulling, no cherry-pick.)
+Apps live in their own repos and are **shared** — every instance runs the same
+app `main`. A fix there benefits all instances directly: commit to the app repo's
+`main`, and each instance just pulls, no cherry-pick.
 
 Only the **Workshop platform repo** is forked per instance, because that's what
 carries per-deployment identity and customization.
@@ -108,8 +105,8 @@ env overrides (`mobile/app.config.js` + `native/config.ts`):
 | `WORKSHOP_APP_SCHEME` | deep-link scheme |
 | `WORKSHOP_IOS_BUNDLE_ID` | iOS bundle id (must differ per instance to coexist) |
 
-The device must be on the same tailnet as the instance (the simonsays origin is
-tailnet-only). This is per-instance build config, so it's **Local** — it never
+The device must be able to reach the instance's origin (a tailnet-only origin
+needs the device on that tailnet). This is per-instance build config, so it's **Local** — it never
 goes upstream.
 
 ---

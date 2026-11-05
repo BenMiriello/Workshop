@@ -65,6 +65,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -131,6 +132,9 @@ STUB_SKIP_DIRS = {"node_modules", ".venv", "__pycache__", "dist", "build", ".git
 # ---------------------------------------------------------------------------
 # process plumbing
 # ---------------------------------------------------------------------------
+
+REVIEWER_LIMIT = 1200
+
 
 def run(argv, cwd=None, timeout=600, env_extra=None, full=False):
     """Run a command and return the record that goes into the evidence file.
@@ -733,19 +737,25 @@ def check_correctness(files, base_rev, evidence, foreign):
         #
         # `base_rev` is the turn boundary this function is already given, which
         # is exactly the revision the turn's commits sit on top of.
+        # The reviewer is given a budget shorter than this call's own limit, so
+        # it stops itself and says what it did not finish instead of being
+        # killed here with nothing to report.
         rec = run(["bash", str(ROOT / "scripts" / "reviewer.sh"), base_rev],
-                  timeout=1200, full=True)
+                  timeout=REVIEWER_LIMIT, full=True,
+                  env_extra={"REVIEWER_BUDGET_SECONDS": str(REVIEWER_LIMIT - 200)})
         evidence["commands"].append(rec)
         try:
             verdict = json.loads(rec["stdout"])
         except ValueError:
             return {"state": "fail", "mode": "reviewer.sh",
-                    "reasons": ["reviewer.sh produced no JSON"]}
+                    "reasons": [f"reviewer.sh produced no JSON (exit {rec['exit']}, "
+                                f"{rec['seconds']}s of {REVIEWER_LIMIT}s)"]}
         return {
             "state": "pass" if verdict.get("complete") else "fail",
             "mode": "reviewer.sh",
             "reviewer_verdict": verdict.get("verdict"),
-            "reasons": verdict.get("reasons") or [],
+            "reasons": (verdict.get("reasons") or [])
+                       + [f"timed_out:{t}" for t in verdict.get("timed_out") or []],
             "stub_hits": verdict.get("stub_hits") or [],
         }
 
@@ -847,8 +857,11 @@ def check_screenshot(files, shot_routes, evidence, delivery_state):
 # the run
 # ---------------------------------------------------------------------------
 
-def evaluate(session_id, transcript, explicit_files, shot_routes):
+def evaluate(session_id, transcript, explicit_files, shot_routes, base_override=None):
     since, base, how = turn_boundary(session_id, transcript)
+    # The Stop hook passes the base it judged against: by the time a background
+    # run reads the mark, the hook has already moved it to the end of the turn.
+    base = base_override or base
     certain, likely = declared_edits(transcript, since)
     files = touched_files(since, base, explicit_files, certain, likely)
     evidence = {
@@ -959,120 +972,156 @@ def save(evidence):
 
 
 # ---------------------------------------------------------------------------
-# the Stop hook
+# the Stop hook, and the prompt hook that reports what it found
 # ---------------------------------------------------------------------------
 
-def stop_hook():
-    """Refuse to let a turn end on an unverified claim.
+# A CHECK NEVER HOLDS A TURN OPEN. Until 2026-10-11 the Stop hook refused to let
+# a turn end until `done.sh` had been run over its files, so every chat that
+# touched a file ran reviewer.sh and then sat waiting on it, minutes at a time,
+# several chats at once. The operator: "fine to run it, not so often though,
+# and never blocking." So the hook starts the check in its own service and lets
+# the turn end, and the next prompt in that chat is told if it failed.
+#
+# NOT SO OFTEN: one check in flight per checkout (the unit name is the lock),
+# and at most one per chat every MIN_INTERVAL_S. Changes made inside the window
+# are not lost: the next stop after it recomputes the turn's set and checks it.
+BACKGROUND_UNIT = "workshop-done-gate"
+MIN_INTERVAL_S = 600
 
-    Fast by construction: it does not re-run the gate. It recomputes the turn's
-    file set and its fingerprint (milliseconds) and asks whether the evidence on
-    disk describes exactly this state. It does re-run `apply.sh --check`, which
-    costs about a tenth of a second and is the one thing that can go stale
-    between the gate passing and the turn ending.
+
+def _session_file(session_id, suffix):
+    return MARKS / f"{(session_id or 'nosession')}.{suffix}"
+
+
+def _host_path(path):
+    """`path` as the service manager sees it. Inside a turn's sandbox the tree is
+    bind-mounted, and a unit started from there runs on the host, where the
+    sandbox path does not exist. Same rule as `host_path` in
+    scripts/restart_backend.sh: WORKSHOP_MOUNT_SOURCE when the sandbox exported
+    it, else the bind mount's own source root."""
+    path = str(path)
+    def findmnt(*args):
+        r = subprocess.run(["findmnt", "-no", *args], capture_output=True, text=True)
+        return (r.stdout.splitlines() or [""])[0].strip()
+    try:
+        mnt = findmnt("TARGET", "--target", path)
+        src = os.environ.get("WORKSHOP_MOUNT_SOURCE", "")
+        if not src and mnt:
+            src = findmnt("FSROOT", "--mountpoint", mnt)
+            src = "" if src == "/" else src
+    except OSError:
+        return path
+    if src and mnt and mnt != "/":
+        return src + path[len(mnt):]
+    return path
+
+
+def _launch_background(session, files, base):
+    """Start `done.sh --report` over `files` and return at once. Returns what
+    happened, for the log: started, throttled or busy."""
+    stamp = _session_file(session, "launched")
+    try:
+        if time.time() - stamp.stat().st_mtime < MIN_INTERVAL_S:
+            return "throttled"
+    except OSError:
+        pass
+    root = _host_path(ROOT)
+    argv = ["bash", f"{root}/scripts/done.sh", "--report", "--quiet",
+            "--base", base, "--files", *files]
+    env = {"CLAUDE_CODE_SESSION_ID": session or "",
+           "PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "")}
+    if shutil.which("systemd-run"):
+        # Its own unit: outside the turn's process group, so retiring the turn
+        # does not kill it, and capped so a heavy suite cannot take the host.
+        cmd = ["systemd-run", "--user", "--quiet", "--collect",
+               f"--unit={BACKGROUND_UNIT}", f"--working-directory={root}",
+               "-p", "MemoryMax=8G", "-p", "MemorySwapMax=0",
+               "-p", "Nice=10", "-p", "CPUWeight=20"]
+        cmd += [f"--setenv={k}={v}" for k, v in env.items()] + argv
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=15)
+        except (OSError, subprocess.TimeoutExpired):
+            return "busy"
+        if r.returncode != 0:
+            return "busy"
+    else:
+        subprocess.Popen(["nice", "-n", "10", *argv], cwd=str(ROOT),
+                         env={**os.environ, **env}, start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    MARKS.mkdir(parents=True, exist_ok=True)
+    stamp.touch()
+    return "started"
+
+
+def _log(line):
+    try:
+        with open(LOG, "a") as fh:
+            fh.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%S%z')}] {line}\n")
+    except OSError:
+        pass
+
+
+def stop_hook():
+    """Start the check for this turn's files if it is owed, and let the turn end.
+
+    Fast by construction: it recomputes the turn's file set and fingerprint
+    (milliseconds), and starts a run only when the evidence on disk does not
+    already describe exactly this state. It never prints a block decision.
     """
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         payload = {}
-    # Claude Code sets this on a stop that is already the result of a block.
-    # Honouring it is what stops a refusal from becoming a loop.
-    if payload.get("stop_hook_active"):
-        return 0
     session = payload.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     transcript = _transcript_path(session, payload.get("transcript_path"))
 
     since, base, how = turn_boundary(session, transcript)
-    if how == "fallback":
-        # Nothing in this session places the start of the turn, so nothing here
-        # can be attributed to it. Record the boundary for next time and let it
-        # end -- refusing over a tree it may not have written is the behaviour
-        # that gets a gate switched off, and a gate that is off catches nothing.
-        write_mark(session)
-        return 0
-    certain, likely = declared_edits(transcript, since)
-    files = touched_files(since, base, certain=certain, likely=likely)
-    if not files:
-        write_mark(session)
-        return 0
-
-    fp = fingerprint(files, base)
-    try:
-        ev = json.loads(EVIDENCE.read_text())
-    except (OSError, ValueError):
-        ev = {}
-
-    reasons = []
-    if ev.get("fingerprint") != fp:
-        reasons.append(
-            "no completion evidence for this state of the tree. "
-            f"{len(files)} file(s) changed this turn and `scripts/done.sh` has not "
-            "been run over them (or they changed after it ran)."
-        )
-    elif ev.get("verdict") != "pass":
-        reasons.append("the completion gate last returned NOT DONE: " +
-                       ", ".join(ev.get("failed_checks", [])))
-    else:
-        rec = run(["bash", str(ROOT / "scripts" / "apply.sh"), "--check"], timeout=60)
-        stale = stale_surfaces(rec["stdout"])
-        mine_stale = sorted({s for s in (surface_of(f) for f in files) if s and s in stale})
-        # Only the surfaces the evidence itself recorded as deliverable. A
-        # surface the evidence called `foreign` is not this turn's to fix, and
-        # neither is one it called `armed`.
-        #
-        # `armed` IS THE STATE THIS HOOK RUNS IN, which is why it has to be
-        # honoured here as well as in check_delivery. The backend restart is
-        # deferred precisely so it does not fire under a live turn: it waits for
-        # THIS reply to land. So at the moment the Stop hook asks, a turn that
-        # changed backend code has necessarily armed a restart that has
-        # necessarily not run yet, and re-reading apply.sh --check will always
-        # say STALE. Blocking on that is a loop with no exit: the hook tells the
-        # agent to run apply.sh, apply.sh arms the restart it already armed, and
-        # the hook asks again. Measured 2026-09-03, immediately after the same
-        # deadlock was fixed one function away.
-        #
-        # The waiter being alive is what makes this safe rather than a hole: if
-        # nothing is parked, the restart is genuinely owed and the surface still
-        # fails below.
-        blocked = set()
-        for surface, s in ((ev.get("checks", {}).get("delivery", {}) or {}).get("surfaces") or {}).items():
-            if s.get("state") == "foreign":
-                blocked.add(surface)
-            elif s.get("state") == "armed" and _restart_is_armed():
-                blocked.add(surface)
-        mine_stale = [s for s in mine_stale if s not in blocked]
-        if mine_stale:
-            reasons.append("these surfaces went stale again after the gate passed: "
-                           + ", ".join(mine_stale) + ". Run: bash scripts/apply.sh")
-
-    if not reasons:
-        write_mark(session)
+    files = []
+    if how != "fallback":
+        # A fallback boundary attributes nothing to this turn, so it owes no check.
+        certain, likely = declared_edits(transcript, since)
+        files = touched_files(since, base, certain=certain, likely=likely)
+    if files:
+        fp = fingerprint(files, base)
         try:
-            with open(LOG, "a") as fh:
-                fh.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%S%z')}] stop-hook: pass "
-                         f"session={session or '?'} files={len(files)} fp={fp}\n")
-        except OSError:
-            pass
-        return 0
+            ev = json.loads(EVIDENCE.read_text())
+        except (OSError, ValueError):
+            ev = {}
+        what = "already checked" if ev.get("fingerprint") == fp else \
+            _launch_background(session, files, base)
+        _log(f"stop-hook: {what} session={session or '?'} files={len(files)} fp={fp}")
+    write_mark(session)
+    return 0
 
-    msg = (
-        "STOP BLOCKED by the completion gate. Done is a machine decision here, "
-        "not a summary you write about yourself.\n\n"
-        + "\n".join("- " + r for r in reasons)
-        + "\n\nRun `bash scripts/done.sh` (add `--shot /<route>` if you changed "
-          "something visible). It composes apply.sh --check, the stub scan and "
-          "reviewer.sh and writes the evidence this hook reads. Fix what it "
-          "names, then it will let you finish. If it names another agent's "
-          "uncommitted work, say so in your report -- that is not yours to fix."
-    )
+
+def prompt_hook():
+    """Tell the chat, once, that the check on its earlier changes failed.
+
+    Printed text from a UserPromptSubmit hook is added to the prompt, so the
+    finding reaches the agent with the operator's next message and costs that
+    turn nothing when there is nothing to say."""
     try:
-        with open(LOG, "a") as fh:
-            fh.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%S%z')}] stop-hook: BLOCKED "
-                     f"session={session or '?'} files={len(files)} fp={fp} "
-                     f":: {reasons[0][:120]}\n")
+        payload = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        payload = {}
+    session = payload.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    path = _session_file(session, "result.json")
+    try:
+        result = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return 0
+    if result.get("reported"):
+        return 0
+    result["reported"] = True
+    try:
+        path.write_text(json.dumps(result))
     except OSError:
-        pass
-    print(json.dumps({"decision": "block", "reason": msg}))
+        return 0
+    if result.get("verdict") == "fail":
+        print("The completion check on files this chat changed earlier failed. "
+              "Fix what it names if it is yours; another agent's work is not.\n"
+              + (result.get("text") or ""))
     return 0
 
 
@@ -1088,6 +1137,12 @@ def main(argv=None):
                     help="judge exactly these paths instead of inferring the turn's set")
     ap.add_argument("--json", action="store_true", help="print the evidence instead of a summary")
     ap.add_argument("--quiet", action="store_true", help="print nothing on a clean pass")
+    ap.add_argument("--prompt-hook", action="store_true",
+                    help="run as a UserPromptSubmit hook: report a failed background check")
+    ap.add_argument("--report", action="store_true",
+                    help="also keep the verdict for this session's next prompt")
+    ap.add_argument("--base", default=None,
+                    help="judge against this commit instead of the turn's own mark")
     args = ap.parse_args(argv)
 
     if os.environ.get(SENTINEL) == "1":
@@ -1096,10 +1151,20 @@ def main(argv=None):
         return 0
     if args.stop_hook:
         return stop_hook()
+    if args.prompt_hook:
+        return prompt_hook()
 
     session = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-    evidence = evaluate(session, _transcript_path(session, None), args.files, args.shot)
+    evidence = evaluate(session, _transcript_path(session, None), args.files, args.shot,
+                        base_override=args.base)
     save(evidence)
+    if args.report:
+        MARKS.mkdir(parents=True, exist_ok=True)
+        _session_file(session, "result.json").write_text(json.dumps({
+            "when": evidence["when"], "verdict": evidence["verdict"],
+            "failed_checks": evidence.get("failed_checks", []),
+            "text": render(evidence), "reported": False,
+        }))
     if args.json:
         print(json.dumps(evidence, indent=2))
     else:

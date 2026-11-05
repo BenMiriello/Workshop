@@ -161,6 +161,164 @@
           "max": 10
         }
       ]
+    },
+    {
+      "id": "ops-1-tools-over-http",
+      "title": "Every turn reaches the workshop tools over HTTP with signed claims",
+      "source": "docs/platform-redesign/operations-and-boundaries-2026-11-04.md section 3, stage 1",
+      "assertions": [
+        {
+          "kind": "regex_present",
+          "says": "the launch spec is HTTP",
+          "path": "backend/services/app_registry.py",
+          "regex": "\"url\": f\"\\{page_link.backend_base\\(\\)\\}/mcp/workshop\""
+        },
+        {
+          "kind": "command_succeeds",
+          "says": "the route accepts only signed turn claims",
+          "command": "cd backend && .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_mcp_workshop_route.py"
+        }
+      ]
+    },
+    {
+      "id": "ops-2-runner-verbs",
+      "title": "Build chats see, log, start, stop and restart apps through tools",
+      "source": "docs/platform-redesign/operations-and-boundaries-2026-11-04.md section 3, stage 2",
+      "assertions": [
+        {
+          "kind": "command_succeeds",
+          "says": "authority, preflight, reload, health wait and the unsaved-work refusal hold",
+          "command": "cd backend && .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_app_ops.py"
+        }
+      ]
+    },
+    {
+      "id": "ops-3-work-verbs",
+      "title": "Build, apply, test, check and settings run what each app declares, capped",
+      "source": "docs/platform-redesign/operations-and-boundaries-2026-11-04.md section 3, stage 3",
+      "assertions": [
+        {
+          "kind": "command_succeeds",
+          "says": "declared commands run capped and arguments never become shell text",
+          "command": "cd backend && .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_app_commands.py"
+        }
+      ]
+    },
+    {
+      "id": "ops-4-preview",
+      "title": "A page of any app is screenshotted through a tool",
+      "source": "docs/platform-redesign/operations-and-boundaries-2026-11-04.md section 3, stage 4",
+      "assertions": [
+        {
+          "kind": "regex_present",
+          "says": "app_preview is a verb on the tool server",
+          "path": "backend/mcp/ops_tools.py",
+          "regex": "PREVIEW_NAME = \"app_preview\""
+        }
+      ]
+    },
+    {
+      "id": "ops-5-clarity",
+      "title": "Instructions name the verbs, not scripts",
+      "source": "docs/platform-redesign/operations-and-boundaries-2026-11-04.md section 3, stage 5",
+      "assertions": [
+        {
+          "kind": "regex_absent",
+          "says": "the app-chat briefing names no script",
+          "path": "backend/services/chat_context.py",
+          "regex": "restart_app\\.sh|backend_call\\.py"
+        },
+        {
+          "kind": "absent",
+          "says": "the replaced restart script is gone",
+          "path": "scripts/restart_app.sh"
+        },
+        {
+          "kind": "regex_present",
+          "says": "the orientation map names the verbs",
+          "path": "backend/services/orientation.py",
+          "regex": "app_control"
+        }
+      ]
+    },
+    {
+      "id": "ops-6a-heavy-commands-capped",
+      "title": "A heavy command runs capped inside its own sandbox view, without the systemd socket",
+      "source": "docs/platform-redesign/operations-and-boundaries-2026-11-04.md section 3, stage 6",
+      "assertions": [
+        {
+          "kind": "command_succeeds",
+          "says": "run_capped stays in the caller's view and keeps the deny list",
+          "command": "cd backend && .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_boundary_prerequisites.py -k capped_run"
+        }
+      ]
+    },
+    {
+      "id": "ops-6b-app-folders-declared",
+      "title": "An app declares the outside folders its work needs",
+      "source": "docs/platform-redesign/operations-and-boundaries-2026-11-04.md section 3, stage 6",
+      "assertions": [
+        {
+          "kind": "command_succeeds",
+          "says": "declared folders are bound for that app only",
+          "command": "cd backend && .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_boundary_prerequisites.py -k \"folders or declares\""
+        }
+      ]
+    },
+    {
+      "id": "ops-6c-kit-as-package",
+      "title": "Every app consumes the UI kit as a package, never by a path into the platform tree",
+      "source": "docs/platform-redesign/operations-and-boundaries-2026-11-04.md section 3, stage 6",
+      "assertions": [
+        {
+          "kind": "regex_absent",
+          "says": "no app aliases the platform's kit source",
+          "path": "projects/*/*/vite.config.*",
+          "regex": "packages/ui/src"
+        },
+        {
+          "kind": "regex_absent",
+          "says": "no app aliases the platform's kit source",
+          "path": "projects/*/vite.config.*",
+          "regex": "packages/ui/src"
+        }
+      ]
+    },
+    {
+      "id": "ops-6d-hand-off",
+      "title": "The development chat hands app work to the app's own agent",
+      "source": "docs/platform-redesign/operations-and-boundaries-2026-11-04.md section 3, stage 6",
+      "assertions": [
+        {
+          "kind": "command_succeeds",
+          "says": "app_agent runs in the app's scope and reports back",
+          "command": "cd backend && .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_boundary_prerequisites.py -k \"handed or hands\""
+        }
+      ]
+    },
+    {
+      "id": "ops-7-the-boundary",
+      "title": "Each scope can write only its own tree: no app folders in the development scope, no systemd socket where it is not needed",
+      "source": "docs/platform-redesign/operations-and-boundaries-2026-11-04.md section 3, stage 7",
+      "assertions": [
+        {
+          "kind": "command_succeeds",
+          "says": "the boundary's own tests pass",
+          "command": "cd backend && .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_scope_boundary.py"
+        }
+      ]
+    },
+    {
+      "id": "ops-8-placement",
+      "title": "One app home, the app table plus the manifest as the only registry, and the app-name gate deleted",
+      "source": "docs/platform-redesign/operations-and-boundaries-2026-11-04.md section 3, stage 8",
+      "assertions": [
+        {
+          "kind": "absent",
+          "says": "the stopgap gate is gone because the boundary makes it redundant",
+          "path": "scripts/check_no_app_names.py"
+        }
+      ]
     }
   ]
 }

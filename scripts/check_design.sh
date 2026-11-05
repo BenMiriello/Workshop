@@ -173,7 +173,7 @@ EMOJI = re.compile("[" "\U0001F000-\U0001FAFF" "\U0001F1E6-\U0001F1FF" "]")
 #
 # Single-quoted strings are deliberately NOT scanned. Prose is full of
 # apostrophes, so a naive single-quote matcher reads "can't show — built so the
-# loudest birds don't dominate" as a string literal running from `can'` to
+# loudest rows don't dominate" as a string literal running from `can'` to
 # `don'`, and reports a comment as copy. Double quotes and backticks are what
 # this codebase writes copy in anyway.
 #

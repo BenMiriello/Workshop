@@ -99,7 +99,7 @@ fi
 
 # FIRST-INSTALL MIGRATION. Before markers existed these entries lived loose in
 # the crontab. Appending the block without absorbing them would leave two copies
-# of every schedule, so the commute ticks and the frontend watchdog would each
+# of every schedule, so an app's ticks and the frontend watchdog would each
 # fire twice a cycle -- the exact opposite of what installing this is for.
 #
 # An unmarked line is absorbed when it is unmistakably ours: it invokes a path

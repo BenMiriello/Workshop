@@ -1,5 +1,18 @@
 {
-  "_comment": "Steps of the plan that have NOT landed. An entry here means the step is known not to be done. It is never a pass and it never makes the absolute run green: `python3 scripts/check_plan_landed.py` with no arguments still exits 1 while any pin remains. A pin buys exactly one thing, which is that a reviewer does not reject a worker for debt the worker inherited (`--quiet`). A pinned step that starts passing is a failure (PIN STALE). A pinned step whose `blocked_on_check` command SUCCEEDS is a failure (UNBLOCKED AND UNSTARTED) even under --quiet, because that is the exact condition that cost 2026-08-29 to 2026-09-01: the plan named a blocker, the blocker cleared, nobody re-ran it, and three sessions treated a stale sentence as a live constraint. Adding an entry grows this file, which check_ratchets_not_loosened.py reads as a loosened ratchet and rejects inside a review.",
-  "_measured": "2026-09-01. Every step of section 7 has landed; this file is empty and must stay that way. A new entry here is a NEW admission of debt and check_ratchets_not_loosened.py reads it as a loosened ratchet.",
-  "not_yet": {}
+ "_comment": "Steps of the plan that have NOT landed. An entry here means the step is known not to be done. It is never a pass and it never makes the absolute run green: `python3 scripts/check_plan_landed.py` with no arguments still exits 1 while any pin remains. A pin buys exactly one thing, which is that a reviewer does not reject a worker for debt the worker inherited (`--quiet`). A pinned step that starts passing is a failure (PIN STALE). A pinned step whose `blocked_on_check` command SUCCEEDS is a failure (UNBLOCKED AND UNSTARTED) even under --quiet, because that is the exact condition that cost 2026-08-29 to 2026-09-01: the plan named a blocker, the blocker cleared, nobody re-ran it, and three sessions treated a stale sentence as a live constraint. Adding an entry grows this file, which check_ratchets_not_loosened.py reads as a loosened ratchet and rejects inside a review.",
+ "_measured": "2026-09-01. Every step of section 7 has landed; this file is empty and must stay that way. A new entry here is a NEW admission of debt and check_ratchets_not_loosened.py reads it as a loosened ratchet.",
+ "not_yet": {
+  "ops-7-the-boundary": {
+   "pinned": "2026-11-04",
+   "because": "Waits on ops-6c (the kit as a package): hiding app folders before then would break every runner app's build."
+  },
+  "ops-8-placement": {
+   "pinned": "2026-11-04",
+   "because": "Waits on stage 7: the gate is deleted only once the boundary makes it redundant."
+  },
+  "ops-6c-kit-as-package": {
+   "pinned": "2026-11-04",
+   "because": "Not built: four runner apps compile the kit from a relative path into the platform tree, and moving them needs a published kit package and edits in app repos that hold other sessions' uncommitted work."
+  }
+ }
 }

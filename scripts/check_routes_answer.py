@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -76,7 +77,7 @@ from pathlib import Path
 
 _WORKSHOP = Path(__file__).resolve().parents[1]
 _BACKEND = _WORKSHOP / "backend"
-_DEFAULT_BASE = "http://127.0.0.1:8000"
+_DEFAULT_BASE = f"http://127.0.0.1:{os.environ.get('WORKSHOP_BACKEND_PORT', '8000')}"
 
 # Reached-and-answered. Anything else in 5xx is the failure this looks for.
 _OK_CEILING = 500
@@ -112,15 +113,20 @@ def _mint_session() -> tuple[str, object]:
     """A real session for the data owner, revoked in `finally` by the caller.
 
     The probe has to be authenticated or every route answers 401 and the check
-    proves nothing. Owner 6 is the app user that holds the real data (the
-    `app-user-id-vs-linux-uid` note); a synthetic user would have no threads and
-    the parameterised routes would all go unprobed.
+    proves nothing. The operator is the app user that holds the real data; a
+    synthetic user would have no threads and the parameterised routes would all
+    go unprobed. Looked up, never hardcoded: the id differs per installation.
     """
     sys.path.insert(0, str(_BACKEND))
     from services import auth_store  # noqa: E402
 
+    oid = auth_store.operator_id()
+    if oid is None:
+        print("check_routes_answer: this installation has no operator account",
+              file=sys.stderr)
+        raise SystemExit(2)
     return auth_store.create_session(
-        6, user_agent="check_routes_answer (revoked at exit)", ttl_days=1), auth_store
+        oid, user_agent="check_routes_answer (revoked at exit)", ttl_days=1), auth_store
 
 
 def _get(base: str, path: str, token: str, timeout: float) -> tuple[int, bytes]:

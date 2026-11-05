@@ -3,8 +3,8 @@
 #
 #   bash scripts/shoot.sh /memory                     first declared viewport
 #   bash scripts/shoot.sh /memory 1440 900            an explicit one
-#   bash scripts/shoot.sh /apps/birds/files 390 800 scratch/files.png
-#   bash scripts/shoot.sh --app projects/notes-app /  some other app tree
+#   bash scripts/shoot.sh /apps/<slug>/files 390 800 scratch/files.png
+#   bash scripts/shoot.sh --app projects/<slug> /  some other app tree
 #   bash scripts/shoot.sh --setup                     bootstrap only
 #   bash scripts/shoot.sh --config                    print the resolved config
 #

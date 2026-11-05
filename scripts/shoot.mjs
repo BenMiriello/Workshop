@@ -92,7 +92,9 @@ if (auth.mode === "header" && auth.name && auth.value) {
   ctxOptions.httpCredentials = { username: auth.username, password: auth.password || "" };
 }
 
-const browser = await launcher.launch({ args: ["--no-sandbox"] });
+// No GPU: a headless screenshot never needs one, and on a host whose GPU
+// process cannot start, Chromium dies the moment a page opens.
+const browser = await launcher.launch({ args: ["--no-sandbox", "--disable-gpu", "--use-gl=disabled"] });
 const ctx = await browser.newContext(ctxOptions);
 if (auth.mode === "cookie" && auth.name && auth.value) {
   await ctx.addCookies([{ name: auth.name, value: auth.value, url: cfg.origin }]);

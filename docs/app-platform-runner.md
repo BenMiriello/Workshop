@@ -9,7 +9,7 @@ and importable/fresh. It generalizes the single-process `LocalRunner` from
 and is designed local-now, remote-later: the manifest is the contract a future
 `RemoteRunner` (containers) reads unchanged.
 
-Test case: **gengui** (a Bun `core` API + a Vite `frontend` + a Python
+Test case: **<app>** (a Bun `core` API + a Vite `frontend` + a Python
 `inference-worker`, plus Postgres/Redis/FalkorDB) — the exact "multiple servers as
 one app" shape this targets.
 
@@ -40,6 +40,7 @@ Lives in the project dir. Absent ⇒ auto-detected (a `deploy.config.yaml` with
       "port_env": "PORT",            // env var the service reads for its port (default PORT)
       "<slug>": "/<app>",           // optional http readiness path; else a TCP connect counts
       "expose": true,                // the primary UI surface (reflected as the app URL)
+      "opens": {"web": "#open={url}&n={n}"},  // optional, an exposed service that opens web pages (below)
       "enabled": true,
       "depends_on": ["core"],        // start order + auto-injected CORE_URL
       "env": { "VITE_API_URL": "${core.url}", "DB_PORT": "5434" }  // ${svc.url}/${svc.port} resolve to peers
@@ -58,6 +59,86 @@ also gets `WORKSHOP_APP_SLUG`, `WORKSHOP_SERVICE_NAME`, and `WORKSHOP_PROXY_BASE
 
 Env is **scoped** (allowlist + PORT, like `local_runner`): no platform secret leaks
 into a deployed app. The manifest `env` supplies the non-secret config a service needs.
+
+### `opens.web`: an app that opens web pages
+
+A web link in any chat opens in a new window, unless the operator picks an app
+for web links in Settings > Chat. Only an app that declares it can be picked:
+`opens.web` on an exposed service is a suffix for that service's screen
+(`/apps/<slug>/ui/<service>`), in which `{url}` is the page (encoded) and the
+optional `{n}` a number that differs on every click, so following the same link
+twice opens it twice. Read by `backend/services/web_links.py`. Links to
+Workshop pages always open in place, with no declaration.
+
+`"native_pages": true` beside `web` says the app shows web pages only inside the
+Workshop's native app (its page views). In any other browser a link then opens
+in a new window, so picking such an app never leaves a link going nowhere.
+
+### The `chat` block: an app's own chat
+
+An app declares what its chat in scope `app:<slug>` is. Read by
+`backend/services/app_chat.py` on every turn; every key is optional, and an app
+without the block keeps the platform's default chat.
+
+```jsonc
+"chat": {
+  "persona": "chat/persona.md",                // file in the app dir, the scope persona (L2)
+  "mcp": {"service": "api", "path": "/mcp"},   // one of this manifest's services; path defaults to /mcp
+  "model": "<model id or tier>"                // the scope's declared default
+}
+```
+
+- **persona**: read each time a prompt is assembled, so editing it needs no
+  restart. It sits where every scope persona sits: under the platform kernel
+  and orientation, above the operator's own instructions for the scope. A path
+  that leaves the app's tree is ignored.
+- **mcp**: attached to every chat in the scope as an HTTP MCP server at
+  `http://127.0.0.1:<port><path>`, the port being the one the service runs on
+  now (the proxy's own lookup), else its pinned `port`. Every tool it lists is
+  allowed (`mcp__<slug>__*`), on top of the workshop toolkit, web and subagent
+  tools every app chat gets. A service with no port means that turn runs
+  without the server, logged.
+- **model**: rung 4 of `services/model_resolution` (scope declared). A thread
+  pin or an explicit pick still wins, and a model nobody can reach right now is
+  skipped with a named reason. A local model qualifies for agentic turns: a
+  provider that declares `cli_harness` runs the same `claude -p` turn with the
+  CLI redirected at its server (`LocalHttpProvider.cli_env`).
+
+**An app's chat is not its build chat.** `project:<slug>` holds the
+conversations in which an agent edits the app's source; `app:<slug>` holds the
+app's own assistant. Both are keyed to the same app row, so "the app's
+conversations" (`/api/apps/{id}/chats`) is both kinds, and nothing inside the
+app may read it. An app shows its chat by framing `/embed/chat/app:<slug>`,
+which lists, files and opens `app:<slug>` conversations only, links "see all" to
+`/chats?scope=app:<slug>`, and shows an empty state rather than another scope
+when the app declares no chat.
+
+Any Workshop page, an app's screen included, can also have a chat open BESIDE it
+(the Chat button). What an app can add to that (its page context, its own page
+tools, a Discuss action, `chat.about`, `chat.options` and `chat.follow` for other chats given its
+tools) is the contract in [`chat-beside-a-page.md`](chat-beside-a-page.md).
+
+The framed chat posts versioned messages to the app framing it, to that page's
+own origin only (`frontend/src/components/chat/embedSignals.ts` is the
+reference):
+
+- `{v: 1, type: "workshop/v1/chatTurn", running}`: on load and whenever a turn
+  starts or ends.
+- `{v: 1, type: "workshop/v1/activity"}`: the operator is using the chat, at most
+  every 2 s.
+- `{v: 1, type: "workshop/v1/chatThread", threadId}`: the conversation the chat
+  is on, on load and whenever it becomes a different one, including when the
+  first message of a new chat creates it. A host that shows its chats at its own
+  addresses (`?chats=<base>`) replaces `<base>/new` with `<base>/<threadId>` on
+  it, so a reload reopens that chat instead of starting another.
+- `{v: 1, type: "workshop/v1/open", id, path, service, inner}`: a link in the chat
+  to one of the app's own screens (`/apps/<slug>/ui/<service>/...`) was clicked.
+  `inner` is the address inside the app after `<service>/` (`#/library?show=12`,
+  `notes/3?x=1`, or `""`), and `path` is the whole Workshop address. To show it in
+  place, navigate there and reply to the frame at once with
+  `{v: 1, type: "workshop/v1/opened", id}` (to `event.source`, at
+  `event.origin`). With no reply within 600 ms the chat opens `path` in the top
+  window, as it does for any other Workshop link.
 
 ## Viewing a running app over the tailnet
 
@@ -84,14 +165,19 @@ overlay run).
    **The app must be base-aware:** it serves correctly only if its assets use
    `WORKSHOP_PROXY_BASE` (a web service can pass `--base $WORKSHOP_PROXY_BASE` to Vite)
    AND its client router uses that base (e.g. `basepath: import.meta.env.BASE_URL`).
-   Done that way, the SPA renders fully (verified on gengui). **Limit:** WebSockets
-   (Vite HMR) do not traverse the HTTP proxy — edits need a manual reload, not hot.
+   Done that way, the SPA renders fully (verified on <app>). **WebSockets** traverse
+   the proxy too: an upgrade on the same path (`routes/base_apps_ws.py`) is relayed to
+   the same service at the same full path and query, with the same operator gate plus
+   an Origin check, and with subprotocols, text/binary frames and close codes carried
+   both ways. The public edge relays the upgrade on both prefixes an app is framed at
+   (`/base-apps/run/...` and `/api/base-apps/...`), and the Vite dev origin carries it
+   under `/api`.
 3. **Dedicated origin** (for an app you can't make base-aware, or want HMR): give the
    service its own tailnet HTTPS origin. Operator-run (the platform is sandboxed from
    `tailscale serve`):
    ```bash
-   tailscale serve --bg --https=8448 http://127.0.0.1:<frontend-port>
-   # then open https://<host>:8448/  — full app at base=/, its own /api proxy, HMR
+   tailscale serve --bg --https=<https-port> http://127.0.0.1:<frontend-port>
+   # then open https://<host>:<https-port>/  — full app at base=/, its own /api proxy, HMR
    ```
    Look up `<frontend-port>` in the App panel or `GET /base-apps/ports`.
 
@@ -165,7 +251,7 @@ It also detects a scaffold project that *shadows* a built-in app (e.g. a `commut
 project whose real code is in the monorepo) and says so, instead of the agent concluding
 "nothing exists". Re-sent on resumed turns too, since the session never re-reads it.
 
-## gengui status (2026-06-15)
+## <app> status (2026-06-15)
 
 - **frontend** (Vite/Bun): **runs reliably** via the platform — `bun install` then
   `vite` on an app-window port, healthy. This is the surface to view.

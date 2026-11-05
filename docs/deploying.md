@@ -110,6 +110,9 @@ bash scripts/restart_backend.sh --deferred                  # if backend/ change
 bash scripts/build_workshop_public.sh                       # if frontend/ changed
 ```
 
+Pulling a long way forward? [UPGRADING.md](../UPGRADING.md) lists the changes an
+older install does not pick up by itself.
+
 `--deferred` waits for any in-flight agent turn to finish before restarting, so
 an update cannot cut off a reply mid-stream. It refuses outright (exit 2) if a
 turn is running and you did not ask it to wait.
@@ -126,10 +129,11 @@ Absent, each of these turns one feature off and leaves the rest running.
   with no supervision.
 - **gh** — pull requests and issue trackers.
 - **cloudflared** — the public hostname.
-- **ffmpeg** — birds audio.
-- **voice** — `pip install -r backend/requirements-voice.txt` plus model files
-  under `.runtime/voice/models/`. The packages alone are not enough; the models
-  are large and are not pip-installable.
+- **ffmpeg** — decoding recorded audio that is not WAV.
+- **speech** — the packages are in `requirements.txt`; the models (about 1 GB)
+  are fetched on first use, or ahead of time with `bash scripts/setup_speech.sh`.
+  `bash scripts/setup_speech.sh --gpu` also builds the environment speech uses to
+  borrow an idle GPU. Settings are listed in `backend/services/speech/engine.py`.
 
 ## Things that will bite you
 

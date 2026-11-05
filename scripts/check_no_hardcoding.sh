@@ -195,7 +195,9 @@ _HOME_FORMS+='|expanduser\([[:space:]]*["'"'"']~/'
 #   /home/user, /Users/user   the documented placeholder in test fixtures,
 #                         the same role @example.com plays for probe_mail
 #   @WORKSHOP_ROOT@       the substitution token in generated unit files
+#   /Users/Shared         macOS's folder common to every account, not a home
 _HOME_ALLOWED='@WORKSHOP_ROOT@'
+_HOME_ALLOWED+='|/Users/Shared/'
 _HOME_ALLOWED+='|(~|\$\{?HOME\}?)/\.(claude|config|local|cache|ssh|gitconfig|nvm|cloudflared)'
 _HOME_ALLOWED+='|Path\.home\(\)[[:space:]]*/[[:space:]]*["'"'"'](\.claude|\.config|\.local|\.cache|\.ssh|\.gitconfig|workshop)'
 _HOME_ALLOWED+='|(~|\$\{?HOME\}?)/workshop'

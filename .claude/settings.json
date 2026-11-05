@@ -7,8 +7,19 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/done.sh\" --stop-hook",
-            "timeout": 60,
-            "statusMessage": "checking the completion gate"
+            "timeout": 30,
+            "statusMessage": "starting the completion check in the background"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/done.sh\" --prompt-hook",
+            "timeout": 10
           }
         ]
       }

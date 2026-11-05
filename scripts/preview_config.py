@@ -164,6 +164,18 @@ def _expand(value):
     return value
 
 
+def _load_instance_env() -> None:
+    """This installation's preview origin and user live in instance.env, which
+    the services load and a plain shell does not. A value already set wins."""
+    try:
+        from db import script_env
+        text = (script_env.config_dir() / "instance.env").read_text()
+    except (ImportError, OSError, UnicodeDecodeError):
+        return
+    for key, value in script_env.parse_env_file(text).items():
+        os.environ.setdefault(key, value)
+
+
 def _read_declared(app_dir: Path) -> tuple[dict, str]:
     """The app's own preview declaration, and where it came from."""
     try:
@@ -267,6 +279,7 @@ def resolve(app_dir: Path) -> dict:
     """The normalized preview config for one app tree."""
     app_dir = app_dir.resolve()
     declared, source = _read_declared(app_dir)
+    _load_instance_env()
     declared = _expand(declared if isinstance(declared, dict) else {})
     row = _detect_stack(app_dir)
     merged = dict(BASE_DEFAULTS)
