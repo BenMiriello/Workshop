@@ -17,10 +17,12 @@ import { describe, expect, it } from "vitest";
 import { SHARED } from "@workshop/app-build";
 import {
   builtImportMap,
+  commonjsNames,
   devImportMap,
   sharedEntryFile,
   sharedEntryName,
   sharedInputs,
+  starReexports,
 } from "../../plugins/importmap";
 
 const FRONTEND = path.resolve(__dirname, "../..");
@@ -97,5 +99,23 @@ describe("the shared entries the build has to emit", () => {
       const source = fs.readFileSync(path.join(FRONTEND, sharedEntryFile(spec)), "utf8");
       expect(source, spec).toContain('import "./guard"');
     }
+  });
+});
+
+describe("a built shared entry exports names an app can import", () => {
+  // In a build both of these fail SILENTLY: the bundle builds, the dev server
+  // works, and every app bundle fails in the built origin on its first named
+  // import ("does not provide an export named ...").
+  it("keeps each entry's export names through the build", () => {
+    const config = fs.readFileSync(path.join(FRONTEND, "vite.config.ts"), "utf8");
+    expect(config).toMatch(/preserveEntrySignatures:\s*"exports-only"/);
+  });
+
+  it("reads a CommonJS package's names from the package", () => {
+    expect(starReexports('import "./guard";\nexport * from "react";\n')).toEqual(["react"]);
+    const from = path.join(FRONTEND, sharedEntryFile("react"));
+    expect(commonjsNames("react", from)).toEqual(expect.arrayContaining(["useState", "createElement"]));
+    expect(commonjsNames("react/jsx-runtime", from)).toEqual(expect.arrayContaining(["jsx", "jsxs", "Fragment"]));
+    expect(commonjsNames("react", from)).not.toContain("default");
   });
 });

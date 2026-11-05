@@ -189,6 +189,52 @@ export function pageOf<T>(rows: readonly T[], shown: number): ListPage<T> {
   };
 }
 
+// ---- Search ---------------------------------------------------------------
+
+/** One search result: the chat, and for a match inside its messages, the
+ *  passage the words were found in. */
+export type SearchRow<T> = { thread: T; snippet: string | null };
+
+/**
+ * The server's ranked hits, joined to the rows this list actually holds and cut
+ * into two groups: chats whose TITLE matched, then chats where the words only
+ * turn up in the messages. The server's order is kept inside each group.
+ *
+ * A hit with no row here is dropped, which is how an app's own Chats tab narrows
+ * a search that ran over every chat: the join IS the filter.
+ */
+export function searchGroups<T extends { id: string }>(
+  threads: readonly T[],
+  hits: readonly { id: string; where: string; snippet?: string | null }[],
+): ChatGroup<SearchRow<T>>[] {
+  const byId = new Map(threads.map((t) => [t.id, t] as const));
+  const title: SearchRow<T>[] = [];
+  const content: SearchRow<T>[] = [];
+  for (const h of hits) {
+    const thread = byId.get(h.id);
+    if (!thread) continue;
+    (h.where === "title" ? title : content).push({ thread, snippet: h.snippet ?? null });
+  }
+  const groups: ChatGroup<SearchRow<T>>[] = [];
+  if (title.length) groups.push({ key: "title", label: "Titles", items: title });
+  if (content.length) groups.push({ key: "content", label: "Messages", items: content });
+  return groups;
+}
+
+/** The first `n` rows of a grouped list, still grouped. A page of a search is
+ *  cut across its groups the same way a page of the date list is. */
+export function firstOfGroups<T>(groups: readonly ChatGroup<T>[], n: number): ChatGroup<T>[] {
+  const out: ChatGroup<T>[] = [];
+  let left = Math.max(0, n);
+  for (const g of groups) {
+    if (left <= 0) break;
+    const items = g.items.slice(0, left);
+    left -= items.length;
+    out.push({ ...g, items });
+  }
+  return out;
+}
+
 // ---- The row's tags --------------------------------------------------------
 
 export type ChatTagKind = "scope" | "role" | "branch";

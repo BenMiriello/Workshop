@@ -23,14 +23,11 @@ export type PlaceMemory = {
 export type ShellMemory = {
   places: Record<string, PlaceMemory>;
   /**
-   * The mobile page toolbar's manual override, and the key it was set against.
-   *
-   * "A manual toggle holds until you change place or page" (operator, session
-   * 2), so the override is stored WITH the key it applies to rather than as a
-   * bare boolean plus a reset somewhere else. When the key moves on, the
-   * override is simply no longer the one being asked about.
+   * The mobile page toolbar's remembered state. One preference for the whole
+   * shell, like the desktop column: closing it stays closed across pages and
+   * apps until it is opened again. Absent means "never touched it".
    */
-  tabs?: { key: string; open: boolean };
+  tabs?: { open: boolean };
 };
 
 export const EMPTY_MEMORY: ShellMemory = { places: {} };
@@ -95,12 +92,9 @@ export function openPath(memory: ShellMemory, place: ShellPlace): string {
 }
 
 function belongsTo(place: ShellPlace, path: string): boolean {
-  return place.pages.some((p) => (p.end ? path === p.to : path === p.to || path.startsWith(p.to + "/")));
-}
-
-/** The key the mobile toolbar override is scoped to: place plus page. */
-export function tabsKey(placeId: string, pageId: string | null): string {
-  return `${placeId}:${pageId ?? ""}`;
+  const onRow = place.pages.some((p) =>
+    p.end ? path === p.to : path === p.to || path.startsWith(p.to + "/"));
+  return onRow || (place.records ?? []).some((r) => path === r || path.startsWith(r + "/"));
 }
 
 /**
@@ -108,15 +102,14 @@ export function tabsKey(placeId: string, pageId: string | null): string {
  *
  * DEFAULT IS OPEN, EVERYWHERE. An earlier build defaulted it closed on an
  * app's own page and the operator reversed that outright: never default to
- * closed.
+ * closed. Once toggled, the choice holds across every place and page.
  */
-export function tabsOpen(memory: ShellMemory, key: string): boolean {
-  if (memory.tabs && memory.tabs.key === key) return memory.tabs.open;
-  return true;
+export function tabsOpen(memory: ShellMemory): boolean {
+  return memory.tabs?.open ?? true;
 }
 
-export function toggleTabs(memory: ShellMemory, key: string): ShellMemory {
-  return { ...memory, tabs: { key, open: !tabsOpen(memory, key) } };
+export function toggleTabs(memory: ShellMemory): ShellMemory {
+  return { ...memory, tabs: { open: !tabsOpen(memory) } };
 }
 
 // ---- persistence ----------------------------------------------------------
@@ -134,7 +127,7 @@ export function parseMemory(raw: string | null): ShellMemory {
     const tabs = (parsed as ShellMemory).tabs;
     return {
       places: places && typeof places === "object" ? places : {},
-      ...(tabs && typeof tabs === "object" && typeof tabs.key === "string" ? { tabs } : {}),
+      ...(tabs && typeof tabs === "object" && typeof tabs.open === "boolean" ? { tabs: { open: tabs.open } } : {}),
     };
   } catch {
     return EMPTY_MEMORY;

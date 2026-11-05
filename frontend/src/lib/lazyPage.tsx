@@ -97,10 +97,27 @@ function isChunkLoadError(error: Error): boolean {
     .test(error.message);
 }
 
+/** Hand a crash to the backend. Fire and forget: reporting must never be the
+ *  second thing that goes wrong on a page that is already broken. */
+function reportClientError(error: Error, componentStack: string): void {
+  fetch("/api/client-errors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: window.location.pathname,
+      name: error.name,
+      message: error.message.slice(0, 4000),
+      stack: (error.stack ?? "").slice(0, 4000),
+      component_stack: componentStack.slice(0, 4000),
+      user_agent: navigator.userAgent.slice(0, 500),
+    }),
+  }).catch(() => {});
+}
+
 /** What a failed route shows. Split out from the boundary so it can be tested:
  *  React does not call `getDerivedStateFromError` during server rendering, so a
  *  boundary cannot be exercised by renderToString. */
-export function RouteError({ error }: { error: Error }) {
+export function RouteError({ error, onRetry }: { error: Error; onRetry?: () => void }) {
   const stale = isChunkLoadError(error);
   return (
     <StateBlock
@@ -109,47 +126,56 @@ export function RouteError({ error }: { error: Error }) {
       hint={
         stale
           ? "The app was updated while this tab was open, so part of it is out of date. Reload to get the current version."
-          : "Reloading may clear it. If it keeps happening, the detail is in this tab's browser console."
+          : "Try again, or reload the app."
       }
       action={
-        <Button
-          variant="primary"
-          onClick={() => { clearChunkReloadGuard(); window.location.reload(); }}
-        >
-          Reload
-        </Button>
+        <>
+          {onRetry && !stale && <Button onClick={onRetry}>Try again</Button>}
+          <Button
+            variant="primary"
+            onClick={() => { clearChunkReloadGuard(); window.location.reload(); }}
+          >
+            Reload
+          </Button>
+        </>
       }
     />
   );
 }
 
 /** Catches a render or chunk-load failure under a route and says what happened.
- *  A class because React offers no hook equivalent. */
+ *  A class because React offers no hook equivalent.
+ *
+ *  A failure belongs to the route it happened on. `resetKey` is that route:
+ *  when it changes the boundary lets go of the error, so leaving a broken page
+ *  does not carry its error screen to every page after it. */
 export class RouteBoundary extends Component<
-  { children: ReactNode },
+  { children: ReactNode; resetKey?: string },
   { error: Error | null }
 > {
   state: { error: Error | null } = { error: null };
+
+  componentDidUpdate(prev: { resetKey?: string }) {
+    if (this.state.error && prev.resetKey !== this.props.resetKey) {
+      this.setState({ error: null });
+    }
+  }
 
   static getDerivedStateFromError(error: Error) {
     return { error };
   }
 
   // The route-level message is deliberately non-technical (see RouteError), so
-  // the raw error and its component stack have to land SOMEWHERE or a bug like
-  // this is undiagnosable forever except by guessing from the visible text.
-  // This is that somewhere: the full detail, plus which route it was, to the
-  // console every time.
+  // the raw error and its component stack are sent to the backend, which keeps
+  // them where they can be read. Nobody is sent to a console to find them.
   componentDidCatch(error: Error, info: { componentStack?: string | null }) {
-    console.error(
-      `[route:${window.location.pathname}] ${error.name}: ${error.message}`,
-      error,
-      info.componentStack,
-    );
+    reportClientError(error, info.componentStack ?? "");
   }
 
   render() {
     const { error } = this.state;
-    return error ? <RouteError error={error} /> : this.props.children;
+    return error
+      ? <RouteError error={error} onRetry={() => this.setState({ error: null })} />
+      : this.props.children;
   }
 }

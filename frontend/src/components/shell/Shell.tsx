@@ -8,25 +8,50 @@
 // The two width modifiers from the old shell are unchanged and still the ONLY
 // per-route width logic there is. Do not reintroduce a route-by-route list.
 
-import type { ReactNode } from "react";
-import { useLocation } from "react-router-dom";
+import { useEffect, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { OverlayHost } from "@workshop/ui";
 import { DirectoryProvider } from "./directory";
+import { CopyRelay } from "./copies/CopyRelay";
+import { AppFrameHost, AppFramesProvider } from "./frames/AppFrames";
+import { useQuietAutoplay } from "./frames/autoplaySound";
+import { BesideDrawer } from "./beside/BesideDrawer";
+import { useBeside } from "./beside/besideStore";
+import { FindBar } from "./find/FindBar";
+import { FindProvider } from "./find/FindProvider";
+import { OverlayAppHost } from "./overlays/OverlayAppHost";
 import { Dock } from "./Dock";
 import { MobileBars } from "./MobileBars";
 import { PageColumn } from "./PageColumn";
 import { ShellTrail } from "./ShellTrail";
+import { SpeechLayer } from "./speech/SpeechLayer";
+import { openPlaces } from "../../lib/speech/openPlaces";
+import { currentPage } from "../../lib/speech/placeName";
+import { useMediaQuery } from "../../lib/useMediaQuery";
+import { useVisualViewport } from "../../lib/useVisualViewport";
 import { isOpenChat } from "./places";
 import { TakeoverProvider } from "./takeover";
 import { useShell } from "./useShell";
+import "./shell.css";
+
+export type WorkshopShellWindow = Window & { workshopNavigate?: (path: string) => void };
 
 // The takeover provider sits ABOVE the frame because `useShell` reads it: an
 // open document force-collapses the phone's page toolbar (mockup spec section
 // 6), and that read has to happen in the same render as the declaration.
 export function Shell({ children }: { children: ReactNode }) {
+  useQuietAutoplay();
   return (
     <TakeoverProvider>
-      <ShellFrame>{children}</ShellFrame>
+      <CopyRelay />
+      <FindProvider>
+        <AppFramesProvider>
+          <ShellFrame>{children}</ShellFrame>
+          {/* Dictation and read aloud for every page and every framed app.
+              It draws its own fixed overlays in the document body. */}
+          <SpeechLayer />
+        </AppFramesProvider>
+      </FindProvider>
     </TakeoverProvider>
   );
 }
@@ -34,6 +59,19 @@ export function Shell({ children }: { children: ReactNode }) {
 function ShellFrame({ children }: { children: ReactNode }) {
   const shell = useShell();
   const { pathname } = useLocation();
+  const { driving } = useBeside();
+  const navigate = useNavigate();
+  // A same-origin frame inside the shell (a chat an app embeds) goes to a
+  // Workshop page through this, in place, rather than reloading the shell.
+  useEffect(() => {
+    const w = window as WorkshopShellWindow;
+    w.workshopNavigate = (path: string) => navigate(path);
+    return () => { delete w.workshopNavigate; };
+  }, [navigate]);
+  // Dictation names where its words go by the place they were said in.
+  useEffect(() => currentPage.set(shell.place.name), [shell.place.name]);
+  // And "open <name>" reaches the places the dock lists.
+  useEffect(() => openPlaces.set(shell.places), [shell.places]);
 
   // AN OPEN CONVERSATION IS AN OPEN CONVERSATION WHEREVER IT IS ADDRESSED FROM.
   // The rule is `isOpenChat` in places.ts, which matches the global focused
@@ -44,7 +82,19 @@ function ShellFrame({ children }: { children: ReactNode }) {
   const chatFull = isOpenChat(pathname);
   const appFull =
     !chatFull && (/^\/apps\/[^/]/.test(pathname) || /^\/projects\/[^/]+\/run/.test(pathname));
-  const widthClass = chatFull ? " ws-app--chatfull" : appFull ? " ws-app--appfull" : "";
+  // A framed app screen (/apps/<slug>/ui/<service>) also drops <main>'s padding
+  // and page scroll, so the frame fills everything below the chrome edge to edge.
+  const framed = appFull && /^\/apps\/[^/]+\/ui\/[^/]+/.test(pathname);
+  const widthClass = chatFull
+    ? " ws-app--chatfull"
+    : appFull ? " ws-app--appfull" + (framed ? " ws-app--appframe" : "") : "";
+  // EVERY PAGE ON A PHONE IS PINNED like a focused chat: the shell is the
+  // visible window, so the keyboard shrinks it from below instead of iOS
+  // scrolling the whole layout up and the toolbar off the top. It used to be
+  // only with the chat beside the page, which left any other field (a note, an
+  // app's own drawer) to push the bars off the screen.
+  const pinned = useMediaQuery("(max-width: 899px)");
+  useVisualViewport(pinned);
 
   return (
     // The directory takeover spans the page column AND the content, because a
@@ -52,11 +102,11 @@ function ShellFrame({ children }: { children: ReactNode }) {
     // drawn in the column. One provider above both is what lets the shell stay
     // ignorant of what any particular directory contains.
     <DirectoryProvider onNeedColumn={shell.openColumn}>
-      <div className={"ws-root ws-app ws-shell" + widthClass}>
+      <div className={"ws-root ws-app ws-shell" + widthClass + (pinned ? " ws-app--pinned" : "")}>
         <Dock shell={shell} />
         <div className="ws-shell__stage">
           <MobileBars shell={shell} />
-          <div className="ws-shell__cols">
+          <div className={"ws-shell__cols" + (driving ? " is-driving" : "")}>
             <PageColumn shell={shell} />
             {/* The content region, and the only place an overlay may land.
                 Dialogs portal into the host this renders, so they cover the page
@@ -73,8 +123,18 @@ function ShellFrame({ children }: { children: ReactNode }) {
                   files of whichever agent happened to be mid-task. A warning
                   that is usually showing is not a warning. Do not reintroduce
                   it, in this or any other always-mounted form. */}
-              <main>{children}</main>
+              {/* App frames outlive the route that shows them
+                  (frames/keptFrames.ts), so they are drawn here, beside the
+                  routed page rather than inside it. */}
+              <main>{children}<AppFrameHost /></main>
+              <FindBar />
+              {/* An app opened over this page, in a modal scoped to the
+                  content region like every other dialog. */}
+              <OverlayAppHost />
             </OverlayHost>
+            {/* The chat beside the page: a column at the right, or the lower
+                part of a phone's screen (beside/BesideDrawer). */}
+            <BesideDrawer placeId={shell.place.id} placeName={shell.place.name} />
           </div>
         </div>
       </div>

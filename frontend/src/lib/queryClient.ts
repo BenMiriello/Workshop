@@ -36,7 +36,7 @@ function watchFocusAndVisibility(): void {
   });
 }
 
-/** The app's client. One per document; the provider mounts it in `App.tsx`. */
+/** The app's client. One per document; the provider mounts it in `main.tsx`. */
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

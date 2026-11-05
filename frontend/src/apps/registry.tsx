@@ -25,6 +25,7 @@
 
 import { Suspense } from "react";
 import type { ComponentType, ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 import { RouteBoundary, RouteSkeleton } from "../lib/lazyPage";
 import type { AppModule, AppStatus, CrumbNode } from "./appModule";
 
@@ -186,8 +187,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
  *  renames every content-hashed chunk) left the route blank permanently, with
  *  no message and no way back. See lib/lazyPage. */
 export function AppSuspense({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation();
   return (
-    <RouteBoundary>
+    <RouteBoundary resetKey={pathname}>
       <Suspense fallback={<RouteSkeleton />}>{children}</Suspense>
     </RouteBoundary>
   );

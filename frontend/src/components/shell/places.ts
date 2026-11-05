@@ -69,6 +69,10 @@ export type ShellPlace = {
    *  is the fallback, which is what makes it the root. */
   prefixes: string[];
   pages: ShellPage[];
+  /** Route prefixes of records that live in this place without being a row,
+   *  such as one open conversation. A path under one of these is a place worth
+   *  coming back to, so it is restored like a row is. */
+  records?: string[];
   /** Where this place opens when nothing is remembered about it, when it is
    *  not simply the first page. An app declares this (see `landingFor`); the
    *  platform places do not, because their first row IS their landing. */
@@ -91,7 +95,7 @@ export type ShellPlace = {
  *
  *  `icon` is a DECLARED value and it is optional. Absent, the tile falls back to
  *  a two-letter monogram of the name -- two, because one is ambiguous on this
- *  very instance: Budget and Birds both render "B", which shipped and was
+ *  very instance: two apps with the same first letter both rendered it, which shipped and was
  *  immediately visible. See lib/appIcon. */
 export type AppDescriptor = {
   id: string;
@@ -111,7 +115,20 @@ export type AppDescriptor = {
    *  a row for it above its tabs; one that does not would get a row pointing
    *  at a redirect, which is a row to nowhere. */
   ownScreen?: boolean;
+  /** The screens this app serves (its exposed services), in its order. Each
+   *  is a row above the tabs, at `home/ui/<service>`. */
+  screens?: readonly AppScreenRef[];
 } & Partial<AppTabFacts>;
+
+export type AppScreenRef = { service: string; label: string };
+
+/** A served screen's row label. A lone screen with no label of its own is the
+ *  app itself, so it takes the app's name rather than a service name like
+ *  "web" that the operator never chose. */
+export function screenLabel(app: { name: string }, screen: AppScreenRef, count: number): string {
+  if (screen.label !== screen.service) return screen.label;
+  return count === 1 ? app.name : screen.service;
+}
 
 function matchesPrefix(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(prefix + "/");
@@ -233,6 +250,7 @@ export function buildPlaces(
     prefixes: [],
     Icon: icons.home,
     defaultColumnOpen: true,
+    records: ["/changes", "/runs", "/stores", "/agents"],
     // ADR-008 order: use first, build second, workers third, config last. This
     // is the live SectionNav list with Home swapped for Dashboard.
     //
@@ -249,7 +267,11 @@ export function buildPlaces(
       // No Projects row. Project is not an entity (settled 2026-08-20), the
       // list of things you open is Apps, and section 6 keeps only the rows
       // that are genuinely global: Tickets, Memory, Usage, Roles.
-      { id: "apps", label: "Apps", to: "/apps", Icon: icons.apps },
+      //
+      // `end`: a specific app is never a page of Home, even while the dock
+      // has no tile for it yet (the launcher read in flight on a reload), so
+      // Home never remembers one and its tile never opens an app.
+      { id: "apps", label: "Apps", to: "/apps", Icon: icons.apps, end: true },
       // ROLES, NOT AGENTS. The roster listed markdown files as if they were
       // live entities; four of them had run once between them in six weeks.
       // A thread is the one entity and "agent" is a description of a thread
@@ -278,6 +300,7 @@ export function buildPlaces(
     // the dock stays lit while you are reading one, but it is not a PAGE: the
     // shell gives it the whole screen (see useShell's `fullScreen`).
     prefixes: ["/chats", "/chat"],
+    records: ["/chat"],
     Icon: icons.chats,
     defaultColumnOpen: true,
     pages: [
@@ -306,6 +329,7 @@ export function buildPlaces(
       { id: "account", label: "Account", to: "/settings", Icon: icons.account, end: true },
       { id: "appearance", label: "Appearance", to: "/settings/appearance", Icon: icons.appearance },
       { id: "chat", label: "Chat", to: "/settings/chat", Icon: icons.chats },
+      { id: "speech", label: "Speech", to: "/settings/speech", Icon: icons.speech },
       // Instructions folds into Chat, which is the ninth row and the last of
       // the twelve to go (section 6, "Settings: 12 rows to 9"). Custom
       // instructions are how the assistant behaves in a chat, which is the
@@ -357,6 +381,14 @@ export function buildPlaces(
       ...(app.ownScreen
         ? [{ id: "app", label: app.name, to: app.home, Icon: icons.apps }]
         : []),
+      // And one row per screen it SERVES, also ahead of the tabs: what an app
+      // runs is the first thing in it (app-screens-2026-09-23.md).
+      ...(app.screens ?? []).map((s) => ({
+        id: `ui:${s.service}`,
+        label: screenLabel(app, s, app.screens?.length ?? 0),
+        to: `${app.home}/ui/${s.service}`,
+        Icon: icons.screen ?? icons.apps,
+      })),
       ...tabs.map((t) => ({
         id: t.id,
         label: t.label,

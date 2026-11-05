@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { appIcon, appStatuses } from "../apps/registry";
 import { fetchLauncher } from "../apps/useAppPlaces";
+import { orderBy } from "../components/dashboard/arrange";
+import { useSavedOrder } from "../components/dashboard/useArrange";
 import { queryKeys } from "../lib/queryKeys";
 import { AppGlyph } from "../lib/appIcon";
 import {
@@ -157,7 +159,7 @@ type AgentState =
 // The "Assistant" toggle in an app's Manage panel. Reads the app's manifest
 // (ui.agent_button) and writes it back on change — a view preference, so it
 // commits immediately rather than behind an Edit/Save bar. Optimistic with
-// revert on failure. Apps with no manifest (external, e.g. Wearables) render
+// revert on failure. Apps with no manifest (external ones) render
 // nothing here.
 function AgentButtonSetting({ appId }: { appId: string }) {
   const qc = useQueryClient();
@@ -408,9 +410,10 @@ export default function Apps() {
     staleTime: 0,
     retry: false,
   });
+  const savedOrder = useSavedOrder();
   const launcher: LauncherState =
     launcherQuery.data
-      ? { kind: "loaded", apps: launcherQuery.data.apps, incomplete: launcherQuery.data.incomplete ?? null }
+      ? { kind: "loaded", apps: orderBy(launcherQuery.data.apps, savedOrder, (a) => a.id), incomplete: launcherQuery.data.incomplete ?? null }
       : launcherQuery.isError
         ? { kind: "error", message: String(launcherQuery.error) }
         : { kind: "loading" };

@@ -17,7 +17,7 @@
 // old mechanism by then; they have since moved onto the query layer
 // (`lib/queryClient.ts`) with the same URLs and the same intervals. Nothing in
 // this module knows how often it is called.
-import { shortHttpError } from "@workshop/ui";
+import { getJson as get } from "./http";
 import type { components } from "../api/schema.gen";
 import type { Job } from "./jobs";
 
@@ -29,14 +29,6 @@ export type InboxList = components["schemas"]["InboxList"];
 export type UsageStatus = components["schemas"]["UsageStatus"];
 
 // ---- fetching --------------------------------------------------------------
-
-async function get<T>(url: string): Promise<T> {
-  const r = await fetch(url);
-  if (!r.ok) {
-    throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-  }
-  return (await r.json()) as T;
-}
 
 /** What wants the operator, across every scope. One route, and the same column
  *  a chat's work panel shows -- see backend services/chat_work.needs_you. */

@@ -8,7 +8,7 @@
 // itself cannot be exercised that way; the two pieces it is made of can be, and
 // React calling the static on a client-side throw is React's own contract.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
 import { RouteBoundary, RouteError, RouteSkeleton } from "./lazyPage";
 
@@ -37,6 +37,14 @@ describe("RouteError", () => {
     expect(html).not.toContain("The operation is insecure");
     expect(html).toContain("Reload");
   });
+
+  // The operator's rule (2026-10-13): never send a person to a console or a
+  // terminal to find out what happened.
+  it("never points the person at the console", () => {
+    const html = renderToString(<RouteError error={new Error("boom")} onRetry={() => {}} />);
+    expect(html.toLowerCase()).not.toContain("console");
+    expect(html).toContain("Try again");
+  });
 });
 
 describe("RouteBoundary", () => {
@@ -49,6 +57,27 @@ describe("RouteBoundary", () => {
     const html = renderToString(<RouteBoundary><p>fine</p></RouteBoundary>);
     expect(html).toContain("fine");
     expect(html).not.toContain("This page failed to load");
+  });
+});
+
+describe("RouteBoundary reset", () => {
+  const boundary = (resetKey: string, error: Error | null) => {
+    const b = new RouteBoundary({ children: null, resetKey });
+    b.state = { error };
+    b.setState = vi.fn();
+    return b;
+  };
+
+  it("lets go of an error when the route changes", () => {
+    const b = boundary("/b", new Error("boom"));
+    b.componentDidUpdate({ resetKey: "/a" });
+    expect(b.setState).toHaveBeenCalledWith({ error: null });
+  });
+
+  it("keeps the error while the route is the same", () => {
+    const b = boundary("/a", new Error("boom"));
+    b.componentDidUpdate({ resetKey: "/a" });
+    expect(b.setState).not.toHaveBeenCalled();
   });
 });
 

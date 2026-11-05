@@ -1,4 +1,4 @@
-import { shortHttpError } from "@workshop/ui";
+import { jsonOrFail as j } from "./http";
 // The one ref format, resolved in-app (memory-and-documentation-model-
 // 2026-08-14.md sec 10). A ref names another entity as `workshop:<kind>/...`
 // -- never a file path, never a copyable URL -- and this is the ONLY place the
@@ -31,11 +31,6 @@ export type ResolvedRef = {
   status: string;
   preview?: RefPreview | null;
 };
-
-async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-  return r.json() as Promise<T>;
-}
 
 // `null` for a ref that could not be positively confirmed to still resolve
 // (a deleted note, an unknown ticket, a bad shape) -- the backend REFUSES

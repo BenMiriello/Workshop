@@ -13,18 +13,23 @@
 // and the launcher grid cannot disagree. Whether it has settings comes from the
 // registry, the one frontend file allowed to know an app by id.
 //
+// Above the index: the app catalog (what can be installed, each with on and
+// off) and the shortcuts of the running apps that open over any page.
+//
 // NOTHING HERE NAMES AN APP. The list, the names, the icons and the routes are
 // all data; this file reads it.
 
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  Skeleton, Stack, StateBlock, Table, TableScroll, shortHttpError,
+  SectionLabel, Skeleton, Stack, StateBlock, Table, TableScroll, shortHttpError,
 } from "@workshop/ui";
 
 import type { components } from "../../api/schema.gen";
 import { AppGlyph } from "../../lib/appIcon";
 import { AppSuspense, appSettingsPanel } from "../../apps/registry";
+import { AppCatalog } from "./AppCatalog";
+import { OverlayShortcuts } from "./OverlayShortcuts";
 
 type AppRecord = components["schemas"]["App"];
 type LauncherCard = components["schemas"]["LauncherCard"];
@@ -39,7 +44,7 @@ function opensAt(card: LauncherCard | undefined): { to: string; external: boolea
   return null;
 }
 
-export default function InstalledApps() {
+function InstalledList() {
   const [apps, setApps] = useState<AppRecord[] | null>(null);
   const [cards, setCards] = useState<Record<string, LauncherCard>>({});
   const [err, setErr] = useState<string | null>(null);
@@ -149,6 +154,17 @@ export default function InstalledApps() {
           })}
         </AppSuspense>
       )}
+    </Stack>
+  );
+}
+
+export default function InstalledApps() {
+  return (
+    <Stack>
+      <AppCatalog />
+      <OverlayShortcuts />
+      <SectionLabel>Installed</SectionLabel>
+      <InstalledList />
     </Stack>
   );
 }

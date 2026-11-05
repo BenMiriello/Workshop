@@ -1,7 +1,8 @@
 // The dock: primary navigation, 60px, desktop only.
 //
 // Home, All chats, a hairline, then one tile per installed app, then the
-// avatar pinned to the bottom. There is no Settings tile (the avatar owns
+// avatar pinned to the bottom. The apps show as many as fit; "+" and the avatar
+// are always on screen (`.ws-rail__apps`). There is no Settings tile (the avatar owns
 // account and settings) and there is no Search or Activity tile yet, because
 // neither has a backend to answer it. See
 // docs/platform-redesign/navigation-shell-2026-08-20.md sections 8.3 and 8.4:
@@ -16,15 +17,12 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Plus } from "lucide-react";
-import { AppGlyph, monogram } from "../../lib/appIcon";
-import { useAuth } from "../../auth/AuthProvider";
+import { AppGlyph } from "../../lib/appIcon";
+import { BesideButton } from "./beside/BesideButton";
+import { AccountMenu } from "./AccountMenu";
 import type { Shell } from "./useShell";
 import type { ShellPlace } from "./places";
 import type { components } from "../../api/schema.gen";
-
-/** The signed-in person's initials. The same two-letter rule an app with no
- *  icon falls back to, so it is literally the same function. */
-const initials = (name: string | null | undefined, email: string) => monogram(name || email || "");
 
 function Tile({ shell, place }: { shell: Shell; place: ShellPlace }) {
   const active = shell.place.id === place.id;
@@ -62,7 +60,6 @@ function Tile({ shell, place }: { shell: Shell; place: ShellPlace }) {
 }
 
 export function Dock({ shell }: { shell: Shell }) {
-  const { user } = useAuth();
   const nav = useNavigate();
   const [creating, setCreating] = useState(false);
 
@@ -96,7 +93,6 @@ export function Dock({ shell }: { shell: Shell }) {
   // remove. It still highlights, because it is still a place.
   const fixed = shell.places.filter((p) => p.kind === "home" || p.kind === "chats");
   const apps = shell.places.filter((p) => p.kind === "app");
-  const inSettings = shell.place.kind === "settings";
 
   return (
     <nav className="ws-rail" aria-label="Places">
@@ -104,9 +100,13 @@ export function Dock({ shell }: { shell: Shell }) {
         <Tile key={p.id} shell={shell} place={p} />
       ))}
       {apps.length > 0 && <span className="ws-rail__rule" aria-hidden />}
-      {apps.map((p) => (
-        <Tile key={p.id} shell={shell} place={p} />
-      ))}
+      {apps.length > 0 && (
+        <div className="ws-rail__apps">
+          {apps.map((p) => (
+            <Tile key={p.id} shell={shell} place={p} />
+          ))}
+        </div>
+      )}
       {/* Start a new project: create it and open a chat in it. An action, not a
           place, so it is a button and never highlights. The rail lists a fixed
           set of apps today, so the new project is reached through that chat
@@ -122,15 +122,8 @@ export function Dock({ shell }: { shell: Shell }) {
         <Plus size={18} aria-hidden />
       </button>
       <span className="ws-rail__spacer" aria-hidden />
-      <Link
-        to="/settings"
-        className={"ws-rail__avatar" + (inSettings ? " is-active" : "")}
-        aria-current={inSettings ? "page" : undefined}
-        aria-label="Account and settings"
-        title="Account and settings"
-      >
-        {initials(user?.name, user?.email ?? "")}
-      </Link>
+      <BesideButton variant="rail" />
+      <AccountMenu shell={shell} variant="rail" />
     </nav>
   );
 }

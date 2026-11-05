@@ -314,3 +314,28 @@ describe("the Settings place", () => {
     expect(settings.pages.length).toBeGreaterThan(1);
   });
 });
+
+describe("an app's served screens (app-screens-2026-09-23.md)", () => {
+  const served = buildPlaces([
+    { id: "shop", name: "Shop", home: "/apps/shop",
+      screens: [{ service: "store", label: "store" }, { service: "admin", label: "Admin console" }] },
+    { id: "single", name: "Single", home: "/apps/single",
+      screens: [{ service: "web", label: "web" }] },
+  ], icons);
+  const shop = served.find((p) => p.id === "app:shop") as ShellPlace;
+  const single = served.find((p) => p.id === "app:single") as ShellPlace;
+
+  it("lists every screen first, in the app's order, inside the app", () => {
+    expect(shop.pages.slice(0, 2).map((p) => [p.id, p.to])).toEqual([
+      ["ui:store", "/apps/shop/ui/store"],
+      ["ui:admin", "/apps/shop/ui/admin"],
+    ]);
+    expect(placeFor(served, "/apps/shop/ui/admin/orders/3").id).toBe("app:shop");
+  });
+
+  it("names a lone unlabelled screen after the app, and keeps a declared label", () => {
+    expect(single.pages[0].label).toBe("Single");
+    expect(shop.pages[0].label).toBe("store");
+    expect(shop.pages[1].label).toBe("Admin console");
+  });
+});

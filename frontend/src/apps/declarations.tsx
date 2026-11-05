@@ -15,7 +15,9 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { Route } from "react-router-dom";
 import type { ComponentType, ReactNode } from "react";
+import { HttpError, isTransientNetworkError } from "@workshop/ui";
 import type { components } from "../api/schema.gen";
+import { cappedBackoff, pauseForRetry } from "../lib/retryPause";
 import { AppRouteHost } from "./AppRouteHost";
 import type { AppDeclaration } from "./contract";
 import { forgetLoadedApps } from "./loader";
@@ -191,28 +193,79 @@ export function canActivate(app: AppDeclaration): boolean {
 
 type Payload = components["schemas"]["AppContributions"];
 
-async function read(): Promise<DeclarationState> {
+/** What one read learned. `unanswered` is a restart window or a dropped
+ *  connection, which says nothing about which apps exist; `signedOut` is the
+ *  boot read racing the session check (main.tsx), to be asked again once there
+ *  is a session. */
+type ReadResult =
+  | { kind: "answered"; state: DeclarationState }
+  | { kind: "unanswered"; error: string }
+  | { kind: "signedOut" };
+
+async function read(): Promise<ReadResult> {
   let payload: Payload;
   try {
     const r = await fetch(CONTRIBUTIONS);
+    if (r.status === 401) return { kind: "signedOut" };
     if (!r.ok) {
-      return { apps: [], ready: true, error: `${CONTRIBUTIONS} answered ${r.status}` };
+      const error = `${CONTRIBUTIONS} answered ${r.status}`;
+      if (isTransientNetworkError(new HttpError(r.status, error))) return { kind: "unanswered", error };
+      return { kind: "answered", state: { apps: [], ready: true, error } };
     }
     payload = (await r.json()) as Payload;
   } catch {
-    return { apps: [], ready: true, error: `${CONTRIBUTIONS} could not be reached` };
+    return { kind: "unanswered", error: `${CONTRIBUTIONS} could not be reached` };
   }
   const declared = Array.isArray(payload?.apps) ? payload.apps : [];
   const usable = declared.filter((app) => app && app.id && canActivate(app));
   const apps = await Promise.all(usable.map(toModule));
-  return { apps, ready: true, error: null };
+  return { kind: "answered", state: { apps, ready: true, error: null } };
+}
+
+/** How long the FIRST read holds the routed area for a backend that is not
+ *  answering, before the shell renders without the apps. Long enough to cover
+ *  a restart; the read carries on in the background either way. */
+const FIRST_READ_HOLD_MS = 10_000;
+
+let generation = 0;
+
+/** Read until the server answers. A failure to answer is never published as an
+ *  empty catalog over one already on screen, and is never the session's final
+ *  word: the read keeps asking (lib/retryPause) and publishes when it lands.
+ *  Settles once there is something to render, so a caller is not held for the
+ *  length of an outage. A newer load supersedes this one. */
+function load(): Promise<void> {
+  const gen = ++generation;
+  const started = Date.now();
+  return new Promise<void>((settle) => {
+    void (async () => {
+      for (let attempt = 0; gen === generation; attempt++) {
+        const r = await read();
+        if (gen !== generation) break;
+        if (r.kind === "answered") {
+          publish(r.state);
+          break;
+        }
+        if (r.kind === "signedOut") {
+          pending = null;
+          break;
+        }
+        if (!state.ready && Date.now() - started >= FIRST_READ_HOLD_MS) {
+          publish({ apps: [], ready: true, error: r.error });
+        }
+        if (state.ready) settle();
+        await pauseForRetry(cappedBackoff(attempt));
+      }
+      settle();
+    })();
+  });
 }
 
 /** Read the declarations once per session. Idempotent and safe to call from
  *  every render. */
 export function ensureDeclarations(): Promise<void> {
   if (pending) return pending;
-  pending = read().then(publish);
+  pending = load();
   return pending;
 }
 
@@ -220,7 +273,7 @@ export function ensureDeclarations(): Promise<void> {
  *  failed to load with a hash this tab was holding. */
 export function refreshDeclarations(): Promise<void> {
   forgetLoadedApps();
-  pending = read().then(publish);
+  pending = load();
   return pending;
 }
 

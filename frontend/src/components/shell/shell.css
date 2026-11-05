@@ -1,0 +1,28 @@
+/* PINNED (Shell.tsx `ws-app--pinned`): on a phone the shell is the visible
+   window, sized from visualViewport (lib/useVisualViewport) like a focused
+   chat, so the keyboard shortens it from below. Without this iOS slides the
+   whole layout up to reveal a focused field, the bars go off the top, and a
+   field low on the page (a note's body) stays under the keyboard. <main> and
+   anything bounded inside it shrink with the shell, so the bars stay on screen
+   and the editor's own scroller is the one that moves. */
+@media (max-width: 899px) {
+  .ws-app.ws-app--pinned {
+    position: fixed;
+    left: 0; right: 0; width: 100%; max-width: none;
+    top: var(--app-top, 0px);
+    height: var(--app-vh, 100dvh);
+    max-height: var(--app-vh, 100dvh);
+    margin: 0;
+    /* CLIP, NOT HIDDEN. `overflow: hidden` still makes a box a scroller that
+       script and the browser can move, and iOS does move it: revealing the
+       caret after a tap scrolls every scrollable ancestor, so the shell itself
+       slid up inside its own box and took the bars off the top. Measured on
+       iOS WebKit 2026-10-25: 190px with the shell pinned, on top of the
+       document scroll. `clip` is not a scroller, so the reveal has to scroll
+       the box that is meant to scroll (the editor, <main>) instead. */
+    overflow: clip;
+  }
+  /* A framed app fills <main> and must not be slid either: a field focused
+     inside the frame reveals itself through this document's scrollers too. */
+  .ws-app.ws-app--pinned.ws-app--appframe .ws-app__body > main { overflow: clip; }
+}

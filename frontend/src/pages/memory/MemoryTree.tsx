@@ -122,7 +122,7 @@ export type MemorySource = {
  * One source, with the two whole-tree reads cached in it.
  *
  * `selectedPlace` is the scope key of the currently shown place (e.g.
- * "workshop", "development", "project:birds"). The root level shows system/,
+ * "workshop", "development", "project:widgets"). The root level shows system/,
  * user/, and the notes filed to exactly that scope. Documents are appended for
  * the workshop place only.
  *

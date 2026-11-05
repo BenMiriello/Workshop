@@ -10,7 +10,6 @@ import {
   rememberPath,
   setColumnOpen,
   settleMotion,
-  tabsKey,
   tabsOpen,
   toggleColumn,
   toggleTabs,
@@ -26,6 +25,7 @@ const places = buildPlaces(
   icons,
 );
 const home = places.find((p) => p.id === "home") as ShellPlace;
+const chats = places.find((p) => p.id === "chats") as ShellPlace;
 const gizmo = places.find((p) => p.id === "app:gizmo") as ShellPlace;
 
 describe("columnOpen", () => {
@@ -81,11 +81,26 @@ describe("openPath", () => {
     expect(openPath(m, gizmo)).toBe("/apps/gizmo/locations");
   });
 
+  it("never opens Home on an app recorded before the app had a tile", () => {
+    const m = rememberPath(EMPTY_MEMORY, home, "/apps/elsewhere/ui/web");
+    expect(openPath(m, home)).toBe("/");
+  });
+
   it("ignores a remembered path that no longer belongs to the place", () => {
     // A page that was removed, or an app whose routes moved. Falling through to
     // the landing page is right; navigating to a 404 is not.
     const m: typeof EMPTY_MEMORY = { places: { home: { path: "/a-page-that-was-deleted" } } };
     expect(openPath(m, home)).toBe("/");
+  });
+
+  it("returns to the conversation that was open in All chats", () => {
+    const m = rememberPath(EMPTY_MEMORY, chats, "/chat/general");
+    expect(openPath(m, chats)).toBe("/chat/general");
+  });
+
+  it("returns to a record page that is not a row of Home", () => {
+    const m = rememberPath(EMPTY_MEMORY, home, "/runs/abc");
+    expect(openPath(m, home)).toBe("/runs/abc");
   });
 
   it("does not rewrite memory when the path has not moved", () => {
@@ -95,24 +110,19 @@ describe("openPath", () => {
 });
 
 describe("the mobile page toolbar", () => {
-  it("defaults to open everywhere, including an app's own page", () => {
-    expect(tabsOpen(EMPTY_MEMORY, tabsKey("app:gizmo", "app"))).toBe(true);
-    expect(tabsOpen(EMPTY_MEMORY, tabsKey("home", "dashboard"))).toBe(true);
+  it("defaults to open", () => {
+    expect(tabsOpen(EMPTY_MEMORY)).toBe(true);
   });
 
-  it("holds a manual close until the page changes", () => {
-    const key = tabsKey("home", "dashboard");
-    const closed = toggleTabs(EMPTY_MEMORY, key);
-    expect(tabsOpen(closed, key)).toBe(false);
-    // Same place, different page: back to the default.
-    expect(tabsOpen(closed, tabsKey("home", "tickets"))).toBe(true);
-    // Different place entirely: back to the default.
-    expect(tabsOpen(closed, tabsKey("app:gizmo", "app"))).toBe(true);
+  it("holds a manual close across pages and places", () => {
+    const closed = toggleTabs(EMPTY_MEMORY);
+    expect(tabsOpen(closed)).toBe(false);
+    const moved = rememberPath(closed, home, "/tickets");
+    expect(tabsOpen(moved)).toBe(false);
   });
 
-  it("re-opens on a second toggle of the same key", () => {
-    const key = tabsKey("home", "dashboard");
-    expect(tabsOpen(toggleTabs(toggleTabs(EMPTY_MEMORY, key), key), key)).toBe(true);
+  it("re-opens on a second toggle", () => {
+    expect(tabsOpen(toggleTabs(toggleTabs(EMPTY_MEMORY)))).toBe(true);
   });
 });
 
@@ -125,12 +135,12 @@ describe("parseMemory", () => {
   });
 
   it("round-trips what it wrote", () => {
-    const m = toggleTabs(rememberPath(EMPTY_MEMORY, home, "/usage"), tabsKey("home", "usage"));
+    const m = toggleTabs(rememberPath(EMPTY_MEMORY, home, "/usage"));
     expect(parseMemory(JSON.stringify(m))).toEqual(m);
   });
 
-  it("drops a tabs override with no key rather than trusting it", () => {
-    expect(parseMemory('{"places":{},"tabs":{"open":false}}').tabs).toBeUndefined();
+  it("drops a tabs override with no boolean rather than trusting it", () => {
+    expect(parseMemory('{"places":{},"tabs":{"open":"no"}}').tabs).toBeUndefined();
   });
 });
 

@@ -1,0 +1,24 @@
+/* An app opened over the page: its frame fills the modal body. */
+.ws-overlay-app__frame {
+  display: block;
+  width: 100%;
+  height: min(70vh, 640px);
+  border: 0;
+  background: var(--bg);
+}
+
+/* The Mac app's paste panel (pages/EmbedOverlay.tsx): the app fills it. */
+.ws-panel-overlay {
+  height: 100vh;
+  background: var(--bg);
+}
+.ws-panel-overlay__frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--bg);
+}
+.ws-panel-overlay__state {
+  margin: var(--space-6);
+}

@@ -37,7 +37,7 @@ const entry: DirectoryEntry = {
   subject_label: "Add a Tools settings page",
   subject_status: "doing",
   pid: 4118779,
-  hostname: "bgmdebian",
+  hostname: "example-host",
   last_beat_at: "2026-08-23T11:59:48Z",
   expires_at: "2026-08-23T12:29:48Z",
   lease,

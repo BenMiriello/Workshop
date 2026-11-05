@@ -1,7 +1,11 @@
 import { Link } from "react-router-dom";
-import { useAppPlaces } from "../../apps/useAppPlaces";
+import { Button, cx } from "@workshop/ui";
+import { useAppPlaces, type AppPlace } from "../../apps/useAppPlaces";
 import { AppGlyph } from "../../lib/appIcon";
+import { orderBy } from "./arrange";
 import { DashboardCard } from "./DashboardCard";
+import { useArrange } from "./useArrange";
+import { useTileDrag } from "./useTileDrag";
 
 // THE APPS, and they are the DOCK'S apps.
 //
@@ -21,23 +25,56 @@ import { DashboardCard } from "./DashboardCard";
 // feature: paging a list of a dozen tiles hides half of them behind a control
 // nobody asked for. The card scrolls like the other three now.
 
+// ARRANGING. "Arrange" turns the tiles into handles: drag one onto another to
+// move it, and the order is kept on the server so it is the same everywhere.
+
+function Tile({ app }: { app: AppPlace }) {
+  return (
+    <>
+      <span className="ws-dashapps__glyph">
+        <AppGlyph icon={app.icon} name={app.name} size={22} textSize="var(--fs-base)" />
+      </span>
+      <span className="ws-dashapps__name">{app.name}</span>
+    </>
+  );
+}
+
 export function AppsCard() {
-  const apps = useAppPlaces();
+  const arrange = useArrange();
+  const saved = orderBy(useAppPlaces(), arrange.order, (a) => a.id);
+  const { listRef, order, dragging, settling, props, style } = useTileDrag(
+    saved.map((a) => a.id),
+    undefined,
+    (ids) => void arrange.reorder(ids),
+  );
+  const byId = new Map(saved.map((a) => [a.id, a]));
+  const apps = order.flatMap((id) => byId.get(id) ?? []);
+
+  const action = apps.length > 0 && (
+    <Button size="sm" variant="ghost" onClick={arrange.arranging ? arrange.stop : arrange.start}>
+      {arrange.arranging ? "Done" : "Arrange"}
+    </Button>
+  );
 
   return (
-    <DashboardCard label="Apps" link={{ to: "/apps", label: "all →" }}>
+    <DashboardCard label="Apps" action={action} link={{ to: "/apps", label: "all →" }}>
       {apps.length === 0 ? (
         <p className="ws-dashcard__empty">No apps installed.</p>
       ) : (
-        <ul className="ws-dashapps">
-          {apps.map((a) => (
+        <ul ref={listRef} className={cx("ws-dashapps", arrange.arranging && "ws-dashapps--arranging")}>
+          {apps.map((a, i) => (
             <li key={a.id}>
-              <Link className="ws-dashapps__tile" to={a.home} title={a.name}>
-                <span className="ws-dashapps__glyph">
-                  <AppGlyph icon={a.icon} name={a.name} size={22} textSize="var(--fs-base)" />
-                </span>
-                <span className="ws-dashapps__name">{a.name}</span>
-              </Link>
+              {arrange.arranging ? (
+                <button type="button" title={a.name} {...props(a.id, i)} style={style(a.id)}
+                  className={cx("ws-dashapps__tile",
+                    dragging === a.id && "is-dragging", dragging === a.id && settling && "is-settling")}>
+                  <Tile app={a} />
+                </button>
+              ) : (
+                <Link className="ws-dashapps__tile" to={a.home} title={a.name}>
+                  <Tile app={a} />
+                </Link>
+              )}
             </li>
           ))}
         </ul>

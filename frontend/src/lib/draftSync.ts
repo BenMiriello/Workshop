@@ -45,131 +45,14 @@
 // durable cross-device copy and the arbiter.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { HttpError, withTransientRetry } from "@workshop/ui";
-import { userStorage } from "./storage";
+import {
+  ACTIVE_MS, BROADCAST_DEBOUNCE_MS, SERVER_DEBOUNCE_MS, cleanSettings,
+  channel, CLIENT_ID, lsRead, lsWrite, serverClear, serverGet, serverPut, subs,
+  type DraftAttachment, type DraftPayload, type DraftSettings, type DraftValue, type Sub,
+} from "./draftWire";
+import { joinAppend } from "./speech/chatTargetsText";
 
-/** A file already uploaded and sitting in the composer. */
-export type DraftAttachment = { id: string; name: string; kind: "image" | "pdf" | "text" };
-
-// A DRAFT IS EVERYTHING IN THE COMPOSER, text and files together. They are one
-// record because they are one thing to the operator: what they have written and
-// not sent. Keeping the files in React state while the text was persisted meant
-// a reload brought back a message about a screenshot that was no longer
-// attached, and left the uploaded file orphaned on the server.
-type DraftPayload = {
-  key: string; text: string; ts: number; client_id: string;
-  attachments?: DraftAttachment[];
-};
-
-const LS_PREFIX = "ws-chat-draft:";
-const ACTIVE_MS = 3000; // "actively editing" window after a keystroke
-const BROADCAST_DEBOUNCE_MS = 120;
-const SERVER_DEBOUNCE_MS = 600;
-
-// Stable per-tab id — one per page load is enough to suppress self-echo.
-const CLIENT_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
-
-const channel: BroadcastChannel | null =
-  typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("ws-chat-drafts") : null;
-
-// Per-key subscribers — each mounted chat surface for that key.
-type Sub = (p: DraftPayload) => void;
-const subs = new Map<string, Set<Sub>>();
-
-function emitLocal(p: DraftPayload) {
-  subs.get(p.key)?.forEach((fn) => fn(p));
-}
-
-if (channel) {
-  channel.onmessage = (e) => {
-    const p = e.data as DraftPayload;
-    if (p && p.key) emitLocal(p);
-  };
-}
-
-type DraftValue = { text: string; ts: number; attachments: DraftAttachment[] };
-
-function lsRead(key: string): DraftValue {
-  try {
-    const raw = userStorage.local.getItem(LS_PREFIX + key);
-    if (raw) {
-      const v = JSON.parse(raw);
-      if (typeof v?.text === "string") {
-        return {
-          text: v.text,
-          ts: Number(v.ts) || 0,
-          attachments: Array.isArray(v.attachments) ? v.attachments : [],
-        };
-      }
-    }
-  } catch { /* ignore */ }
-  return { text: "", ts: 0, attachments: [] };
-}
-
-function lsWrite(key: string, text: string, ts: number, attachments: DraftAttachment[] = []) {
-  // A CLEAR IS STORED, NOT DELETED. The timestamp is what makes "this was
-  // cleared at T" comparable with a write from before T; removing the row
-  // threw that away, so a late write looked like the first thing anyone had
-  // said about this key and won.
-  userStorage.local.setItem(LS_PREFIX + key, JSON.stringify({ text, ts, attachments }));
-}
-
-async function serverGet(key: string): Promise<DraftValue | null> {
-  try {
-    const r = await fetch(`/api/chat/drafts/${encodeURIComponent(key)}`);
-    if (!r.ok) return null;
-    const v = await r.json();
-    return {
-      text: typeof v?.text === "string" ? v.text : "",
-      ts: Number(v?.ts) || 0,
-      attachments: Array.isArray(v?.attachments) ? v.attachments : [],
-    };
-  } catch { return null; }
-}
-
-function putDraft(p: DraftPayload): Promise<Response> {
-  return fetch(`/api/chat/drafts/${encodeURIComponent(p.key)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text: p.text, ts: p.ts, client_id: p.client_id,
-      attachments: p.attachments || [],
-    }),
-    keepalive: true,
-  }).then((r) => {
-    // Typed so the retry below can tell a restart window from a real refusal.
-    // A keystroke write never looks at this; a CLEAR does.
-    if (!r.ok) throw new HttpError(r.status, `draft PUT ${r.status}`);
-    return r;
-  });
-}
-
-function serverPut(p: DraftPayload) {
-  try {
-    void putDraft(p).catch(() => {});
-  } catch { /* offline — localStorage already holds it */ }
-}
-
-/** THE CLEAR IS THE ONE DRAFT WRITE NOTHING SUPERSEDES.
- *
- *  Every other write here is fire-and-forget on purpose: a keystroke write that
- *  is lost is replaced by the next keystroke 600ms later, so retrying it would
- *  be spending requests on a value that is already stale. A CLEAR has no next
- *  write. If it is dropped, the server keeps holding text the operator sent, at
- *  a timestamp older than this browser's tombstone -- invisible here, because
- *  localStorage remembers the clear, and visible on ANY OTHER SURFACE, which
- *  adopts it as the newest thing anyone said about that composer.
- *
- *  That is the standing report: "I often will send a message in chat then the
- *  text remains in the input even after it's submitted even days later." The
- *  server's own clear-on-accept covers the send that lands; this covers the one
- *  that does not, and the restart window in which neither request gets through.
- *  Same schedule as every other retry in the app. */
-function serverClear(p: DraftPayload) {
-  try {
-    void withTransientRetry(() => putDraft(p)).catch(() => {});
-  } catch { /* offline — the local tombstone still stands on this device */ }
-}
+export type { DraftAttachment, DraftSettings } from "./draftWire";
 
 /** Drop-in replacement for useState<string>("") for a chat composer.
  *
@@ -184,10 +67,21 @@ export function useDraft(key: string): {
   /** Files attached to this composer, restored with its text. */
   attachments: DraftAttachment[];
   setAttachments: (a: DraftAttachment[]) => void;
+  /** What was picked before a message existed. Meaningful for a blank chat only;
+   *  a chat that has a thread keeps these on the thread. */
+  settings: DraftSettings;
+  /** Merge a pick in. A blank value removes the field: it was never chosen. */
+  setSettings: (patch: DraftSettings) => void;
   clearForSend: () => void;
+  /** Move what is in the box to another key and empty this one, for a chat that
+   *  changes scope under the cursor. Settings stay behind: model lists differ. */
+  carryTo: (toKey: string) => void;
 } {
   const [draft, setDraftState] = useState<string>(() => lsRead(key).text);
   const [attachments, setAttachmentsState] = useState<DraftAttachment[]>(() => lsRead(key).attachments);
+  const [settings, setSettingsState] = useState<DraftSettings>(() => lsRead(key).settings);
+  const settingsRef = useRef<DraftSettings>(settings);
+  settingsRef.current = settings;
   const attachmentsRef = useRef<DraftAttachment[]>(attachments);
   attachmentsRef.current = attachments;
   // `setAttachments` writes the CURRENT text alongside the new file list, and it
@@ -220,7 +114,8 @@ export function useDraft(key: string): {
     tsRef.current = v.ts;
     setDraftState(v.text);
     setAttachmentsState(v.attachments);
-    lsWrite(forKey, v.text, v.ts, v.attachments);
+    setSettingsState(v.settings);
+    lsWrite(forKey, v.text, v.ts, v.attachments, v.settings);
   }, []);
 
   const editing = () => Date.now() - lastEditRef.current < ACTIVE_MS;
@@ -233,6 +128,7 @@ export function useDraft(key: string): {
     lastEditRef.current = 0;
     setDraftState(local.text);
     setAttachmentsState(local.attachments);
+    setSettingsState(local.settings);
     let cancelled = false;
     void serverGet(key).then((s) => {
       if (cancelled || !s) return;
@@ -244,10 +140,27 @@ export function useDraft(key: string): {
   // Live updates: same-browser via BroadcastChannel, cross-device on focus.
   useEffect(() => {
     const sub: Sub = (p) => {
+      // Words added from outside (dictation into this chat while its composer
+      // was elsewhere) go on the end of whatever is in the box, typing or not.
+      // Every copy computes the same text from the same base, so only a box
+      // that held something else publishes its result.
+      if (p.append !== undefined) {
+        if (keyRef.current !== p.key) return;
+        const next = joinAppend(draftRef.current, p.append);
+        clearedAtRef.current.delete(p.key);
+        if (next !== p.text) { setDraftRef.current(next); return; }
+        tsRef.current = Math.max(tsRef.current, p.ts);
+        draftRef.current = next;
+        setDraftState(next);
+        return;
+      }
       if (p.client_id === CLIENT_ID) return; // our own echo
       if (p.ts <= tsRef.current) return;      // not newer
       if (editing()) return;                  // we are typing — keep ours
-      adopt(p.key, { text: p.text, ts: p.ts, attachments: p.attachments || [] });
+      adopt(p.key, {
+        text: p.text, ts: p.ts, attachments: p.attachments || [],
+        settings: cleanSettings(p.settings),
+      });
     };
     let set = subs.get(key);
     if (!set) { set = new Set(); subs.set(key, set); }
@@ -283,22 +196,25 @@ export function useDraft(key: string): {
 
   // ONE WRITE PATH for both halves of a draft, so text and files can never be
   // stored under different keys or at inconsistent times.
-  const write = useCallback((text: string, atts: DraftAttachment[]) => {
+  const write = useCallback((text: string, atts: DraftAttachment[], sets: DraftSettings) => {
     // Captured, so a key change mid-debounce cannot misroute the write.
     const forKey = keyRef.current;
     const ts = Date.now();
     tsRef.current = ts;
     lastEditRef.current = ts;
-    lsWrite(forKey, text, ts, atts); // synchronous — never lose a keystroke on reload
+    lsWrite(forKey, text, ts, atts, sets); // synchronous — never lose a keystroke on reload
     // Typing again is the operator taking this composer back after a send. Only
     // a write WITH CONTENT is that. An empty write also flows through here (the
     // attachment list emptying right after a send is the live case), and letting
     // it delete the tombstone re-opened the exact window the tombstone closes:
     // the next stale adopt restored the sent message to the box.
     if (text || atts.length > 0) clearedAtRef.current.delete(forKey);
+    // A settings-only write is deliberately NOT typing: it leaves the tombstone
+    // alone for the same reason an empty write does. A pick made on a blank chat
+    // after a send must not re-open the window the tombstone closes.
 
     const payload: DraftPayload = {
-      key: forKey, text, ts, client_id: CLIENT_ID, attachments: atts,
+      key: forKey, text, ts, client_id: CLIENT_ID, attachments: atts, settings: sets,
     };
     window.clearTimeout(bcTimer.current);
     bcTimer.current = window.setTimeout(() => {
@@ -316,15 +232,30 @@ export function useDraft(key: string): {
 
   const setDraft = useCallback((v: string) => {
     setDraftState(v);
-    write(v, attachmentsRef.current);
+    // Before the render, so a `setAttachments` in the same tick stores this text.
+    draftRef.current = v;
+    write(v, attachmentsRef.current, settingsRef.current);
   }, [write]);
+  const setDraftRef = useRef(setDraft);
+  setDraftRef.current = setDraft;
 
   /** The composer's files changed: one arrived, or one was removed. Stored with
    *  the text, because they are one thing — what is in the box and not sent. */
   const setAttachments = useCallback((a: DraftAttachment[]) => {
     setAttachmentsState(a);
     attachmentsRef.current = a;
-    write(draftRef.current, a);
+    write(draftRef.current, a, settingsRef.current);
+  }, [write]);
+
+  /** The whole record is last-write-wins, so a device that picks before its read
+   *  of the server returns can overwrite a newer pick made elsewhere. Text has
+   *  always behaved this way; settings accept it for the same reason. */
+  const setSettings = useCallback((patch: DraftSettings) => {
+    const next = cleanSettings({ ...settingsRef.current, ...patch });
+    for (const [k, v] of Object.entries(patch)) if (!v) delete (next as Record<string, string>)[k];
+    settingsRef.current = next;
+    setSettingsState(next);
+    write(draftRef.current, attachmentsRef.current, next);
   }, [write]);
 
   /** The operator hit enter. Empty the box and make sure nothing puts it back.
@@ -345,6 +276,8 @@ export function useDraft(key: string): {
     setDraftState("");
     setAttachmentsState([]);
     attachmentsRef.current = [];
+    setSettingsState({});
+    settingsRef.current = {};
     // The refs are this hook's own snapshot of "what is in the box", and the
     // box just emptied. draftRef is otherwise only reassigned during render,
     // so a callback running in the SAME tick as the send (files.take() does)
@@ -353,7 +286,7 @@ export function useDraft(key: string): {
     // sent message reappeared in the composer days later: 2026-08-14, the
     // new-chat composer showing the previous new chat's opening message.
     draftRef.current = "";
-    lsWrite(forKey, "", ts, []);
+    lsWrite(forKey, "", ts, [], {});
     window.clearTimeout(bcTimer.current);
     window.clearTimeout(srvTimer.current);
     pendingSrv.current = null;
@@ -367,5 +300,18 @@ export function useDraft(key: string): {
     serverClear({ key: forKey, text: "", ts, client_id: CLIENT_ID, attachments: [] });
   }, []);
 
-  return { draft, setDraft, attachments, setAttachments, clearForSend };
+  const carryTo = useCallback((toKey: string) => {
+    const text = draftRef.current;
+    const atts = attachmentsRef.current;
+    if (!text && atts.length === 0) return;
+    const moved: DraftPayload = {
+      key: toKey, text, ts: Date.now(), client_id: CLIENT_ID, attachments: atts,
+    };
+    lsWrite(toKey, text, moved.ts, atts, {});
+    channel?.postMessage(moved);
+    serverPut(moved);
+    clearForSend();
+  }, [clearForSend]);
+
+  return { draft, setDraft, attachments, setAttachments, settings, setSettings, clearForSend, carryTo };
 }

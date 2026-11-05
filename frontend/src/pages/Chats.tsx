@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router-dom";
-import { ChevronLeft, Plus } from "lucide-react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { ChevronLeft, LayoutGrid, List, Plus, Search } from "lucide-react";
 import {
   Button,
   ConfirmDialog,
@@ -10,16 +10,23 @@ import {
   Notice,
   PageHeader,
   SectionLabel,
+  Segmented,
   Skeleton,
   StateBlock,
 } from "@workshop/ui";
 import { chatApi, threadAgent, type ThreadSummary } from "../lib/chat";
 import ChatRow from "../components/chat/ChatRow";
+import ChatCard from "../components/chat/ChatCard";
+import { useChatListView } from "../components/chat/useChatListView";
 import { queryKeys } from "../lib/queryKeys";
 import { newChatHref } from "../lib/chatSelection";
 import { scopeLabel } from "../components/chat/chatScope";
 import { appChatPath } from "../components/shell/places";
-import { PAGE_SIZE, groupByDate, groupByField, pageOf, spansScopes, visibleThreads } from "./chatList";
+import {
+  PAGE_SIZE, firstOfGroups, groupByDate, groupByField, pageOf, searchGroups, spansScopes, visibleThreads,
+  type ChatGroup, type SearchRow,
+} from "./chatList";
+import { useChatSearch } from "../components/chat/useChatSearch";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
 // its own object with an optional context binding (general / project / app /
@@ -160,8 +167,13 @@ export type ChatsScope = { id: string; slug: string; name: string; scope?: strin
  * you to do this". Three previous rounds changed how the copy RENDERED. The
  * copy was the bug.
  */
-export function ChatsView({ app = null, header = true, eyebrow, sub }: {
+export function ChatsView({
+  app = null, scope = null, header = true, title, eyebrow, sub, onOpenThread, onNewChat,
+}: {
   app?: ChatsScope | null;
+  /** One context key, when this list is one chat scope's conversations
+   *  (`/chats?scope=`, where an app's own embedded chat sends "see all"). */
+  scope?: string | null;
   /** False where a page header is already on screen above this (an app tab). */
   header?: boolean;
   /** Drawn INSIDE the header this view owns, by a caller that would otherwise
@@ -173,8 +185,14 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
    *  subtitle and its list, where /chats has none. Compared side by side at
    *  1440px on 2026-09-01, that band and the missing tab strip were the only
    *  things left that made the two pages look like different pages. */
+  /** The header's title. Absent: the scope's name, or Chats. */
+  title?: string;
   eyebrow?: string;
   sub?: ReactNode;
+  /** Where a picked chat and New chat go, for a mount that is not the shell's
+   *  own route (a framed list hands them to the page framing it). */
+  onOpenThread?: (t: ThreadSummary) => void;
+  onNewChat?: () => void;
 } = {}) {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -186,6 +204,11 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
   // How many rows are mounted. Grows a page per press of Show more, and NEVER
   // on its own.
   const [shown, setShown] = useState(PAGE_SIZE);
+  const [view, setView] = useChatListView();
+  // The search: title matches, then message matches (`useChatSearch`). An app's
+  // tab searches every chat and its join to this list narrows the answer.
+  const [query, setQuery] = useState("");
+  const search = useChatSearch(query, app ? null : scope);
 
   // The list live-updates by polling the shared TanStack client the rest of the
   // app uses. Short interval because liveness (the running dot, a new turn, a new
@@ -197,7 +220,7 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
   // rather than filtering this one, and both render the same row.
   const endpoint = app ? `/api/apps/${app.id}/chats` : "/api/chat/threads";
   const q = useQuery({
-    queryKey: app ? queryKeys.apps.chats(app.id) : queryKeys.chat.threads(null),
+    queryKey: app ? queryKeys.apps.chats(app.id) : queryKeys.chat.threads(scope),
     queryFn: app
       ? async (): Promise<ThreadSummary[]> => {
           const r = await fetch(endpoint);
@@ -205,7 +228,7 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
           const d = await r.json();
           return (d.chats ?? []) as ThreadSummary[];
         }
-      : () => chatApi.listThreads(),
+      : () => chatApi.listThreads(scope ?? undefined),
     refetchInterval: 4000,
     staleTime: 0,
     retry: false,
@@ -245,12 +268,12 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
   // because the client cannot resolve it -- the right answer is `app:<slug>` for
   // an installed app and the root scope itself for a root-scoped one, and only
   // the server knows which this is. Falls back to the slug for an older payload.
-  const newChat = () => nav(newChatHref(app ? (app.scope || app.slug) : "general"));
+  const newChat = onNewChat ?? (() => nav(newChatHref(app ? (app.scope || app.slug) : scope || "general")));
 
   // THE SCOPE TAG, ONLY WHERE IT SAYS SOMETHING. Never on an app's own tab (it
   // would be the page title once per row), and on the global list only when the
   // rows in hand actually differ. See `spansScopes`.
-  const showScope = useMemo(() => !app && spansScopes(threads ?? []), [app, threads]);
+  const showScope = useMemo(() => !app && !scope && spansScopes(threads ?? []), [app, scope, threads]);
 
   // The list, newest first. The rule lives in ./chatList so this page holds no
   // ordering logic of its own.
@@ -260,15 +283,31 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
   // between an app and the global list -- and never on a poll: a refetch
   // returns a new array each tick, and resetting on that would snap the reader
   // back to the first page every four seconds.
-  const listId = app?.id ?? null;
-  useEffect(() => { setShown(PAGE_SIZE); }, [listId]);
+  const listId = app?.id ?? scope;
+  useEffect(() => { setShown(PAGE_SIZE); }, [listId, search.active, search.hits]);
 
+  const found = useMemo(
+    () => (search.active && search.hits ? searchGroups(rows, search.hits) : null),
+    [search.active, search.hits, rows],
+  );
+  const foundCount = found?.reduce((n, g) => n + g.items.length, 0) ?? 0;
   const { visible, total, more, next } = pageOf(rows, shown);
-  // The mounted page, cut into its date headings. Grouping happens AFTER the
-  // slice so a heading always matches the rows actually on screen: bucketing
-  // the whole list first would print "Earlier this month 84" over the four of
-  // those eighty-four that have loaded.
-  const groups = useMemo(() => groupByDate(visible), [visible]);
+  // The mounted page, cut into its headings: dates, or a search's Titles and
+  // Messages. Grouping happens AFTER the slice so a heading always matches the
+  // rows actually on screen: bucketing the whole list first would print
+  // "Earlier this month 84" over the four of those eighty-four that have loaded.
+  const groups: ChatGroup<SearchRow<ThreadSummary>>[] = useMemo(
+    () => (found
+      ? firstOfGroups(found, shown)
+      : search.active ? []
+      : groupByDate(visible).map((g) => ({
+          ...g, items: g.items.map((thread) => ({ thread, snippet: null })),
+        }))),
+    [found, shown, visible, search.active],
+  );
+  const page = found
+    ? { shown: Math.min(shown, foundCount), total: foundCount, more: shown < foundCount, next: shown + PAGE_SIZE }
+    : { shown: visible.length, total, more, next };
 
   // Each running dot's position among the running dots, top to bottom. It feeds
   // the 1/6 pulse offset, and is read only at the instant a dot goes live (see
@@ -276,9 +315,9 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
   const runningOrdinals = useMemo(() => {
     const m = new Map<string, number>();
     let n = 0;
-    for (const t of visible) if (t.running) m.set(t.id, n++);
+    for (const g of groups) for (const { thread: t } of g.items) if (t.running) m.set(t.id, n++);
     return m;
-  }, [visible]);
+  }, [groups]);
 
   // A CHAT OPENED FROM AN APP STAYS IN THE APP. `/chat/<key>` is the All chats
   // place (shell/places.ts, `prefixes: ["/chats", "/chat"]`), so from an app's
@@ -301,6 +340,10 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
   // both correct for a row whose scope is not the app's and the only way the
   // URL survives being pasted into a fresh tab.
   const open = (t: ThreadSummary) => {
+    if (onOpenThread) {
+      onOpenThread(t);
+      return;
+    }
     if (app) {
       nav(appChatPath(app.slug, t.id));
       return;
@@ -345,6 +388,15 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
 
   const controls = (
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+            <Segmented
+              ariaLabel="Layout"
+              value={view}
+              onChange={setView}
+              options={[
+                { value: "list", label: <List role="img" aria-label="List" /> },
+                { value: "grid", label: <LayoutGrid role="img" aria-label="Grid" /> },
+              ]}
+            />
             <Button variant="primary" onClick={newChat}>
               <Plus aria-hidden /> New chat
             </Button>
@@ -357,7 +409,7 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
         <PageHeader
           className="ws-chats-head"
           eyebrow={eyebrow}
-          title="Chats"
+          title={title ?? (scope ? scopeLabel(scope) : "Chats")}
           sub={sub}
           actions={controls}
         />
@@ -409,6 +461,28 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
         />
       ) : (
         <>
+          <label className="ws-searchfield" style={{ display: "flex", marginBottom: "var(--space-4)" }}>
+            <Search aria-hidden />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search chats"
+              aria-label="Search chats"
+              spellCheck={false}
+            />
+          </label>
+          {search.error && (
+            <Notice tone="error" where="/api/chat/threads/search">
+              Couldn't search chats: {search.error}
+            </Notice>
+          )}
+          {search.active && !found && !search.error && <p className="ws-card__meta">Searching</p>}
+          {found && foundCount === 0 && (
+            <StateBlock
+              title="No chats match"
+              hint={`No title or message has every word of "${query.trim()}".`}
+            />
+          )}
           {/* NEWEST FIRST, UNDER DATE HEADINGS. The order is the one order and
               the headings only NAME runs of it, so nothing here reorders a row.
               The rule is `groupByDate` in pages/chatList, tested there. */}
@@ -418,10 +492,25 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
                 <SectionLabel>{g.label}</SectionLabel>
                 <span className="ws-card__meta">{g.items.length}</span>
               </div>
-              {g.items.map((t) => (
+              {view === "grid" ? (
+                <div className="ws-chat-grid">
+                  {g.items.map(({ thread: t, snippet }) => (
+                    <ChatCard
+                      key={t.id}
+                      thread={t}
+                      snippet={snippet}
+                      ordinal={runningOrdinals.get(t.id) ?? 0}
+                      onOpen={open}
+                      onArchive={(x) => { void archiveOne(x); }}
+                      onDelete={(x) => setPending({ id: x.id, title: x.title || "this chat" })}
+                    />
+                  ))}
+                </div>
+              ) : g.items.map(({ thread: t, snippet }) => (
                 <ChatRow
                   key={t.id}
                   thread={t}
+                  snippet={snippet}
                   ordinal={runningOrdinals.get(t.id) ?? 0}
                   showScope={showScope}
                   onOpen={open}
@@ -432,10 +521,10 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
             </div>
           ))}
           <ListFoot
-            shown={visible.length}
-            total={total}
-            more={more}
-            onMore={() => setShown(next)}
+            shown={page.shown}
+            total={page.total}
+            more={page.more}
+            onMore={() => setShown(page.next)}
           />
         </>
       )}
@@ -461,7 +550,8 @@ export function ChatsView({ app = null, header = true, eyebrow, sub }: {
 
 /** `/chats`: the whole list, with its own page header. */
 export default function Chats() {
-  return <ChatsView />;
+  const [search] = useSearchParams();
+  return <ChatsView scope={search.get("scope") || null} />;
 }
 
 /**

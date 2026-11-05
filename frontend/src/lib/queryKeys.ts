@@ -59,6 +59,9 @@ export const queryKeys = {
     threads: (scope: ThreadScope) => ["chat", "threads", "live", scope] as const,
     /** `GET /api/chat/threads?archived=true`. Its own list; see above. */
     threadsArchived: () => ["chat", "threads", "archived"] as const,
+    /** `GET /api/chat/threads/search` -- the live chats matching a query. Under
+     *  the lists' prefix so the invalidation after a write reaches it too. */
+    threadSearch: (scope: ThreadScope, q: string) => ["chat", "threads", "search", scope, q] as const,
     /** The prefix over BOTH lists and every scope, for invalidating after a write. */
     threadsAll: () => ["chat", "threads"] as const,
     /**
@@ -94,6 +97,9 @@ export const queryKeys = {
      * Dropping a trigger would serve a cached list where the code this replaced
      * made a request. See the call site for the per-trigger reasoning.
      */
+    /** `GET /api/chat/providers`, read once for its keys alone: which scopes a
+     *  chat can be in. No triggers, unlike `providers` below. */
+    providerKeys: () => ["chat", "providers", "keys"] as const,
     providers: (t: {
       scope: string | null;
       mode: string;
@@ -102,6 +108,22 @@ export const queryKeys = {
       nonce: number;
     }) => ["chat", "providers", t.scope, t.mode, t.initialThreadId, t.startNew, t.nonce] as const,
   },
+
+  /** What a chat may reach: the apps it could be given and what it was given
+   *  (routes/page_link.py, components/chat/AccessMenu). */
+  chatApps: {
+    catalog: () => ["chat-apps"] as const,
+    grants: (threadId: string) => ["chat-apps", threadId] as const,
+  },
+
+  /** A chat's page settings: level and follow (routes/page_link.py). */
+  pageLink: (threadId: string) => ["page-link", threadId] as const,
+
+  /** Where a chat is working, as the apps it reaches report it (routes/chat_place.py). */
+  chatPlace: (threadId: string) => ["chat-place", threadId] as const,
+
+  /** Where a chat's web links open (routes/web_links.py, lib/webLinks). */
+  webLinks: () => ["web-links"] as const,
 
   jobs: {
     all: () => ["jobs"] as const,
@@ -146,6 +168,11 @@ export const queryKeys = {
     scopes: () => ["tasks", "scopes"] as const,
     labels: (scope: string) => ["tasks", "labels", scope] as const,
     assignees: (scope: string) => ["tasks", "assignees", scope] as const,
+  },
+
+  /** The dashboard's own arrangement of its Apps card. */
+  dashboard: {
+    layout: () => ["dashboard", "layout"] as const,
   },
 
   usage: {
@@ -270,5 +297,18 @@ export const queryKeys = {
    */
   build: {
     entry: () => ["build", "entry"] as const,
+  },
+
+  /** Whether this server can transcribe and speak, and on what; and the
+   *  voices it reads in. */
+  speech: {
+    status: () => ["speech", "status"] as const,
+    voices: () => ["speech", "voices"] as const,
+    commands: () => ["speech", "commands"] as const,
+  },
+
+  /** The account's signed-in browsers. */
+  auth: {
+    sessions: () => ["auth", "sessions"] as const,
   },
 } as const;

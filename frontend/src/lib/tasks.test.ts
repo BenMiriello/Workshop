@@ -283,7 +283,7 @@ describe("sourceShort", () => {
 describe("ticketRowFacts", () => {
   const task = {
     status: "in_review",
-    scope: "project:birds",
+    scope: "project:widgets",
     source: { kind: "agent" },
   };
 
@@ -296,7 +296,7 @@ describe("ticketRowFacts", () => {
 
   it("reads status, scope, who filed it, in that order", () => {
     expect(ticketRowFacts(task, { showScope: true }))
-      .toEqual(["in review", "Project: birds", "agent"]);
+      .toEqual(["in review", "Project: widgets", "agent"]);
   });
 
   it("drops the scope on a list that is already one scope", () => {
@@ -308,9 +308,9 @@ describe("ticketRowFacts", () => {
 
   it("drops who filed it when nobody recorded one", () => {
     expect(ticketRowFacts({ ...task, source: { kind: "unknown" } }, { showScope: true }))
-      .toEqual(["in review", "Project: birds"]);
+      .toEqual(["in review", "Project: widgets"]);
     expect(ticketRowFacts({ ...task, source: null }, { showScope: true }))
-      .toEqual(["in review", "Project: birds"]);
+      .toEqual(["in review", "Project: widgets"]);
   });
 
   it("never returns more facts than the meta line can show", () => {
@@ -339,7 +339,7 @@ describe("spansScopes", () => {
   });
 
   it("is true as soon as two rows differ", () => {
-    expect(spansScopes([{ scope: "development" }, { scope: "project:birds" }]))
+    expect(spansScopes([{ scope: "development" }, { scope: "project:widgets" }]))
       .toBe(true);
   });
 
@@ -347,7 +347,7 @@ describe("spansScopes", () => {
     // `ticketHref` defaults a null scope to `workshop`, so a null row and a
     // `workshop` row are one scope and must not read as two.
     expect(spansScopes([{ scope: null }, { scope: "workshop" }])).toBe(false);
-    expect(spansScopes([{}, { scope: "project:birds" }])).toBe(true);
+    expect(spansScopes([{}, { scope: "project:widgets" }])).toBe(true);
   });
 
   it("is false for no rows, because nothing varies in nothing", () => {

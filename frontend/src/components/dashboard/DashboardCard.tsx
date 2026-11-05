@@ -18,11 +18,13 @@ import { cx, StateBlock, Skeleton } from "@workshop/ui";
 // because the card ran out of pixels.
 
 export function DashboardCard({
-  label, count, link, children, className,
+  label, count, action, link, children, className,
 }: {
   label: string;
   /** Beside the label. A number the head states, not a badge. */
   count?: ReactNode;
+  /** A control in the head, before the link. */
+  action?: ReactNode;
   /** The way out of this card, right-aligned in the head. */
   link?: { to: string; label: string };
   children: ReactNode;
@@ -33,6 +35,7 @@ export function DashboardCard({
       <header className="ws-dashcard__head">
         <span className="ws-dashcard__label">{label}</span>
         {count != null && <span className="ws-dashcard__count">{count}</span>}
+        {action}
         {link && (
           <Link className="ws-dashcard__link" to={link.to}>{link.label}</Link>
         )}

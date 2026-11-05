@@ -35,8 +35,13 @@ import InstalledApps from "./settings/InstalledApps";
 import GitHubAccount from "./settings/GitHubAccount";
 import Trackers from "./settings/Trackers";
 import CustomInstructions from "./settings/CustomInstructions";
+import SignedInDevices from "./settings/SignedInDevices";
+import SpeechSection from "./settings/SpeechSection";
+import { CopySection } from "../components/shell/copies/CopySection";
+import ModelDefaults from "./settings/ModelDefaults";
 
 import type { PermissionState } from "@shared/native-bridge";
+import { WebLinksSetting } from "./settings/WebLinksSetting";
 
 // Settings. One section per tab, ordered by how often the operator touches it.
 //
@@ -50,6 +55,7 @@ export type SettingsTab =
   | "account"
   | "appearance"
   | "chat"
+  | "speech"
   | "memory"
   | "connectors"
   | "apps"
@@ -59,6 +65,7 @@ const TAB_TITLE: Record<SettingsTab, string> = {
   account: "Account",
   appearance: "Appearance",
   chat: "Chat",
+  speech: "Speech",
   memory: "Memory",
   connectors: "Connectors",
   apps: "Apps",
@@ -98,6 +105,7 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
           {/* Native-shell only; renders nothing in a browser. It belongs to
               this signed-in session's device, so it sits under Account. */}
           <DeviceSection />
+          <CopySection />
         </>
       )}
       {tab === "appearance" && <AppearanceSection />}
@@ -109,9 +117,12 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
       {tab === "chat" && (
         <>
           <ChatSection />
+          <ModelDefaults />
+          <WebLinksSetting />
           <CustomInstructions embedded />
         </>
       )}
+      {tab === "speech" && <SpeechSection />}
       {tab === "memory" && <MemorySection />}
       {/* Panels contributed by installed apps. Settings does not know which
           apps exist or what they need configured.
@@ -149,7 +160,7 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
               and the queue runner. The GPU/broker/Ollama residency rows and the
               loopback service-probe grid that used to sit here were removed on
               2026-08-20: they were a client of one local machine's daemons
-              (gpubrokerd at 127.0.0.1:8447, a single consumer GPU) and cannot
+              (a local GPU broker daemon, a single consumer GPU) and cannot
               exist in a production deploy. Ollama stays only as the embeddings
               backend behind the WORKSHOP_TEXT_EMBED_URL config seam, which is
               not a Settings control. */}
@@ -636,6 +647,7 @@ function AccountSection() {
           )}
         </span>
       </Row>
+      <SignedInDevices />
       <DeviceTokens />
     </Section>
   );

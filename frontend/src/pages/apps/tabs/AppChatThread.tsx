@@ -51,11 +51,13 @@ export default function AppChatThread() {
   // field of one small settings read (`getThread` is not the transcript), and it
   // is what makes the URL a real deep link instead of something that only works
   // when you arrived from the tab.
+  // The client's default retry, which waits out a 502/503/504 or a dropped
+  // connection and answers a 404 at once. Without it one blip during a restart
+  // left "Couldn't open this chat" until Retry was pressed.
   const thread = useQuery({
     queryKey: queryKeys.chat.thread(threadId),
     queryFn: () => chatApi.getThread(threadId),
     enabled: threadId !== "",
-    retry: false,
   });
 
   // THE TRAIL NAMES THE APP AND THE TAB, and the tab crumb is the way back.

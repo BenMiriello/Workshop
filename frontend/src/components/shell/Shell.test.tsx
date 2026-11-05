@@ -32,11 +32,11 @@ beforeAll(async () => {
 });
 
 // The same nesting the app uses: AuthProvider > QueryClientProvider >
-// BreadcrumbProvider > Shell (App.tsx). The avatar reads the signed-in user, so
-// rendering the shell without the auth provider throws, exactly as it would in
-// the app.
+// BreadcrumbProvider > Shell (main.tsx, App.tsx). The avatar reads the
+// signed-in user, so rendering the shell without the auth provider throws,
+// exactly as it would in the app.
 //
-// THE QUERY CLIENT IS PART OF THAT NESTING and was missing here. App.tsx has
+// THE QUERY CLIENT IS PART OF THAT NESTING and was missing here. The app has
 // always mounted `QueryClientProvider` above `Shell`, so a shell child that
 // reads from the server is a normal thing for it to contain; without the
 // provider this harness threw on the first one that appeared, reporting a

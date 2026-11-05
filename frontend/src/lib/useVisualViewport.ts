@@ -1,19 +1,23 @@
 import { useEffect } from "react";
 import { keyboardInset, updateBaseline, type ViewportBaseline } from "./keyboardInset";
+import { revealCaret } from "./revealCaret";
 
 // Pin a full-height shell to the *visual* viewport, so a composer sits right
 // above the mobile keyboard and the content above it stays put.
 //
-// The shell is position:fixed (see `.ws-app--chatfull`). On iOS the keyboard
-// does NOT resize the layout viewport — it overlays, and the browser scrolls the
-// page up to reveal the focused input, which would carry a static layout up and
-// out of view. `visualViewport` gives the true visible window: its height shrinks
-// for the keyboard and its offsetTop is how far the page scrolled under it. Both
-// feed `--app-vh` / `--app-top`, which the fixed shell consumes.
+// The shell is position:fixed (see `.ws-app--chatfull` and `.ws-app--pinned`).
+// On iOS the keyboard does NOT resize the layout viewport — it overlays, and the
+// browser scrolls the page up to reveal the focused input, which would carry a
+// static layout up and out of view. `visualViewport` gives the true visible
+// window: its height shrinks for the keyboard and its offsetTop is how far the
+// page scrolled under it. Both feed `--app-vh` / `--app-top`, which the fixed
+// shell consumes.
 //
-// This lives in one place because every full-height chat surface needs it, not
-// only the focused route: a surface without it is exactly where the "huge blank
-// chin above the keyboard, app squeezed into the top" symptom comes from.
+// EVERY PAGE ON A PHONE NEEDS THIS, not only a chat. A field anywhere low on a
+// page (a note's body, an app's own drawer in a frame) gets the same treatment
+// from iOS: the whole layout slides up, the bars leave the top of the screen,
+// and the place being typed into is left under the keyboard. Reported
+// 2026-10-25 against a note; the chat page was the one surface that was pinned.
 //
 // Two iOS-specific details that a naive resize listener gets wrong:
 //   * the browser commonly reports an intermediate height mid-keyboard-animation
@@ -21,116 +25,148 @@ import { keyboardInset, updateBaseline, type ViewportBaseline } from "./keyboard
 //     last event rather than trusting a single measurement;
 //   * `offsetTop` is clamped at 0 — Firefox iOS and Safari disagree about its
 //     sign/semantics, and a negative value would push the shell off-screen.
+//
+// ONE PIN, HOWEVER MANY SURFACES ASK FOR IT. The shell pins itself on every
+// phone route and a full-height chat pins too, often inside that shell. Each
+// install restores the body styles it found and clears the variables on its way
+// out, so two independent installs undo each other: leaving a chat would strip
+// `--app-vh` from the shell that is still pinned. Counting holders makes the
+// first one install and the last one remove.
+let holders = 0;
+let release: (() => void) | null = null;
+
 export function useVisualViewport(active: boolean = true): void {
   useEffect(() => {
     if (!active) return;
-    const vv = window.visualViewport;
-    const root = document.documentElement.style;
-    let timers: number[] = [];
-    // The resting height for this orientation, which is what the keyboard is
-    // measured against. See lib/keyboardInset.
-    let baseline: ViewportBaseline = null;
-
-    const set = () => {
-      const h = vv ? vv.height : window.innerHeight;
-      const top = vv ? Math.max(0, vv.offsetTop) : 0;
-      root.setProperty("--app-vh", `${Math.round(h)}px`);
-      root.setProperty("--app-top", `${Math.round(top)}px`);
-      // How much of the viewport the soft keyboard is covering, so layout that
-      // depends on the keyboard can ask about the KEYBOARD rather than about
-      // focus. The composer's bottom padding used to key off `.is-focused`,
-      // which meant the composer changed height during the blur, in the middle
-      // of a tap. Focus is a proxy for the keyboard and a bad one; this is the
-      // real thing, and it is only ever written outside a gesture.
-      //
-      // THE ARITHMETIC IS NOT INLINE ANY MORE, and that is the point. It used to
-      // be `innerHeight - h`, which is zero on this document by construction:
-      // index.html asks for `interactive-widget=resizes-content`, so the
-      // keyboard shrinks BOTH viewports and the difference between them never
-      // moves. The padding therefore never collapsed, and nothing said so,
-      // because "no keyboard" is what the wrong answer looks like. The rule is a
-      // tested function over numbers now; both viewport models are pinned.
-      const reading = { viewportHeight: h, innerHeight: window.innerHeight, width: window.innerWidth };
-      baseline = updateBaseline(baseline, reading);
-      root.setProperty("--app-kb", `${keyboardInset(reading, baseline)}px`);
-    };
-    // Re-measure after the keyboard animation settles, not just when the event
-    // fires. Without this the shell keeps a mid-animation height and the gap it
-    // leaves below is the blank chin.
-    const settle = () => {
-      set();
-      timers.forEach(window.clearTimeout);
-      timers = [120, 320, 600].map((ms) => window.setTimeout(set, ms));
-    };
-    // THE SAME PASSES, BUT NEVER INSIDE THE GESTURE. A focus change is dispatched
-    // in the middle of a tap: mousedown -> focus change -> mouseup -> click. This
-    // function writes `--app-top` and `--app-vh`, which are the `top` and
-    // `height` of the fixed shell, so calling `set()` inline from `focusout`
-    // MOVED THE WHOLE APP between mousedown and mouseup. The browser re-runs its
-    // hit test across that pair and dispatches click to the nearest common
-    // ancestor of the two results, so the click landed on the row instead of the
-    // button, and the button's handler never ran.
-    //
-    // That is the mechanism behind "my first tap only closes the keyboard": the
-    // tap was not being swallowed by the keyboard at all, it was being swallowed
-    // by our own re-measurement. Reported repeatedly through 2026-08; the earlier
-    // fixes (`onMouseDown` preventDefault, then `keepFocus`) both attacked the
-    // focus change and neither touched this.
-    //
-    // A zero-delay timeout is the whole fix: it runs in a later task, after the
-    // click has finished dispatching. No measurement is lost, only deferred.
-    const settleAfterGesture = () => {
-      timers.forEach(window.clearTimeout);
-      timers = [0, 120, 320, 600].map((ms) => window.setTimeout(set, ms));
-    };
-
-    settle();
-    // Keep the page itself from scrolling behind the fixed shell. `body {
-    // overflow: hidden }` alone does NOT stop iOS from scrolling the *layout*
-    // viewport to reveal a focused input, and that scroll is what opens the
-    // blank band below the shell. Pin both elements, and paint them with the app
-    // background so any residual gap reads as the app rather than as a white
-    // chin. The previous values are restored on cleanup.
-    const body = document.body.style;
-    const html = document.documentElement.style;
-    const prev = {
-      bodyOverflow: body.overflow, bodyPosition: body.position, bodyWidth: body.width,
-      bodyHeight: body.height, bodyBg: body.background,
-      htmlOverflow: html.overflow, htmlBg: html.background,
-    };
-    body.overflow = "hidden";
-    body.position = "fixed";
-    body.width = "100%";
-    body.height = "100%";
-    body.background = "var(--bg)";
-    html.overflow = "hidden";
-    html.background = "var(--bg)";
-    vv?.addEventListener("resize", settle);
-    vv?.addEventListener("scroll", set);
-    window.addEventListener("resize", settle);
-    window.addEventListener("orientationchange", settle);
-    // Focusing the composer is what summons the keyboard; measure from there too
-    // so the settle passes start before the first resize event arrives.
-    window.addEventListener("focusin", settleAfterGesture);
-    window.addEventListener("focusout", settleAfterGesture);
+    holders += 1;
+    if (holders === 1) release = pinToVisualViewport();
     return () => {
-      timers.forEach(window.clearTimeout);
-      vv?.removeEventListener("resize", settle);
-      vv?.removeEventListener("scroll", set);
-      window.removeEventListener("resize", settle);
-      window.removeEventListener("orientationchange", settle);
-      window.removeEventListener("focusin", settleAfterGesture);
-      window.removeEventListener("focusout", settleAfterGesture);
-      body.overflow = prev.bodyOverflow;
-      body.position = prev.bodyPosition;
-      body.width = prev.bodyWidth;
-      body.height = prev.bodyHeight;
-      body.background = prev.bodyBg;
-      html.overflow = prev.htmlOverflow;
-      html.background = prev.htmlBg;
-      root.removeProperty("--app-vh");
-      root.removeProperty("--app-top");
-      root.removeProperty("--app-kb");
+      holders -= 1;
+      if (holders > 0) return;
+      release?.();
+      release = null;
     };
   }, [active]);
+}
+
+function pinToVisualViewport(): () => void {
+  const vv = window.visualViewport;
+  const root = document.documentElement.style;
+  let timers: number[] = [];
+  // The resting height for this orientation, which is what the keyboard is
+  // measured against. See lib/keyboardInset.
+  let baseline: ViewportBaseline = null;
+  // The height last written, so a SHRINK can be told from any other pass.
+  let applied = Infinity;
+
+  const set = () => {
+    const h = vv ? vv.height : window.innerHeight;
+    const top = vv ? Math.max(0, vv.offsetTop) : 0;
+    root.setProperty("--app-vh", `${Math.round(h)}px`);
+    root.setProperty("--app-top", `${Math.round(top)}px`);
+    // How much of the viewport the soft keyboard is covering, so layout that
+    // depends on the keyboard can ask about the KEYBOARD rather than about
+    // focus. The composer's bottom padding used to key off `.is-focused`,
+    // which meant the composer changed height during the blur, in the middle
+    // of a tap. Focus is a proxy for the keyboard and a bad one; this is the
+    // real thing, and it is only ever written outside a gesture.
+    //
+    // THE ARITHMETIC IS NOT INLINE ANY MORE, and that is the point. It used to
+    // be `innerHeight - h`, which is zero on this document by construction:
+    // index.html asks for `interactive-widget=resizes-content`, so the
+    // keyboard shrinks BOTH viewports and the difference between them never
+    // moves. The padding therefore never collapsed, and nothing said so,
+    // because "no keyboard" is what the wrong answer looks like. The rule is a
+    // tested function over numbers now; both viewport models are pinned.
+    const reading = { viewportHeight: h, innerHeight: window.innerHeight, width: window.innerWidth };
+    baseline = updateBaseline(baseline, reading);
+    const kb = keyboardInset(reading, baseline);
+    root.setProperty("--app-kb", `${kb}px`);
+    // The same fact as a selector, for layout that changes shape while the
+    // keyboard is up (the chat beside a page grows on a phone).
+    document.documentElement.toggleAttribute("data-keyboard", kb > 0);
+    // The window just got shorter under a caret iOS had already revealed for
+    // the full height. See lib/revealCaret.
+    if (h < applied) revealCaret();
+    applied = h;
+  };
+  // Re-measure after the keyboard animation settles, not just when the event
+  // fires. Without this the shell keeps a mid-animation height and the gap it
+  // leaves below is the blank chin.
+  const settle = () => {
+    set();
+    timers.forEach(window.clearTimeout);
+    timers = [120, 320, 600].map((ms) => window.setTimeout(set, ms));
+  };
+  // THE SAME PASSES, BUT NEVER INSIDE THE GESTURE. A focus change is dispatched
+  // in the middle of a tap: mousedown -> focus change -> mouseup -> click. This
+  // function writes `--app-top` and `--app-vh`, which are the `top` and
+  // `height` of the fixed shell, so calling `set()` inline from `focusout`
+  // MOVED THE WHOLE APP between mousedown and mouseup. The browser re-runs its
+  // hit test across that pair and dispatches click to the nearest common
+  // ancestor of the two results, so the click landed on the row instead of the
+  // button, and the button's handler never ran.
+  //
+  // That is the mechanism behind "my first tap only closes the keyboard": the
+  // tap was not being swallowed by the keyboard at all, it was being swallowed
+  // by our own re-measurement. Reported repeatedly through 2026-08; the earlier
+  // fixes (`onMouseDown` preventDefault, then `keepFocus`) both attacked the
+  // focus change and neither touched this.
+  //
+  // A zero-delay timeout is the whole fix: it runs in a later task, after the
+  // click has finished dispatching. No measurement is lost, only deferred.
+  const settleAfterGesture = () => {
+    timers.forEach(window.clearTimeout);
+    timers = [0, 120, 320, 600].map((ms) => window.setTimeout(set, ms));
+  };
+
+  settle();
+  // Keep the page itself from scrolling behind the fixed shell. `body {
+  // overflow: hidden }` alone does NOT stop iOS from scrolling the *layout*
+  // viewport to reveal a focused input, and that scroll is what opens the
+  // blank band below the shell. Pin both elements, and paint them with the app
+  // background so any residual gap reads as the app rather than as a white
+  // chin. The previous values are restored on cleanup.
+  const body = document.body.style;
+  const html = document.documentElement.style;
+  const prev = {
+    bodyOverflow: body.overflow, bodyPosition: body.position, bodyWidth: body.width,
+    bodyHeight: body.height, bodyBg: body.background,
+    htmlOverflow: html.overflow, htmlBg: html.background,
+  };
+  body.overflow = "hidden";
+  body.position = "fixed";
+  body.width = "100%";
+  body.height = "100%";
+  body.background = "var(--bg)";
+  html.overflow = "hidden";
+  html.background = "var(--bg)";
+  vv?.addEventListener("resize", settle);
+  vv?.addEventListener("scroll", set);
+  window.addEventListener("resize", settle);
+  window.addEventListener("orientationchange", settle);
+  // Focusing the composer is what summons the keyboard; measure from there too
+  // so the settle passes start before the first resize event arrives.
+  window.addEventListener("focusin", settleAfterGesture);
+  window.addEventListener("focusout", settleAfterGesture);
+  return () => {
+    timers.forEach(window.clearTimeout);
+    vv?.removeEventListener("resize", settle);
+    vv?.removeEventListener("scroll", set);
+    window.removeEventListener("resize", settle);
+    window.removeEventListener("orientationchange", settle);
+    window.removeEventListener("focusin", settleAfterGesture);
+    window.removeEventListener("focusout", settleAfterGesture);
+    body.overflow = prev.bodyOverflow;
+    body.position = prev.bodyPosition;
+    body.width = prev.bodyWidth;
+    body.height = prev.bodyHeight;
+    body.background = prev.bodyBg;
+    html.overflow = prev.htmlOverflow;
+    html.background = prev.htmlBg;
+    root.removeProperty("--app-vh");
+    root.removeProperty("--app-top");
+    root.removeProperty("--app-kb");
+    document.documentElement.removeAttribute("data-keyboard");
+  };
 }

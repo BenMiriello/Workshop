@@ -1,4 +1,4 @@
-import { shortHttpError } from "@workshop/ui";
+import { jsonOrFail as j } from "./http";
 // What other chats SEE and SEARCH (memory-and-documentation-model-2026-08-14.md
 // sec 6). This is CURATION, not security: everything on this box runs as one
 // uid, so nothing here restricts what any process can read. It keeps a chat's
@@ -30,11 +30,6 @@ export type MemoryPolicy = {
   scopes: Record<string, ShareValue>;
   items: Record<string, ShareValue>;
 };
-
-async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-  return r.json() as Promise<T>;
-}
 
 export async function getPolicy(): Promise<MemoryPolicy> {
   return j<MemoryPolicy>(await fetch("/api/memory-policy"));

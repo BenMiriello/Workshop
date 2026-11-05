@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  PAGE_SIZE, bucketFor, chatTags, groupByDate, newestFirst, pageOf, spansScopes, visibleThreads,
+  PAGE_SIZE, bucketFor, chatTags, firstOfGroups, groupByDate, newestFirst, pageOf, searchGroups,
+  spansScopes, visibleThreads,
 } from "./chatList";
 
 // A row, cut down to the fields these rules actually read. The list route sends
@@ -261,5 +262,39 @@ describe("groupByDate", () => {
     ];
     const total = groupByDate(rows, now).reduce((n, g) => n + g.items.length, 0);
     expect(total).toBe(3);
+  });
+});
+
+describe("searchGroups", () => {
+  const rows = [{ id: "a" }, { id: "b" }, { id: "c" }];
+
+  it("puts title matches first and keeps the server's order inside each group", () => {
+    const groups = searchGroups(rows, [
+      { id: "c", where: "title" },
+      { id: "a", where: "content", snippet: "...found here..." },
+      { id: "b", where: "title" },
+    ]);
+    expect(groups.map((g) => g.key)).toEqual(["title", "content"]);
+    expect(groups[0].items.map((r) => r.thread.id)).toEqual(["c", "b"]);
+    expect(groups[1].items[0].snippet).toBe("...found here...");
+  });
+
+  it("drops a hit the list does not hold", () => {
+    const groups = searchGroups(rows, [{ id: "zz", where: "title" }]);
+    expect(groups).toEqual([]);
+  });
+});
+
+describe("firstOfGroups", () => {
+  it("cuts a page across groups without reordering them", () => {
+    const groups = [
+      { key: "x", label: "X", items: [1, 2, 3] },
+      { key: "y", label: "Y", items: [4, 5] },
+    ];
+    expect(firstOfGroups(groups, 4)).toEqual([
+      { key: "x", label: "X", items: [1, 2, 3] },
+      { key: "y", label: "Y", items: [4] },
+    ]);
+    expect(firstOfGroups(groups, 2)).toEqual([{ key: "x", label: "X", items: [1, 2] }]);
   });
 });

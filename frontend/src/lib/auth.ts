@@ -18,6 +18,10 @@ export interface AuthUser {
 }
 
 import { native } from "@workshop/ui";
+import { purgeApps } from "./appStorage";
+import { READ_TIMEOUT_MS, readDeadlineFor, withDeadline } from "./requestTimeout";
+import { meOutcome, type MeResult } from "./sessionProbe";
+
 
 export class AuthError extends Error {}
 
@@ -65,7 +69,12 @@ export function installAuthFetch(): void {
     // (with SameSite=Strict) defeats CSRF.
     if (!headers.has(CSRF_HEADER)) headers.set(CSRF_HEADER, "1");
 
-    return orig(input, { ...init, headers, credentials: "include" });
+    const send = (signal?: AbortSignal) =>
+      orig(input, { ...init, headers, credentials: "include", ...(signal ? { signal } : {}) });
+    // A read that a stalled backend never answers must fail, or nothing that
+    // retries a blip ever gets the chance. See requestTimeout.ts.
+    const deadline = input instanceof Request ? null : readDeadlineFor(init.method, !!init.signal);
+    return deadline === null ? send() : withDeadline(send, deadline);
   };
 }
 
@@ -143,18 +152,27 @@ export async function register(
   return user;
 }
 
-/** Resolve the current user from the session cookie, or null if not signed in. */
-export async function fetchMe(): Promise<AuthUser | null> {
+/** Read the current user from the session cookie, once. Only a 401 is
+ *  "not signed in"; a failure to answer is reported as such, and the caller
+ *  asks again (lib/sessionProbe.ts). */
+export async function fetchMe(): Promise<MeResult<AuthUser>> {
   try {
-    const r = await rawFetch("/api/auth/me", { credentials: "include" });
-    if (r.ok) return (await r.json()) as AuthUser;
+    const r = await withDeadline(
+      (signal) => rawFetch("/api/auth/me", { credentials: "include", signal }),
+      READ_TIMEOUT_MS,
+    );
+    const outcome = meOutcome(r.status);
+    if (outcome === "authed") return { kind: "authed", user: (await r.json()) as AuthUser };
+    return outcome === "anon" ? { kind: "anon" } : { kind: "unanswered" };
   } catch {
-    /* network error — treat as anonymous, the guard will show login */
+    // No response, a missed deadline, or a body that was not the user (an
+    // edge's HTML page): none of those says who is signed in.
+    return { kind: "unanswered" };
   }
-  return null;
 }
 
 export async function logout(everywhere = false): Promise<void> {
+  await purgeApps(new Set());
   try {
     await rawFetch("/api/auth/logout", {
       method: "POST",

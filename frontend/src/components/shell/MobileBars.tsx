@@ -47,16 +47,11 @@
 
 import { Link } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
-import { monogram } from "../../lib/appIcon";
-import { useAuth } from "../../auth/AuthProvider";
+import { BesideButton } from "./beside/BesideButton";
+import { AccountMenu } from "./AccountMenu";
 import RefPill from "../holders/RefPill";
 import { PlaceMenu } from "./PlaceMenu";
 import type { Shell } from "./useShell";
-
-/** The signed-in person's initials. Same two-letter rule as an app with no
- *  icon, so it is the same function; this file and Dock.tsx each had their own
- *  copy of it, which is how three spellings of one rule appear. */
-const initials = (name: string | null | undefined, email: string) => monogram(name || email || "");
 
 export function MobileBars({ shell }: { shell: Shell }) {
   const { place, page, tabsOpen, fullScreen, hasPageList, documentOpen, branch } = shell;
@@ -66,7 +61,6 @@ export function MobileBars({ shell }: { shell: Shell }) {
   // while the toolbar is force-collapsed there is no state for it to carry and
   // no toggle it could perform.
   const togglable = hasPageList && !fullScreen && !documentOpen;
-  const { user } = useAuth();
 
   return (
     <div className="ws-bar1__wrap">
@@ -104,13 +98,8 @@ export function MobileBars({ shell }: { shell: Shell }) {
               labelMax={10}
             />
           )}
-          <Link
-            to="/settings"
-            className="ws-bar1__avatar"
-            aria-label="Account and settings"
-          >
-            {initials(user?.name, user?.email ?? "")}
-          </Link>
+          <BesideButton variant="bar" />
+          <AccountMenu shell={shell} variant="bar" />
         </div>
       </div>
 

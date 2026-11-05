@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { appPlaces } from "./registry";
 import { queryKeys } from "../lib/queryKeys";
+import { orderBy } from "../components/dashboard/arrange";
+import { useSavedOrder } from "../components/dashboard/useArrange";
 import type { components } from "../api/schema.gen";
 
 // WHICH APPS EXIST is a question for the platform, not for the bundle.
@@ -40,6 +42,8 @@ export type AppPlace = {
   hasFiles?: boolean;
   /** Whether this app ships its own screens at `home`. */
   ownScreen?: boolean;
+  /** The screens it serves, from its manifest's exposed services. */
+  screens?: readonly { service: string; label: string }[];
 };
 
 /** `GET /api/base-apps/launcher`. Exported so every reader of this list uses
@@ -86,6 +90,7 @@ function place(app: LauncherCard, known: AppPlace | undefined): AppPlace {
     projectSlug: surface?.project_slug ?? null,
     hasFiles: surface?.files ?? false,
     ownScreen: !!known,
+    screens: surface?.screens ?? [],
   };
 }
 
@@ -100,6 +105,7 @@ function place(app: LauncherCard, known: AppPlace | undefined): AppPlace {
  *  choose and then be unable to take it back. */
 export function useAppPlacesState(): { apps: AppPlace[]; ready: boolean } {
   const bundled = appPlaces();
+  const order = useSavedOrder();
   const q = useQuery({
     queryKey: queryKeys.apps.launcher(),
     queryFn: fetchLauncher,
@@ -119,7 +125,9 @@ export function useAppPlacesState(): { apps: AppPlace[]; ready: boolean } {
     if (!app.route && app.href) continue;
     out.push(place(app, byId.get(app.id)));
   }
-  return out.length > 0 ? { apps: out, ready: true } : { apps: bundled, ready: true };
+  return out.length > 0
+    ? { apps: orderBy(out, order, (a) => a.id), ready: true }
+    : { apps: bundled, ready: true };
 }
 
 /** Every app this installation has, in launcher order. */

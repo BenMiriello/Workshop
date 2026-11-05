@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
+  AppWindow,
   Shapes,
   Archive,
   Blocks,
@@ -36,12 +37,13 @@ import {
   Settings as SettingsIcon,
   Tags,
   Wrench,
+  AudioLines,
 } from "lucide-react";
 import { useAppPlaces } from "../../apps/useAppPlaces";
 import { useAppRef, type AppRefRead } from "../holders/useHolders";
 import { userStorage } from "../../lib/storage";
 import { branchSubject } from "./pageChrome";
-import { buildPlaces, pageFor, placeFor, type ShellPage, type ShellPlace } from "./places";
+import { buildPlaces, landingFor, pageFor, placeFor, type ShellPage, type ShellPlace } from "./places";
 import { useTakeover } from "./takeover";
 import {
   EMPTY_MEMORY,
@@ -53,7 +55,6 @@ import {
   rememberPath,
   setColumnOpen,
   settleMotion,
-  tabsKey,
   tabsOpen as readTabsOpen,
   toggleColumn,
   toggleTabs,
@@ -73,6 +74,8 @@ const ICONS = {
   archived: Archive,
   projects: FolderGit2,
   apps: LayoutGrid,
+  // A screen an app serves, framed inside it.
+  screen: AppWindow,
   agents: Bot,
   // A role is a DEFINITION picked from a list, not a robot.
   roles: Shapes,
@@ -90,6 +93,7 @@ const ICONS = {
   // Settings' own page rows.
   account: CircleUser,
   appearance: Palette,
+  speech: AudioLines,
   instructions: FileText,
   // A connector is a plug: an account or service this installation is wired to.
   connectors: Plug,
@@ -254,8 +258,7 @@ export function useShell(): Shell {
 
   const columnOpen = readColumnOpen(memory, place) && !fullScreen;
   const hasPageList = place.pages.length > 1;
-  const key = tabsKey(place.id, page?.id ?? null);
-  const tabsOpen = readTabsOpen(memory, key) && !fullScreen && hasPageList && !documentOpen;
+  const tabsOpen = readTabsOpen(memory) && !fullScreen && hasPageList && !documentOpen;
 
   const selectPlace = useCallback(
     (next: ShellPlace) => {
@@ -263,6 +266,12 @@ export function useShell(): Shell {
         // Rule 2: the place you are already in. Toggle, and animate it.
         setMotion(grantMotion(pathname));
         setMemory((m) => toggleColumn(m, next));
+        return;
+      }
+      // Inside an open conversation its own tile is the way out to the list,
+      // not a link back to the conversation it remembers.
+      if (next.id === place.id) {
+        navigate(landingFor(next));
         return;
       }
       // Rule 1: a different place never toggles the column, and hard cuts. The
@@ -287,10 +296,14 @@ export function useShell(): Shell {
   }, [place, pathname]);
 
   const onToggleTabs = useCallback(() => {
-    setMemory((m) => toggleTabs(m, key));
-  }, [key]);
+    setMemory((m) => toggleTabs(m));
+  }, []);
 
-  const hrefFor = useCallback((next: ShellPlace) => openPath(memory, next), [memory]);
+  const hrefFor = useCallback(
+    (next: ShellPlace) =>
+      next.id === place.id && fullScreen ? landingFor(next) : openPath(memory, next),
+    [memory, place.id, fullScreen],
+  );
 
   return {
     places,

@@ -65,7 +65,7 @@
 // the bottom bar (spec section 6), so the ActionBar's Save would be unreachable
 // exactly when it mattered. The unsaved DOT replaces the "unsaved" pill, and the
 // dot going out is the receipt.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Eye, Lock, Pencil, Trash2 } from "lucide-react";
 import {
@@ -76,6 +76,7 @@ import {
   Field,
   Input,
   Notice,
+  ReadAloudButton,
   Row,
   SectionLabel,
   Skeleton,
@@ -189,6 +190,7 @@ export function NoteDocument({
 }) {
   const base = `/api/memory/scopes/${encodeURIComponent(scope)}/notes`;
   const [loaded, setLoaded] = useState<NoteLoaded | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const [err, setErr] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [saveErr, setSaveErr] = useState<string | null>(null);
@@ -324,6 +326,8 @@ export function NoteDocument({
         dirty={edit.dirty}
       >
         {actions}
+        <ReadAloudButton source={`memory:${scope}:${noteId}`} within={bodyRef}
+          text={() => [title, body].filter((x) => x.trim()).join("\n\n")} />
         {bar.toggle && (
           <Button size="sm" variant="ghost" onClick={() => goForm(bar.toggle!.to)}>
             {bar.toggle.to === "source"
@@ -404,7 +408,7 @@ export function NoteDocument({
             <>
               {hook && <p className="ws-memory__hook">{hook}</p>}
               {body.trim() ? (
-                <Markdown>{body}</Markdown>
+                <div ref={bodyRef}><Markdown>{body}</Markdown></div>
               ) : (
                 <p className="ws-muted" style={{ margin: 0 }}>This note has no body yet. Edit it to write one.</p>
               )}
@@ -586,6 +590,7 @@ export function DocDocument({
   takeover?: boolean;
 }) {
   const [file, setFile] = useState<FileContent | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const [err, setErr] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [saveErr, setSaveErr] = useState<string | null>(null);
@@ -723,6 +728,7 @@ export function DocDocument({
         backLabel={backLabel}
         meta={!canEdit ? <Badge><Lock size={12} strokeWidth={1.8} aria-hidden /> read only</Badge> : null}
       >
+        <ReadAloudButton source={`memory-file:${path}`} within={bodyRef} text={() => body} />
         {toggle && (
           <Button size="sm" variant="ghost" onClick={() => goForm(toggle.to)}>
             {toggle.to === "source"
@@ -797,7 +803,7 @@ export function DocDocument({
             // source is one tap away.
             <FilePreview workspace="documents" path={path} name={baseName(path)} takeover={takeover} />
           ) : body.trim() ? (
-            <Markdown>{body}</Markdown>
+            <div ref={bodyRef}><Markdown>{body}</Markdown></div>
           ) : (
             <p className="ws-muted" style={{ margin: 0 }}>This document is empty.</p>
           )}
