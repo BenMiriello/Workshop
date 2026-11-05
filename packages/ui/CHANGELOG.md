@@ -12,6 +12,995 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.8.0 - 2026-11-05 - page views, read aloud, spoken actions, floating menus
+
+**Minor, with migrations.** Everything built on 0.7.10 between 2026-09-23 and
+2026-11-04, one subsection per change, newest first. Read each one's Removed and
+Changed notes before upgrading; under 0.x the minor is the breaking position.
+
+### Page states say when a page is held and why it closed (2026-11-04)
+
+
+**Added.** `PageState.held` is true while the shell holds a page's media
+because the page is not on screen, and a closing state may carry
+`closedBy: "released"`: the shell let go of a page that kept playing while it
+was held. The app keeps that tab and opens the page again when it is shown.
+Both are left out by shells from before them.
+
+### Menus and popovers float over their container (2026-11-03)
+
+
+**Changed.** `Menu` and `Popover` open as `position: fixed` surfaces placed
+from their trigger, so they overlay whatever scrolls or clips around them
+instead of opening inside it. A menu on a row near the end of a short scrolling
+list used to grow the list and scroll it up under itself; it now opens over the
+list, and when neither side of the trigger has room it slides onto the screen
+over the trigger. The surface keeps its place in the DOM, so descendant rules
+written against `.ws-menu__list` and `.ws-popover__surface` still match. The
+`--top`/`--bottom` side classes no longer set `top` or `bottom`.
+
+**Migration.** A rule that positioned a surface with `top`, `bottom`, `left`
+or `right` now fights the inline position; shift it with `translate` instead.
+
+### A failed page load is shown where it was going (2026-11-03)
+
+
+**Added.** `PageErrorEvent.shownInPage`: the page view showed the failure
+itself. A main-frame load that fails now moves the page view to the address
+that failed, with a page saying why and Try again, so Back returns to the
+page that was left; before, the page being left stayed and its address came
+back. An app that shows its own notice for a page error leaves it out for
+these.
+
+**Changed.** A page view pauses every sound and video in a page the moment
+it is left: a load in its main frame starts, or the page moves through its
+own history (a pushed or popped entry). An address rewritten in place and a
+jump within the page do not count.
+
+**Migration.** None.
+
+### Apps declare their own spoken actions (2026-11-02)
+
+
+**Added.** `useSpokenActions(actions)`, `useSpokenAction(action)` and
+`registerSpokenActions(actions)` (which returns the unregister): a page or an
+app in a shell frame declares what it can be told to do by voice, in the shape
+of WebMCP's `registerTool`: `id`, `title`, `description`, `phrases`,
+`examples`, an optional `input` (one free text, or `choices`), `annotations`
+(`readOnlyHint`, and `consequentialHint`, which makes the shell ask first) and
+`run(arg?)`. A phrase may hold one slot for the input (`"add to {group}"`). The shell hears an
+action's phrases while its document is on screen, understands looser wordings
+from its description and examples, and lists it in Commands under the app's
+name. Outside a Workshop shell nothing is registered. `provideSpokenActions`
+and `spokenActionsHost` are the shell's side of the same contract.
+
+**Migration.** None.
+
+### A popover over a page view takes its clicks (2026-11-01)
+
+
+**Fixed.** `drawnOverPage` (through its paint-order rule) placed a box with a
+z-index inside a positioned wrapper with z-index auto, such as a `Popover`'s
+surface, under the wrapper's own place in the tree, so an open popover over
+a page view was never counted: its clicks went to the page under it. A
+positioned box with z-index auto starts no stacking context, and the rule now
+orders what it holds in the context around it, as the browser does.
+
+**Migration.** None.
+
+### Page views are drawn under the web UI (2026-11-01)
+
+
+**Changed.** A native shell now draws page views under its see-through web
+view, so everything the web UI draws over a page (menus, bars, dialogs, their
+shadows and round corners) shows as the engine renders it, with no hole cut
+in the page. `drawnOverPage` and `pages.setCutouts` now decide only where the
+web UI takes clicks and touches from the page; a dimmed scrim counts, so a
+click on it closes its dialog instead of reaching the page.
+
+**Added.** `usePageSlot(slot, shown)`: while `shown`, the element a page view
+is placed over and every box holding it draw no background, and an app in a
+frame tells the shell (`PAGE_SLOT_MSG`), which does the same for the frame.
+`seeThrough(el)` is the same for one element and its holders.
+
+**Migration.** An app that places a page view calls `usePageSlot` on the
+element it places it over. Without it, the slot's background covers the page
+on a shell that draws pages under the web UI.
+
+### Read aloud knows where the text is (2026-10-31)
+
+
+**Added.** `ReadAloudHost.read` takes an optional third argument, `place`:
+the element or selected range the text shows in, so the shell's reader can
+mark the sentence being read on the page and follow it. An optional
+`ReadAloudHost.place(el, source, text)` declares that an element reads as a
+text, so a tap in it while something is being read reads it from the tapped
+sentence. `useReadAloud` passes both through (`read(text, place?)`, `place`).
+`ReadAloudButton` uses them: given `within`, its document is highlighted while
+read and can be tapped into.
+
+**Migration.** None. Both are optional; a host without them reads as before.
+
+### Portalled surfaces carry the app's type and ink (2026-10-30)
+
+
+**Fixed.** A `Modal` (centered or `sheet`), a `Sheet` drawer and the toast
+stack portalled to `<body>`, outside `.ws-root`, now take the same
+`--font-sans`, `--fs-base`, `--lh-base` and `--fg` as `.ws-root` instead of
+the browser's serif font and black text. Nothing inside `.ws-root` changes:
+the rule applies only to a `.ws-overlay` or `.ws-toasts` with no `.ws-root`
+ancestor, at zero specificity.
+
+**Migration.** None. An app that restated the font on `.ws-overlay` or
+`.ws-modal` for this can drop that rule.
+
+### What the web UI draws over a page view (2026-10-30)
+
+
+**Added.** `drawnOverPage(host, area)` and `DrawnOver`: what a document
+draws over a native page view, read from the document by one rule (every box
+that shows something over `area` and paints above `host`, by CSS stacking),
+never from a list of roles. `pages.setCutouts(id, rects, { modal })` and
+`PageCutoutOptions`: `modal: false` lets the page keep every click outside
+the rects. `ShellApi.overlays(rects, modal)`: the web UI's own layers, which
+a native shell now cuts out of every app's page views by itself.
+
+**Migration.** None. `setCutouts` without options behaves as before. An app
+that measured Workshop's own document to cut its layers out can stop when
+`shell.overlays` is offered.
+
+### A page view plays only on screen (2026-10-29)
+
+
+**Added.** `pages.hide(id, { keepPlaying })` and `PageHideOptions`. A hidden
+page view's sound and video are now paused and cannot start until it is shown
+again (what was playing stays paused); `keepPlaying` lets a hidden page play on
+while its app is in front. The shell holds every page view of an app whose
+frame the web UI is not showing (`shell.foreground`, now taken by the iOS
+shell too) and every page view while the shell is in the background,
+minimized or covered, whatever the app asked.
+
+**Migration.** None. An app that let hidden pages play now passes
+`keepPlaying` to keep doing so while it is in front.
+
+### Menu rows with buttons of their own (2026-10-29)
+
+
+**Added.** `MenuRow`: a row that is not itself chosen, with buttons at its end
+(`actions`) and `muted` for an entry that no longer stands. `MenuAction`: an
+icon button for a row or a heading that does not close the menu and is reached
+by the arrow keys. `MenuLabel` takes `actions` for buttons acting on its group.
+
+**Migration.** None.
+
+### Page cutouts (2026-10-28)
+
+
+**Added.** `pages.setCutouts(id, rects)`: rects in `setRect`'s CSS pixels where
+the web UI shows through a page view. A menu or dialog over a page no longer
+needs the page moved away and replaced by a still of itself; the page stays in
+place and keeps playing around it. While any rect is set the web UI takes every
+click and touch, so a click on the page closes the menu as it would anywhere
+else. An empty list makes the page whole again.
+
+**Migration.** None. The Mac and iPhone apps need a new build for it;
+`typeof pages.setCutouts` tells an older build apart.
+
+### Opening a document never overwrites newer writing; an empty one is a blank page (2026-10-28)
+
+
+**Fixed.** A `VersionedDocument` that finds unsaved typing kept on this device
+merges it on open with the source's text winning wherever the two differ: that
+copy was typed in an earlier session, so it no longer overwrites what was saved
+since. A stale empty copy had replaced a whole note the moment it was glanced
+at in another app. A kept copy without the text it was typed on is applied
+only onto that same version. Typing in an open document still keeps yours in a
+conflict (`mergeDrafts`/`merge3`/`mergeField` take an optional `prefer`).
+
+**Changed.** An empty document shows a blank page instead of "Nothing written
+yet" and a Start writing button; a click anywhere on it starts writing. The
+default `placeholder` is now empty.
+
+### Text fields never wear the focus ring (2026-10-28)
+
+
+**Changed.** The global `:focus-visible` ring no longer matches text-entry
+elements (`input` other than checkbox, radio, range and button types,
+`textarea`, `select`, `contenteditable`). Browsers match `:focus-visible` on a
+field however it was focused, so the ring showed on every click. A field's focus
+cue is its own treatment: `.ws-input`, `.ws-select`, `.ws-textarea`,
+`.ws-searchfield` and `.ws-stepper` show one accent hairline. The ring left on
+buttons, tabs and links is 2px instead of 3px.
+
+**Migration.** None. A consumer rule that sets `box-shadow: none` on a field to
+cancel the ring can be deleted.
+
+### One focus ring on a search field (2026-10-28)
+
+
+**Fixed.** A focused `.ws-searchfield` drew the global focus ring on its input
+as well as its own ring on the field, so a second box showed inside the field.
+The input inside a search field no longer takes the global ring.
+
+**Migration.** None.
+
+### Page sound (2026-10-27)
+
+
+**Added.** `pages.setMuted(id, muted)`, and `playingAudio` and `muted` on the
+"pages:state" event (type `PageState`). A page view's sound can be silenced
+without stopping the page (WebKit's page mute, the call Safari's tab speaker
+uses), and the shell reports whether the page has sound playing, muted or not.
+A page stays muted across its navigations; a page view opened again starts
+unmuted. The two state fields are left out where the shell cannot tell, and
+`setMuted` rejects there.
+
+**Migration.** None. The Mac and iPhone apps need a new build for it;
+`typeof pages.setMuted` tells an older build apart.
+
+### OverlayScope: a column beside the content gets its own overlays (2026-10-27)
+
+
+**Added.** `OverlayScope` (props `active`, `className`) and the `.ws-overlay-scope`
+rule. It renders a host that fills its own box and routes `Modal`, `Sheet` and the
+other portalled overlays inside it there, so a column that sits beside the shell's
+content region (the chat beside a page) no longer sends its dialogs to `<body>`
+at the size of the whole window. `active={false}` leaves overlays with the host
+above. Nothing else changes.
+
+### Phone fixes for documents: no sideways text, words kept as typed, wrapping titles (2026-10-25)
+
+
+**Fixed.** Wrapped editor text fits its column in WebKit: one long unbroken
+run (a URL) no longer widens a read-only document past the screen.
+
+**Changed.** The page look keeps words as typed: autocorrect and inline
+predictions are off (the keyboard still underlines misspellings and offers
+fixes to tap). A `DocumentBar` title wraps, read or edited, in one box that
+grows with its text instead of a one-line field that scrolled sideways, and
+takes the 16px floor on a phone.
+
+**Added.** `DocumentBar` `nameShown`: how the name reads while its field is not
+focused. `VersionedDocument` passes `titleDisplay` through it, so a hidden word
+in a title shows as written only while the title itself is being typed in.
+
+### A document is read and written in one surface (2026-10-25)
+
+
+**Changed.** `VersionedDocument` no longer swaps a reader for an editor. Its
+text is always the page-look editor: read-only while it is read, writable from
+the tap that starts writing, with the caret where the tap landed and nothing
+else on screen changing. History previews and another writer's version are the
+same editor, read-only (`DocumentText`). The page look now draws everything the
+reader drew: images and task boxes in place, and tables, code blocks (diagrams
+included) and rules through the one markdown renderer. Inline markup, blocks and
+a host's replacement text show what is written only where the caret has been
+moved to write. Links are followed by a tap while reading, Ctrl or Cmd and a
+click while writing. `.ws-vdoc__read` is no longer drawn.
+
+**Added.** On `Editor`: `marks` (a host's additions to how text is drawn:
+replacement text, a class, a link; `EditorMark`, `EditorMarks`), `onLink`,
+`onStartEditing` (a read-only editor a tap makes writable) and `scrollTo`. On
+`VersionedDocument`: `marks`, `onLink` and `scrollTo`. `DocumentText`.
+
+**Deprecated.** `VersionedDocument`'s `renderBody` is no longer drawn.
+Migration: move what it drew into `marks` (mentions, replaced words, marked
+ranges) and its link handling into `onLink`, which gets a URL or
+`wikilink:<title>`. The prop is removed in the next breaking release.
+
+### Wider chat cards (2026-10-25)
+
+
+**Changed.** `.ws-chat-grid` columns are 18rem cards rather than 15rem, so the
+page measure holds three and a chat's title reads before it ellipsizes.
+
+### Editing a document leaves its text where it was (2026-10-25)
+
+
+**Changed.** The editor's page look (`look="page"`) now draws a document
+exactly where the reading form does, so tapping into one moves nothing:
+numbered items keep their numbers hanging in the margin (counted as the reading
+form counts them), nested lists step in by the reading form's indent with its
+disc, circle and square bullets, loose lists keep their paragraph spacing, and
+headings and quotes keep the reading form's spacing. The `#` of a heading, a
+quote's `>` and a list's marker no longer turn back into source on the line
+being edited; Backspace at the start of one removes it. Inline markup (`**`, a
+link's target) shows only around the text the caret has been moved into, never
+from the tap that opened the editor. Brackets that are only text keep the
+text's color. Inline code in a document's reading form wraps between words,
+as the editor wraps it.
+
+### The chat list as a grid of cards (2026-10-25)
+
+
+**Added.** `.ws-chat-grid` and `.ws-chat-card` (with `__menu`, `__preview`
+and `__foot`): the chat list's grid layout, as many 15rem cards per row as
+fit, each holding a title line, three lines of preview and a foot on the
+bottom edge, every card in a row the same height.
+
+### A text box that opens while you write (2026-10-25)
+
+
+**Added.** `Textarea` takes `grow`: while focused it fits all of its text, and
+on blur it returns to its own size.
+
+**Changed.** A dialog's action row wraps when its buttons do not fit on one
+line, instead of running past the edge.
+
+### Number fields keep what is typed (2026-10-25)
+
+
+**Fixed.** `Input type="number"` shows the typed text while it has focus and
+the caller's `value` again on blur. Clearing a field to type a new number no
+longer redraws a 0 (or a caller's clamped minimum) under the caret. Every
+change is still reported to `onChange` as before.
+
+### A form dialog can use a phone's height (2026-10-25)
+
+
+**Added.** `Modal` takes `tall`: on a phone the dialog grows to the height of
+its region before its body scrolls, instead of the 32rem cap other dialogs keep
+there. For dialogs that are mostly form fields.
+
+### A host can keep text out of sight (2026-10-25)
+
+
+**Added.** `EditorProps.conceal` (`EditorConceal`): ranges the host names are
+drawn blurred while editing, except within `reveal` characters of the caret,
+kept current as the text and the caret move. `VersionedDocumentProps.conceal`
+passes it through, and `VersionedDocumentProps.titleDisplay` says how a title
+reads wherever it is not being edited.
+
+**Changed.** The history sheet's previews and another writer's text are drawn
+with the host's `renderBody` and `titleDisplay`, as the document itself is.
+
+### Date fields fit on a phone (2026-10-25)
+
+
+**Fixed.** `Input` with `type` date, time, datetime-local, month or week drops
+the native appearance, so on iOS WebKit it takes the field's width instead of a
+native minimum that ran past the right edge of a dialog. The native picker
+still opens on tap. CSS only; no API change.
+
+### Documents save as they are typed (2026-10-24)
+
+
+**Changed.** `VersionedDocument` saves the text itself: after a pause in
+typing, on Done, on Cmd/Ctrl+S, and when the page is hidden or left. There is no
+draft and no Save or Discard. A save that finds a newer version merges the two
+word by word (`documentMerge.ts`) and saves the merge; only where both sides
+changed the same words is mine kept, with a notice offering theirs. An open
+document re-reads its source when shown again and every `pollMs` (10s), and
+takes newer text in place; the editor applies outside text as edits, so the
+caret stays put and Undo skips them. Typing not yet confirmed is kept on the
+device with the text it was typed on, and merged on the next open. The history
+sheet restores through the same save loop and drops the version-number column
+(`.ws-vdoc__vnum` is gone).
+
+**Changed, compatible.** `DocumentSource` no longer has `saveDraft` or
+`discardDraft`, and `load()` returns `{ state }`; a source that still has them
+is not called on them. `save` and `restore` take an optional
+`DocumentWriteMeta` naming the device, so a source can group one device's saves
+into one history entry. New export: `DocumentWriteMeta`.
+
+### Attach and send (2026-10-24)
+
+
+**Added.** `ChatAttach.sendOnly`: the items go to the chat beside the page as a
+message of their own, sent at once, and the composer keeps its draft and
+anything else attached.
+
+### A tapped line stays put (2026-10-24)
+
+
+**Added.** `EditorProps.initialTop`: the viewport y the starting caret's text
+should sit at. `VersionedDocument` passes where a reading form was tapped, and
+the editor holds that line there while it measures what it had estimated, so
+starting to edit a long document no longer moves the text twice. Markdown is in
+place from the editor's first frame and is parsed past the caret at mount.
+
+**Changed.** `DocumentBar` in the `title` variant: the title takes the bar's
+free width read or edited, and back is the chevron alone.
+
+### How a chat's work is seen (2026-10-18)
+
+
+**Added.** `CHAT_VIEWS`, `ChatView` and `PageLinkState.view`: follow, show or
+hide, how the operator sees the chat beside the page at work in an app.
+`readShellMessage` reads it, from `follow` when the shell does not send it;
+`follow` stays, true only for `follow`.
+
+### Lines break as they read (2026-10-18)
+
+
+**Fixed.** The page look of `Editor` breaks lines where the reading form does
+(pre-wrap rather than CodeMirror's break-spaces, and no WebKit
+after-white-space), so in Safari and the Workshop apps a word near the edge no
+longer moves to the next line when editing begins.
+
+### Bullet height (2026-10-18)
+
+
+**Fixed.** The page look's list bullet sits a pixel higher, level with the
+reading form's.
+
+### Bullet matches the reading form's (2026-10-18)
+
+
+**Fixed.** The page look's list bullet is the reading form's size and sits where
+its disc marker sits.
+
+### No ring around a page being edited (2026-10-18)
+
+
+**Fixed.** The page look of `Editor` draws no focus ring around its text; the
+caret is the only sign it is being edited (the ring had been clipped out of
+sight by the editor's own scroll box until 0.7.10.41).
+
+### A document scrolls as one while edited (2026-10-18)
+
+
+**Fixed.** The page look of `Editor` inside a document body grows to its text
+and the body scrolls it, as while reading, instead of fitting the window and
+scrolling inside itself. Starting to edit no longer cuts the visible text short
+at the bottom or jumps a scrolled document back to the top.
+
+### Lists edit the way they read (2026-10-18)
+
+
+**Fixed.** The page look of `Editor` (`look="page"`) spaces list items like the
+reading form (`.ws-md li`) and draws the bullet as the same round dot, so
+starting to edit a document with a list no longer moves the text below it.
+
+### Title field as wide as its title (2026-10-18)
+
+
+**Fixed.** `DocumentBar` with `onNameChange`: the title field is exactly as
+wide as its text (a hidden copy of the text sets the width) instead of a
+character count with an 8-character floor, so starting to edit a document no
+longer pushes the meta line and actions to the right. No API change.
+
+### Show a chat from the page (2026-10-18)
+
+
+**Added.** `showChat(thread)` and `PAGE_LINK_MESSAGES.showChat`: an app asks the
+shell to open the chat beside the page on a given conversation, so the mark on
+something a chat made or works in opens that chat.
+
+### Follow in the page link (2026-10-18)
+
+
+**Added.** `PageLinkState.follow` (optional): whether the operator follows the
+chat beside the page (its eye button), so an app that shows a chat's work can
+bring it to the front when it is switched on. `readShellMessage` reads it,
+true when the shell does not send it.
+
+### Read aloud button (2026-10-18)
+
+
+**Added.** `ReadAloudButton({ source, text, within?, selected? })`: the bar
+control that reads the selection inside a document, else the whole text, and
+stops its own reading. `VersionedDocument` uses it; any document bar can.
+
+### Read aloud, and editing that looks like reading (2026-10-18)
+
+
+**Added.** `useReadAloud(source)`, `readAloudHost()` and `provideReadAloud(host)`:
+a page asks the Workshop shell's one reader to read text (`read`, `stop`, and
+whether it is reading for that source). The shell installs the host; outside a
+shell `available` is false and a Read aloud control should not show.
+
+**Added.** `Editor` `look="page"`: no box, the reading form's face, size and
+paragraph gap, prose emphasis instead of code colors, and markdown drawn as it
+reads (marks hidden away from the selection's lines). `look="field"` is the
+default and unchanged.
+
+**Added.** `VersionedDocument` `menuItems`: the host's `MenuItem`s in the bar's
+More menu.
+
+**Changed.** `VersionedDocument` edits in the page look; Edit is a pencil and
+finishing is a check (saves when there are changes, then shows the reading
+form); Read aloud sits in the bar (the selection inside the document, else all
+of it); Tags moved into More. `DocumentBar` with both `onBack` and
+`onNameChange` draws the chevron alone ahead of the name field.
+
+### Page link names the chat (2026-10-17)
+
+
+**Changed.** `PageLinkState` gains `thread`, the conversation beside the page
+(null when none), read from the shell's `workshop/v1/pageLink`. It is the id
+the app's tool server gets as `X-Workshop-Thread`, so an app can mark what a
+chat made and bring it to the front beside that chat.
+
+**Migration.** Code that builds a `PageLinkState` itself (an initial value)
+adds `thread: null`.
+
+### Page link (2026-10-17)
+
+
+**Added.** The app side of a chat beside a page, so an app framed by the shell
+uses the shell's own message names and shapes instead of writing them again:
+`startPageLink({context, tools, run, onLink})` keeps the shell told what is on
+screen and answers the chat's calls to the app's tools (an undeclared tool or a
+throw becomes the chat's error); `attachToChat(...)` hands items or a prompt to
+the chat; `reportTakeover()` gives a chat in control the page back. Types
+`PageTool`, `PageCall` (with `access`, the app's chat options this chat has on),
+`PageResult`, `PageLinkState`, `ChatAttach`; constants `PAGE_LINK_MESSAGES`,
+`PAGE_LEVELS`, `PAGE_CONTEXT_MAX`. Framework-free; inert outside a frame.
+
+**Migration.** None.
+
+### Notice body on a phone (2026-10-17)
+
+
+**Fixed.** Below 640px a `Notice` whose sentence ran longer than one line put
+the sentence on the line BELOW its icon, leaving the icon alone on the first.
+The body now takes the rest of the icon's line and wraps inside it; an action
+still drops to its own line.
+
+**Migration.** None.
+
+### Mic capability (2026-10-17)
+
+
+**Added.** The native bridge types gain the `mic` capability (`MicApi`):
+`status()`, `request()` (the system prompt while undetermined) and
+`openSettings()`, mirroring `shared/native-bridge.ts`. Offered by the Mac and
+iPhone shells from their next build; check `has("mic")` before calling.
+
+**Migration.** None.
+
+### UseTrackingStatus without location (2026-10-17)
+
+
+**Fixed.** `useTrackingStatus` called `location.trackingStatus()` on any native
+shell, so a shell that does not offer the `location` capability threw while
+rendering and took the Settings Account tab down with it. It now does nothing
+unless the shell has `location`.
+
+**Migration.** None.
+
+### CopyText (2026-10-17)
+
+
+**Added.** `copyText(text)`: writes the clipboard and resolves true once the
+text is there. A copy made from code fires no DOM `copy` event, so after a copy
+lands it dispatches `COPIED_EVENT` (`"workshop:copied"`, detail `{ text }`) on
+its window; the Workshop shell listens for it on its own window and on
+same-origin app frames, and tells apps subscribed to the "copied" event.
+`CopyButton` now copies through it.
+
+**Migration.** None. An app copying from code should call `copyText` rather
+than `navigator.clipboard.writeText`, so its copies are seen.
+
+### Page zoom (2026-10-12)
+
+
+**Added.** `pages.setZoom(id, factor)`. Draws the page view at `factor` times
+its size, the way a browser's zoom does (WKWebView `pageZoom`): 1 is normal,
+the layout width changes with it, and the factor is held to 0.3 through 3. It
+stays with the page view across its navigations; a page view opened again
+starts at 1.
+
+`hidden?` on `PageCommandItem`: the Mac takes the command's key and lists no
+menu item for it, for a second key of a command already listed (Cmd-= beside
+Cmd-+). An older Mac build ignores the flag and lists the item.
+
+**Migration.** None. The Mac and iPhone apps need a new build for it;
+`typeof pages.setZoom` tells an older build apart.
+
+### Page downloads handed to the app (2026-10-12)
+
+
+**Added.** `downloadsToApp` in `PageNavigationRules`, and the "pages:download"
+event (type `PageDownloadEvent`). With it set, a load of a page's main frame
+whose response is an attachment (a Content-Disposition starting with
+"attachment") or a type the page view cannot show is cancelled, the page stays
+where it was, and the file is reported with `{ id, app?, url, from, filename?,
+mime?, bytes?, reason: "attachment" | "unshowable" }`. Only http and https
+addresses are reported, and frames other than the main frame are left alone.
+The shell downloads nothing; the file is the app's to fetch. Off unless the app
+sets it, and kept with the rest of the app's rules.
+
+**Migration.** None; an app that does not set it sees no change. The Mac and
+iPhone apps need a new build for it. An older build refuses rules carrying the
+new key ("Not a navigation rule: downloadsToApp") and keeps the old ones, so an
+app that sets it retries without it when `set` rejects.
+
+### Navigation rules for page views (2026-10-12)
+
+
+**Added.** `pages.navigationRules.set(rules)` and `.remove()`, and the
+"pages:navigationBlocked" event (types `PageNavigationRules`, `PageHopRule`,
+`PageStripRule`, `PageNavigationBlockedEvent`). An app declares where its
+page views may go, and the shell applies it to every navigation of its pages,
+pop-ups included, and keeps it across launches:
+
+- `popupsNeedTap`: a pop-up opens only from a tap, click or key.
+- `blockUntappedJumps`: the whole page jumping to another site is cancelled
+  when the page's script, or a frame from another site, started it without a
+  tap within `tapWindowMs` (default 5000); each is reported with where it
+  would have gone. Loads the app starts, server redirects, form posts, back,
+  forward and reloads are never judged.
+- `publicSuffixes`: the public suffix list, for telling sites apart.
+- `hops`: tracking hops skipped, the destination taken from a query
+  parameter (plain or base64) or the path.
+- `stripParams`: tracking query parameters taken out.
+
+Every rule is off unless the app sets it. Taps, clicks and keys are noted by
+the shell, natively, so a page can neither fake nor hide them.
+
+**Migration.** None; an app that sets no rules sees no change. The Mac and
+iPhone apps need a new build for it; `typeof pages.navigationRules?.set` tells
+an older build apart.
+
+### Page commands reach the app in front with no page (2026-10-11)
+
+
+**Added.** `WorkshopNative.shell.foreground(app | null)` (capability
+`"shell"`, type `ShellApi`): Workshop's web UI reports which app's frame it
+shows. On the Mac, with no page view visible, a registered page command fires
+for that app, and "pages:command" arrives with a null `id` (no page). The iOS
+shell takes the call and keeps nothing.
+
+**Changed.** `PageCommandEvent.id` is `string | null`.
+
+**Migration.** A handler that reads `e.id` as a page id checks for null
+first; acting on a null id for the app's current view (its active tab, say)
+is what makes Cmd-W and the like work with no page on screen. An app that
+ignores a null id keeps today's behaviour, except that the shell's own item no
+longer fires for a key the app registered.
+
+### Page commands answer while the app is in front (2026-10-11)
+
+
+**Changed.** On the Mac a registered page command also fires when keyboard
+focus is outside every page view (Workshop's web UI, the app's own controls in
+its frame): the app whose page view is the topmost visible one answers, and
+"pages:command" names that page, as it would the focused one. Only that app is
+asked; when it has no command for the key, or no page view is visible, the
+shell's own item applies (Cmd-W closes the window). Menu items are enabled only
+while their command would answer. The types are unchanged; their comments
+state the new rule.
+
+**Migration.** None. An app that acts on "pages:command" for its own pages
+already handles the event; it now also arrives while focus is in its controls.
+
+### One Live Activity for every app (2026-10-11)
+
+
+**Breaking.** `WorkshopNative.liveActivity` takes a generic
+`LiveActivityState` instead of the single-purpose state it had, whose
+`direction`, `leaveByLocal` and `targetArriveLocal` fields are gone and whose
+`countdownTo` is now optional. `ActivityStatus` is now the kit's five status
+kinds (`ok | running | stopped | warn | danger`, the same as `StatusKind`)
+instead of `ok | info | caution | urgent`. The old state type is removed.
+
+**Added.** `liveActivities()`, the Live Activity API acting for the app the
+frame serves (`undefined` outside an app's served pages, in a plain browser,
+and in a shell from before activities were per app), and the types
+`LiveActivityState`, `LiveActivityHandle`, `LiveActivityApi` and
+`ActivityStatus`. A state is a `headline`, an optional `subtitle` and
+`detail`, an optional `countdownTo` (ISO 8601; the shell counts down
+natively), an optional `progress` (0 to 1, clamped), a `status` and an SF
+Symbol name in `symbol`. The shell lays out the lock screen and the Dynamic
+Island's compact, expanded and minimal views from those fields alone.
+
+**Changed.** An activity belongs to the app that started it. `start` is
+refused without an app; `update` and `end` reject an activity another app
+started, or one that is gone; a tap on the activity opens the app's page in
+Workshop. A state with an unknown status, no headline, no symbol or an
+unreadable `countdownTo` is rejected.
+
+**Migration.** The calls keep their names and arguments; what changes is
+where the API comes from and the state passed to it.
+
+- Get the API with `const la = liveActivities()` instead of
+  `native().liveActivity`. It is `undefined` where an activity cannot belong
+  to an app, so check it and `await la.isSupported()` before starting.
+- `start(state)` and `update(id, state)`: build the new state from the old.
+  `headline` and `subtitle` carry over as they were. `countdownTo` carries
+  over and may now be left out. `direction` has no field of its own; fold it
+  into `headline` or `subtitle` if the activity should say it. The two
+  preformatted time strings, if still wanted, go into `detail` as one line.
+  Set `symbol` to the SF Symbol the activity should show; the old layout
+  drew a fixed one. Map the status: `ok` to `ok`, `info` to `running`,
+  `caution` to `warn`, `urgent` to `danger`.
+- `end(id)` is unchanged.
+- An `update` or `end` that rejects means the activity is gone (dismissed,
+  timed out, or started by an older shell). Start a new one. Activities an
+  older shell started are not carried over.
+
+### Page views are each app's own (2026-10-11)
+
+
+**Changed.** `pagesBridge()` returns the bridge acting for the app its frame
+serves (the slug in `/base-apps/run/<slug>/proxy/...`, under `/api` too) when
+the shell offers `forApp`. The shell keeps page ids, profiles and their data
+stores (cookies included), content rule lists, user scripts and page
+commands per app: an app lists, reads and removes only its own, and
+`closeAll` (also called when the frame goes away) closes only its pages. A
+shell without `forApp` behaves as before.
+
+**Added.** `WorkshopNative.forApp?(app)`, and `app?` on `PageState`,
+`PageErrorEvent`, `PageNewWindowEvent`, `PageCommandEvent` and
+`PageMessageEvent`. The bridge from `forApp` passes `on` only its app's
+`"pages:*"` events.
+
+**Migration.** Rebuild the app with this kit: a shell with per-app page views
+refuses page requests that carry no app. Nothing else changes for an app that
+reaches page views through `pagesBridge()`. Stores made before the change keep
+their identifiers and cookies: the first app to reach its profiles takes them
+over. Rule lists and scripts stored before it are dropped once; set them again
+when `contentRules.list()` no longer has them.
+
+### Page commands are the app's to register (2026-10-11)
+
+
+**Breaking.** `PageCommand` (a fixed union of six command names) is
+removed, and `PageCommandEvent.command` is a `string`: the id of a command
+the app registered. The Mac shell no longer has page items of its own (File's
+Cmd-T and Cmd-L, View's Cmd-R, a History menu with Cmd-[ and Cmd-]), and
+Cmd-W in a page view closes the window unless an app registered it.
+
+**Added.** `PagesApi.commands.set(items)` with `PageCommandItem` (`id`,
+`title`, `key`, `modifiers?` of `PageKeyModifier` `"command" | "shift" |
+"option" | "control"`, default command; `menu?`, the top-level menu, default
+"File"; `focusShell?`). The Mac lists them in its menu bar, takes their keys
+while a page view has focus, and sends `"pages:command"` with the item's id.
+The iOS shell takes the list and never fires; it no longer declares
+`"pages:command"`.
+
+**Migration.** Register each command you handled with `commands.set`: the id
+your handler map is keyed by, a title, the key, and the menu it was in
+(`focusShell: true` for one that moves focus into your UI, as an address
+field does). Key the handler map by `string` rather than `PageCommand`, and
+call `commands.set([])` when the screen goes away.
+
+### The shell's web engine (2026-10-11)
+
+
+**Added.** `WorkshopNative.engine` (optional) with `NativeEngine`
+(`webkitVersion?`, `safariVersion?`): the Mac reports the installed Safari's
+version and WebKit's build, iOS its OS release as `safariVersion`. Shell
+builds from before it leave it out. The Mac shell's own user agent no longer
+carries "Version/… Safari/…"; web code that wants a Safari agent for page
+views builds one from `engine.safariVersion`. Nothing is removed.
+
+### Page views: menu, press and pick removed (2026-10-11)
+
+
+**Removed.** Everything 0.7.10.18 added: `PagesApi.menu.set` and
+`.menu.answer` with `PageMenuItem`, bridge topics `"pages:menuRequest"`
+(`PageMenuRequestEvent`) and `"pages:menu"` (`PageMenuEvent`),
+`PagesApi.pick(id, on)`, and topic `"pages:press"` (`PagePressEvent`).
+A page's context menu on a right-click or long-press is WebKit's own again,
+with nothing waiting on the app and no long-press recognizer of the
+platform's. An app that wants its own menu on a page draws it in the page
+with a user script and reports the choice over `"pages:message"`.
+
+### Page views: the app's items in page menus, long-press and pick (2026-10-11)
+
+
+**Added.** `PagesApi.menu.set(items)` and `.answer(token, items)` with
+`PageMenuItem` (`id`, `title`, `enabled?`; a disabled item is a header).
+Bridge topic `"pages:menuRequest"` with `PageMenuRequestEvent` (`id`,
+`token`, `x`, `y`, `link?`, `image?`, `media?`): a page's own context menu
+(a right-click on the Mac, WebKit's long-press menu on the iPhone) waits up
+to 400 ms for the answer, then takes the `set` items. Topic `"pages:menu"`
+with `PageMenuEvent` (`id`, `item`, `token?`, `x`, `y`) when one is chosen.
+`PagesApi.pick(id, on)` holds the next tap on a page. Topic `"pages:press"`
+with `PagePressEvent` (`id`, `x`, `y`, `pick`): a one-finger long-press
+WebKit's menu did not take (iPhone), or the picked tap. Nothing is removed.
+
+### Page views: user scripts and page messages (2026-10-11)
+
+
+**Added.** `PagesApi.userScripts.set(identifier, script)` and
+`.remove(identifier)` with `PageUserScript` (`source`; `world` `"page"` or
+`"isolated"`, default isolated; `frames` `"all"` or `"main"`, default all;
+`at` `"start"` or `"end"`, default start): a script installed in every page
+view, pop-ups included, from each page's next document, and kept on the
+device for the next launch. Bridge topic `"pages:message"` with
+`PageMessageEvent` (`id`, `world`, `frameMain`, `frameUrl`, `body`,
+`dropped?`): what a user script posts with
+`window.webkit.messageHandlers.workshop.postMessage(value)`, bodies over
+256 KB dropped and counted. `PagesApi.run` takes an optional third argument,
+`PageRunOptions` (`world`), to run in the isolated world. `PageWorld` names
+the two worlds. The iOS shell now also forwards `"pages:command"`. Nothing is
+removed.
+
+### Page views: the size a pop-up asked for (2026-10-11)
+
+
+**Added.** `PageNewWindowEvent.features` (optional) with `PageWindowFeatures`
+(`width`, `height`, `x`, `y`, each optional): set with `popupId` when the page
+asked for a size for its new window, as `window.open(url, name,
+"width=500,height=600")` does, so the web can show it as a floating window
+instead of a tab. Nothing is removed.
+
+### Page views: browser shortcuts and crashed pages (2026-10-11)
+
+
+**Added.** Bridge topic `"pages:command"` with `PageCommandEvent` (`id`,
+`command`) and `PageCommand` (`location`, `newTab`, `closeTab`, `reload`,
+`back`, `forward`): the Mac shell sends one for Cmd-L, Cmd-T, Cmd-W, Cmd-R,
+Cmd-[ and Cmd-] typed while a page view has focus. `PageState.crashed`
+(optional): the page's web process ended, and it runs no script until a
+reload. Nothing is removed.
+
+### Page views: pop-ups that keep their opener (2026-10-11)
+
+
+**Added.** `PageNewWindowEvent.popupId`: the shell has already opened a
+hidden page view for the new window, linked to the page that opened it, so a
+sign-in pop-up can hand its result back. `PagesApi.adopt(popupId, id)` gives
+that view the id of the tab made for it. A pop-up that closes itself pushes
+its `closed` state like any page. Nothing is removed.
+
+### The native bridge names a Mac shell (2026-10-11)
+
+
+**Changed.** `WorkshopNative.platform` is `"ios" | "macos"`: the AppKit shell
+in `macos/` installs the same bridge and says `"macos"`. It offers only the
+capabilities it implements, so `has()` stays the way to ask what is there.
+Nothing is removed.
+
+### Page views: content mode and content rules (2026-10-11)
+
+
+**Added.** `PageOpenOptions` gains `contentMode` (`"mobile"` or `"desktop"`,
+the new type `PageContentMode`), and `PagesApi` gains
+`setContentMode(id, mode, userAgent?)`, which applies the mode (and the user
+agent, when given) and reloads the page. `PagesApi.contentRules` sets, removes
+and lists WebKit content rule lists by identifier; a set list applies to every
+page view, open or opened later, and stays in force across launches of the
+phone app. Nothing is removed.
+
+### Page views close with the app that opened them (2026-10-10)
+
+
+**Fixed.** When `pagesBridge()` finds the shell's bridge through a parent
+frame, it closes every page view once that frame goes away (`pagehide` or
+`unload`). Page views sit above the whole shell, so before this, leaving a
+framed app left its pages on screen over the next one. Nothing else changes.
+
+### Native page views from the phone app (2026-10-10)
+
+
+**Added.** The native bridge's `WorkshopNative` type gains `pages`, the mobile
+shell's native page views (real WebKit pages placed above the web UI, one
+iOS data store per profile), with its event topics `pages:state`,
+`pages:error` and `pages:newWindow` and the types `PagesApi`,
+`PageOpenOptions`, `PageRect`, `PageProxy`, `PageState`, `PageErrorEvent`,
+`PageNewWindowEvent`, `PageRunResult` and `PageCookie`. `pagesBridge()`
+returns the bridge that can drive them, looking through same-origin parent
+frames so a framed app finds the shell's bridge; `topViewportRect(el)` gives
+an element's rect in the top document's viewport, the space page rects use.
+Nothing is removed.
+
+### A document's bar stays still, and reading text opens it for editing (2026-10-10)
+
+
+**Changed.** `VersionedDocument` no longer shows the "unsaved changes were
+kept" banner, its "Discard draft" button, or the bar's "Discard". Drafts are
+still written as before; the bar says so with one dot in a fixed slot (accent,
+labelled "Unsaved changes"), so it appearing moves nothing. While there are
+changes the bar's last button is Save, otherwise Done. History and the
+Preview toggle moved into a "More" menu, which also holds "Discard unsaved
+changes" (with a confirmation) while there are changes. Tags: a tag button in the bar opens the add field; existing
+tags always show. The editor's minimum height inside a `fit` document is 8rem
+(was 12rem), so it fits a short phone viewport without the page scrolling.
+
+**Added.** Tapping or clicking the text of a document that is being read opens
+the editor with the caret at that spot. `DocumentBar` takes `quietDirty`
+(reserved slot, accent dot), and `Editor` takes `autoFocus` and
+`initialSelection` (read at mount). All optional; nothing is removed.
+
+### List text in the editor keeps the normal text color (2026-10-09)
+
+
+**Fix.** The markdown highlighting painted the whole list, text included, in the
+punctuation tone, so a numbered or bulleted line went grey as soon as it was a
+list item. Only the marker ("1.", "-") takes that tone now; the item's text is
+the editor's text color.
+
+### The rail shows only the app tiles that fit (2026-10-07)
+
+
+**Fix.** With more installed apps than the rail had room for, the tiles pushed
+the "+" and the avatar off the bottom of the screen. App tiles now sit in
+`.ws-rail__apps`, the only part of the rail that shrinks: it shows as many whole
+tiles as fit and clips the rest, so the controls below it are always visible.
+A consumer that renders its own rail wraps its app tiles in that class.
+
+### A VersionedDocument can fit a sized box, and is edited in its reading face (2026-10-04)
+
+
+**Local to this installation, additive.** `VersionedDocument` takes an optional
+`fit`: the frame fills a box its host has already sized, its bar sits above the
+body instead of sticking inside the host's scroller, and the body scrolls under
+it. In the source form the editor fills what is left and scrolls inside itself.
+Sticky inside a padded scroller let the text show through the strip above the
+bar. Separately, the editor inside a `VersionedDocument` is drawn in the sans
+face, size and leading of the reading form rather than the code editor's mono,
+never under the `--fs-field` no-zoom floor.
+
+### A missed deadline is a transient failure (2026-10-04)
+
+
+**Local to this installation, a fix; no API change.** `isTransientNetworkError`
+now also answers true for an error named `TimeoutError`, which is what
+`AbortSignal.timeout` rejects with and what the shell's fetch deadline throws.
+A request a stalled server never answered is the same fault as a 502 from a
+restarting one, so `withTransientRetry` and every caller that keys retries on
+this function ride it out the same way. An `AbortError` (a caller cancelling
+its own request) is still not transient.
+
+### A VersionedDocument with a Back can be titled (2026-10-02)
+
+
+**Local to this installation, a fix; no API change.** `DocumentBar` folds its
+name into the back button whenever `onBack` is given, so a `VersionedDocument`
+given `onBack` drew no title field and a note could not be titled. It now holds
+Back while editing and gives it back on Done. The combined back button reads the
+`namePlaceholder` for an empty name instead of nothing.
+
+### VersionedDocument, editor suggestions and highlights (2026-10-02)
+
+
+**Local to this installation, additive.** New exports on the `editor` subpath and
+three optional `Editor` props; nothing removed or renamed. Queued for upstream as
+a platform change (docs/upstream-queue.md).
+
+#### Added
+
+- **`Editor` props `completions`, `highlights`, `onSelectionChange`.** Plain data
+  rather than CodeMirror extensions, because an app bundle cannot hand the shell's
+  editor an extension built against a second copy of `@codemirror/state`. A
+  completion source is a trigger (`"@"`, `"[["`), an optional close (`"]]"`) and a
+  function from the typed query to suggestions; highlights are ranges with a tone
+  and a tooltip that follow the text until replaced. `matchTrigger` is the pure
+  matcher, exported for tests. New optional peer: `@codemirror/autocomplete`.
+- **`VersionedDocument`** (editor subpath): one markdown document with a title,
+  tags, drafts autosaved to the host and to the browser, a version on every Save,
+  a history sheet with restore, and a save that names its base version so a newer
+  save made elsewhere is offered rather than overwritten. Storage is the host's,
+  through `DocumentSource`; `.ws-vdoc__*` styles in components.css.
+
+#### Changed
+
+- The editor's implementation moved to `src/EditorCore.tsx`; `src/Editor.tsx` is
+  now the subpath entry that re-exports it beside the document frame. The import
+  path `@workshop/ui/editor` is unchanged.
+
+### Sheet (2026-10-01)
+
+
+**Local to this installation, additive.** One new export, `Sheet`, and nothing
+removed or renamed. Queued for upstream as a platform change
+(docs/upstream-queue.md).
+
+#### Added
+
+- **`Sheet`**: a panel you work in beside the work. A side panel on the right
+  edge from 900px up, a bottom sheet below it. The head holds the title and a
+  close button, the body scrolls, and `actions` sit outside the scroll. Esc, the
+  scrim and the close button all call `onClose`; focus is trapped and restored
+  as in `Modal`. Its overlay is `.ws-overlay--side`, a sixth sanctioned overlay
+  modifier. Use it for settings and pickers; a decision you are being asked to
+  make stays a `Modal`.
+
+#### Changed
+
+- `Modal`'s focus handling moved into an internal hook shared with `Sheet`.
+  Behaviour is unchanged.
+
+### Toast and NumberField (2026-09-23)
+
+**Additive.** `ToastHost`, `useToast`, `type ToastSpec` (the Toast primitive)
+and `NumberField`. Nothing removed or renamed.
+
 ## 0.7.10 - 2026-09-16 - a section owns its spacing, and stretching is opt-in
 
 **Patch, additive.** One new export (`Section`), one new optional prop
@@ -351,7 +1340,7 @@ strictly more.
 ## 0.6.1 - 2026-08-23 - an overlay can start below chrome the shell does not own
 
 **Additive.** One new modifier. Nothing existing moved: `--bare`, `--dropdown`,
-`--under-bar1` and `--sheet` are byte-identical, so the place menu, the birds
+`--under-bar1` and `--sheet` are byte-identical, so the place menu, an app's
 bottom sheet, `Modal` and `ConfirmDialog` are all unaffected.
 
 - **New: `.ws-overlay--under-chrome`.** `top: var(--ws-overlay-top, 0px)`. For a
@@ -381,7 +1370,7 @@ and anything that puts a surface over the app composes them.
 
 Reported by the operator on 2026-08-23, having counted the copies: the chat work
 sheet dimmed only the chat column and left the rest of the screen bright, the
-phone place menu had a private copy with no blur, and the birds More sheet had a
+phone place menu had a private copy with no blur, and an app's More sheet had a
 third with a raw `rgba()` fill and a raw z-index. "why do we have multiple
 randomly implemented poorly implemented different overlay backdrops... the blur
 one is better than this. we shouldnt have multiple implementations of the same

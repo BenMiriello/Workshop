@@ -60,6 +60,10 @@ export type Placement = {
    * dropdown opened "slightly hanging off the screen to the side" on mobile.
    */
   insetStart: number;
+  /** The surface's top edge, in the same coordinates as the trigger. When
+   * neither side fits, it slides into the clip box over the trigger rather
+   * than hanging off the edge. */
+  top: number;
   /** Which side of the trigger it opens on. */
   side: "bottom" | "top";
 };
@@ -119,10 +123,15 @@ export function placeMenu(
   const belowOverflows = trigger.bottom + gap + size.height > clip.bottom - EDGE_PAD;
   const aboveOverflows = trigger.top - gap - size.height < clip.top + EDGE_PAD;
 
+  const placed = side === "bottom"
+    ? (belowOverflows && !aboveOverflows ? "top" : "bottom")
+    : (aboveOverflows && !belowOverflows ? "bottom" : "top");
+  const want = placed === "bottom" ? trigger.bottom + gap : trigger.top - gap - size.height;
+  const floor = clip.top + EDGE_PAD;
+  const ceil = clip.bottom - EDGE_PAD - size.height;
   return {
     insetStart: left - trigger.left,
-    side: side === "bottom"
-      ? (belowOverflows && !aboveOverflows ? "top" : "bottom")
-      : (aboveOverflows && !belowOverflows ? "bottom" : "top"),
+    top: ceil >= floor ? Math.min(Math.max(want, floor), ceil) : floor,
+    side: placed,
   };
 }

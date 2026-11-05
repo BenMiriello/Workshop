@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Check } from "lucide-react";
 import { cx } from "./cx";
 import { catClass, statusClass, type CatHue, type StatusKind } from "./status";
@@ -92,8 +92,31 @@ export function Field({
   );
 }
 
-export function Input({ className, ...rest }: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={cx("ws-input", className)} {...rest} />;
+// A NUMBER FIELD SHOWS WHAT IS TYPED until it loses focus. Callers turn the
+// text into a number on every keystroke (`Number(e.target.value)`), so clearing
+// the field to type a new value handed back 0, or a clamped 1, and the field
+// redrew it under the caret: "5" after a clear became "05" or "15". While the
+// field has focus it shows its own text and still reports every change; on
+// blur it shows the caller's value again.
+export function Input({ className, type, value, onChange, onBlur, ...rest }: React.InputHTMLAttributes<HTMLInputElement>) {
+  const [typed, setTyped] = useState<string | null>(null);
+  const own = type === "number" && value !== undefined;
+  return (
+    <input
+      className={cx("ws-input", className)}
+      type={type}
+      value={own && typed !== null ? typed : value}
+      onChange={(e) => {
+        if (own) setTyped(e.target.value);
+        onChange?.(e);
+      }}
+      onBlur={(e) => {
+        setTyped(null);
+        onBlur?.(e);
+      }}
+      {...rest}
+    />
+  );
 }
 
 export function Select({ className, children, ...rest }: React.SelectHTMLAttributes<HTMLSelectElement>) {
@@ -104,8 +127,32 @@ export function Select({ className, children, ...rest }: React.SelectHTMLAttribu
   );
 }
 
-export function Textarea({ className, ...rest }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={cx("ws-textarea", className)} {...rest} />;
+// `grow`: while focused the box fits all of its text, and on blur it returns to
+// its own size (`rows`, or the kit's minimum). A drag handle is not enough,
+// because iOS draws none.
+export function Textarea({ className, grow, onFocus, onBlur, onInput, ...rest }:
+  React.TextareaHTMLAttributes<HTMLTextAreaElement> & { grow?: boolean }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const [open, setOpen] = useState(false);
+  const fit = () => {
+    const el = ref.current;
+    if (!el || !grow) return;
+    el.style.height = "";
+    if (open && el.scrollHeight > el.clientHeight) {
+      el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+    }
+  };
+  useLayoutEffect(fit);
+  return (
+    <textarea
+      ref={ref}
+      className={cx("ws-textarea", className)}
+      onFocus={(e) => { setOpen(true); onFocus?.(e); }}
+      onBlur={(e) => { setOpen(false); onBlur?.(e); }}
+      onInput={(e) => { fit(); onInput?.(e); }}
+      {...rest}
+    />
+  );
 }
 
 // Read-only display value — the Edit-mode "view" state of a field.

@@ -50,12 +50,17 @@ export { FilterBar, FilterChip } from "./filters";
 export { Board, BoardColumn, BoardCard } from "./Board";
 export { Segmented, type SegmentedOption } from "./Segmented";
 export { Stepper } from "./Stepper";
+export { NumberField } from "./NumberField";
 export { Modal, ConfirmDialog } from "./Modal";
-export { OverlayHost, useOverlayHost } from "./OverlayHost";
+export { Sheet } from "./Sheet";
+export { ToastHost, useToast, type ToastSpec } from "./Toast";
+export { OverlayHost, OverlayScope, useOverlayHost } from "./OverlayHost";
 export { PageActionBar } from "./PageActionBar";
 export { Menu, MenuItem, MenuCheckItem, MenuSeparator, MenuLabel } from "./Menu";
+export { MenuAction, MenuRow } from "./MenuRow";
 export { Popover } from "./Popover";
 export { StateBlock, Notice, Skeleton, ActionBar, CopyButton, RevealField } from "./feedback";
+export { copyText, COPIED_EVENT, type CopiedDetail } from "./clipboard";
 export { TableScroll, Table, NumCell, TimeCell } from "./Table";
 export { FileTree, type FileTreeProps } from "./FileTree";
 // The same tree on a phone: one level at a time, Up walking back out. Same
@@ -109,8 +114,35 @@ export {
   native, isNativeShell, hasCapability, isPaidTier, onNativeEvent,
   type Capability, type WorkshopNative, type BridgeEventTopic,
 } from "./native/bridge";
+export type { NativeEngine } from "./native/types";
 export {
   getCurrentFix, startDeviceTracking, stopDeviceTracking, backgroundTrackingSupported,
 } from "./native/location";
 export { useNative, useNativeEvent, useTrackingStatus, type NativeInfo } from "./native/useNative";
+export { pagesBridge, topViewportRect } from "./native/pages";
+export { drawnOverPage, type DrawnOver } from "./native/layersOver";
+export { PAGE_SLOT_MSG, seeThrough, usePageSlot } from "./native/underPage";
+export { liveActivities } from "./native/liveActivity";
+export type {
+  PagesApi, PageOpenOptions, PageHideOptions, PageCutoutOptions, PageRect, PageProxy, PageState, PageErrorEvent,
+  PageNewWindowEvent, PageWindowFeatures, PageRunResult, PageCookie, PageContentMode, PageCommandItem,
+  PageCommandEvent, PageKeyModifier,
+  PageMessageEvent, PageRunOptions, PageUserScript, PageWorld,
+  PageDownloadEvent, PageHopRule, PageNavigationBlockedEvent, PageNavigationRules, PageStripRule,
+  ActivityStatus, LiveActivityState, LiveActivityHandle, LiveActivityApi, ShellApi, MicApi,
+} from "./native/types";
 export { type AppChatDockRenderer, type AppChatDockOptions } from "./appChatDock";
+export {
+  provideReadAloud, readAloudHost, useReadAloud,
+  type ReadAloudHost, type ReadAloudPhase, type ReadAloudState,
+} from "./readAloud";
+export { ReadAloudButton, type ReadAloudButtonProps } from "./ReadAloudButton";
+export {
+  provideSpokenActions, registerSpokenActions, spokenActionsHost, useSpokenAction, useSpokenActions,
+  type SpokenAction, type SpokenActionAnnotations, type SpokenActionInput, type SpokenActionsHost,
+} from "./spokenActions";
+export {
+  PAGE_LINK_MESSAGES, PAGE_LEVELS, PAGE_CONTEXT_MAX, startPageLink, attachToChat, reportTakeover, showChat, CHAT_VIEWS,
+  readShellMessage, type ChatView, type PageLevel, type PageTool, type PageResult, type PageCall, type PageLinkState,
+  type ChatAttach, type ChatAttachItem, type ShellMessage, type PageLinkOptions, type PageLinkHandle,
+} from "./pageLink";

@@ -1,6 +1,6 @@
 // The date/time formatting, in ONE place. There were sixteen independent
 // implementations across the frontend before this file existed, and they had
-// already drifted in ways an operator could see: `CommutePages.tsx` had no day
+// already drifted in ways an operator could see: one page had no day
 // tier, so 48 hours read "48h ago" there and "2d ago" everywhere else; some
 // callers clamped a negative delta (a clock skew, a server timestamp a beat
 // ahead of the browser) and some did not, so a fresh record could read "-3s
@@ -22,7 +22,7 @@
 
 /** Relative "time ago", the unit every list row and meta line uses.
  *
- * Seconds through years, with a day tier (the bug CommutePages had) and every
+ * Seconds through years, with a day tier (the bug one page had) and every
  * tier clamped to zero, so a timestamp a beat ahead of the browser's clock
  * reads "0s" rather than a negative number.
  *

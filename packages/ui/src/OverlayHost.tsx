@@ -33,3 +33,32 @@ export function OverlayHost({ children }: { children: ReactNode }) {
     </div>
   );
 }
+
+// A COLUMN OF ITS OWN INSIDE THE SHELL, such as the chat beside a page. It sits
+// beside the shell's content region, not inside it, so the shell's host is not
+// its host: a dialog opened there would fall back to <body> and be centred in
+// the whole window, over the dock and the page it is meant to sit beside. This
+// gives such a column a host that fills exactly the column, so its dialogs,
+// sheets and scrims are scoped to it the way the page's are scoped to the page.
+//
+// `active` off hands overlays to whichever host is above, or <body>. A phone
+// stacks the column under the page in half the window, too short for a dialog,
+// so it asks for the whole window there without remounting what is inside.
+export function OverlayScope({
+  active = true,
+  className,
+  children,
+}: {
+  active?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const outer = useContext(OverlayHostContext);
+  const [host, setHost] = useState<HTMLDivElement | null>(null);
+  return (
+    <div className={className ? `ws-overlay-scope ${className}` : "ws-overlay-scope"}>
+      <OverlayHostContext.Provider value={active ? host : outer}>{children}</OverlayHostContext.Provider>
+      <div className="ws-overlay-host" ref={setHost} />
+    </div>
+  );
+}

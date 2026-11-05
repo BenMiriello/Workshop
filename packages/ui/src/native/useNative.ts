@@ -45,7 +45,7 @@ export function useTrackingStatus(pollMs = 5000) {
 
   useEffect(() => {
     const n = native();
-    if (!n) return;
+    if (!n?.has("location")) return;
     let alive = true;
     const tick = () =>
       n.location

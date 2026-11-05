@@ -27,6 +27,32 @@
 .ws-root *::before,
 .ws-root *::after { box-sizing: border-box; }
 
+/* The same reset for the things that are PORTALLED to <body>, which is outside
+   `.ws-root` and so was reaching none of them. Measured 2026-08-17 at 390px: a
+   `.ws-textarea` in a dialog is `width: 100%` of a 324px body and came out 350px
+   wide, because content-box adds the 24px of padding and the 2px of border on
+   top of the 100%. That is 26px of sideways scroll in every dialog in the app
+   that holds a field, and it is why `.ws-modal` already had to declare
+   box-sizing for its own box. One rule per portal root, rather than each
+   component defending itself. */
+.ws-overlay *, .ws-overlay *::before, .ws-overlay *::after,
+.ws-menu__list *, .ws-menu__list *::before, .ws-menu__list *::after,
+.ws-toasts *, .ws-toasts *::before, .ws-toasts *::after { box-sizing: border-box; }
+
+/* And the type and ink `.ws-root` gives everything inside it. A dialog, drawer
+   or toast portalled to <body> inherited the browser's serif font and black
+   text instead, so an app framed without a shell had to restate the font for
+   every portal itself. Only portals that land OUTSIDE `.ws-root` take this:
+   one inside it (the shell's overlay host) keeps inheriting from where it
+   sits. Zero specificity, so an app that restyles a portal still wins. */
+:where(.ws-overlay, .ws-toasts):not(:where(.ws-root) *) {
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  -webkit-font-smoothing: antialiased;
+}
+
 /* ---- CURSORS (global rule) ----------------------------------------------
    Default arrow over everything (no I-beam on non-editable text); pointer only
    on genuinely clickable things; text only on editable controls. We never use
@@ -163,8 +189,21 @@
    ring appeared after typing and not after clicking. Same control, same click,
    different result, no way for the operator to tell why.
    Excluding them here fixes the class of bug in one place, and leaves their own
-   box-shadow alone rather than trading a stray ring for a missing elevation. */
-.ws-root :focus-visible:not([tabindex="-1"]) {
+   box-shadow alone rather than trading a stray ring for a missing elevation.
+
+   A TEXT FIELD NEVER GETS THE RING EITHER. Browsers match :focus-visible on a
+   focused text field however it was focused, mouse and tap included, so the
+   ring sat on every field the moment it was clicked: on top of a kit field's
+   own accent border, and as a thick halo on any field outside the kit. Each
+   one was then patched by hand (search field, find bar, chat input, editor)
+   and the next new field brought it back. A field's focus cue is its own
+   treatment (`.ws-input:focus` and friends: one accent hairline) or just the
+   caret, and that is decided here once. */
+.ws-root :focus-visible:not([tabindex="-1"]):not(:is(
+  textarea, select, [contenteditable]:not([contenteditable="false"]),
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="button"],
+    [type="submit"], [type="reset"], [type="color"], [type="file"], [type="image"])
+)) {
   box-shadow: var(--focus-ring);
 }
 
@@ -774,6 +813,53 @@ a.ws-btn { text-decoration: none; }
 .ws-chatgroup__head .ws-section-label { margin: 0; }
 .ws-chatgroup:first-of-type .ws-chatgroup__head { margin-top: 0; }
 
+/* THE CHAT LIST AS A GRID: the same groups, each a grid of cards instead of a
+   column of rows. Columns are as many 18rem cards as fit, so a phone gets one
+   and the desktop measure three, wide enough that a title reads before it
+   ellipsizes, with no breakpoint to keep in step. Every card in
+   a row ends the same height: the title is one line, the preview is held at
+   three lines whether or not the message fills them, and the foot sits on the
+   bottom edge. */
+.ws-chat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(18rem, 100%), 1fr));
+  grid-auto-rows: 1fr;
+  gap: var(--space-2);
+}
+.ws-chat-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+@media (hover: hover) {
+  .ws-chat-card.ws-card--interactive:hover {
+    transform: none;
+    box-shadow: var(--shadow-card);
+    background: var(--card-hover);
+  }
+}
+.ws-chat-card__menu { margin-left: auto; }
+.ws-chat-card__preview {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-tight, 1.4);
+  min-height: calc(var(--lh-tight, 1.4) * 3em);
+}
+.ws-chat-card__foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
 /* ---- LIST ROW ------------------------------------------------------------ */
 /* The one row shape for every list in the app: tickets and runs today. It is a
    ROW, not a card and not a table cell (operator, 2026-08-12).
@@ -1245,10 +1331,7 @@ a.ws-btn { text-decoration: none; }
               box-shadow var(--dur-fast) var(--ease-out);
 }
 .ws-searchfield:hover { background-color: var(--bg-inset); }
-.ws-searchfield:focus-within {
-  background-color: var(--card); border-color: var(--accent);
-  box-shadow: var(--focus-ring);
-}
+.ws-searchfield:focus-within { background-color: var(--card); border-color: var(--accent); }
 .ws-searchfield svg { width: 14px; height: 14px; flex: none; }
 .ws-searchfield input {
   flex: 1 1 auto; min-width: 0;
@@ -1475,6 +1558,17 @@ span.ws-filterchip__open { cursor: default; }
   background-position: right var(--space-2) center;
   padding-right: var(--space-6);
 }
+
+/* DATE AND TIME FIELDS ON iOS. WebKit gives these inputs a native minimum width
+   that ignores `width: 100%` and `min-width: 0`, so on a phone they ran past the
+   right edge of a dialog. Without the native appearance they take the field's
+   width like any other input; tapping still opens the native picker. */
+.ws-input[type="date"], .ws-input[type="time"], .ws-input[type="datetime-local"],
+.ws-input[type="month"], .ws-input[type="week"] {
+  -webkit-appearance: none; appearance: none;
+  display: block; max-width: 100%; line-height: var(--control-h);
+}
+.ws-input::-webkit-date-and-time-value { text-align: left; min-width: 0; }
 
 /* read-only display value (Edit-mode "view" state) */
 .ws-readonly { font-size: var(--fs-field); color: var(--fg); padding: 0 0; min-height: var(--control-h); display: inline-flex; align-items: center; }
@@ -1725,9 +1819,17 @@ span.ws-filterchip__open { cursor: default; }
 .ws-cat-slate     { --_cat: var(--cat-slate); }
 
 /* ---- TABS ---------------------------------------------------------------- */
-.ws-tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border); }
+/* overflow-x:auto rather than wrapping: a wrapped tab row grows the header's
+   height and shoves the panel below it down every time the active tab
+   changes width, and it still doesn't stop a single long label from widening
+   the page. Scrolling contains the overflow inside the strip instead. */
+.ws-tabs {
+  display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border);
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
 .ws-tab {
   appearance: none; background: none; border: none; cursor: pointer;
+  flex: none;
   padding: var(--space-2) var(--space-3); margin-bottom: -1px;
   font-family: inherit; font-size: var(--fs-base); font-weight: var(--fw-medium);
   color: var(--muted); border-bottom: 2px solid transparent;
@@ -1768,7 +1870,7 @@ span.ws-filterchip__open { cursor: default; }
    That is a correction, not a preference. On 2026-08-23 the operator counted
    the bespoke ones: the chat's work sheet dimmed only the chat column and left
    the rest of the screen bright, the phone place menu had its own copy with no
-   blur, and the birds More sheet had a third with a raw rgba fill and a raw
+   blur, and an app's More sheet had a third with a raw rgba fill and a raw
    z-index. His words: "why do we have multiple randomly implemented poorly
    implemented different overlay backdrops... the blur one is better than this.
    we shouldnt have multiple implementations of the same thing done different
@@ -1789,7 +1891,7 @@ span.ws-filterchip__open { cursor: default; }
 }
 .ws-overlay-host > .ws-overlay { position: absolute; pointer-events: auto; }
 
-/* THE MODIFIERS. Five, and they are the only sanctioned ways this varies.
+/* THE MODIFIERS. Six, and they are the only sanctioned ways this varies.
 
    --bare       nothing is inside it. It is a dismiss surface, not a dialog
                 host, so it drops the centring and the padding that exist to
@@ -1812,6 +1914,8 @@ span.ws-filterchip__open { cursor: default; }
                 in the caller's stylesheet (see below).
    --sheet      the dialog inside it is a bottom sheet, so it aligns to the
                 bottom edge and gives up its padding.
+   --side       it holds a `.ws-sheet` (`<Sheet>`): against the right edge on a
+                wide screen, against the bottom on a narrow one, no padding.
 
    --under-bar1 and --under-chrome are the same idea at two altitudes, and the
    split is not redundancy. Bar one is the shell's own bar, so the shell knows
@@ -1846,7 +1950,8 @@ span.ws-filterchip__open { cursor: default; }
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   margin: 0 0 var(--space-5); color: var(--muted); font-size: var(--fs-base); line-height: var(--lh-base);
 }
-.ws-modal__actions { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: var(--space-2); }
+/* Wraps rather than running off a phone when a record offers several actions. */
+.ws-modal__actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
 /* A control in the action row that is about the DIALOG rather than about the
    decision: a details toggle, a "what is this" link. It sits at the opposite end
    from the actions so the reader's eye is not asked to tell it apart from the
@@ -1874,14 +1979,61 @@ span.ws-filterchip__open { cursor: default; }
 }
 @keyframes ws-sheet-up { from { transform: translateY(12px); opacity: 0; } }
 
+/* Sheet (`<Sheet>`): a panel of settings beside the work. A side panel on the
+   right edge on a wide screen, so what it changes stays in view; a bottom sheet
+   on a narrow one, in reach of a thumb. Doubled class on the overlay so an
+   app's own `.ws-overlay` rule (several restyle it under 560px) cannot pull it
+   back to the middle. The head and actions stay put and the body scrolls. */
+.ws-overlay.ws-overlay--side { align-items: stretch; justify-content: flex-end; padding: 0; }
+.ws-sheet {
+  position: relative; z-index: var(--z-modal);
+  box-sizing: border-box;
+  display: flex; flex-direction: column;
+  width: min(26rem, 100%); max-height: 100%;
+  background: var(--bg); border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  animation: ws-sheet-side var(--dur-base) var(--ease-out);
+}
+.ws-sheet__head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+.ws-sheet__title {
+  flex: 1; min-width: 0; margin: 0;
+  font-size: var(--fs-lg); font-weight: var(--fw-semi);
+}
+.ws-sheet__body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  padding: var(--space-4) var(--space-5);
+}
+.ws-sheet__actions {
+  flex: 0 0 auto; display: flex; justify-content: flex-end; gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+}
+@keyframes ws-sheet-side { from { transform: translateX(16px); opacity: 0; } }
+@media (max-width: 899px) {
+  .ws-overlay.ws-overlay--side { align-items: flex-end; justify-content: stretch; }
+  .ws-sheet {
+    width: 100%; max-height: calc(100% - var(--space-6));
+    border-left: 0; border-top: 1px solid var(--border);
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    animation-name: ws-sheet-up;
+  }
+}
+
 /* Centered dialogs still have to fit a phone: shrink the padding and let the
    dialog use the full width minus a margin, without becoming a sheet. */
 @media (max-width: 560px) {
-  /* :not() so the two modifiers that DELETED the padding keep it deleted. A
+  /* :not() so the three modifiers that DELETED the padding keep it deleted. A
      bare scrim has nothing to frame, and a bottom sheet inset 16px from the
      edges is not a bottom sheet. Both used to be undone here, because this rule
      is later in the file at equal specificity. */
-  .ws-overlay:not(.ws-overlay--bare):not(.ws-overlay--sheet) { padding: var(--space-4); }
+  .ws-overlay:not(.ws-overlay--bare):not(.ws-overlay--sheet):not(.ws-overlay--side) {
+    padding: var(--space-4);
+  }
   .ws-modal, .ws-modal--lg {
     max-width: none; padding: var(--space-4);
     /* A DIALOG MUST NOT READ AS A PAGE. `max-height: 100%` let a content-heavy
@@ -1896,6 +2048,10 @@ span.ws-filterchip__open { cursor: default; }
        The min() keeps a short dialog its own natural height. */
     max-height: min(100%, 32rem);
   }
+  /* A form of many fields scrolling inside 32rem on a phone with room to spare
+     reads as a dialog too small for its job. It takes the region's height, still
+     inset by the overlay's padding, and only then scrolls. */
+  .ws-modal.ws-modal--tall { max-height: 100%; }
 }
 
 /* ---- MENU (overflow / compact picker popover) ---------------------------- */
@@ -1909,7 +2065,8 @@ span.ws-filterchip__open { cursor: default; }
    flex on `.ws-menu` itself (see .chat-actions > .ws-menu). */
 .ws-menu { position: relative; display: inline-flex; flex: 0 0 auto; min-width: 0; }
 .ws-menu__list {
-  position: absolute; z-index: var(--z-dropdown);
+  box-sizing: border-box;
+  position: fixed; z-index: var(--z-dropdown);
   min-width: 11rem; max-width: min(20rem, 80vw);
   /* Grow to fit contents, bounded by the viewport (mirrors .ws-popover__surface).
      placeMenu measures the post-clamp height and flips/scrolls accordingly, so a
@@ -1920,8 +2077,6 @@ span.ws-filterchip__open { cursor: default; }
   border-radius: var(--radius-md); box-shadow: var(--shadow-md);
   animation: ws-pop var(--dur-fast) var(--ease-out);
 }
-.ws-menu__list--bottom { top: calc(100% + var(--space-1)); }
-.ws-menu__list--top { bottom: calc(100% + var(--space-1)); }
 .ws-menu__item {
   display: flex; align-items: center; gap: var(--space-1);
   /* Same inner padding as a chat bubble (.chat-bubble) — one comfortable
@@ -1991,6 +2146,21 @@ span.ws-filterchip__open { cursor: default; }
   color: var(--muted);
 }
 .ws-menu__group:first-child { padding-top: var(--space-1); }
+.ws-menu__group--actions { display: flex; align-items: center; gap: var(--space-2); padding-right: var(--space-1); }
+/* An entry row: tighter on the right, where its buttons sit. */
+.ws-menu__row--entry { justify-content: flex-start; gap: var(--space-1); padding-right: var(--space-1); }
+.ws-menu__row--entry.is-muted .ws-menu__label { color: var(--faint); }
+.ws-menu__acts { flex: none; display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+.ws-menu__act {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.75rem; height: 1.75rem; padding: 0;
+  color: var(--muted); background: transparent; border: none;
+  border-radius: var(--radius-sm); cursor: pointer;
+}
+.ws-menu__act svg { width: 16px; height: 16px; }
+.ws-menu__act:hover { color: var(--fg); background: var(--card-hover); }
+.ws-menu__act[disabled] { opacity: 0.4; cursor: default; }
+.ws-menu__act[disabled]:hover { color: var(--muted); background: transparent; }
 
 /* ---- POPOVER (an anchored PANEL, not a list of choices) ------------------ */
 /* Same anchoring machinery as .ws-menu (see useAnchoredPlacement) and the same
@@ -2002,7 +2172,7 @@ span.ws-filterchip__open { cursor: default; }
    clips its own trigger out of existence. */
 .ws-popover { position: relative; display: inline-flex; flex: 0 0 auto; min-width: 0; }
 .ws-popover__surface {
-  position: absolute; z-index: var(--z-dropdown);
+  position: fixed; z-index: var(--z-dropdown);
   /* Width follows content between a min and a max: a short ref sits near 14rem,
      a long title or URL grows it toward the max. The only consumer is the ref
      preview card. The vw term keeps it on a phone, where it is nearly the whole
@@ -2019,8 +2189,6 @@ span.ws-filterchip__open { cursor: default; }
   border-radius: var(--radius-lg); box-shadow: var(--shadow-md);
   animation: ws-pop var(--dur-fast) var(--ease-out);
 }
-.ws-popover__surface--bottom { top: calc(100% + var(--space-1)); }
-.ws-popover__surface--top { bottom: calc(100% + var(--space-1)); }
 
 /* ---- STATE BLOCKS: loading / empty / error ------------------------------- */
 .ws-state {
@@ -2090,10 +2258,12 @@ span.ws-filterchip__open { cursor: default; }
    the control sits against the edge, and on the shell banner it ran past it
    entirely. Giving the body a floor makes the wrap happen instead: below it the
    action cannot share the line, so it takes the next one, indented to the text
-   column so it reads as belonging to the sentence above it. */
+   column so it reads as belonging to the sentence above it. The body's basis is
+   the rest of the line after the icon, not its content: with `auto`, a sentence
+   longer than one line dropped below its own icon and left it alone up top. */
 @media (max-width: 640px) {
   .ws-notice { flex-wrap: wrap; }
-  .ws-notice__body { min-width: 16ch; }
+  .ws-notice__body { flex-basis: calc(100% - 14px - var(--space-2)); min-width: 16ch; }
   .ws-notice__action { margin-left: calc(14px + var(--space-2)); }
 }
 
@@ -2180,6 +2350,12 @@ span.ws-filterchip__open { cursor: default; }
      also narrowed the toolbar. */
   width: 100%;
   height: 100dvh;
+  /* border-box so the notch padding below is INCLUDED in the 100dvh. With the
+     default content-box, the element was 100dvh + inset tall — taller than the
+     screen — which is exactly what let the page scroll the topnav off the top
+     and open dead space below. The .ws-root* reset is descendants-only and does
+     not reach this element, so it must say so itself. */
+  box-sizing: border-box;
   /* Belt and braces on the shell being exactly one viewport. `height` alone was
      enough in theory and was not in practice (see the box-sizing note above),
      and the consequence of getting it wrong is the whole app's chrome leaving
@@ -2210,6 +2386,12 @@ span.ws-filterchip__open { cursor: default; }
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+/* The box an `OverlayScope` hands to a column that is not the content region:
+   the host inside it fills the column and nothing else. */
+.ws-overlay-scope {
+  position: relative; flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
 }
 .ws-overlay-host {
   position: absolute;
@@ -2282,6 +2464,19 @@ span.ws-filterchip__open { cursor: default; }
   max-width: var(--page-max);
   margin-inline: auto;
 }
+/* ---- FRAMED APP (installed app in an iframe) -----------------------------
+   An installed app fills the ENTIRE area below the topnav — edge to edge, no
+   reading-width cap, no <main> padding, and the page never scrolls. The topnav
+   is the only Workshop chrome; the framed app owns everything below it,
+   including its own top/bottom toolbars and its own internal scrolling.
+   The selector carries three classes (0,3,1) so it beats both the base main
+   rule and the mobile `.ws-app__body > main` padding override, in any order. */
+.ws-app--appframe { max-width: none; }
+.ws-app.ws-app--appframe .ws-app__body > main {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+}
 .ws-nav { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 .ws-nav a {
   color: var(--muted); text-decoration: none; font-size: var(--fs-base); font-weight: var(--fw-medium);
@@ -2350,8 +2545,27 @@ span.ws-filterchip__open { cursor: default; }
   flex-direction: column; align-items: center;
   gap: var(--space-2);
   padding: var(--space-3) 0;
+  min-height: 0;
+  /* Visible, not hidden: the account menu opens out of the rail. The app tiles
+     do their own clipping (.ws-rail__apps). */
+  position: relative; z-index: var(--z-dock);
   background: var(--bg);
   border-right: 1px solid var(--border);
+}
+/* THE APPS GET WHAT IS LEFT. Home, All chats, "+" and the avatar never shrink;
+   this column is the only thing that does. A tile that does not fit wraps into
+   a second column, which the clip hides, so the rail shows whole tiles only and
+   the controls below them are always on screen. The inline padding keeps the
+   active marker and the focus ring inside the clip. */
+.ws-rail__apps {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  width: var(--rail-w);
+  padding: 2px calc((var(--rail-w) - var(--rail-tile)) / 2);
+  display: flex; flex-direction: column; flex-wrap: wrap; align-content: flex-start;
+  gap: var(--space-2) var(--rail-w);
+  overflow: hidden;
 }
 @media (min-width: 900px) {
   .ws-shell { flex-direction: row; }
@@ -2426,6 +2640,16 @@ span.ws-filterchip__open { cursor: default; }
 }
 .ws-rail__avatar:hover,
 .ws-bar1__avatar:hover { border-color: var(--accent); }
+button.ws-rail__avatar,
+button.ws-bar1__avatar { padding: 0; font-family: inherit; cursor: pointer; }
+/* The rail's menu opens beside the rail, not over it: the avatar is centred in
+   the rail, so the shift is the avatar's half-rail distance to the rail's edge.
+   It opens upward, so the vertical shift (the 32px avatar plus the gap) brings
+   its bottom edge level with the avatar's. */
+.ws-accountmenu--rail .ws-menu__list {
+  min-width: 13rem;
+  translate: calc(var(--rail-w) / 2 + 16px + var(--space-2)) calc(32px + var(--space-1));
+}
 
 /* ---- Page column ---------------------------------------------------------
    Closing it is TWO movements at once: the clip box collapses to zero width
@@ -2826,7 +3050,8 @@ span.ws-filterchip__open { cursor: default; }
      land settled either way; saying it here means a future literal duration
      cannot quietly reintroduce the movement. */
   .ws-placemenu,
-  .ws-overlay { animation: none; }
+  .ws-overlay,
+  .ws-sheet { animation: none; }
 }
 
 /* ---- SEGMENTED CONTROL — sliding thumb ----------------------------------- */
@@ -3086,7 +3311,7 @@ span.ws-filterchip__open { cursor: default; }
   background: var(--card);
   overflow: hidden;
 }
-.ws-stepper:focus-within { box-shadow: var(--focus-ring); }
+.ws-stepper:focus-within { border-color: var(--accent); }
 .ws-stepper__input {
   width: 44px;
   border: none;
@@ -3557,6 +3782,15 @@ span.ws-filterchip__open { cursor: default; }
   flex: 1 1 auto;
   min-height: 0;
 }
+/* Text the host keeps out of sight while it is written (editorConceal.ts). */
+.ws-editor .ws-editor__concealed { color: transparent; text-shadow: 0 0 7px var(--fg); }
+/* Wrapped text fits its column. The content is a flex item, so its least
+   width is its longest unbroken run, and WebKit ignores the break-anywhere
+   rule when working that out: one long URL made a read-only note 507px wide
+   in a 370px column on iOS, every line running off the right edge. An
+   editable one escaped only because WebKit breaks words in editable text by
+   default. */
+.ws-editor .cm-lineWrapping { min-width: 0; }
 
 /* ---- DOCUMENT CHROME (.ws-doc, .ws-docbar) --------------------------------
    The header and body box around a file that is open, measured in
@@ -3616,6 +3850,10 @@ span.ws-filterchip__open { cursor: default; }
 .ws-docbar__back:focus-visible { box-shadow: var(--focus-ring); }
 .ws-docbar__back svg { flex: none; }
 .ws-docbar__back .ws-docbar__name { color: inherit; }
+/* The chevron alone, ahead of a title being edited: the title's text starts
+   where it did inside the combined control, so Edit does not move it. */
+.ws-docbar__back--icon { flex: none; padding-right: 0; margin-right: calc(var(--space-1) - var(--space-2)); }
+.ws-docbar__back--icon + .ws-docbar__namebox { margin-left: calc(-1 * var(--space-1) - 1px); margin-right: -1px; }
 .ws-docbar__path,
 .ws-docbar__name {
   font-family: var(--font-mono); font-size: var(--fs-xs);
@@ -3639,13 +3877,42 @@ span.ws-filterchip__open { cursor: default; }
    bar is identical, which is the point of sharing it. */
 .ws-docbar--title .ws-docbar__name {
   font-family: var(--font-sans);
-  font-size: var(--fs-md);
+  /* The size the document's text is read and written at: on a phone, the 16px
+     floor, so focusing the title never zooms the page (THE 16px FLOOR). */
+  font-size: max(var(--fs-md), var(--fs-field));
   font-weight: var(--fw-semi);
 }
+/* A title wraps rather than scrolling sideways or ending in an ellipsis, and
+   the bar grows with it. Read and edited it is the same box (DocumentBar.tsx):
+   a hidden copy of the text sets the height, the text or the field fills it. */
+.ws-docbar--title { height: auto; min-height: var(--docbar-h); padding-block: var(--space-1); }
+.ws-docbar--title .ws-docbar__name { white-space: normal; text-overflow: clip; line-height: var(--lh-snug); }
+.ws-docbar--title .ws-docbar__namebox::after { height: auto; padding: 2px var(--space-1); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ws-docbar--title .ws-docbar__namebox > :is(.ws-docbar__nameinput, .ws-docbar__nametext) {
+  grid-area: 1 / 1; width: 100%; overflow-wrap: anywhere;
+}
+.ws-docbar--title textarea.ws-docbar__nameinput { height: 100%; resize: none; overflow: hidden; display: block; }
 .ws-docbar--title .ws-docbar__path { font-family: var(--font-sans); }
+/* A title takes all the room between the back chevron and the controls, read
+   or edited, so the field is never narrower than what is typed in it and the
+   dirty dot sits in the same place in both. */
+.ws-docbar--title .ws-docbar__name { flex: 1 1 auto; }
 /* The title, editable in place. It reads as the title until you are in it: no
-   box at rest, the box on focus, so the bar does not look like a form. */
-.ws-docbar__nameinput {
+   box at rest, the box on focus, so the bar does not look like a form.
+   The box is as wide as its text: the field and a hidden copy of the text
+   (::after, with the field's padding and border) share one grid cell, and the
+   copy sets the width. */
+.ws-docbar__namebox { display: inline-grid; overflow: hidden; }
+.ws-docbar__namebox::after {
+  content: attr(data-value);
+  grid-area: 1 / 1;
+  visibility: hidden; height: 0; overflow: hidden;
+  white-space: pre;
+  padding: 0 var(--space-1);
+  border: 1px solid transparent;
+}
+.ws-docbar__namebox > .ws-docbar__nameinput { grid-area: 1 / 1; width: 100%; }
+.ws-docbar__nameinput, .ws-docbar__nametext {
   min-width: 0;
   padding: 2px var(--space-1);
   border: 1px solid transparent;
@@ -3654,6 +3921,7 @@ span.ws-filterchip__open { cursor: default; }
   color: inherit;
   font: inherit;
 }
+.ws-docbar__nametext { display: block; }
 .ws-docbar__nameinput:hover { border-color: var(--border); }
 .ws-docbar__nameinput:focus {
   outline: none;
@@ -3668,6 +3936,12 @@ span.ws-filterchip__open { cursor: default; }
   border-radius: var(--radius-pill);
   background: var(--warn);
 }
+.ws-docbar__dirtyslot {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--space-3); height: var(--space-3);
+}
+.ws-docbar__dot--quiet { background: var(--accent); }
 .ws-docbar__meta {
   display: none;
   flex: 0 1 auto;
@@ -3691,6 +3965,7 @@ span.ws-filterchip__open { cursor: default; }
    follows everywhere else in the app. */
 .ws-docbar__actions .ws-btn--ghost { --_fg: var(--muted); }
 .ws-docbar__actions .ws-btn--ghost:hover { --_fg: var(--fg); }
+.ws-docbar__actions .ws-btn--ghost[aria-pressed="true"] { --_fg: var(--accent); --_bg: var(--accent-soft); }
 /* NO DISCARD ON MOBILE (spec section 6). Hidden rather than branched in JS so
    there is one DOM and one breakpoint: `display: none` also takes it out of the
    accessibility tree, so nothing reaches a control that is not on screen. */
@@ -3799,6 +4074,172 @@ span.ws-filterchip__open { cursor: default; }
      both. The same rule applies on both now; the flex column above needs no
      per-viewport arithmetic, so there is nothing left to restate here. */
 }
+
+/* FIT: a document inside a box its host has already sized (a pane beside a
+   list, a gallery stage). The bar is OUT of the scroller rather than sticky in
+   it, because sticky lands below the scroller's own padding and the text shows
+   through that strip above the bar. The source form fills what is left and
+   scrolls inside the editor, the same chain as --full above. */
+.ws-doc--fit {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+}
+/* Nothing scrolls under the bar, so it needs no fill of its own and takes the
+   host's surface; no inset either, so the title lines up with the text. */
+.ws-doc--fit .ws-docbar { position: static; background: none; padding-inline: 0; }
+.ws-doc--fit .ws-doc__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.ws-doc--fit .ws-doc__body > .ws-stack { flex: 1 1 auto; min-height: 0; }
+.ws-doc--fit .ws-editor { flex: 1 1 auto; min-height: 8rem; }
+
+/* ---- VERSIONED DOCUMENT (.ws-vdoc) ------------------------------------------
+   The frame around a document that keeps versions (VersionedDocument.tsx): the
+   tag row, the history list, and the other side of a save conflict. The header
+   and body are the document chrome above; only what is new is here. */
+.ws-vdoc__chips { gap: var(--space-2); align-items: center; }
+/* THE PAGE LOOK (Editor look="page", markdownPreview.ts): editing a document
+   looks like reading it. No box, no inset, the reading form's size, leading and
+   paragraph gap; only the caret says it is being edited. The reading form takes
+   the same size, so the 16px no-zoom floor on a phone moves both together. */
+.ws-editor--page .cm-editor { font-size: max(var(--fs-md), var(--fs-field)); }
+/* What the page look draws in place (markdownWidgets.ts, markdownBlocks.tsx):
+   images, task boxes hanging where a bullet would, and blocks drawn by the
+   markdown renderer at the text's own size, out of the editor's pre-wrap. */
+.ws-editor--page .cm-md-img { max-width: 100%; height: auto; border-radius: var(--radius-md); vertical-align: top; }
+.ws-editor--page .cm-md-task {
+  width: 1em; height: 1em; vertical-align: -0.125em; accent-color: var(--accent);
+  margin: 0 var(--space-2) 0 calc(-1 * (1em + var(--space-2)));
+}
+.ws-editor--page .cm-md-block { white-space: normal; cursor: default; }
+.ws-editor--page .cm-md-block .ws-md { font-size: inherit; }
+.ws-editor--page .cm-editor,
+.ws-editor--page .cm-editor.cm-focused { background: none; border: 0; border-radius: 0; box-shadow: none; }
+.ws-editor--page .cm-scroller { font-family: var(--font-sans); line-height: var(--lh-base); }
+.ws-editor--page .cm-content { padding: 0; }
+.ws-editor--page .cm-line { padding: 0; }
+.ws-editor--page .cm-md-gap { line-height: var(--space-3); }
+.ws-editor--page .cm-md-h { font-weight: var(--fw-semi); line-height: var(--lh-snug); letter-spacing: -0.01em; }
+/* The reading form's heading margins (.ws-md h1): the space above and below a
+   heading, whether a blank line or the next line of text meets it. */
+.ws-editor--page .cm-md-gap:has(+ .cm-md-h) { line-height: var(--space-4); }
+.ws-editor--page .cm-md-h + .cm-md-gap { line-height: var(--space-2); }
+.ws-editor--page .cm-md-h:has(+ .cm-line:not(.cm-md-gap, .cm-md-h)) { padding-bottom: var(--space-2); }
+.ws-editor--page .cm-line:not(.cm-md-gap, .cm-md-h) + .cm-md-h { padding-top: var(--space-4); }
+.ws-editor--page .cm-md-h1 { font-size: var(--fs-lg); }
+.ws-editor--page .cm-md-h2 { font-size: var(--fs-md); }
+.ws-editor--page :is(.cm-md-h3, .cm-md-h4, .cm-md-h5, .cm-md-h6) { font-size: var(--fs-sm); }
+.ws-editor--page .cm-md-quote { border-left: 3px solid var(--border-strong); padding-left: var(--space-3); color: var(--muted); }
+/* A quote's padding, and the gap its paragraph keeps inside it (.ws-md blockquote). */
+.ws-editor--page .cm-md-qtop { padding-top: var(--space-1); }
+.ws-editor--page .cm-md-qend { padding-bottom: calc(var(--space-1) + var(--space-3)); }
+.ws-editor--page .cm-md-link {
+  text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklab, currentColor, transparent 55%);
+}
+.ws-editor--page .cm-md-code {
+  font-family: var(--font-mono); font-size: 0.92em;
+  background: var(--bg-inset); border-radius: var(--radius-sm); padding: 0.1em 0.35em;
+}
+/* Markup that is showing because the caret is in it. */
+.ws-editor--page .cm-md-mark { color: var(--faint); }
+/* A list line's indent is set per depth by the preview, as the reading form
+   nests its lists. The reading form spaces list items apart (.ws-md li), all
+   but the last, whose space is the list's own gap below it. */
+.ws-editor--page :is(.cm-md-li, .cm-md-lic):has(+ .cm-md-li) { padding-bottom: var(--space-1); }
+.ws-editor--page :is(.cm-md-li, .cm-md-lic).cm-md-loose:has(+ .cm-md-li) { padding-bottom: var(--space-3); }
+/* An ordered item's number hangs left of its text as the reading form's
+   marker does: it takes no room in the line. */
+.ws-editor--page .cm-md-num { display: inline-block; width: 0; white-space: pre; }
+.ws-editor--page .cm-md-num > span { display: inline-block; transform: translateX(-100%); }
+/* A round dot like the reading form's disc marker, not the font's bullet
+   character, which some faces draw as a square. */
+.ws-editor--page .cm-md-bullet {
+  display: inline-block; width: var(--space-4); margin-left: calc(-1 * var(--space-4));
+  font-size: 0; vertical-align: middle;
+}
+.ws-editor--page .cm-md-bullet::before {
+  content: ""; display: inline-block;
+  width: 0.3125rem; height: 0.3125rem; border-radius: var(--radius-pill);
+  background: var(--fg);
+  transform: translate(-1px, -2px);
+}
+.ws-editor--page .cm-md-bullet--2::before { background: none; box-shadow: inset 0 0 0 1px var(--fg); }
+.ws-editor--page .cm-md-bullet--3::before { border-radius: 0; }
+/* The page scrolls as one, the way it does while reading: the editor is as
+   tall as its text and the document body scrolls it, rather than the editor
+   being fitted to the window and scrolling inside itself. Fitted, its scroll
+   area ended above the body's bottom padding (so the visible text was cut
+   short the moment editing began) and started at the top however far down
+   the reading form had been scrolled. CodeMirror follows its scrolling
+   ancestors to decide what to draw. */
+.ws-doc .ws-doc__body .ws-editor--page { flex: 1 0 auto; min-height: 0; }
+.ws-doc .ws-doc__body :is(.ws-stack, .ws-field--grow):has(.ws-editor--page) { flex: 1 0 auto; }
+.ws-editor--page .cm-editor { height: auto; }
+.ws-editor--page .cm-scroller { overflow: visible; }
+/* Lines break where the reading form breaks them. CodeMirror wraps with
+   break-spaces, where a space at a line's end takes room, and WebKit adds
+   after-white-space to anything editable; between them a word near the edge
+   moved to the next line the moment editing began. pre-wrap lets the space
+   hang, as it does while reading. */
+.ws-editor--page .cm-content.cm-lineWrapping { white-space: pre-wrap; line-break: auto; -webkit-line-break: auto; }
+/* Only the caret says the page is being edited. */
+.ws-editor--page .cm-editor .cm-content:is(:focus, :focus-visible) { outline: none; }
+.ws-vdoc__chip {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  height: var(--control-h-sm);
+  padding: 0 var(--space-1) 0 var(--space-3);
+  background-color: var(--accent-soft);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-sm);
+  max-width: 100%; min-width: 0;
+}
+.ws-vdoc__chiptext { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-vdoc__chipx {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--control-h-sm); height: var(--control-h-sm);
+  border: 0; border-radius: var(--radius-pill);
+  background: transparent; color: var(--muted);
+  cursor: pointer;
+}
+.ws-vdoc__chipx:hover { color: var(--fg); background-color: var(--card-hover); }
+.ws-vdoc__chipx:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.ws-vdoc__tagin { width: 10rem; max-width: 100%; height: var(--control-h-sm); }
+.ws-vdoc__hints { gap: var(--space-1); }
+/* Read-only until tapped: a writable document's text takes the text cursor,
+   its links the pointer. */
+.ws-vdoc--writable .ws-editor--page .cm-content { cursor: text; }
+.ws-editor--page .cm-content[contenteditable="false"] [data-ws-link] { cursor: pointer; }
+.ws-vdoc__theirs {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-inset);
+}
+.ws-vdoc__versions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ws-vdoc__version {
+  display: grid;
+  grid-template-rows: auto auto;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0; border-bottom: 1px solid var(--border);
+  background: transparent; color: var(--fg);
+  text-align: left; cursor: pointer;
+  min-height: var(--control-h);
+}
+.ws-vdoc__version:hover { background-color: var(--card-hover); }
+.ws-vdoc__version:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.ws-vdoc__vtitle { font-weight: var(--fw-semi); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-vdoc__vmeta { color: var(--muted); font-size: var(--fs-xs); }
 
 /* ---- THE 16px FLOOR: nothing zooms the page when you focus it ------------- */
 /* iOS Safari zooms the viewport in whenever you focus a text field whose
@@ -3922,6 +4363,7 @@ span.ws-filterchip__open { cursor: default; }
   padding: var(--space-4);
 }
 .ws-authscreen__card { width: 100%; max-width: 380px; }
+
 .ws-authscreen__brand {
   display: flex;
   align-items: center;
@@ -4279,6 +4721,80 @@ span.ws-filterchip__open { cursor: default; }
 }
 .chat-ctx-btn:hover { background: var(--bg-inset); }
 
+/* ---- TOASTS -------------------------------------------------------------- */
+/* Deterministic structure: title row, optional picture-and-text row, optional
+   meta row. Fixed width so a stack of them is a column and not a ragged pile. */
+.ws-toasts {
+  position: fixed; z-index: var(--z-toast);
+  right: var(--space-4); top: var(--space-4);
+  display: flex; flex-direction: column; gap: var(--space-2);
+  width: 22rem; max-width: calc(100vw - var(--space-4) * 2);
+  pointer-events: none;
+}
+.ws-toasts > * { pointer-events: auto; }
+.ws-toast {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  padding: var(--space-3);
+  animation: ws-toast-in var(--dur-base) var(--ease-out);
+}
+.ws-toast__head {
+  display: flex; align-items: center; gap: var(--space-2);
+  min-height: 1.25rem;
+}
+.ws-toast__icon { display: inline-flex; color: currentColor; }
+.ws-toast__title {
+  flex: 1 1 auto; min-width: 0;
+  font-size: var(--fs-base); font-weight: var(--fw-semi); color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ws-toast__close {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 1.5rem; height: 1.5rem; padding: 0;
+  background: none; border: 0; border-radius: var(--radius-sm);
+  color: var(--muted); cursor: pointer;
+}
+.ws-toast__close:hover { background: var(--bg-inset); color: var(--fg); }
+.ws-toast__body {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-top: var(--space-2);
+  border: 0; background: none; padding: 0; text-align: left; width: 100%;
+}
+.ws-toast__body--open { cursor: pointer; }
+.ws-toast__thumbs { flex: 0 0 auto; display: flex; gap: var(--space-1); }
+.ws-toast__thumb {
+  width: 3rem; height: 3rem; object-fit: cover;
+  border-radius: var(--radius-sm); background: var(--bg-inset);
+}
+.ws-toast__text {
+  flex: 1 1 auto; min-width: 0;
+  font-size: var(--fs-sm); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ws-toast__meta {
+  margin-top: var(--space-1);
+  font-size: var(--fs-xs); color: var(--muted);
+}
+.ws-toasts__more {
+  align-self: flex-end;
+  padding: var(--space-1) var(--space-2);
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-xs); color: var(--muted); cursor: pointer;
+}
+/* Drops in from above, because that is where it comes from. */
+@keyframes ws-toast-in { from { opacity: 0; transform: translateY(-8px); } }
+
+/* Full width less the gutter on the narrow viewport, and clear of the notch:
+   the toasts moved from the bottom to the top, so what they have to stay out of
+   is the safe-area inset rather than the bottom nav. */
+@media (max-width: 560px) {
+  .ws-toasts {
+    left: var(--space-3); right: var(--space-3);
+    top: calc(var(--space-3) + env(safe-area-inset-top));
+    width: auto;
+  }
+}
 /* The sheet's two sort groups read as one control, so the direction sits
    tighter under the keys than the sheet's section gap would put it. */
 .ws-filtersheet__dir { margin-top: var(--space-2); }
@@ -4605,3 +5121,44 @@ span.ws-filterchip__open { cursor: default; }
   font-size: var(--fs-xs);
 }
 .ws-drill__aside svg { width: 13px; height: 13px; flex: none; color: var(--faint); }
+
+/* ---- Find in page --------------------------------------------------------
+   A row of the content region's own column, after <main>, so the page ends above
+   it. The border and padding are the chat composer's. The overlay host is pulled
+   up by the bar's height so a page's action bar rides above it. */
+:root {
+  --ws-findbar-h: calc(var(--control-h) + var(--space-3) + max(var(--space-3), env(safe-area-inset-bottom)));
+}
+.ws-findbar {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  height: 0;
+  overflow: hidden;
+  padding-inline: var(--page-pad-x);
+  border-top: 1px solid var(--border);
+  transition: height var(--dur-base) var(--ease-out);
+}
+.ws-findbar:not(.is-open) { border-top-color: transparent; }
+.ws-findbar.is-open { height: var(--ws-findbar-h); }
+.ws-overlay-host { transition: bottom var(--dur-base) var(--ease-out); }
+.ws-app__body:has(> .ws-findbar.is-open) > .ws-overlay-host { bottom: var(--ws-findbar-h); }
+.ws-findbar__inner {
+  width: 100%; max-width: var(--page-max); margin-inline: auto;
+  box-sizing: border-box;
+  height: calc(var(--ws-findbar-h) - 1px);
+  padding-top: var(--space-3);
+  padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: var(--space-1);
+}
+.ws-findbar__inner .ws-input { flex: 1 1 auto; min-width: 0; }
+.ws-findbar__inner .ws-input:focus { border-color: transparent; background-color: var(--bg-inset); }
+.ws-findbar__count {
+  flex: 0 0 auto;
+  min-width: 4.5rem; text-align: right;
+  font-size: var(--fs-sm); color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* Neutral ink for every match so it reads in all eight schemes and both modes;
+   the current match takes the MINE tone, the selection colour everywhere else. */
+::highlight(ws-find) { background-color: color-mix(in srgb, var(--fg) 30%, transparent); color: inherit; }
+::highlight(ws-find-current) { background-color: var(--you); color: var(--you-fg); }

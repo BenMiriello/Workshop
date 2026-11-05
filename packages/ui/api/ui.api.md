@@ -6,7 +6,7 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.7.10
+Version: 0.8.0
 
 ## @workshop/ui
 
@@ -24,6 +24,7 @@ Source: `src/index.ts`
 - applyPalette
 - applyTheme
 - AppSettings
+- attachToChat
 - backgroundTrackingSupported
 - Badge
 - Board
@@ -39,16 +40,20 @@ Source: `src/index.ts`
 - CHART_TARGET
 - ChartFrame
 - ChartTooltip
+- CHAT_VIEWS
 - Checkbox
 - Clamp
 - ConfirmDialog
+- COPIED_EVENT
 - CopyButton
+- copyText
 - cx
 - DEFAULT_PALETTE
 - DetailLayout
 - Divider
 - documentBar
 - DocumentBar
+- drawnOverPage
 - drillCursor
 - drillInto
 - drillParent
@@ -80,21 +85,31 @@ Source: `src/index.ts`
 - isPaidTier
 - isTransientNetworkError
 - LEGACY_PALETTES
+- liveActivities
 - Menu
+- MenuAction
 - MenuCheckItem
 - MenuItem
 - MenuLabel
+- MenuRow
 - MenuSeparator
 - Modal
 - namespacedKey
 - native
 - nodesById
 - Notice
+- NumberField
 - NumCell
 - onNativeEvent
 - OverlayHost
+- OverlayScope
+- PAGE_CONTEXT_MAX
+- PAGE_LEVELS
+- PAGE_LINK_MESSAGES
+- PAGE_SLOT_MSG
 - PageActionBar
 - PageHeader
+- pagesBridge
 - PALETTE_META
 - PalettePicker
 - planMigration
@@ -103,24 +118,36 @@ Source: `src/index.ts`
 - ProgressBar
 - Prop
 - Props
+- provideReadAloud
+- provideSpokenActions
+- ReadAloudButton
+- readAloudHost
 - ReadOnly
+- readShellMessage
 - registerDeviceScoped
+- registerSpokenActions
+- reportTakeover
 - resolvePaletteId
 - RevealField
 - Row
 - Section
 - SectionLabel
+- seeThrough
 - Segmented
 - Select
 - setCurrentUser
 - SettingsRow
 - SettingsSection
+- Sheet
 - shortHttpError
+- showChat
 - Skeleton
 - Spacer
+- spokenActionsHost
 - Stack
 - StackedBar
 - startDeviceTracking
+- startPageLink
 - Stat
 - StateBlock
 - statusClass
@@ -138,9 +165,11 @@ Source: `src/index.ts`
 - timeAgo
 - timeAgoSeconds
 - TimeCell
+- ToastHost
 - Toggle
 - toggleBranch
 - Toolbar
+- topViewportRect
 - TRANSIENT_BACKOFF_MS
 - treeKeyIntent
 - type AgencyTier
@@ -149,12 +178,17 @@ Source: `src/index.ts`
 - type BridgeEventTopic
 - type Capability
 - type CatHue
+- type ChatAttach
+- type ChatAttachItem
+- type ChatView
+- type CopiedDetail
 - type Crumb
 - type DocumentBarInput
 - type DocumentBarModel
 - type DocumentBarProps
 - type DocumentBarVariant
 - type DocumentForm
+- type DrawnOver
 - type EditMode
 - type FileDrillProps
 - type FileDrillTrail
@@ -170,14 +204,31 @@ Source: `src/index.ts`
 - type FileTreeProps
 - type FileTreeRow
 - type NativeInfo
+- type PageCall
+- type PageLevel
+- type PageLinkHandle
+- type PageLinkOptions
+- type PageLinkState
+- type PageResult
+- type PageTool
 - type PaletteGroup
 - type PaletteId
 - type PaletteMeta
+- type ReadAloudButtonProps
+- type ReadAloudHost
+- type ReadAloudPhase
+- type ReadAloudState
 - type SegmentedOption
+- type ShellMessage
+- type SpokenAction
+- type SpokenActionAnnotations
+- type SpokenActionInput
+- type SpokenActionsHost
 - type StatusKind
 - type StorageExemption
 - type TabItem
 - type ThemeMode
+- type ToastSpec
 - type UserId
 - type WhenHidden
 - type WorkshopNative
@@ -188,11 +239,16 @@ Source: `src/index.ts`
 - useNative
 - useNativeEvent
 - useOverlayHost
+- usePageSlot
 - usePalette
 - usePoll
+- useReadAloud
 - useResolvedMode
 - userStorage
+- useSpokenAction
+- useSpokenActions
 - useTheme
+- useToast
 - useTrackingStatus
 - VRAM_UNKNOWN
 - withTransientRetry
@@ -214,12 +270,28 @@ Source: `src/Markdown.tsx`
 
 Source: `src/Editor.tsx`
 
+- DocumentText
 - Editor
 - languageForPath
+- matchTrigger
+- type DocumentDraft
+- type DocumentSaveResult
+- type DocumentSource
+- type DocumentState
+- type DocumentVersionInfo
+- type DocumentWriteMeta
+- type EditorCompletionItem
+- type EditorCompletionSource
+- type EditorHighlight
+- type EditorHighlightTone
+- type EditorLook
 - type EditorProfile
 - type EditorProps
+- type EditorSelection
 - type PathLanguage
 - type PathProfile
+- type VersionedDocumentProps
+- VersionedDocument
 
 ## Asset entry points
 

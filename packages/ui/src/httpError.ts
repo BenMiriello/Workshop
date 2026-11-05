@@ -58,12 +58,17 @@ export class HttpError extends Error {
  * A failure a moment's wait can cure, rather than a real answer. A backend
  * restart is a pause, not a break: while it comes back up the edge has no
  * origin to reach and answers 502/503/504 for a second or two, and a fetch
- * that never got a response at all rejects as a TypeError. Everything else, a
- * 4xx or a 500, is a real answer the server chose to give and must not be
- * retried away.
+ * that never got a response at all rejects as a TypeError. A request that got
+ * no answer inside its deadline rejects as a `TimeoutError` (the name
+ * `AbortSignal.timeout` uses), and that is the same fault seen from a stalled
+ * server rather than a closed port. Everything else, a 4xx or a 500, is a real
+ * answer the server chose to give and must not be retried away.
  */
 export function isTransientNetworkError(e: unknown): boolean {
   if (e instanceof HttpError) return e.status >= 502 && e.status <= 504;
+  if (typeof e === "object" && e !== null && (e as { name?: unknown }).name === "TimeoutError") {
+    return true;
+  }
   return e instanceof TypeError;
 }
 
@@ -155,4 +160,9 @@ export function shortHttpError(status: number, statusText: string, body: string)
   const detail = !looksHtml && b && b.length <= ERROR_BODY_CAP ? b : "";
   const tail = detail || STATUS_SENTENCES[status] || statusText || "request failed";
   return `${status} ${tail}`.trim();
+}
+
+/** What a caught value says, for a line in the interface. */
+export function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }

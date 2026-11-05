@@ -56,7 +56,7 @@ export function Menu({
   const id = useId();
   // Which edge it pins to and which side it opens on, measured before paint and
   // re-measured on resize and ancestor scroll. Shared with Popover.
-  const { insetStart, side: placed } = useAnchoredPlacement(open, side, wrapRef, listRef);
+  const { left, top, side: placed } = useAnchoredPlacement(open, side, wrapRef, listRef);
   // Whether this menu is being driven by the keyboard. Focus is only sent back
   // to the trigger when it is: a programmatic .focus() after a mouse/touch pick
   // re-triggers the global :focus-visible ring, which looks like a border the
@@ -90,9 +90,10 @@ export function Menu({
       viaKeyboard.current = true;
       // Both item roles: a checkable row is still a row you arrow onto. It is
       // only the CLOSE-on-activation gate below that distinguishes them.
+      // A MenuAction inside a row is arrowed onto too, in reading order.
       const items = Array.from(
         listRef.current?.querySelectorAll<HTMLElement>(
-          '[role="menuitem"], [role="menuitemcheckbox"]') ?? [],
+          '[role="menuitem"], [role="menuitemcheckbox"], .ws-menu__act:not([disabled])') ?? [],
       );
       if (!items.length) return;
       e.preventDefault();
@@ -111,7 +112,7 @@ export function Menu({
     // Focus the LIST, not its first item: focusing an item drew a focus ring
     // around a row you hadn't chosen, which reads as a border on a random entry.
     // ArrowDown from here still lands on the first item (`at` is -1).
-    listRef.current?.focus();
+    listRef.current?.focus({ preventScroll: true });
     return () => {
       document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("keydown", onKey, true);
@@ -144,9 +145,9 @@ export function Menu({
           tabIndex={-1}
           aria-label={label}
           className={cx("ws-menu__list", `ws-menu__list--${placed}`)}
-          // A clamped pixel offset, not a CSS class pinning to one of two
-          // fixed edges: see menuPlacement.ts.
-          style={{ left: insetStart }}
+          // A clamped fixed position, not a CSS class pinning to one of two
+          // edges: see menuPlacement.ts.
+          style={{ left, top }}
           // Activating an ITEM closes the menu; individual items don't each have
           // to remember to. Gated to role="menuitem" rather than "any click in
           // the list", because a menu can also hold a persistent control (a
@@ -277,6 +278,15 @@ export function MenuSeparator() {
 //
 // `role="presentation"` because the heading is not selectable and must not be
 // announced as a menu item; the visual grouping is the affordance.
-export function MenuLabel({ children }: { children: ReactNode }) {
-  return <div className="ws-menu__group" role="presentation">{children}</div>;
+//
+// `actions`: MenuAction buttons that act on the whole group (Undo and Redo on
+// a history), at the heading's end.
+export function MenuLabel({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
+  if (!actions) return <div className="ws-menu__group" role="presentation">{children}</div>;
+  return (
+    <div className="ws-menu__group ws-menu__group--actions" role="group" aria-label={typeof children === "string" ? children : undefined}>
+      <span className="ws-menu__label">{children}</span>
+      <span className="ws-menu__acts">{actions}</span>
+    </div>
+  );
 }

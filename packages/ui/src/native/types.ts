@@ -22,8 +22,19 @@
 // package's own wrappers call, because platform code that reads `native()`'s
 // return value through this package's re-exported `WorkshopNative` type
 // needs the whole interface, not just the slice `native/bridge.ts` uses.
+import type { StatusKind } from "../status";
+import type { PageRect, PagesApi } from "./pageTypes";
+
+export type { PageMessageEvent, PageRunOptions, PageUserScript, PageWorld } from "./pageScriptTypes";
+export type { PageDownloadEvent } from "./pageDownloadTypes";
+export type {
+  PageHopRule, PageNavigationBlockedEvent, PageNavigationRules, PageStripRule,
+} from "./pageNavigationTypes";
+export type * from "./pageTypes";
+
 export type Capability =
-  | "location" | "audio" | "speech" | "localNotify" | "liveActivity" | "secureStore";
+  | "location" | "audio" | "speech" | "localNotify" | "mic" | "liveActivity" | "secureStore" | "pages"
+  | "shell";
 
 export interface LocationFix {
   lat: number;
@@ -91,33 +102,64 @@ export interface SpeechSpeakOptions {
   pitch?: number;
 }
 
-/** Status kinds mirror the web design system's five status kinds. */
-export type ActivityStatus = "ok" | "info" | "caution" | "urgent";
+/** The kit's five status kinds. */
+export type ActivityStatus = StatusKind;
 
-export interface CommuteActivityState {
-  direction: "to-work" | "to-home";
+/** What a Live Activity shows; the shell lays out the lock screen and the
+ *  Dynamic Island from these fields. */
+export interface LiveActivityState {
   headline: string;
   subtitle?: string;
-  leaveByLocal?: string;
-  targetArriveLocal?: string;
-  countdownTo: string;
+  /** A third, smaller line. */
+  detail?: string;
+  /** ISO 8601 instant the native timer counts down to. */
+  countdownTo?: string;
+  /** 0 to 1; values outside are clamped. */
+  progress?: number;
   status: ActivityStatus;
+  /** An SF Symbol name, e.g. "timer". */
+  symbol: string;
 }
 
 export interface LiveActivityHandle {
   id: string;
 }
 
+export interface LiveActivityApi {
+  isSupported(): Promise<boolean>;
+  /** Needs the bridge from `forApp`: the activity is that app's. */
+  start(state: LiveActivityState): Promise<LiveActivityHandle>;
+  /** Rejects for an activity that is gone or another app's. */
+  update(id: string, state: LiveActivityState): Promise<void>;
+  end(id: string): Promise<void>;
+}
+
 export type BridgeEventTopic =
-  | "location:fix" | "audio:captured" | "notify:response" | "liveActivity:ended";
+  | "location:fix" | "audio:captured" | "notify:response" | "liveActivity:ended"
+  | "pages:state" | "pages:error" | "pages:newWindow" | "pages:command" | "pages:message"
+  | "pages:navigationBlocked" | "pages:download";
+
+/** The shell's web engine; a field is left out where the shell cannot tell it. */
+export interface NativeEngine {
+  /** WebKit's own build version, e.g. "20621.1.15.11.10". */
+  webkitVersion?: string;
+  /** The Safari release this WebKit is, e.g. "26.0". */
+  safariVersion?: string;
+}
 
 export interface WorkshopNative {
   readonly bridgeVersion: number;
-  readonly platform: "ios";
+  readonly platform: "ios" | "macos";
   readonly tier: "free" | "paid";
+  /** Absent in shell builds from before it existed. */
+  readonly engine?: NativeEngine;
 
   has(cap: Capability): boolean;
   on<T = unknown>(topic: BridgeEventTopic, cb: (payload: T) => void): () => void;
+  /** This bridge acting for app `app`: requests carry it and `on` passes
+   *  only its "pages:*" events. Page views and Live Activities are kept per
+   *  app by it. Absent in shells from before it existed. */
+  forApp?(app: string): WorkshopNative;
 
   location: {
     getCurrent(): Promise<LocationFix>;
@@ -146,14 +188,34 @@ export interface WorkshopNative {
     requestPermission(): Promise<PermissionState>;
   };
 
-  liveActivity: {
-    isSupported(): Promise<boolean>;
-    start(state: CommuteActivityState): Promise<LiveActivityHandle>;
-    update(id: string, state: CommuteActivityState): Promise<void>;
-    end(id: string): Promise<void>;
-  };
+  mic: MicApi;
+
+  liveActivity: LiveActivityApi;
 
   secureStore: {
     set(key: "ws-device-token", value: string): Promise<void>;
   };
+
+  pages: PagesApi;
+
+  shell: ShellApi;
+}
+
+/** The system microphone permission of the app hosting the web UI. */
+export interface MicApi {
+  status(): Promise<PermissionState>;
+  /** The system prompt while undetermined; resolves to the state after it. */
+  request(): Promise<PermissionState>;
+  /** Opens the settings page where this app's microphone is allowed. */
+  openSettings(): Promise<void>;
+}
+
+/** What Workshop's web UI tells the shell; offered only by shells that take it. */
+export interface ShellApi {
+  /** The app whose frame the web UI shows, or null for none. */
+  foreground(app: string | null): Promise<void>;
+  /** Where the web UI's own layers sit over page views, in page view space:
+   *  every app's pages are cut away there, and take no input there (none at
+   *  all while `modal`). Absent in shells from before it. */
+  overlays?(rects: PageRect[], modal: boolean): Promise<void>;
 }

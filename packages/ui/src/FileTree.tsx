@@ -85,6 +85,7 @@ import {
   type FileTreeNode,
   type FileTreeRow,
 } from "./fileTree";
+import { messageOf } from "./httpError";
 
 export type FileTreeProps = {
   /** The only thing the tree knows about the data. See `FileTreeAdapter`.
@@ -139,10 +140,6 @@ export function fileTreeIconFor(node: FileTreeNode, open: boolean) {
  *  step is a token and a row can still be styled from outside. */
 function indent(depth: number) {
   return { "--ws-tree-depth": depth } as React.CSSProperties;
-}
-
-function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
 }
 
 export function FileTree({

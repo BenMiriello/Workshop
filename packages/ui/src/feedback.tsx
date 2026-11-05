@@ -1,6 +1,7 @@
 import { useCallback, useState, type ReactNode } from "react";
 import { AlertTriangle, Check, Copy, Eye, EyeOff, Inbox, Info } from "lucide-react";
 import { cx } from "./cx";
+import { copyText } from "./clipboard";
 import { Button } from "./controls";
 
 // ---- State blocks: loading / empty / error ---------------------------------
@@ -117,12 +118,10 @@ export function ActionBar({
 export function CopyButton({ value, className }: { value: string; className?: string }) {
   const [copied, setCopied] = useState(false);
   const copy = useCallback(() => {
-    const done = () => {
+    void copyText(value).then(() => {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1100);
-    };
-    if (navigator.clipboard) navigator.clipboard.writeText(value).then(done, done);
-    else done();
+    });
   }, [value]);
   return (
     <span className={cx("ws-copy", className)}>

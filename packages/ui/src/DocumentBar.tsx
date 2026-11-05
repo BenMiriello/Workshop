@@ -53,7 +53,7 @@
 // both would put two Saves and two "unsaved" markers on one screen, and on a
 // phone the spec says the bottom bar hides while a document is open, which
 // would leave the ActionBar's Save unreachable exactly when it mattered.
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ChevronLeft } from "lucide-react";
 import { cx } from "./cx";
 
@@ -87,15 +87,25 @@ export interface DocumentBarProps {
    *  ref rewrite per letter. A note's title needs none of this: it is part of
    *  the note's own draft and is written by the note's own Save. */
   onNameCommit?: () => void;
+  /** How the name reads while its field is not focused, e.g. with words a host
+   *  hides drawn as others. The field shows `name` itself while it is being
+   *  typed in. */
+  nameShown?: string;
   /** The directory that holds it, drawn ahead of the name in --faint. Hidden
    *  below 900px, where the header is a back control and there is no room. */
   path?: string;
   /** Unsaved changes. Draws the one dot, and nothing else in this app says
    *  "unsaved" on this surface. */
   dirty?: boolean;
-  /** Leaving the document. On a phone this control and the name are ONE tap
-   *  target, per the mockup, and it is what replaces the Up bar while a
-   *  document is open. Omit it where there is a tree beside the file already. */
+  /** Holds the dirty marker's space whether or not it is showing, so it
+   *  appearing moves nothing, and draws it in the accent rather than the
+   *  warning amber: unsaved changes are the reader's own work, not a fault. */
+  quietDirty?: boolean;
+  /** Leaving the document. On a phone, in the `file` variant, this control and
+   *  the name are ONE tap target, per the mockup, and it is what replaces the
+   *  Up bar while a document is open. In the `title` variant it is the chevron
+   *  alone: a record's title is something you read, not a way out (operator,
+   *  2026-10-24). Omit it where there is a tree beside the file already. */
   onBack?: () => void;
   /** What Back reaches, for its accessible name ("Back to src/pages"). */
   backLabel?: string;
@@ -109,18 +119,47 @@ export interface DocumentBarProps {
 }
 
 export function DocumentBar({
-  name, variant = "file", onNameChange, onNameCommit, namePlaceholder,
-  path, dirty = false, onBack, backLabel, meta, children, className,
+  name, variant = "file", onNameChange, onNameCommit, nameShown, namePlaceholder,
+  path, dirty = false, quietDirty = false, onBack, backLabel, meta, children, className,
 }: DocumentBarProps) {
-  const nameEl = onNameChange ? (
-    // Sized to its own content so the bar's layout does not jump as you type,
-    // and so a short title does not sit in a wide empty box. `size` is the
-    // cheapest way to do that without measuring in JS.
+  const [typing, setTyping] = useState(false);
+  const shown = typing || nameShown === undefined ? name : nameShown;
+  // A TITLE wraps, read or edited, in one box: the text sits in the same place
+  // in both, nothing scrolls sideways under the caret, and a long title is
+  // never cut off. A field that grows with its text, never a one-line input.
+  const titleEl = variant === "title" && (
+    <span className="ws-docbar__name ws-docbar__namebox" data-value={`${shown || namePlaceholder || ""} `}>
+      {onNameChange ? (
+        <textarea
+          className="ws-docbar__nameinput"
+          rows={1}
+          value={shown}
+          placeholder={namePlaceholder}
+          onFocus={() => setTyping(true)}
+          onChange={(e) => onNameChange(e.target.value.replace(/\s*\n\s*/g, " "))}
+          onBlur={() => { setTyping(false); onNameCommit?.(); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); e.currentTarget.blur(); }
+          }}
+          aria-label="Title"
+        />
+      ) : (
+        <span className={cx("ws-docbar__nametext", !shown && "ws-docbar__name--empty")}>{shown || namePlaceholder}</span>
+      )}
+    </span>
+  );
+  const nameEl = titleEl || (onNameChange ? (
+    // A filename is exactly as wide as its text: a hidden copy of the text
+    // beside the field sets the width (the box's ::after, styles/components.css),
+    // so turning the name into a field moves nothing after it. A TITLE instead
+    // takes all the room the bar has, read or edited, so the field never hugs
+    // or clips what is typed in it (operator, 2026-10-24).
+    <span className="ws-docbar__name ws-docbar__namebox" data-value={name || namePlaceholder || ""}>
     <input
-      className="ws-docbar__name ws-docbar__nameinput"
+      className="ws-docbar__nameinput"
       value={name}
       placeholder={namePlaceholder}
-      size={Math.max(8, Math.min(60, (name || namePlaceholder || "").length + 1))}
+      size={1}
       onChange={(e) => onNameChange(e.target.value)}
       onBlur={onNameCommit}
       onKeyDown={(e) => {
@@ -131,14 +170,26 @@ export function DocumentBar({
       }}
       aria-label={variant === "title" ? "Title" : "Filename"}
     />
+    </span>
   ) : (
     <span className={cx("ws-docbar__name", !name && "ws-docbar__name--empty")}>
       {name || namePlaceholder}
     </span>
-  );
+  ));
   return (
     <div className={cx("ws-docbar", variant === "title" && "ws-docbar--title", className)}>
-      {onBack ? (
+      {onBack && (onNameChange || variant === "title") ? (
+        // A name being edited cannot be inside the back button, and a title is
+        // never part of it, so the chevron stands alone ahead of the name and
+        // the text stays where it was when Edit turns it into a field.
+        <>
+          <button type="button" className="ws-docbar__back ws-docbar__back--icon" onClick={onBack}
+            aria-label={backLabel ? `Back to ${backLabel}` : "Back"}>
+            <ChevronLeft size={13} aria-hidden />
+          </button>
+          {nameEl}
+        </>
+      ) : onBack ? (
         // ONE tap target: the chevron and the name are a single button, not a
         // back button standing next to a label.
         <button
@@ -148,7 +199,9 @@ export function DocumentBar({
           aria-label={backLabel ? `Back to ${backLabel}` : "Back"}
         >
           <ChevronLeft size={13} aria-hidden />
-          <span className="ws-docbar__name">{name}</span>
+          <span className={cx("ws-docbar__name", !name && "ws-docbar__name--empty")}>
+            {name || namePlaceholder}
+          </span>
         </button>
       ) : (
         <>
@@ -158,7 +211,12 @@ export function DocumentBar({
       )}
 
       {/* A 6px dot is too small to carry a word, so it carries a name. */}
-      {dirty && <span className="ws-docbar__dot" role="img" aria-label="Unsaved changes" />}
+      {quietDirty ? (
+        <span className="ws-docbar__dirtyslot">
+          {dirty && <span className="ws-docbar__dot ws-docbar__dot--quiet" role="img"
+            aria-label="Unsaved changes" title="Unsaved changes" />}
+        </span>
+      ) : dirty && <span className="ws-docbar__dot" role="img" aria-label="Unsaved changes" />}
 
       {meta && <span className="ws-docbar__meta">{meta}</span>}
 

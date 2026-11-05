@@ -96,6 +96,14 @@ describe("a failure worth a quiet retry", () => {
     expect(isTransientNetworkError(new TypeError("Failed to fetch"))).toBe(true);
   });
 
+  it("treats a request that missed its deadline as transient", () => {
+    expect(isTransientNetworkError(new DOMException("timed out", "TimeoutError"))).toBe(true);
+  });
+
+  it("does NOT retry a request its caller aborted", () => {
+    expect(isTransientNetworkError(new DOMException("aborted", "AbortError"))).toBe(false);
+  });
+
   it("does NOT retry a real answer the server chose to give", () => {
     expect(isTransientNetworkError(new HttpError(401, "401 Not signed in."))).toBe(false);
     expect(isTransientNetworkError(new HttpError(403, "403 Not allowed."))).toBe(false);

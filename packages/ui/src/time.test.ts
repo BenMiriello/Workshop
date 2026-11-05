@@ -34,7 +34,7 @@ describe("timeAgo", () => {
   });
 
   it("has a day tier: 48 hours reads as days everywhere, not as hours", () => {
-    // CommutePages.tsx had no day tier before this module existed, so the
+    // One page had no day tier before this module existed, so the
     // same 48-hour-old timestamp read "48h ago" there and "2d ago" every
     // other place `ago` was implemented.
     expect(timeAgo(agoIso(48 * HOUR))).toBe("2d ago");

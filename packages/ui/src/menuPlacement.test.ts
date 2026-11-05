@@ -15,7 +15,7 @@ const CHAT_LOG = rect(120, 60, 1200, 780);
 describe("placeMenu", () => {
   it("opens flush with the trigger's left edge and downward when there is room", () => {
     expect(placeMenu(rect(100, 100, 20, 20), LIST, VIEWPORT, "bottom", GAP))
-      .toEqual({ insetStart: 0, side: "bottom" });
+      .toEqual({ insetStart: 0, top: 124, side: "bottom" });
   });
 
   it("slides left off the viewport edge", () => {
@@ -92,6 +92,19 @@ describe("placeMenu", () => {
       const short = rect(0, 0, 1440, 220);
       expect(placeMenu(rect(600, 100, 20, 20), LIST, short, "bottom", GAP).side).toBe("bottom");
       expect(placeMenu(rect(600, 100, 20, 20), LIST, short, "top", GAP).side).toBe("top");
+    });
+
+    it("opens above with its bottom edge a gap over the trigger", () => {
+      // trigger.top 500 - gap 4 - height 200.
+      expect(placeMenu(rect(600, 500, 20, 20), LIST, CHAT_LOG, "top", GAP).top).toBe(296);
+    });
+
+    it("slides into the clip box over the trigger when neither side fits", () => {
+      // A row near the bottom of a short downloads list: 260px of viewport,
+      // trigger at 150, a 200px menu. Below would end at 374, above would start
+      // at -54. It lands at the bottom edge instead: 260 - 8 - 200 = 52.
+      const short = rect(0, 0, 1440, 260);
+      expect(placeMenu(rect(600, 150, 20, 20), LIST, short, "bottom", GAP).top).toBe(52);
     });
   });
 

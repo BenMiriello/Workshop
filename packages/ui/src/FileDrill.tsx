@@ -60,6 +60,7 @@ import {
   type FileTreeLevels,
   type FileTreeNode,
 } from "./fileTree";
+import { messageOf } from "./httpError";
 
 export type FileDrillProps = {
   /** The same seam `FileTree` takes. Keep it stable (`useMemo`): a new adapter
@@ -92,10 +93,6 @@ export type FileDrillProps = {
   label?: string;
   className?: string;
 };
-
-function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
 
 export function FileDrill({
   adapter,

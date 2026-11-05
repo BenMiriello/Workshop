@@ -10,26 +10,37 @@ import { narrowClip, placeMenu, type Clipper, type Rect } from "./menuPlacement"
 // whenever the geometry can have moved; the arithmetic itself stays in
 // menuPlacement.ts, where a test can execute it.
 //
-// It was Menu's private layout effect until Popover needed the same behaviour.
-// Copying it would have meant two copies of the flip rule, and the flip rule is
-// the thing that has already been got wrong once (see menuPlacement.ts).
+// THE SURFACE IS `position: fixed`, so it floats over whatever scrolls or
+// clips around its trigger instead of living inside it. It used to be
+// absolute, and a scroller's overflow was then both its cage and its
+// scrollbar: a row menu near the end of a short list did not fit either way,
+// opened anyway, grew the list's scroll height and was scrolled into view by
+// its own focus, so the whole list jumped up under it. Reported 2026-11-03 on
+// Browser's downloads list. The surface stays where it is in the DOM, so
+// every descendant rule a consumer wrote against it still matches.
 
-// The box a popover must stay inside: the viewport, narrowed by every ancestor
-// that clips.
-//
-// THE VIEWPORT IS NOT THE ONLY EDGE, and assuming it was is what put the chat's
-// branch menu half off screen. `.chat-log` is `overflow-x: hidden` and the chat
-// column is capped at `--page-max` and centred, so on a desktop a menu opening
-// from a bubble had hundreds of pixels of viewport to its right and was still
-// sliced off at the log's own edge. Measured against the viewport it did not
-// overflow, so it never flipped. Reported 2026-08-14: "it opens up and off to
-// the side oddly and is clipped/hidden off the edge of its container".
-//
-// Each axis is asked separately, because `overflow-x: hidden` with a `visible`
-// y is a real and common combination (that log is exactly it) and clipping one
-// axis says nothing about the other. That reduction is `narrowClip`, which is
-// pure and tested; this function only reads the DOM.
-function clipBox(el: HTMLElement): Rect {
+// Where a fixed surface placed at (0, 0) actually lands. The viewport's
+// corner, unless an ancestor is the containing block for fixed descendants
+// (a transform, a filter, `contain`, a container query...). Which properties
+// do that differs between engines, so this asks the engine with a probe
+// instead of keeping a list.
+function fixedOrigin(host: HTMLElement): { x: number; y: number } {
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;visibility:hidden";
+  host.appendChild(probe);
+  const r = probe.getBoundingClientRect();
+  probe.remove();
+  return { x: r.left, y: r.top };
+}
+
+// The box the surface must stay inside. With the viewport as its containing
+// block, a fixed surface escapes every ancestor's overflow, so the viewport is
+// the whole box. Under a containing-block ancestor it does not, and this falls
+// back to every ancestor that clips, each axis asked separately (see
+// `narrowClip`).
+function clipBox(el: HTMLElement, contained: boolean): Rect {
+  const viewport = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+  if (!contained) return viewport;
   const clippers: Clipper[] = [];
   for (let n = el.parentElement; n; n = n.parentElement) {
     const s = getComputedStyle(n);
@@ -45,10 +56,7 @@ function clipBox(el: HTMLElement): Rect {
       clipsY,
     });
   }
-  return narrowClip(
-    { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight },
-    clippers,
-  );
+  return narrowClip(viewport, clippers);
 }
 
 /**
@@ -59,59 +67,59 @@ function clipBox(el: HTMLElement): Rect {
  * @param side the PREFERRED side. A preference, not a guarantee.
  * @param anchorRef the positioned wrapper holding the trigger.
  * @param surfaceRef the surface itself, mounted only while open.
+ * @returns `left` and `top` for the surface's fixed position, and the side
+ *   it opened on.
  */
 export function useAnchoredPlacement(
   open: boolean,
   side: "bottom" | "top",
   anchorRef: RefObject<HTMLElement | null>,
   surfaceRef: RefObject<HTMLElement | null>,
-): { insetStart: number; side: "bottom" | "top" } {
-  // Horizontal position is NOT a caller choice, and it is not a binary pick
-  // between the trigger's two edges either any more (see menuPlacement.ts):
-  // it is a pixel offset, clamped into the box the surface must stay inside,
-  // so it is correct at any trigger position in any row -- including one
-  // that lands in the middle of a narrow phone screen, which a two-way pick
-  // could not guarantee.
-  const [insetStart, setInsetStart] = useState(0);
+): { left: number; top: number; side: "bottom" | "top" } {
+  const [at, setAt] = useState({ left: 0, top: 0 });
   // Where it ACTUALLY opened, which is `side` unless that would be clipped.
   const [placed, setPlaced] = useState<"bottom" | "top">(side);
 
   // Measure BEFORE paint, so a flip is never visible as a jump. Re-measures on
-  // resize and on any ancestor scroll while open: the trigger's position
-  // relative to the clip edge can change without a close and reopen.
+  // resize and on any ancestor scroll while open: the trigger moves under a
+  // fixed surface without a close and reopen.
   useLayoutEffect(() => {
-    if (!open) { setInsetStart(0); setPlaced(side); return; }
+    if (!open) { setAt({ left: 0, top: 0 }); setPlaced(side); return; }
     const measure = () => {
       const surface = surfaceRef.current;
       const anchor = anchorRef.current;
       if (!surface || !anchor) return;
-      // The arithmetic is in menuPlacement.ts, where a test can execute it.
-      // This function's whole job is turning the DOM into its four arguments.
-      const at = anchor.getBoundingClientRect();
+      const origin = fixedOrigin(anchor);
+      const trigger = anchor.getBoundingClientRect();
+      // Projected from the trigger and the surface's own size, never read
+      // back from where the surface sits now (see menuPlacement.ts).
       const p = placeMenu(
-        { left: at.left, top: at.top, right: at.right, bottom: at.bottom },
+        { left: trigger.left, top: trigger.top, right: trigger.right, bottom: trigger.bottom },
         { width: surface.offsetWidth, height: surface.offsetHeight },
-        clipBox(anchor),
+        clipBox(anchor, origin.x !== 0 || origin.y !== 0),
         side,
         // The real gap the CSS leaves between trigger and surface, read from
         // the token rather than restated as a number that can drift from it.
         parseFloat(getComputedStyle(surface).getPropertyValue("--space-1")) || 4,
       );
-      setInsetStart(p.insetStart);
+      setAt({ left: trigger.left + p.insetStart - origin.x, top: p.top - origin.y });
       setPlaced(p.side);
     };
     measure();
     window.addEventListener("resize", measure);
-    // Scrolling any ancestor moves the trigger relative to the clip box without
-    // closing the surface (only a pointerdown does that), so the side that
-    // fitted when it opened may not fit a moment later. Capture, because a
-    // scroll on an inner scroller does not bubble.
+    // Capture, because a scroll on an inner scroller does not bubble.
     window.addEventListener("scroll", measure, true);
+    // A surface that fills in after it opens (rows fetched on open) is placed
+    // at its first, shorter size: pinned by its top edge it then grows past
+    // the clip box, and one opening upward grows down over its trigger.
+    const grown = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    if (surfaceRef.current) grown?.observe(surfaceRef.current);
     return () => {
+      grown?.disconnect();
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure, true);
     };
   }, [open, side, anchorRef, surfaceRef]);
 
-  return { insetStart, side: placed };
+  return { ...at, side: placed };
 }
