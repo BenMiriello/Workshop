@@ -31,6 +31,7 @@ import { dictationKindOf } from "../../../lib/speech/targets";
 import { watchDocuments } from "../sameOriginFrames";
 import { holdCopyEvent, wrapWrites } from "./clipboardWrites";
 import { copiedReport, fieldSelection } from "./copyReport";
+import { listenForCopyPrefs } from "./copyPrefsBridge";
 import { heldCopy } from "./heldCopy";
 
 function report(text: string): void {
@@ -131,5 +132,9 @@ export function CopyRelay() {
     return win ? watch(win) : () => {};
   }), []);
   useEffect(watchLeaving, []);
+  useEffect(() => {
+    void copyPrefs.load();
+    return listenForCopyPrefs();
+  }, []);
   return null;
 }

@@ -37,7 +37,6 @@ import Trackers from "./settings/Trackers";
 import CustomInstructions from "./settings/CustomInstructions";
 import SignedInDevices from "./settings/SignedInDevices";
 import SpeechSection from "./settings/SpeechSection";
-import { CopySection } from "../components/shell/copies/CopySection";
 import ModelDefaults from "./settings/ModelDefaults";
 
 import type { PermissionState } from "@shared/native-bridge";
@@ -105,7 +104,6 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
           {/* Native-shell only; renders nothing in a browser. It belongs to
               this signed-in session's device, so it sits under Account. */}
           <DeviceSection />
-          <CopySection />
         </>
       )}
       {tab === "appearance" && <AppearanceSection />}

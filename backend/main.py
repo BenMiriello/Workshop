@@ -27,6 +27,7 @@ from routes import web_links as web_links_routes
 from routes import speech as speech_routes
 from routes import speech_live
 from routes import speech_commands, speech_dictations
+from routes import copy_prefs as copy_prefs_routes
 from routes import gpu_claims as gpu_claims_routes
 from routes import resources as resources_routes
 from routes import chat_schedules as chat_schedules_routes
@@ -582,6 +583,7 @@ app.include_router(voice_stream.router, tags=["voice"])
 # Dictation and read-aloud for every page, on the same engine as voice mode.
 app.include_router(speech_routes.router, dependencies=_USER)
 app.include_router(speech_commands.router, dependencies=_USER)
+app.include_router(copy_prefs_routes.router, dependencies=_USER)
 app.include_router(speech_dictations.router, dependencies=_USER)
 # Live dictation's socket, signed in inside the handler like the voice socket.
 app.include_router(speech_live.router, tags=["speech"])
