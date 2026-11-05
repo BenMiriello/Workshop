@@ -1,8 +1,8 @@
 """Multi-service app runner — run a project made of several servers as one app.
 
 `local_runner` runs a project's standalone surface as ONE subprocess. Real apps are
-several cooperating servers (gengui = a Bun API `core` + a Vite `frontend` + a Python
-`inference-worker`, plus Postgres/Redis). This runner models that:
+several cooperating servers (for example an API `core`, a Vite `frontend` and a
+background `worker`, plus Postgres/Redis). This runner models that:
 
   - An app has N **services**, each its own managed subprocess with its own cwd,
     build step, start command, and port (allocated centrally via port_registry).
@@ -32,8 +32,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.error
@@ -41,7 +43,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import compose_gen, container_runtime, local_runner, port_registry
+from services import (compose_gen, container_runtime, local_runner, port_registry,
+                      relocated_artifacts)
 from wsplatform import paths
 
 log = logging.getLogger("workshop.app_runner")
@@ -114,12 +117,38 @@ class ServiceSpec:
     cwd: str = "."           # relative to the project dir
     build: str | None = None
     port_env: str = "PORT"
+    #: A FIXED port for this service. When set, the runner always uses exactly
+    #: this port and never allocates a different one - it waits for the port to
+    #: come free instead. Leave it unset to keep the dynamic allocation.
+    #:
+    #: Dynamic allocation is fine for a service nobody addresses by hand, and
+    #: wrong for one that people and scripts do. One app's api drifted
+    #: 8700 -> 8703 -> 8704 -> 8706 in nineteen minutes, because `_stop_service`
+    #: releases the allocation before the dying process has actually let go of
+    #: the socket, so `allocate(preferred=...)` finds its own old port "in use"
+    #: and takes the next free one instead. Every restart moved the address, and
+    #: anything holding the old one got "could not reach the server".
+    port: int | None = None
     health: str | None = None  # http path probed for readiness, e.g. "/health"
-    expose: bool = False     # the app's primary UI surface (reflected as the URL)
+    expose: bool = False     # a screen of the app (app_surface.app_screens)
+    label: str | None = None  # the screen's name in the app's sidebar
     enabled: bool = True
     disabled_reason: str | None = None  # why enabled=false, shown in the UI
     depends_on: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    #: How to swap new code into this service without a stop, when it knows a
+    #: better way than stop-and-spawn (a graceful handover to its own launcher).
+    #: A command, run in the service's cwd with the service's env; a restart
+    #: runs this instead of re-spawning and then waits for health as usual.
+    reload: str | None = None
+    #: A command that must succeed before any restart of this service, run the
+    #: same way. A failure leaves the running service untouched.
+    preflight: str | None = None
+    #: Seconds a restart waits for this service to be healthy again.
+    ready_timeout: int | None = None
+    #: Installs what the service depends on (a venv, packages). Kept apart from
+    #: `build` so building does not reinstall every dependency each time.
+    setup: str | None = None
 
 
 @dataclass
@@ -150,12 +179,40 @@ class EnvRequirement:
 
 
 @dataclass
+class AppCommand:
+    """A whole-app command the app declares for one of the operation verbs
+    (`test`, a check, `migrate`): what to run, where, and its limits."""
+    command: str
+    name: str = ""
+    cwd: str = "."
+    timeout_s: int = 1800
+    memory: str = "8G"
+
+
+@dataclass
 class AppManifest:
     name: str
     services: list[ServiceSpec]
     deps: list[DepSpec] = field(default_factory=list)
     env_requirements: list[EnvRequirement] = field(default_factory=list)
     detected: bool = False   # True if auto-detected (no workshop.app.json on disk)
+    test: AppCommand | None = None
+    checks: list[AppCommand] = field(default_factory=list)
+    migrate: AppCommand | None = None
+
+
+def _command_from_raw(raw, name: str = "") -> AppCommand | None:
+    """A declared command: a bare string, or {command, name, cwd, timeout_s, memory}."""
+    if isinstance(raw, str) and raw.strip():
+        return AppCommand(command=raw.strip(), name=name)
+    if not isinstance(raw, dict) or not str(raw.get("command") or "").strip():
+        return None
+    timeout = str(raw.get("timeout_s") or "").strip()
+    return AppCommand(command=str(raw["command"]).strip(),
+                      name=str(raw.get("name") or name),
+                      cwd=str(raw.get("cwd") or "."),
+                      timeout_s=int(timeout) if timeout.isdigit() else 1800,
+                      memory=str(raw.get("memory") or "8G"))
 
 
 # ---- project dir + manifest resolution --------------------------------------
@@ -201,18 +258,28 @@ def _spec_from_raw(raw: dict, idx: int) -> ServiceSpec:
     start = str(raw.get("start") or "").strip()
     if not start:
         raise AppError(f"service '{name}' has no start command", status=400)
+    pinned_port = int(raw["port"]) if str(raw.get("port") or "").strip().isdigit() else None
+    if pinned_port is not None:
+        port_registry.reserve_pinned(pinned_port)
     return ServiceSpec(
         name=name,
         start=start,
         cwd=str(raw.get("cwd") or "."),
         build=(str(raw["build"]).strip() if raw.get("build") else None),
         port_env=str(raw.get("port_env") or "PORT"),
+        port=pinned_port,
         health=(str(raw["health"]) if raw.get("health") else None),
         expose=bool(raw.get("expose", False)),
+        label=str(raw.get("label") or "").strip() or None,
         enabled=bool(raw.get("enabled", True)),
         disabled_reason=(str(raw["_disabled_reason"]).strip() if raw.get("_disabled_reason") else None),
         depends_on=[str(d) for d in (raw.get("depends_on") or []) if isinstance(d, str)],
         env={str(k): str(v) for k, v in (raw.get("env") or {}).items()},
+        setup=(str(raw["setup"]).strip() if raw.get("setup") else None),
+        reload=(str(raw["reload"]).strip() if raw.get("reload") else None),
+        preflight=(str(raw["preflight"]).strip() if raw.get("preflight") else None),
+        ready_timeout=(int(raw["ready_timeout"])
+                       if str(raw.get("ready_timeout") or "").strip().isdigit() else None),
     )
 
 
@@ -247,7 +314,7 @@ def _env_requirements_from_raw(raw: dict) -> list[EnvRequirement]:
 def _autodetect(project_dir: Path) -> AppManifest:
     """Build a manifest when none is declared.
 
-    1. A `deploy.config.yaml` with a `services:` map (gengui's shape) → one service
+    1. A `deploy.config.yaml` with a `services:` map (a multi-service app's shape) → one service
        per entry, using its `path` + `start_command`/`build_command`.
     2. Else a single service from dev_servers.suggest_command (back-compat with the
        single-process projects local_runner handled).
@@ -371,9 +438,14 @@ def resolve_manifest(slug: str) -> AppManifest:
     # If exactly one service and none marked expose, it is the surface.
     if len(services) == 1 and not any(s.expose for s in services):
         services[0].expose = True
+    checks = [c for c in (_command_from_raw(r, f"check-{i + 1}")
+                          for i, r in enumerate(raw.get("checks") or [])) if c]
     return AppManifest(
         name=str(raw.get("name") or slug), services=services, deps=deps,
         env_requirements=_env_requirements_from_raw(raw),
+        test=_command_from_raw(raw.get("test"), "test"),
+        checks=checks,
+        migrate=_command_from_raw(raw.get("migrate"), "migrate"),
     )
 
 
@@ -417,27 +489,97 @@ def _slug_lock(slug: str) -> threading.Lock:
         return _LOCKS.setdefault(slug, threading.Lock())
 
 
+_PERSIST_LOCK = threading.Lock()
+
+
 def _persist_state() -> None:
+    """Write the whole of _STATE to STATE_STORE. Every bring-up thread calls
+    this, several at once at boot, so the snapshot, write and rename happen
+    under one lock: a writer that takes the lock later snapshots later state,
+    so the last rename is always the newest state. The temp file is unique per
+    write, so even a writer outside this process cannot rename it away."""
+    with _PERSIST_LOCK:
+        tmp: str | None = None
+        try:
+            # The compact dump runs in C without releasing the GIL, so it is a
+            # consistent snapshot while other threads mutate their own apps.
+            # The pretty dump of the copy can then take its time.
+            snapshot = json.loads(json.dumps(_STATE))
+            STATE_STORE.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=STATE_STORE.parent,
+                                       prefix=STATE_STORE.name + ".", suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(snapshot, indent=2) + "\n")
+            os.replace(tmp, STATE_STORE)
+            tmp = None
+        except OSError as e:
+            log.warning("could not persist app state: %s", e)
+        finally:
+            if tmp is not None:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+
+
+BOOT_STAMP = STATE_STORE.with_suffix(".boot")
+
+
+def _boot_id() -> str:
     try:
-        STATE_STORE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = STATE_STORE.with_suffix(STATE_STORE.suffix + ".tmp")
-        tmp.write_text(json.dumps(_STATE, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, STATE_STORE)
-    except OSError as e:
-        log.warning("could not persist app state: %s", e)
+        return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        return ""
 
 
 def _load_persisted() -> None:
     """Load STATE_STORE into memory once at import/startup. Pids from a previous
-    process are NOT live here, so reconcile() marks them stopped."""
+    process are NOT live here, so reconcile() marks them stopped — unless the host
+    rebooted in between, when the kernel reissues low pids and a recorded one can
+    land on an unrelated process (or thread) and read as alive. So a state file
+    written under a different boot id has every pid dropped and every running
+    service marked failed, which is what makes the monitor bring it back."""
     if not STATE_STORE.exists():
         return
     try:
         data = json.loads(STATE_STORE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return
-    if isinstance(data, dict):
-        _STATE.update(data)
+    if not isinstance(data, dict):
+        return
+    boot = _boot_id()
+    try:
+        stamped = BOOT_STAMP.read_text(encoding="utf-8").strip()
+    except OSError:
+        stamped = ""
+    if boot and stamped and stamped != boot:
+        for app in data.values():
+            if not isinstance(app, dict):
+                continue
+            for s in (app.get("services") or {}).values():
+                if s.get("pid"):
+                    s["pid"] = None
+                if s.get("status") in ("running", "starting"):
+                    s["status"] = "failed"
+                    s["error"] = "host rebooted"
+        log.info("app state predates this boot; dropped all recorded pids")
+    # No bring-up survives the process that ran it, so a `starting` phase on
+    # disk is a build that was cut off. Left in place it reads as in progress
+    # forever, and start_app and restart_service both stand down for it.
+    for app in data.values():
+        if not isinstance(app, dict) or app.get("phase") != "starting":
+            continue
+        app["phase"] = "failed"
+        for s in (app.get("services") or {}).values():
+            if s.get("status") in ("pending", "building", "starting"):
+                s["status"] = "failed"
+                s["error"] = "bring-up interrupted"
+    _STATE.update(data)
+    if boot:
+        try:
+            BOOT_STAMP.write_text(boot + "\n", encoding="utf-8")
+        except OSError as e:
+            log.warning("could not write boot stamp: %s", e)
 
 
 def _app_owner(slug: str, svc: str) -> str:
@@ -515,6 +657,39 @@ def _build_log(slug: str, svc: str) -> Path:
     return LOG_ROOT / f"{slug}__{svc}.log"
 
 
+# App logs are the child's own stdout (opened O_APPEND) and otherwise grow without
+# bound — one tight error loop once produced a 172GB log that filled the disk. Big
+# logs are fine; monster logs are not. The monitor calls cap_logs() each pass to
+# keep only the most recent LOG_KEEP bytes once a file passes LOG_CAP.
+LOG_CAP_BYTES = int(os.environ.get("WORKSHOP_APP_LOG_CAP_MB", "512")) * 1024 * 1024
+LOG_KEEP_BYTES = int(os.environ.get("WORKSHOP_APP_LOG_KEEP_MB", "64")) * 1024 * 1024
+
+
+def cap_logs() -> list[str]:
+    """Trim any app log past LOG_CAP down to its last LOG_KEEP bytes. Safe while the
+    child keeps appending (O_APPEND writes at EOF; we only rewrite the head then
+    truncate). Returns the names trimmed. Never raises — a logging guard must not
+    take down the monitor."""
+    trimmed: list[str] = []
+    if not LOG_ROOT.exists():
+        return trimmed
+    for p in sorted(LOG_ROOT.glob("*.log")):
+        try:
+            sz = p.stat().st_size
+            if sz <= LOG_CAP_BYTES:
+                continue
+            with open(p, "r+b") as f:
+                f.seek(max(0, sz - LOG_KEEP_BYTES))
+                tail = f.read()
+                f.seek(0)
+                f.write(f"[log capped: dropped {sz - len(tail)} older bytes]\n".encode() + tail)
+                f.truncate()
+            trimmed.append(p.name)
+        except OSError:
+            continue
+    return trimmed
+
+
 def _service_healthy(port: int, health: str | None, timeout: float = 1.5) -> bool:
     """Readiness probe. With a health path, an HTTP status < 500 counts as healthy.
     Without one, a successful TCP connect to the port counts."""
@@ -535,6 +710,202 @@ def _service_healthy(port: int, health: str | None, timeout: float = 1.5) -> boo
         return False
 
 
+def _pid_listening_on(port: int) -> int | None:
+    """The pid bound to 127.0.0.1:`port`, or None. Reads the OS, not the registry."""
+    try:
+        out = subprocess.run(["ss", "-lntpH", f"sport = :{port}"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    marker = "pid="
+    if marker not in out:
+        return None
+    try:
+        return int(out.split(marker, 1)[1].split(",", 1)[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def _evict_squatter(slug: str, svc_name: str, port: int) -> None:
+    """Clear an UNTRACKED process off this service's pinned port.
+
+    A pin means the service will not move, which is the point - and it turns one
+    failure into a deadlock unless this exists. One app's api ended up with a
+    healthy uvicorn on 8700 that the runner had not spawned and did not know
+    about: the runner called its own service `failed` (the pid it tracked was
+    gone), tried to restart, could not have its own port, and would have parked
+    as crashlooping while a working server sat on the address. The app 409s
+    throughout, because the proxy believes the runner, not the socket.
+
+    Only a process the runner does NOT currently track as a live service is
+    evicted, so this can never kill a healthy sibling. SIGTERM, then SIGKILL.
+    """
+    pid = _pid_listening_on(port)
+    if not pid:
+        return
+    tracked = {
+        s.get("pid")
+        for app in _STATE.values()
+        for s in (app.get("services") or {}).values()
+        if s.get("pid") and _alive(s.get("pid"))
+    }
+    if pid in tracked:
+        return  # a live service the runner owns; the caller's own stop path handles it
+    log.warning("evicting untracked pid %s from %s/%s's pinned port %d",
+                pid, slug, svc_name, port)
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.kill(pid, sig)
+        except (ProcessLookupError, PermissionError):
+            return
+        for _ in range(50):
+            if not _alive(pid):
+                return
+            time.sleep(0.1)
+
+
+def _serving_group(port: int, health: str | None, service_dir: Path) -> int | None:
+    """The process already serving a service, or None.
+
+    Serving means the port passes the service's readiness probe AND the process
+    bound to it runs from the service's own directory, so another app, or
+    another installation's copy, on the same port is never mistaken for it.
+    Returns the process group leader when there is one, because that is what the
+    runner tracks and stops."""
+    if not _service_healthy(port, health):
+        return None
+    pid = _pid_listening_on(port)
+    if not pid:
+        return None
+    try:
+        cwd = os.readlink(f"/proc/{pid}/cwd")
+        pgid = os.getpgid(pid)
+    except OSError:
+        return None
+    root = str(service_dir.resolve())
+    if not (cwd == root or cwd.startswith(root + os.sep)):
+        return None
+    if pgid != os.getpgid(0) and _alive(pgid):
+        return pgid
+    return pid
+
+
+def _adopt(slug: str, spec: ServiceSpec, sstate: dict, project_dir: Path) -> bool:
+    """Take over a service that is serving but that the runner does not track.
+
+    THE RECORD IS A CACHE OF WHAT IS RUNNING; THE SOCKET IS THE TRUTH. A reboot
+    restore overlapping the monitor, two starts from two tabs, and a restart
+    that raced a bring-up have each left a working service recorded `failed`.
+    Everything downstream believed the record: the screen showed "Starting"
+    over an app that was up in another tab, the proxy refused it with 409, and
+    the next start reaped the working copy to spawn another. Adopting makes the
+    record agree with the socket, so none of those paths ever sees a phantom
+    outage."""
+    port = sstate.get("port") or spec.port
+    if not port:
+        return False
+    pid = _serving_group(port, spec.health, project_dir / spec.cwd)
+    if not pid or not port_registry.adopt(_app_owner(slug, spec.name), "app", port, pid):
+        return False
+    sstate.update(pid=pid, port=port, url=f"http://127.0.0.1:{port}",
+                  status="running", error=None,
+                  started_at=sstate.get("started_at") or time.time())
+    log.info("adopted %s/%s, already serving on %d as pid %s", slug, spec.name, port, pid)
+    return True
+
+
+def _adopt_untracked(slug: str, app: dict) -> None:
+    """Adopt every service of `app` whose tracked process is gone but which is
+    still serving. A bring-up in progress owns its services, so it is left alone."""
+    if app.get("phase") == "starting" or _slug_lock(slug).locked():
+        return
+    stale = [name for name, s in (app.get("services") or {}).items()
+             if s.get("status") not in ("disabled", "building", "starting")
+             and not _alive(s.get("pid"))]
+    if not stale:
+        return
+    try:
+        manifest = resolve_manifest(slug)
+        project_dir = _project_dir(slug)
+    except AppError:
+        return
+    specs = {s.name: s for s in manifest.services if s.enabled}
+    adopted = [name for name in stale if name in specs
+               and _adopt(slug, specs[name], app["services"][name], project_dir)]
+    if adopted:
+        _persist_state()
+
+
+#: Set to "0" to spawn services as plain children again (the old behaviour).
+DETACH_SERVICES = os.environ.get("WORKSHOP_DETACH_SERVICES", "1") != "0"
+
+
+#: Vars systemd-run needs to reach the user bus. The service env is an ALLOWLIST
+#: (that is the point of `_service_env`), so these have to be added back
+#: deliberately for the wrapper - not for the service, which never sees the bus.
+_BUS_ENV = ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS")
+
+#: None = not probed yet. Set once per process by `_detachment_works`.
+_DETACH_OK: bool | None = None
+
+
+def _detachment_works(env: dict[str, str]) -> bool:
+    """Can we actually spawn into a transient scope, right now, with this env?
+
+    ASKED RATHER THAN ASSUMED, because assuming it cost an outage. `systemd-run
+    --user` needs a session bus, the scoped service env does not carry one, and
+    the failure is not a fallback - it is `Failed to connect to bus: No medium
+    found` and an instant exit. Every service the runner started died on spawn,
+    which is a far worse failure than the cgroup coupling this was fixing.
+
+    So the capability is PROVED once with a throwaway command before any real
+    service depends on it, and a box that cannot do it degrades to the old
+    behaviour instead of failing to run anything.
+    """
+    global _DETACH_OK
+    if _DETACH_OK is None:
+        if not shutil.which("systemd-run") or not env.get("DBUS_SESSION_BUS_ADDRESS"):
+            _DETACH_OK = False
+        else:
+            try:
+                probe = subprocess.run(
+                    ["systemd-run", "--user", "--scope", "--collect", "--quiet",
+                     "/bin/true"],
+                    env=env, capture_output=True, timeout=15)
+                _DETACH_OK = probe.returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                _DETACH_OK = False
+        if not _DETACH_OK:
+            log.warning("cannot spawn services into their own scope; falling back "
+                        "to plain children (they will die with the backend)")
+    return _DETACH_OK
+
+
+def _detached_argv(argv: list[str], env: dict[str, str] | None = None) -> list[str]:
+    """Wrap a start command so the service gets its OWN cgroup.
+
+    `start_new_session=True` gives a new session and process group, and neither
+    of those is what systemd kills by. Stopping a unit kills its whole CGROUP,
+    and a plain child of the backend is in the backend's cgroup - so every
+    `systemctl restart control-panel@workshop-backend` also killed every app the
+    runner was supervising. That is a supervisor taking down the things it
+    exists to keep up, and on 2026-08-17 it did exactly that to one app three
+    times in one hour while the operator was using it.
+
+    A transient scope puts the process under `app.slice` instead, as a sibling
+    of the backend rather than a child. The pid is preserved (systemd-run
+    `--scope` execs in place), so pid liveness, `killpg` and the port registry
+    all keep working unchanged, and the runner re-adopts the still-running
+    service by pid when it loads its persisted state.
+
+    Falls back to the bare command when systemd-run is unavailable, because a
+    box without it should still run apps - just with the old coupling.
+    """
+    if not DETACH_SERVICES or not _detachment_works(env or {}):
+        return argv
+    return ["systemd-run", "--user", "--scope", "--collect", "--quiet", *argv]
+
+
 def _spawn_service(slug: str, spec: ServiceSpec, project_dir: Path, port: int,
                    peers: dict[str, dict]) -> int:
     """Spawn one service's start command as a process group, env scoped + injected.
@@ -550,18 +921,28 @@ def _spawn_service(slug: str, spec: ServiceSpec, project_dir: Path, port: int,
     env["WORKSHOP_APP_SLUG"] = slug
     env["WORKSHOP_SERVICE_NAME"] = spec.name
     env["WORKSHOP_PROXY_BASE"] = f"/base-apps/run/{slug}/proxy/{spec.name}/"
+    # Where the service reaches the Workshop's own machine-local API (GPU claims).
+    api_port = (os.environ.get("WORKSHOP_BACKEND_PORT") or "8000").strip()
+    env["WORKSHOP_API_URL"] = f"http://127.0.0.1:{api_port}"
+    # The wrapper's own requirements, not the service's: systemd-run talks to the
+    # user bus, and `_service_env` allowlists the environment.
+    spawn_env = dict(env)
+    for key in _BUS_ENV:
+        value = os.environ.get(key)
+        if value:
+            spawn_env[key] = value
     log_path = _build_log(slug, spec.name)
     try:
         with open(log_path, "ab", buffering=0) as logf:
             logf.write(f"\n--- start {spec.name} on :{port} @ {time.ctime()} ---\n".encode())
             proc = subprocess.Popen(
-                ["/bin/bash", "-c", spec.start],
+                _detached_argv(["/bin/bash", "-c", spec.start], spawn_env),
                 cwd=str(cwd),
                 stdout=logf,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,
-                env=env,
+                env=spawn_env,
             )
     except (OSError, ValueError) as e:
         raise AppError(f"failed to launch service '{spec.name}': {e}", status=500)
@@ -579,6 +960,7 @@ def _run_build(slug: str, spec: ServiceSpec, project_dir: Path,
         return True, "no build step"
     cwd = (project_dir / spec.cwd).resolve()
     log_path = _build_log(slug, spec.name)
+    relocated_artifacts.drop_broken(project_dir, cwd)
     build_env = {**os.environ}
     for k, v in spec.env.items():
         out = v
@@ -737,8 +1119,10 @@ def _bring_up(slug: str, manifest: AppManifest) -> None:
             # from a prior run must not short-circuit this, or the central registry
             # loses track of the claim after a stop()/restart freed it.
             try:
-                port = port_registry.allocate(_app_owner(slug, spec.name), "app",
-                                              preferred=sstate.get("port"))
+                port = port_registry.allocate(
+                    _app_owner(slug, spec.name), "app",
+                    preferred=spec.port or sstate.get("port"),
+                    pinned=spec.port is not None)
             except RuntimeError as e:
                 sstate["status"] = "failed"
                 sstate["error"] = str(e)
@@ -825,6 +1209,18 @@ _SELF_MSG = ("This project is Workshop itself, not a separate app you can start.
 # path so a running app is never interrupted mid-transition.
 
 def _use_containers() -> bool:
+    """Which backend start_app uses, from `WORKSHOP_APP_BACKEND`: `auto` (the
+    default) containerizes whenever docker is reachable; `subprocess` and
+    `container` pin one. A deployment whose apps run straight off the host
+    filesystem must be able to say so, because "docker is reachable" is not the
+    same question as "these apps are built to run in a container", and auto
+    answering the first silently moves working apps onto a path that has never
+    run them."""
+    mode = os.environ.get("WORKSHOP_APP_BACKEND", "auto").strip().lower()
+    if mode == "subprocess":
+        return False
+    if mode == "container":
+        return True
     return container_runtime.available()
 
 
@@ -982,6 +1378,18 @@ def _container_stop(slug: str) -> None:
             log.warning("compose down failed for %s: %s", slug, e.message)
 
 
+def _run_bring_up(target, slug: str, manifest: AppManifest) -> None:
+    """Run a bring-up, and never let one that raised leave the app `starting`:
+    that phase is never recomputed, and restart_service stands down for it."""
+    try:
+        target(slug, manifest)
+    finally:
+        app = _STATE.get(slug) or {}
+        if app.get("phase") == "starting":
+            app["phase"] = "failed"
+            _persist_state()
+
+
 def start_app(slug: str) -> dict:
     """Start (or resume) all enabled services of an app. Returns immediately with a
     'starting' snapshot; build + spawn run on a background thread. Idempotent: an
@@ -990,13 +1398,18 @@ def start_app(slug: str) -> dict:
         raise AppError(_SELF_MSG, status=409)
     manifest = resolve_manifest(slug)  # raises AppError
     lock = _slug_lock(slug)
-    if lock.locked():
-        return {"slug": slug, "phase": "starting", **app_status(slug)}
-
-    app = _STATE.setdefault(slug, {})
+    # Checked and claimed in one step: two tabs opening the same stopped app
+    # both passed a bare `locked()` test, and the second bring-up then reaped
+    # the services the first had just spawned.
+    with _STATE_LOCK:
+        app = _STATE.setdefault(slug, {})
+        in_progress = lock.locked() or app.get("phase") == "starting"
+        if not in_progress:
+            app["phase"] = "starting"
+    if in_progress:
+        return {"slug": slug, **app_status(slug)}
     app["slug"] = slug
     app["desired"] = "running"
-    app["phase"] = "starting"
     app["manifest_detected"] = manifest.detected
     app.setdefault("services", {})
     for spec in manifest.services:
@@ -1014,7 +1427,7 @@ def start_app(slug: str) -> dict:
     _persist_state()
 
     target = _container_bring_up if app["backend"] == "container" else _bring_up
-    t = threading.Thread(target=target, args=(slug, manifest), daemon=True)
+    t = threading.Thread(target=_run_bring_up, args=(target, slug, manifest), daemon=True)
     t.start()
     return {"slug": slug, "phase": "starting", **app_status(slug)}
 
@@ -1087,6 +1500,25 @@ def restart_service(slug: str, svc_name: str) -> dict:
     if spec is None:
         raise AppError(f"no service '{svc_name}' in app '{slug}'", status=404)
     project_dir = _project_dir(slug)
+    # A BRING-UP IN PROGRESS WILL SPAWN THIS SERVICE ITSELF. At boot the restore's
+    # start_app is still building when the monitor sees the service `failed`;
+    # spawning here took the port, the bring-up's own spawn then died on it, and
+    # the runner tracked the dead one and parked the service as crashlooping
+    # while an orphan it no longer knew about served the port.
+    # start_app marks the phase before its thread takes the lock, so the phase
+    # covers the moment in between. The lock is HELD for the respawn, not just
+    # tested: a test-then-spawn let a start slip in between the two.
+    lock = _slug_lock(slug)
+    if _STATE.get(slug, {}).get("phase") == "starting" or not lock.acquire(blocking=False):
+        return app_status(slug)
+    try:
+        return _restart_locked(slug, svc_name, spec, manifest, project_dir)
+    finally:
+        lock.release()
+
+
+def _restart_locked(slug: str, svc_name: str, spec: ServiceSpec,
+                    manifest: AppManifest, project_dir: Path) -> dict:
     app = _STATE.setdefault(slug, {"slug": slug, "services": {}})
     if app.get("backend") == "container":
         compose_path = _compose_path_for(slug)
@@ -1099,9 +1531,22 @@ def restart_service(slug: str, svc_name: str) -> dict:
     sstate = app["services"].setdefault(svc_name, _init_service_state(spec, None))
     if sstate.get("pid") and _alive(sstate["pid"]):
         _stop_service(slug, svc_name, sstate)
-    port = port_registry.allocate(_app_owner(slug, svc_name), "app")
+    # ASK FOR THE PORT IT ALREADY HAD, exactly as the bring-up path does. The
+    # registry frees an allocation as soon as its process dies, so without
+    # `preferred` a crash-restart takes the lowest free port in the window
+    # instead of its own — which is how one app's api and web swapped 8703/8706
+    # and then walked down to 8700/8701 over successive restarts. A service's
+    # address moving on crash is not a detail: a sibling that resolved the port
+    # at ITS startup keeps calling the old one and answers 500.
+    # A manifest `port` is a pin and outranks whatever the last run recorded, so
+    # a service that has already drifted comes home on its next restart.
+    port = port_registry.allocate(_app_owner(slug, svc_name), "app",
+                                  preferred=spec.port or sstate.get("port"),
+                                  pinned=spec.port is not None)
     sstate["port"] = port
     sstate["url"] = f"http://127.0.0.1:{port}"
+    if spec.port is not None:
+        _evict_squatter(slug, svc_name, port)
     # Peer map (url+port) from sibling services, so env injection/substitution
     # resolves on a restart exactly as it did on the initial bring-up.
     peers = {
@@ -1160,13 +1605,20 @@ def app_status(slug: str) -> dict:
             "manifest_detected": app.get("manifest_detected", False),
             "backend": "container", "services": services, "deps": deps,
         }
+    _adopt_untracked(slug, app)
+    # A bring-up owns its services' records and their port claims. It reaps the
+    # processes a record still calls `running` and only overwrites that record
+    # when it reaches the service, so a status read in between saw a crash and
+    # released the port the bring-up had just claimed; the spawn then ran with
+    # no allocation at all.
+    bringing_up = app.get("phase") == "starting" or _slug_lock(slug).locked()
     services = []
     for name, s in app.get("services", {}).items():
         pid = s.get("pid")
         alive = _alive(pid)
         status = s.get("status")
         healthy = None
-        if status == "running" and not alive:
+        if status == "running" and not alive and not bringing_up:
             # Crashed since last touch. Nothing restarts it: the subprocess backend is
             # the fallback for a host without docker and has no supervisor.
             status = "failed"
@@ -1205,6 +1657,61 @@ def app_status(slug: str) -> dict:
         "services": services,
         "deps": app.get("deps", []),
     }
+
+
+def running_services() -> list[dict]:
+    """Every service the runner has up, as `{project, service, pid, port}`,
+    read from state without probing health (a probe is an HTTP call per
+    service). Container-backed apps have no process of ours to name."""
+    out = []
+    for slug, app in list(_STATE.items()):
+        if app.get("backend") == "container" or is_self_project(slug):
+            continue
+        for name, s in list((app.get("services") or {}).items()):
+            if s.get("status") == "running" and _alive(s.get("pid")):
+                out.append({"project": slug, "service": name,
+                            "pid": s["pid"], "port": s.get("port")})
+    return out
+
+
+def wants_running(slug: str) -> bool:
+    """Whether the runner means this app to be up: the monitor respawns a service
+    of an app it wants running, so a `failed` or `stopped` reading is temporary."""
+    return (_STATE.get(slug) or {}).get("desired") == "running"
+
+
+def command_env(slug: str, spec: ServiceSpec) -> dict[str, str]:
+    """The environment an app-declared command for this service runs with
+    (`reload`, `preflight`): the host's, plus exactly what the service itself is
+    started with, so the command sees the same port, peers and secrets."""
+    app = _STATE.get(slug) or {}
+    services = app.get("services") or {}
+    peers = {name: {"url": s.get("url"), "port": s.get("port")}
+             for name, s in services.items() if s.get("port")}
+    port = (services.get(spec.name) or {}).get("port") or spec.port or 0
+    return {**os.environ,
+            **_service_env(int(port), spec, peers, _secret_env_for_service(slug, spec.name))}
+
+
+def project_dir(slug: str) -> Path:
+    return _project_dir(slug)
+
+
+def service_target(slug: str, svc_name: str) -> tuple[str | None, int | None]:
+    """A service's status and port WITHOUT probing its health: what a proxy needs
+    to route one request. `app_status` probes every service of the app over HTTP
+    or TCP, so a slow service held each lookup for its probe timeout. A tracked,
+    live, running service process is answered from state; anything else goes through
+    `app_status`, which also adopts a service whose tracked process is gone but
+    which is still serving."""
+    app = _STATE.get(slug)
+    if app and app.get("backend") != "container" and not is_self_project(slug):
+        s = (app.get("services") or {}).get(svc_name) or {}
+        if s.get("status") == "running" and s.get("port") and _alive(s.get("pid")):
+            return "running", s["port"]
+    st = app_status(slug)
+    svc = next((x for x in st.get("services", []) if x["name"] == svc_name), None)
+    return (svc.get("status"), svc.get("port")) if svc else (None, None)
 
 
 def app_logs(slug: str, svc_name: str, max_bytes: int = 16384) -> str:
@@ -1270,7 +1777,8 @@ def manifest_dict(slug: str) -> dict:
         "services": [
             {
                 "name": s.name, "start": s.start, "cwd": s.cwd, "build": s.build,
-                "port_env": s.port_env, "health": s.health, "expose": s.expose,
+                "port_env": s.port_env, "port": s.port,
+                "health": s.health, "expose": s.expose,
                 "enabled": s.enabled, "disabled_reason": s.disabled_reason,
                 "depends_on": s.depends_on, "env_keys": sorted(s.env.keys()),
             }
@@ -1317,6 +1825,31 @@ def env_overview(slug: str) -> dict:
     missing_required = [r["key"] for r in requirements if r["required"] and not r["set"]]
     return {"slug": slug, "requirements": requirements,
             "undeclared_set": extra, "missing_required": missing_required}
+
+
+def restore_desired_running() -> list[str]:
+    """Start every process-mode app whose persisted desired state is `running`
+    and none of whose services is alive. Called once at backend startup: a
+    process-mode app dies with the process that spawned it, and without this it
+    stays down until someone presses Start. Containers are skipped, docker's
+    restart policy already brings them back. An app with some service still
+    alive is left alone rather than restarted underneath itself. Returns the
+    slugs it started."""
+    started: list[str] = []
+    for slug, app in list(_STATE.items()):
+        if app.get("desired") != "running" or app.get("backend") == "container":
+            continue
+        # app_status adopts a service that is serving untracked, so an app that
+        # is up is never started again (and reaped) underneath itself.
+        if app_status(slug)["phase"] != "stopped":
+            continue
+        try:
+            start_app(slug)
+        except AppError as e:
+            log.warning("could not restore app %s: %s", slug, e)
+            continue
+        started.append(slug)
+    return started
 
 
 def list_apps() -> list[dict]:

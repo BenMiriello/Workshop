@@ -5,14 +5,18 @@ Hosts the app launcher, per-app manifests and permissions, the registry
 logs/env) and the port registry. It is keyed by app spec, not by scanning any
 machine's filesystem.
 """
+import asyncio
+import time
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from starlette.requests import HTTPConnection
 from pydantic import BaseModel, ConfigDict, Field
 
-from services import app_overlay, app_registry, app_runner, app_ui, gc, manifests, permissions, port_registry, registry
+from deps_user import request_auth
+from services import app_registry, app_runner, app_ui, gc, manifests, permissions, port_registry, registry
 
 from routes.gc_models import GcReport
 
@@ -33,6 +37,13 @@ router = APIRouter()
 # that the ADR's migration posture says must land with its frontend edit.
 
 
+class AppScreen(BaseModel):
+    """One screen an app serves: an exposed service of its manifest."""
+
+    service: str
+    label: str
+
+
 class AppSurface(BaseModel):
     """Where an app opens and which per-app tabs it has
     (`services/app_surface.py`). Closed: every field is filled by the resolver.
@@ -44,6 +55,8 @@ class AppSurface(BaseModel):
 
     home: str
     tabs: list[str]
+    # The app's served screens, first in its sidebar (app_surface.app_screens).
+    screens: list[AppScreen] = []
     declared: bool
     project_slug: str | None = None
     files: bool
@@ -675,8 +688,15 @@ async def gc_run(body: GcRunIn = Body(default=GcRunIn())):
 # registry constant and its surface reflection (_reflect_surface).
 
 
+# THE RUNNER ROUTES BELOW ARE `def`, NOT `async def`, ON PURPOSE. Each one calls
+# app_runner synchronously, and app_status probes every service's health with a
+# blocking HTTP request. As `async def` that probe ran on the event loop, so an
+# app that was slow or mid-restart froze the whole backend: caught 2026-10-04
+# 08:08:13, every Workshop request taking 1.7-2.2s while the loop waited on
+# an app's /health. A `def` route runs on FastAPI's worker threads; app_runner is
+# already called from threads (app_monitor's tick) and takes its own per-app locks.
 @router.get("/run/{slug}/manifest", response_model=AppRunManifest, response_model_exclude_unset=True)
-async def run_manifest(slug: str):
+def run_manifest(slug: str):
     """The resolved app manifest (declared workshop.app.json, else auto-detected):
     {name, detected, services[], deps[]}."""
     try:
@@ -686,7 +706,7 @@ async def run_manifest(slug: str):
 
 
 @router.post("/run/{slug}/start", response_model=AppStatus, response_model_exclude_unset=True)
-async def run_start(slug: str):
+def run_start(slug: str):
     """Start all enabled services. Returns immediately with a 'starting' snapshot;
     build + spawn proceed on a background thread. Poll status for progress."""
     try:
@@ -696,25 +716,25 @@ async def run_start(slug: str):
 
 
 @router.post("/run/{slug}/stop", response_model=AppStatus, response_model_exclude_unset=True)
-async def run_stop(slug: str):
+def run_stop(slug: str):
     """Stop all services and set desired state = stopped (monitor won't restart)."""
     return app_runner.stop_app(slug)
 
 
 @router.get("/run/{slug}/status", response_model=AppStatus, response_model_exclude_unset=True)
-async def run_status(slug: str):
+def run_status(slug: str):
     """Live per-service status + health, app phase, desired state, declared deps."""
     return app_runner.app_status(slug)
 
 
 @router.get("/run/{slug}/logs", response_model=ServiceLog, response_model_exclude_unset=True)
-async def run_logs(slug: str, service: str):
+def run_logs(slug: str, service: str):
     """Tail one service's combined build+run log."""
     return {"service": service, "log": app_runner.app_logs(slug, service)}
 
 
 @router.post("/run/{slug}/services/{service}/restart", response_model=AppStatus, response_model_exclude_unset=True)
-async def run_restart_service(slug: str, service: str):
+def run_restart_service(slug: str, service: str):
     """Re-spawn one service (no rebuild). Manual counterpart to the monitor."""
     try:
         return app_runner.restart_service(slug, service)
@@ -723,7 +743,7 @@ async def run_restart_service(slug: str, service: str):
 
 
 @router.get("/run", response_model=AppList, response_model_exclude_unset=True)
-async def run_list():
+def run_list():
     """Status of every app the runner knows about."""
     return {"apps": app_runner.list_apps()}
 
@@ -740,14 +760,14 @@ class EnvValuesIn(BaseModel):
 
 
 @router.get("/run/{slug}/env", response_model=EnvOverview, response_model_exclude_unset=True)
-async def run_env(slug: str):
+def run_env(slug: str):
     """Declared env requirements + per-key SET status (never values). Also lists
     any stored keys not declared as requirements."""
     return app_runner.env_overview(slug)
 
 
 @router.put("/run/{slug}/env", response_model=EnvOverview, response_model_exclude_unset=True)
-async def run_env_set(slug: str, body: EnvValuesIn):
+def run_env_set(slug: str, body: EnvValuesIn):
     """Set/merge env values for a project. A blank value clears that key. Returns
     the refreshed presence-only overview (no values echoed back)."""
     from services import secrets_store
@@ -756,7 +776,7 @@ async def run_env_set(slug: str, body: EnvValuesIn):
 
 
 @router.delete("/run/{slug}/env/{key}", response_model=EnvOverview, response_model_exclude_unset=True)
-async def run_env_delete(slug: str, key: str):
+def run_env_delete(slug: str, key: str):
     """Unset one env value. Returns the refreshed overview."""
     from services import secrets_store
     secrets_store.delete_key(slug, key)
@@ -764,7 +784,7 @@ async def run_env_delete(slug: str, key: str):
 
 
 @router.get("/ports", response_model=PortRegistry, response_model_exclude_unset=True)
-async def ports():
+def ports():
     """The central port registry: every current local-service port allocation
     (preview / deploy / app), after a reconcile pass. The single source of truth
     that prevents port conflicts across all three runners."""
@@ -775,16 +795,119 @@ async def ports():
 # App services bind 127.0.0.1:<port> (not exposed to the tailnet). This proxy
 # forwards to one service so the operator can open it through the EXISTING backend
 # origin (https://<host>:8446/base-apps/run/<slug>/proxy/<service>/...), without a
-# new tailscale-serve mapping. HTTP + SSE stream through fine. Two honest limits:
-# WebSockets (e.g. Vite HMR) do not traverse this HTTP proxy, and an SPA that calls
-# an absolute `/api` expects its OWN origin — for those, give the app a dedicated
-# origin with `tailscale serve` (see docs/app-platform-runner.md).
+# new tailscale-serve mapping. HTTP + SSE stream through here; a WebSocket on the
+# same path is relayed by routes/base_apps_ws.py, which resolves the service the
+# same way. One honest limit: an SPA that calls an absolute `/api` expects its OWN
+# origin — for that, give the app a dedicated origin with `tailscale serve` (see
+# docs/app-platform-runner.md).
 
+# Content-Length is not one of these: the body is relayed byte for byte, so the
+# app's length is the true one. Dropped, every answer went out chunked, a video
+# range included, and Safari's player handles a range of unknown length badly.
+#
+# Content-Encoding is not one either: the browser's Accept-Encoding goes to the
+# app as sent, and a body the app compressed is relayed compressed with its
+# header, so a large answer crosses the network at its compressed size.
 _HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailers", "transfer-encoding", "upgrade", "content-encoding",
-    "content-length",
+    "te", "trailers", "transfer-encoding", "upgrade",
 }
+
+# The signed-in user's id, told to the app so it can keep each user's data
+# apart. Only the proxy sets it: a copy arriving with the request is dropped,
+# and a request with no user carries none.
+USER_HEADER = "X-Workshop-User"
+
+
+def user_header(user_id: int | None) -> dict[str, str]:
+    return {USER_HEADER: str(user_id)} if user_id is not None else {}
+
+
+# One client for every proxied request, so connections to an app are pooled and
+# kept alive. Building an httpx.AsyncClient costs ~11ms of CPU (it loads an SSL
+# context), and it ran on the event loop once per request: a page of 200
+# thumbnails held the whole backend for over two seconds. It belongs to the app
+# serving the request (`app.state`), and to the loop it first ran on, so a new
+# loop gets a new one.
+def _proxy_client(request: Request) -> httpx.AsyncClient:
+    state = request.app.state
+    loop = asyncio.get_running_loop()
+    held = getattr(state, "proxy_pool", None)
+    if held is None or held[0] is not loop:
+        # Idle connections are dropped at 2s, under the 5s after which uvicorn
+        # and Node close theirs: at equal timeouts a request sent as the server
+        # closes the connection fails, and that was a 502.
+        held = (loop, httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0, read=None),
+            limits=httpx.Limits(max_connections=256, max_keepalive_connections=64,
+                                keepalive_expiry=2.0),
+        ))
+        state.proxy_pool = held
+    return held[1]
+
+
+# Which port a proxied service is on, remembered for a few seconds. The lookup
+# reads the runner's state and never probes the app's health, which used to hold
+# a lookup for a slow service's probe timeout. An entry that has gone stale costs
+# one failed connect, which drops it.
+_TARGET_TTL_S = 5.0
+
+# A service being restarted is back in a median 8s and a p90 of 14s (a
+# frequently restarted app, 2026-10-02, about 60 restarts a day), and on
+# 2026-10-04 agents restarted it 15 times in 75 minutes, refusing connections
+# 6-20s each time. A request that can be sent twice waits that out, so a
+# restart reads as a pause rather than as broken images and a page that loaded
+# without its content. A POST is never held or resent.
+_HOLD_S = 30.0
+_RESENDABLE = frozenset({"GET", "HEAD", "OPTIONS"})
+#: Request bodies larger than this, or sent without a length, are streamed
+#: through rather than read into memory.
+_BUFFER_MAX = 1 << 20
+
+
+def _streams_body(request: Request) -> bool:
+    if "transfer-encoding" in request.headers:
+        return True
+    size = request.headers.get("content-length") or ""
+    return size.isdigit() and int(size) > _BUFFER_MAX
+_COMING_BACK = frozenset({"starting", "building"})
+# Between its process dying and the monitor's respawn a service reads `failed`.
+_RESPAWN_S = 3.0
+# And for as long as the runner wants the app up, `failed` (process gone) and
+# `stopped` (a restart waiting for the old process to exit) are both on the way
+# back: the 409s the operator got at 08:21 and 08:41 on 2026-10-04 were GETs
+# refused mid-restart after the 3s grace above ran out.
+_DOWN_FOR_NOW = frozenset({"failed", "stopped"})
+
+
+def _proxy_targets(request: HTTPConnection) -> dict[tuple[str, str], tuple[int, float]]:
+    state = request.app.state
+    if getattr(state, "proxy_targets", None) is None:
+        state.proxy_targets = {}
+    return state.proxy_targets
+
+
+async def _proxy_target(request: HTTPConnection, slug: str, service: str) -> tuple[str | None, int | None]:
+    targets = _proxy_targets(request)
+    key = (slug, service)
+    hit = targets.get(key)
+    now = time.monotonic()
+    if hit and now - hit[1] < _TARGET_TTL_S:
+        return "running", hit[0]
+    status, port = await asyncio.to_thread(app_runner.service_target, slug, service)
+    if status == "running" and port:
+        targets[key] = (port, now)
+    else:
+        targets.pop(key, None)
+    return status, port
+
+
+def _coming_back(status: str | None, waited: float, wanted: bool) -> bool:
+    """Whether a service that is not running now is on its way back up, so a
+    request that can be sent twice should wait for it rather than fail."""
+    return (status in _COMING_BACK
+            or (status == "failed" and waited < _RESPAWN_S)
+            or (status in _DOWN_FOR_NOW and wanted))
 
 
 @router.api_route(
@@ -792,36 +915,55 @@ _HOP_BY_HOP = {
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
 )
 async def run_proxy(slug: str, service: str, path: str, request: Request):
-    st = app_runner.app_status(slug)
-    svc = next((s for s in st.get("services", []) if s["name"] == service), None)
-    if not svc or not svc.get("port"):
-        raise HTTPException(404, f"no running service '{service}' for app '{slug}'")
-    if svc.get("status") != "running":
-        raise HTTPException(409, f"service '{service}' is {svc.get('status')}, not running")
-
     # Forward the FULL incoming path verbatim (not just the {path} tail), so an
     # app configured with base = this proxy path serves its assets correctly. The
     # app's public base path is exactly request.url.path's prefix up to {service}.
-    target = f"http://127.0.0.1:{svc['port']}{request.url.path}"
     fwd_headers = {k: v for k, v in request.headers.items()
-                   if k.lower() not in _HOP_BY_HOP and k.lower() != "host"}
-    # Force an unencoded upstream body so we can string-inject the nav overlay
-    # into HTML (you cannot rewrite a gzipped body). Dev preview, so the small
-    # cost of skipping compression is fine.
-    fwd_headers["accept-encoding"] = "identity"
-    body = await request.body()
-    client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None))
-    try:
-        upstream = await client.send(
-            client.build_request(
-                request.method, target, headers=fwd_headers,
-                params=dict(request.query_params), content=body or None,
-            ),
-            stream=True,
-        )
-    except httpx.RequestError as e:
-        await client.aclose()
-        raise HTTPException(502, f"upstream service unreachable: {e}")
+                   if k.lower() not in _HOP_BY_HOP
+                   and k.lower() not in ("host", "content-length", USER_HEADER.lower())}
+    fwd_headers.update(user_header(request_auth(request)["user_id"]))
+    # A big request body (an upload) is passed upstream as it arrives instead of
+    # being collected here first, so its size never sits in this process. Such a
+    # body can be sent only once, so it is never held for a restart either.
+    streamed = _streams_body(request)
+    if streamed:
+        body = b""
+        content = request.stream()
+        if request.headers.get("content-length"):
+            fwd_headers["content-length"] = request.headers["content-length"]
+    else:
+        body = await request.body()
+        content = body or None
+    client = _proxy_client(request)
+    hold = request.method in _RESENDABLE and not body and not streamed
+    wanted = app_runner.wants_running(slug)
+    start = time.monotonic()
+    pause = 0.25
+    while True:
+        status, port = await _proxy_target(request, slug, service)
+        waited = time.monotonic() - start
+        if not (hold and waited < _HOLD_S and _coming_back(status, waited, wanted)):
+            if not port:
+                raise HTTPException(404, f"no running service '{service}' for app '{slug}'")
+            if status != "running":
+                raise HTTPException(409, f"service '{service}' is {status}, not running")
+        if status == "running" and port:
+            try:
+                upstream = await client.send(
+                    client.build_request(
+                        request.method, f"http://127.0.0.1:{port}{request.url.path}",
+                        headers=fwd_headers, params=dict(request.query_params),
+                        content=content,
+                    ),
+                    stream=True,
+                )
+                break
+            except httpx.RequestError as e:
+                _proxy_targets(request).pop((slug, service), None)
+                if not hold or time.monotonic() - start >= _HOLD_S:
+                    raise HTTPException(502, f"upstream service unreachable: {e}")
+        await asyncio.sleep(pause)
+        pause = min(pause * 2, 2.0)
 
     # Strip framing/CSP guards so the app can be framed in the Workshop preview
     # and the injected overlay's inline script runs (a dev-preview proxy, not a
@@ -832,29 +974,12 @@ async def run_proxy(slug: str, service: str, path: str, request: Request):
     resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _STRIP}
 
     ctype = upstream.headers.get("content-type", "")
-    # HTML documents get the nav overlay injected and are returned whole (small,
-    # and string-injection needs the full body). Everything else (assets, SSE)
-    # streams through untouched.
-    if "text/html" in ctype.lower():
-        raw = await upstream.aread()
-        await upstream.aclose()
-        await client.aclose()
-        try:
-            text = raw.decode("utf-8")
-            text = app_overlay.inject(text, slug, service)
-            out = text.encode("utf-8")
-        except UnicodeDecodeError:
-            out = raw  # non-utf8 HTML: pass through unmodified
-        return Response(content=out, status_code=upstream.status_code,
-                        headers=resp_headers, media_type=ctype)
-
     async def _body():
         try:
             async for chunk in upstream.aiter_raw():
                 yield chunk
         finally:
             await upstream.aclose()
-            await client.aclose()
 
     return StreamingResponse(
         _body(), status_code=upstream.status_code, headers=resp_headers,

@@ -70,6 +70,15 @@ def _declarations():
     return out
 
 
+def _instance_ids() -> set[str]:
+    """This deployment's own apps (services/instance_apps.py), when present."""
+    try:
+        from services import instance_apps
+    except ModuleNotFoundError:
+        return set()
+    return set(instance_apps.SPECS)
+
+
 def _entry_point_modules() -> dict[str, str]:
     """{entry point name: module it loads from}, for the app entry-point group.
 
@@ -118,7 +127,7 @@ def test_every_declared_app_reaches_the_catalog():
 def test_the_catalog_is_exactly_what_declared_itself():
     """Nothing in the catalog that nothing declared, and nothing declared lost."""
     ar = _reload_registry()
-    declared_ids = {spec.id for _m, spec in _declarations()}
+    declared_ids = {spec.id for _m, spec in _declarations()} | _instance_ids()
     assert declared_ids == set(ar.BUILTIN_APPS), (
         f"declared {sorted(declared_ids)} but catalog holds {sorted(ar.BUILTIN_APPS)}"
     )

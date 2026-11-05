@@ -27,11 +27,12 @@ import posixpath
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Response, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from middleware.compression import SSEAwareGZipMiddleware
+from services import ws_relay
 
 log = logging.getLogger("workshop.public_edge")
 
@@ -67,7 +68,7 @@ _BLOCKED_PREFIXES = (
     # "/services" was here until 2026-08-20 and should not be: it is a read-only
     # health prober with no ingest, it is require_operator-authed now, and
     # blocking it broke two real features on this origin (the Apps launcher's
-    # per-app status, and Commute reporting its 511 key missing when it was set).
+    # per-app status, and an app reporting its API key missing when it was set).
     #
     # "/events" STAYS, and the asymmetry is the point: that router carries
     # POST /events/{source}, an unauthenticated webhook receiver. Its two
@@ -75,7 +76,18 @@ _BLOCKED_PREFIXES = (
     # per-prefix and they cannot be separated from the ingest they share a
     # router with without giving them their own authed prefix, which a raw JSONL
     # tail does not earn.
-    "/relay", "/events", "/auto-pr",
+    #
+    # "/healthz" is unauthenticated and names every installed app, a filesystem
+    # path and the pid. Every caller that needs it (apply.sh, restart_backend.sh,
+    # migration_state.py) asks the backend on loopback directly, so nothing that
+    # reaches the backend through this edge has a reason to read it.
+    "/relay", "/local-llm", "/events", "/auto-pr", "/healthz",
+    # GPU claims are for servers on this machine, gated by network position.
+    "/gpu/claims",
+    # A dictation's recording, copied by subscribed apps' servers, same trust.
+    "/speech/recordings",
+    # The machine's RAM room: the holder's yield calls, same trust.
+    "/machine",
 )
 
 # An app's own unauthenticated ingest paths are declared on its AppSpec
@@ -112,6 +124,16 @@ _DROP_REQ = {"host", "content-length", "connection", "keep-alive", "transfer-enc
 # _proxy() below for why keeping it requires reading the RAW upstream bytes
 # rather than httpx's auto-decoded `.aread()`.
 _DROP_RESP = {"content-length", "connection", "keep-alive", "transfer-encoding"}
+# A relayed body is the upstream's raw bytes, so its length is still true. Kept,
+# because without it a video range goes out as a stream of unknown size, which
+# Safari's player handles badly.
+_RELAY_DROP = _DROP_RESP - {"content-length"}
+
+#: Above this, a response is relayed to the browser as it arrives rather than
+#: collected here first. Small enough that an app's pictures and video ranges
+#: are never held, large enough that ordinary JSON — which is every API call
+#: through this edge — keeps the collected path it has always used.
+_RELAY_BYTES = 256 * 1024
 
 # No interactive docs on the internet-facing edge. (security-audit-2026-07-18 L3)
 _DOCS = os.environ.get("WORKSHOP_ENABLE_DOCS", "0").strip().lower() in {"1", "true", "yes"}
@@ -180,14 +202,29 @@ _transport = httpx.AsyncHTTPTransport(
 # read the request and was working on it, and this proxy carries writes.
 _RETRYABLE = (httpx.ConnectError, httpx.ConnectTimeout, httpx.RemoteProtocolError)
 
+# A GET, HEAD or OPTIONS is retried on a dropped read too. A ReadError on one of
+# those cannot have changed anything, and it is exactly what a backend restart
+# hands every request already in flight on a pooled connection: measured
+# 2026-10-04 09:05:25, a restart answered 13 in-flight page reads with an
+# instant 502 ("ReadError") while the retry above waited only for connects.
+_IDEMPOTENT = frozenset({"GET", "HEAD", "OPTIONS"})
+
 
 def _build_upstream_request(
-    request: Request, backend_path: str, headers: dict, body: bytes, *, stream: bool
+    request: Request, backend_path: str, headers: dict, body: bytes, *, stream: bool,
+    read: float | None = None,
 ) -> httpx.Request:
     # Per-request, no client, no cookie jar. Query params are carried explicitly
     # (multi_items preserves repeated keys). Timeout rides in request.extensions
     # since the transport, unlike a client, has no configured timeout of its own.
-    timeout = httpx.Timeout(30.0, read=None) if stream else httpx.Timeout(120.0)
+    #
+    # `stream` and `read` are SEPARATE questions and were briefly one. Streaming
+    # the body is how a big response is relayed instead of collected; a read
+    # timeout of None is what an SSE stream needs so a quiet channel is not
+    # killed mid-turn. A media relay wants the first and emphatically not the
+    # second — an upstream that stops talking half way through a video must
+    # still time out.
+    timeout = httpx.Timeout(30.0, read=read) if stream else httpx.Timeout(120.0)
     return httpx.Request(
         request.method,
         BACKEND + backend_path,
@@ -245,10 +282,21 @@ def _is_blocked(stripped_path: str) -> bool:
 # with the honest 502, not hold connections open: waiting longer would convert
 # a clear error into an unexplained hang, which is worse.
 _RETRY_WAITS = (0.25, 1.0, 2.5, 3.0)
+#: Request bodies larger than this, or sent without a length, are relayed as
+#: they arrive rather than read into memory.
+_BUFFER_MAX = 1 << 20
+
+
+def _streams_body(request: Request) -> bool:
+    if "transfer-encoding" in request.headers:
+        return True
+    size = request.headers.get("content-length") or ""
+    return size.isdigit() and int(size) > _BUFFER_MAX
 
 
 async def _send_upstream(
-    request: Request, backend_path: str, headers: dict, body: bytes, *, stream: bool
+    request: Request, backend_path: str, headers: dict, body: bytes, *, stream: bool,
+    read: float | None = None,
 ) -> httpx.Response:
     """Send one proxied request upstream, waiting out a brief backend outage.
 
@@ -258,22 +306,26 @@ async def _send_upstream(
     consumed cannot be handed to the transport a second time.
     """
     last: Exception | None = None
-    for attempt, wait in enumerate((0.0, *_RETRY_WAITS)):
+    # A streamed body can be read once, so it gets one attempt.
+    waits = (0.0, *_RETRY_WAITS) if isinstance(body, (bytes, bytearray)) else (0.0,)
+    for attempt, wait in enumerate(waits):
         if wait:
             await asyncio.sleep(wait)
         try:
             req = _build_upstream_request(
-                request, backend_path, headers, body, stream=stream)
+                request, backend_path, headers, body, stream=stream, read=read)
             resp = await _transport.handle_async_request(req)
             if attempt:
                 log.info("edge: %s %s recovered on attempt %d",
                          request.method, backend_path, attempt + 1)
             return resp
-        except _RETRYABLE as e:
+        except (*_RETRYABLE, httpx.ReadError) as e:
+            if isinstance(e, httpx.ReadError) and request.method not in _IDEMPOTENT:
+                raise
             last = e
             log.info("edge: %s %s unreachable (%s), attempt %d of %d",
                      request.method, backend_path, type(e).__name__,
-                     attempt + 1, len(_RETRY_WAITS) + 1)
+                     attempt + 1, len(waits))
     raise last  # type: ignore[misc]  -- the loop always runs at least once
 
 
@@ -297,7 +349,14 @@ async def _proxy(request: Request, backend_path: str) -> Response:
         return JSONResponse({"detail": "not found"}, status_code=404)
 
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQ}
-    body = await request.body()
+    # An upload is relayed as it arrives rather than collected here first; its
+    # length rides along so the backend still sees one.
+    if _streams_body(request):
+        body = request.stream()
+        if request.headers.get("content-length"):
+            headers["content-length"] = request.headers["content-length"]
+    else:
+        body = await request.body()
 
     # Server-Sent Events (the build-agent turn stream) MUST pass through
     # incrementally. Buffering the whole body — `await _client.request(...)` then
@@ -308,27 +367,61 @@ async def _proxy(request: Request, backend_path: str) -> Response:
     if backend_path.endswith("/stream") or "text/event-stream" in request.headers.get("accept", ""):
         return await _proxy_stream(request, backend_path, headers, body)
 
+    # A ranged or media response is RELAYED, not collected.
+    #
+    # The line below used to be `await upstream.aread()` for everything that was
+    # not SSE, which means the edge downloaded the entire body into this process
+    # before the browser saw one byte. For JSON that is invisible. For the media
+    # an app serves it is the whole problem: a video the browser asked for in
+    # 200KB ranges so it could start playing was fetched in full, in order, here
+    # first — so progressive playback could not happen at all, and every picture
+    # cost its own size in edge latency before it began to arrive.
+    #
+    # The request is issued with `stream=True` and the decision is made from the
+    # RESPONSE, because only the response says how big it is. Anything that is
+    # not media stays on the collected path, which is the one every API call and
+    # every error case here has always taken.
     try:
-        upstream = await _send_upstream(request, backend_path, headers, body, stream=False)
+        upstream = await _send_upstream(request, backend_path, headers, body,
+                                        stream=True, read=120.0)
     except httpx.HTTPError as e:
         return _unreachable(request.method, backend_path, e)
+    ctype = upstream.headers.get("content-type", "").split(";")[0].strip().lower()
     try:
-        # RAW bytes, not `upstream.aread()`. httpx's `.aread()`/`.content`
-        # transparently DECODE a gzip Content-Encoding as part of reading the
-        # body — that's convenient for code that wants the decoded JSON, but
-        # it means a naive read-then-forward here would silently strip
-        # compression the backend put on FOR THE BROWSER, while still
-        # reporting content-encoding: gzip on the passed-through headers
-        # (mismatched framing) or, previously, dropping that header via
-        # _DROP_RESP and serving the now-decoded plaintext body -- either way
-        # the public origin's actual client never saw a single compressed
-        # byte. `aiter_raw()` yields the untouched wire bytes, so whatever
-        # encoding the backend applied rides through to the real client.
-        content = b"".join([chunk async for chunk in upstream.aiter_raw()])
-    finally:
-        await upstream.aclose()
-    resp_headers = [(k, v) for k, v in upstream.headers.items() if k.lower() not in _DROP_RESP]
-    return Response(content=content, status_code=upstream.status_code, headers=dict(resp_headers))
+        length = int(upstream.headers.get("content-length") or 0)
+    except ValueError:
+        length = 0
+    relay = (upstream.status_code == 206
+             or "content-range" in upstream.headers
+             or ctype.startswith(("video/", "audio/", "image/"))
+             or length > _RELAY_BYTES)
+
+    if not relay:
+        try:
+            # RAW bytes, not `upstream.aread()`: `.aread()` decodes a gzip
+            # Content-Encoding, so forwarding it would strip the compression the
+            # backend applied for the browser while the header still claims it.
+            content = b"".join([chunk async for chunk in upstream.aiter_raw()])
+        finally:
+            await upstream.aclose()
+        resp_headers = [(k, v) for k, v in upstream.headers.items()
+                        if k.lower() not in _DROP_RESP]
+        return Response(content=content, status_code=upstream.status_code,
+                        headers=dict(resp_headers))
+
+    resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _RELAY_DROP}
+    # Nothing in front of this may re-buffer what was just un-buffered.
+    resp_headers["x-accel-buffering"] = "no"
+
+    async def relay_body():
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+
+    return StreamingResponse(relay_body(), status_code=upstream.status_code,
+                             headers=resp_headers, media_type=ctype or None)
 
 
 async def _proxy_stream(request: Request, backend_path: str, headers: dict, body: bytes) -> Response:
@@ -371,21 +464,45 @@ async def proxy_api(path: str, request: Request) -> Response:
     return await _proxy(request, f"/api/{path}")
 
 
+@app.api_route(
+    "/base-apps/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+)
+async def proxy_base_apps(path: str, request: Request) -> Response:
+    """The app runner's reverse proxy, relayed verbatim.
+
+    A running app is viewed at /base-apps/run/<slug>/proxy/<service>/..., and the
+    runner forwards that FULL path to the service — so the prefix has to survive
+    the edge unchanged. Relaying it under /api instead would rewrite the path the
+    app is served at and break every asset URL. Without this route the path fell
+    through to the SPA mount below, so an app framed on the public origin loaded
+    the Workshop shell inside itself and rendered blank.
+    """
+    return await _proxy(request, f"/base-apps/{path}")
 # --------------------------------------------------------------- websockets
 # httpx cannot proxy an Upgrade, so a WebSocket route needs its own path: accept
-# here, dial the backend, and pump both directions until either end goes.
+# here, dial the backend, and pump both directions until either end goes
+# (services/ws_relay.py, which the app runner's proxy uses for the next hop).
 #
 # Voice mode runs entirely over one of these. Without this route the operator's
 # actual origin (the BUILT one on :8002) would fail the upgrade and voice would
 # be broken there while working perfectly on the Vite dev origin, which is the
 # exact shape of "it works for you and not for me" this edge exists to prevent.
-@app.websocket("/api/{path:path}")
-async def proxy_ws(websocket: WebSocket, path: str) -> None:
-    import websockets
-    from websockets.exceptions import ConnectionClosed
+#
+# An app framed through the runner reaches the same place by either prefix, so
+# both are relayed: /api/base-apps/... arrives on the /api route, and
+# /base-apps/run/<slug>/proxy/<service>/... on its own, with its path verbatim
+# exactly as the HTTP route above relays it.
+async def _relay_ws(websocket: WebSocket, strip: str = "") -> None:
+    """Relay to the backend at this socket's own path, less `strip`.
 
-    stripped = _normalize("/" + path)
-    if _is_blocked(stripped):
+    The blocklist is checked against the DECODED path, because that is what the
+    backend routes on, and the backend is dialed at the RAW path, so the
+    upstream sees the bytes the browser sent (a trailing slash, an escape)."""
+    decoded = websocket.scope["path"][len(strip):] or "/"
+    raw = (websocket.scope.get("raw_path") or b"").decode("latin-1")
+    backend_path = (raw[len(strip):] or "/") if raw.startswith(strip + "/") else decoded
+    if _is_blocked(decoded):
         await websocket.close(code=4404)
         return
 
@@ -393,7 +510,7 @@ async def proxy_ws(websocket: WebSocket, path: str) -> None:
     # is the only place that knows the host it was actually opened against.
     # Check it here, and forward that host so the backend can check it too.
     # Without `x-forwarded-host` the backend compares the browser's Origin
-    # against its own `127.0.0.1:8000` and refuses every real connection.
+    # against its own loopback address and refuses every real connection.
     host = websocket.headers.get("host", "")
     origin = websocket.headers.get("origin")
     if origin and host and origin.split("//", 1)[-1] != host:
@@ -406,59 +523,28 @@ async def proxy_ws(websocket: WebSocket, path: str) -> None:
     ]
     if host:
         headers.append(("x-forwarded-host", host))
-    upstream_url = f"{_BACKEND_WS}{stripped}"
+    upstream_url = f"{_BACKEND_WS}{backend_path}"
     if websocket.url.query:
         upstream_url += f"?{websocket.url.query}"
 
     try:
-        upstream = await websockets.connect(
-            upstream_url,
-            additional_headers=headers,
-            open_timeout=10,
-            ping_interval=20,
-            # Audio frames are small; the default 1 MiB cap is plenty, and a
-            # bound keeps a wedged client from growing this process.
-            max_size=2 * 1024 * 1024,
-        )
+        upstream = await ws_relay.dial(websocket, upstream_url, headers)
     except Exception:                                   # noqa: BLE001
         # The backend refused (bad credential, blocked origin) or is down. Either
         # way there is nothing to proxy, and the client's reconnect handles it.
         await websocket.close(code=1011)
         return
+    await ws_relay.pump(websocket, upstream)
 
-    await websocket.accept()
 
-    async def to_upstream() -> None:
-        while True:
-            msg = await websocket.receive()
-            if msg["type"] == "websocket.disconnect":
-                return
-            if (data := msg.get("bytes")) is not None:
-                await upstream.send(data)
-            elif (text := msg.get("text")) is not None:
-                await upstream.send(text)
+@app.websocket("/api/{path:path}")
+async def proxy_ws(websocket: WebSocket, path: str) -> None:
+    await _relay_ws(websocket, strip="/api")
 
-    async def to_client() -> None:
-        async for msg in upstream:
-            if isinstance(msg, bytes):
-                await websocket.send_bytes(msg)
-            else:
-                await websocket.send_text(msg)
 
-    a = asyncio.create_task(to_upstream())
-    b = asyncio.create_task(to_client())
-    try:
-        done, pending = await asyncio.wait({a, b}, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-    except (WebSocketDisconnect, ConnectionClosed):
-        pass
-    finally:
-        await upstream.close()
-        try:
-            await websocket.close()
-        except RuntimeError:
-            pass                                        # already closed
+@app.websocket("/base-apps/{path:path}")
+async def proxy_base_apps_ws(websocket: WebSocket, path: str) -> None:
+    await _relay_ws(websocket)
 
 
 class _ImmutableStaticFiles(StaticFiles):

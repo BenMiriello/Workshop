@@ -33,7 +33,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
-from services import installed_apps
+from services import chat_store, installed_apps, page_link
 # THE CONTRACT, re-exported. Apps import these from `services.app_spec`; every
 # existing platform caller imports them from here, and both keep working.
 from services.app_spec import AppSpec, RouterMount, owner_file, runtime_dir  # noqa: F401
@@ -91,8 +91,8 @@ def _has_route_module(name: str) -> bool:
 def _in_tree_factories() -> "list[tuple[str, Callable[[], AppSpec]]]":
     """Every `services/<app>_app.py` that exposes `app_spec()`, by module name.
 
-    The id is deliberately NOT derived from the filename: `notes_app.py`
-    declares the app `notes-app`, and a filename-derived id would have to
+    The id is deliberately NOT derived from the filename: `<name>_app.py`
+    may declare the app `<name>-app`, and a filename-derived id would have to
     special-case that -- which is a platform file knowing an app's name again.
     The module is imported, `app_spec()` is called by the builder, and the id is
     read off the returned spec.
@@ -253,6 +253,14 @@ def _build_catalog() -> dict[str, AppSpec]:
         catalog[spec.id] = spec
     log.info("app catalog: %d in-tree declaration(s), %d out-of-tree via %s entry points",
              len(in_tree), len(discovered), APP_ENTRY_POINT_GROUP)
+    # A deployment may ship apps of its own (see services/instance_apps.py).
+    # Absent on a stock checkout, which then builds the platform catalog alone.
+    try:
+        from services import instance_apps
+    except ModuleNotFoundError:
+        pass
+    else:
+        catalog.update(instance_apps.SPECS)
     return catalog
 
 
@@ -388,12 +396,61 @@ def current_query_turn() -> str | None:
     return _query_turn_ctx.get()
 
 
+# WHICH workshop tools this turn may see, for a turn confined to its own scope
+# (an app's own assistant). The CLI's `--allowedTools` only gates a call; it
+# still LISTS every tool a server offers, so a tool outside the allowlist cost
+# its schema on every request and read to the model as something it had. None
+# for every other turn: the server offers its whole surface, as before. A tuple
+# (possibly empty) confines the server to exactly those names, and confines its
+# search and open_ref to the chat's own scope. Pinned at the same seam as the
+# scope, owner, thread and turn.
+_query_confinement_ctx: contextvars.ContextVar[tuple[str, ...] | None] = (
+    contextvars.ContextVar("workshop_query_confinement", default=None))
+
+
+def set_current_query_confinement(tools: list[str] | tuple[str, ...] | None) -> None:
+    """Confine whatever spawns the workshop MCP server next to `tools` (bare
+    names, e.g. "search"), or lift the confinement with None."""
+    _query_confinement_ctx.set(None if tools is None else tuple(tools))
+
+
+def current_query_confinement() -> tuple[str, ...] | None:
+    return _query_confinement_ctx.get()
+
+
+def confined_workshop_tools(allowed_tools: list[str] | None) -> list[str] | None:
+    """The bare workshop tool names an allowlist grants, or None when it grants
+    the whole server (`mcp__workshop__*`) or names no list at all."""
+    if allowed_tools is None:
+        return None
+    prefix = "mcp__workshop__"
+    if f"{prefix}*" in allowed_tools:
+        return None
+    return [t[len(prefix):] for t in allowed_tools if t.startswith(prefix)]
+
+
 # Platform-level MCP servers, always available (not tied to an installed app):
-# the read-only workshop-query tool the general chat uses to answer "what is
-# going on" from the task + knowledge digest (Stage 7 / 2e). It is NOT a
-# filesystem grant: the server returns a computed digest only, so it cannot leak
-# `.runtime` secrets. Runs under the backend venv with PYTHONPATH=backend so it
-# can reuse services.workspace_digest / services.knowledge.
+# the workshop tool server (mcp/workshop_query_server.py). It is NOT a
+# filesystem grant: its tools return computed answers, so it cannot leak
+# `.runtime` secrets.
+#
+# SERVED BY THE BACKEND OVER HTTP (routes/mcp_workshop.py), so a turn confined
+# to an app's folder reaches it over loopback like any other. Launched over
+# stdio it needs the backend's own interpreter and source, which only the
+# development scope can see, and every app chat ran without it. The env block
+# below is the turn's context either way: the stdio child reads it as its
+# environment, the HTTP route reads it as the signed claims the call carries.
+# `WORKSHOP_MCP_TRANSPORT=stdio` keeps the child launch, for a ticket worker
+# testing a worktree's own copy of the server (scripts/ralph.sh).
+MCP_CALL_TIMEOUT_MS = 30 * 60 * 1000
+
+
+def workshop_over_http() -> bool:
+    """Is the workshop server served by the backend? Its operation tools
+    (mcp/ops_tools) exist only there, where the runner they operate lives."""
+    return (os.environ.get("WORKSHOP_MCP_TRANSPORT") or "").strip() != "stdio"
+
+
 def _platform_mcp_servers() -> dict[str, dict]:
     backend_dir = Path(__file__).resolve().parent.parent  # backend/
     server = backend_dir / "mcp" / "workshop_query_server.py"
@@ -434,14 +491,51 @@ def _platform_mcp_servers() -> dict[str, dict]:
     turn_id = current_query_turn()
     if turn_id:
         env["WORKSHOP_QUERY_TURN"] = str(turn_id)
+    # And THE PAGE beside that chat, when there is one and the operator lets the
+    # chat read it: where to send page tool calls and with which token
+    # (services/page_link). Omitted otherwise, so no page tool is offered.
+    if thread_id:
+        try:
+            env.update(page_link.mcp_env(
+                str(thread_id), chat_store.get_thread_page_level(str(thread_id))))
+            env.update(page_link.access_env(str(thread_id)))
+        except Exception as e:  # noqa: BLE001 - a turn without page tools still runs
+            log.warning("page link env unavailable for %s: %s", thread_id, e)
+    # And WHICH tools, for a turn confined to its own scope. Omitted otherwise.
+    confined = current_query_confinement()
+    if confined is not None:
+        env["WORKSHOP_QUERY_TOOLS"] = ",".join(confined)
+        env["WORKSHOP_QUERY_CONFINED"] = "1"
+    if not workshop_over_http():
+        return {
+            "workshop": {
+                "type": "stdio",
+                "command": python,
+                "args": [str(server)],
+                "env": env,
+            }
+        }
+    from services import turn_claims
+    claims = {k: v for k, v in env.items() if k != "PYTHONPATH"}
     return {
         "workshop": {
-            "type": "stdio",
-            "command": python,
-            "args": [str(server)],
-            "env": env,
+            "type": "http",
+            "url": f"{page_link.backend_base()}/mcp/workshop",
+            "headers": {"Authorization": f"Bearer {turn_claims.mint(claims)}"},
+            "timeout": MCP_CALL_TIMEOUT_MS,
         }
     }
+
+
+def spec_context(spec: dict) -> dict[str, str]:
+    """The caller context a workshop server launch spec carries, for either
+    transport: a stdio child's environment, or the claims an HTTP spec's
+    `Authorization` header signs."""
+    if (spec.get("type") or "stdio") == "stdio":
+        return dict(spec.get("env") or {})
+    from services import turn_claims
+    header = (spec.get("headers") or {}).get("Authorization", "")
+    return turn_claims.verify(header[7:] if header.startswith("Bearer ") else "") or {}
 
 
 def _stdio_host_paths(spec: dict) -> list[str]:
@@ -692,7 +786,14 @@ def launcher_cards() -> Launcher:
         # Only a row with no spec at all is new information here.
         specced = {s.id for s in installed_specs()}
         seen = {c.get("id") for c in cards} | specced
-        for row in apps_service.list_apps(archived=False):
+        rows = apps_service.list_apps(archived=False)
+        # The icon is the user's to set on the app (`PATCH /apps/{id}`), so a
+        # set one outranks what the catalog card shipped with.
+        row_icons = {r.get("slug"): r.get("icon") for r in rows if r.get("icon")}
+        for card in cards:
+            if row_icons.get(card.get("id")):
+                card["icon"] = row_icons[card["id"]]
+        for row in rows:
             slug = row.get("slug")
             if not slug or slug in seen:
                 continue
