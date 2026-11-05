@@ -12,19 +12,6 @@
 // `check_no_raw_storage.py` enforces the other half of that ADR clause:
 // nothing outside this module and the kit's `storage.ts` may call the native
 // `localStorage`/`sessionStorage` API at all.
-//
-// WHY THE BIRD-SPECIFIC EXEMPTIONS STAY HERE, NOT IN THE BIRDS APP. Moving
-// them to a birds-owned module (which app pages otherwise should own) would
-// be correct in the end state, but it is unsafe today: `registerDeviceScoped`
-// must run before the FIRST `setCurrentUser(id)` migration sweep, and this
-// file is what `auth/AuthProvider.tsx` imports eagerly at boot, while the
-// birds pages are lazy-loaded (`apps/registry.tsx`) and may not have run yet
-// on a session's first login. Registering here, eagerly, is what guarantees
-// the migration sweep never sees a bird key before it knows the key is
-// exempt. This is a deliberate, temporary exception to "an app owns its own
-// storage keys": it leaves with birds' content at stage 7 (extraction), when
-// the app gets its own eagerly-loaded entry point that can register itself
-// before anything reads app-agnostic storage.
 import {
   _resetCurrentUserForTest as resetCurrentUserOnKit, isDeviceScoped, isNamespacedKey,
   namespacedKey, planMigration, registerDeviceScoped, setCurrentUser as setCurrentUserOnKit,
@@ -37,31 +24,6 @@ registerDeviceScoped([
     reason:
       "guards a one-shot reload after a stale JS chunk 404s (lib/lazyPage.tsx); " +
       "describes this tab's load, not the signed-in account",
-  },
-  {
-    match: (k) => k.startsWith("birdinfo:"),
-    reason:
-      "public reference data an app fetches from a third party, identical " +
-      "for every viewer and keyed only by a public identifier, so it carries " +
-      "no user-specific content to leak",
-  },
-  {
-    match: (k) =>
-      [
-        "birdDeviceToken", "birdDeviceName", "birdDeviceMode",
-        "birdDeviceFixedLoc", "birdDeviceShared",
-        // pre-rename legacy names the recorder already migrates on its own
-        "birdStationToken", "birdStationLabel",
-        // this device's live-recording session mirror, tied to the device
-        // identity above, not to whoever is looking at the page
-        "birdSessionSpecies", "birdSessionLog", "birdWasListening",
-      ].includes(k),
-    reason:
-      "identity and live-recording state of THIS physical device, " +
-      "independent of which web account is " +
-      "viewing it: the file's own header calls the token 'the only durable " +
-      "client identity' and treats the server, not the browser, as the source " +
-      "of truth for who is looking at it",
   },
 ] satisfies StorageExemption[]);
 

@@ -80,27 +80,18 @@ describe("isNamespacedKey", () => {
 
   it("does not mistake an ordinary legacy key for a namespaced one", () => {
     expect(isNamespacedKey("ws-chat-outbox:t1")).toBe(false);
-    expect(isNamespacedKey("ws_finance_bal")).toBe(false);
+    expect(isNamespacedKey("ws-draft:t1")).toBe(false);
   });
 });
 
 describe("isDeviceScoped", () => {
-  it("exempts the bird recorder's own device identity", () => {
-    expect(isDeviceScoped("birdDeviceToken")).toBe(true);
-    expect(isDeviceScoped("birdStationToken")).toBe(true); // pre-rename legacy name
-  });
-
-  it("exempts the public species-info cache", () => {
-    expect(isDeviceScoped("birdinfo:Turdus migratorius")).toBe(true);
-  });
-
   it("exempts the chunk-reload guard", () => {
     expect(isDeviceScoped("ws-chunk-reloaded")).toBe(true);
   });
 
   it("does not exempt an ordinary data key", () => {
     expect(isDeviceScoped("ws-chat-outbox:t1")).toBe(false);
-    expect(isDeviceScoped("ws_finance_bal")).toBe(false);
+    expect(isDeviceScoped("ws-draft:t1")).toBe(false);
   });
 });
 
@@ -115,7 +106,7 @@ describe("planMigration", () => {
   });
 
   it("leaves a device-scoped key alone", () => {
-    expect(planMigration(["birdDeviceToken", "birdinfo:x"], 3)).toEqual([]);
+    expect(planMigration(["ws-chunk-reloaded"], 3)).toEqual([]);
   });
 
   it("leaves the migration flag itself alone", () => {
@@ -124,10 +115,10 @@ describe("planMigration", () => {
 
   it("plans every ordinary key in one pass", () => {
     const plan = planMigration(
-      ["ws-chat-sel:general", "birdDeviceToken", "ws:9:already-done", "ws_finance_bal"],
+      ["ws-chat-sel:general", "ws-chunk-reloaded", "ws:9:already-done", "ws-draft:t1"],
       9,
     );
-    expect(plan.map((p) => p.from).sort()).toEqual(["ws-chat-sel:general", "ws_finance_bal"].sort());
+    expect(plan.map((p) => p.from).sort()).toEqual(["ws-chat-sel:general", "ws-draft:t1"].sort());
   });
 });
 
@@ -175,19 +166,19 @@ describe("the migration case", () => {
   });
 
   it("runs across both storage areas", () => {
-    localStorage.setItem("ws_finance_bal", "{}");
+    localStorage.setItem("ws-draft:t1", "{}");
     sessionStorage.setItem("ws-chat-scroll:t1", "{}");
     setCurrentUser(5);
-    expect(userStorage.local.getItem("ws_finance_bal")).toBe("{}");
+    expect(userStorage.local.getItem("ws-draft:t1")).toBe("{}");
     expect(userStorage.session.getItem("ws-chat-scroll:t1")).toBe("{}");
   });
 
   it("does not touch a device-scoped key", () => {
-    localStorage.setItem("birdDeviceToken", "abc-123");
+    localStorage.setItem("ws-chunk-reloaded", "1");
     setCurrentUser(5);
     // Untouched at its own raw key — never namespaced, never moved.
-    expect(localStorage.getItem("birdDeviceToken")).toBe("abc-123");
-    expect(userStorage.local.getItem("birdDeviceToken")).toBe("abc-123");
+    expect(localStorage.getItem("ws-chunk-reloaded")).toBe("1");
+    expect(userStorage.local.getItem("ws-chunk-reloaded")).toBe("1");
   });
 
   it("only consumes a legacy key ONCE — a second account starts clean", () => {
