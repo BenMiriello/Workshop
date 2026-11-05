@@ -21,7 +21,10 @@ EDGE_PORT="${WORKSHOP_EDGE_PORT:-8002}"
 mkdir -p "$UNIT_DIR"
 
 for unit in workshop-public.service cloudflared.service; do
-  sed "s#@WORKSHOP_ROOT@#$REPO_ROOT#g" "$REPO_ROOT/infra/systemd/$unit" > "$UNIT_DIR/$unit"
+  sed -e "s#@WORKSHOP_ROOT@#$REPO_ROOT#g" \
+      -e "s#@WORKSHOP_BACKEND_PORT@#${WORKSHOP_BACKEND_PORT:-8000}#g" \
+      -e "s#@WORKSHOP_EDGE_PORT@#$EDGE_PORT#g" \
+      "$REPO_ROOT/infra/systemd/$unit" > "$UNIT_DIR/$unit"
   echo "installed $UNIT_DIR/$unit"
 done
 

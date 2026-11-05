@@ -8,11 +8,13 @@
 # security ticket (SEC-H2/H4/H7), so this one starts closed.
 #
 # Password lives in ./.env, which is gitignored by the `*.env` rule. Copy
-# .env.example and set your own before the first `docker compose up`.
+# .env.example and set your own before the first `docker compose up`. A second
+# installation on the same Docker host sets its own container name, port and
+# project name there too (see .env.example), or it collides with the first.
 services:
   workshop-db:
     image: postgres:18-alpine
-    container_name: workshop-db
+    container_name: ${WORKSHOP_DB_CONTAINER:-workshop-db}
     restart: unless-stopped
     environment:
       POSTGRES_USER: workshop
@@ -30,7 +32,7 @@ services:
       # mount/volume)". See docker-library/postgres#1259.
       - workshop-db-data:/var/lib/postgresql
     ports:
-      - "127.0.0.1:5440:5432"
+      - "127.0.0.1:${WORKSHOP_DB_PORT:-5440}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U workshop -d workshop"]
       interval: 5s

@@ -84,6 +84,16 @@
 #   bash scripts/check_fresh_clone.sh --since REV  review mode, used by
 #                                                  reviewer.sh. Fails only on
 #                                                  what the diff made worse.
+#   bash scripts/check_fresh_clone.sh --tree-only  skip the build and the boot
+#                                                  (A4, A5), keeping the three
+#                                                  tree counts. For a caller
+#                                                  that knows the change touches
+#                                                  nothing either one reads --
+#                                                  reviewer.sh passes it for a
+#                                                  diff confined to docs/. Never
+#                                                  a way to claim separation is
+#                                                  done: those two print "not
+#                                                  run" and the claim needs both.
 #   bash scripts/check_fresh_clone.sh --json       machine-readable
 #   bash scripts/check_fresh_clone.sh --keep       keep the clone, print its path
 #   bash scripts/check_fresh_clone.sh --only NAME  run one assertion by name
@@ -127,6 +137,7 @@ KEEP=0
 REV="HEAD"
 ONLY=""
 SELFTEST=0
+TREE_ONLY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --json)    AS_JSON=1 ;;
@@ -138,6 +149,7 @@ while [[ $# -gt 0 ]]; do
     --only)    ONLY="${2:-}"; shift ;;
     --only=*)  ONLY="${1#--only=}" ;;
     --harness-selftest) SELFTEST=1 ;;
+    --tree-only) TREE_ONLY=1 ;;
     *) echo "check_fresh_clone: unknown argument '$1'" >&2; exit 2 ;;
   esac
   shift
@@ -649,15 +661,9 @@ a5_run() { # $1 = clone dir
   local admin_dsn="postgresql+psycopg://workshop@/workshop?host=$PG_SOCK"
   local app_dsn="postgresql+psycopg://workshop_app:freshclone@/workshop?host=$PG_SOCK"
 
-  # THE ROLE COMES FIRST, before alembic, and this is not the documented order.
-  # db/bootstrap.py says "run after alembic upgrade"; run that way against an
-  # empty cluster the migration dies on `REVOKE ... FROM workshop_app`, because
-  # the role does not exist yet. Recorded in the design doc, section 3.2.
-  if ! "$PGBIN/psql" -h "$PG_SOCK" -U workshop -d workshop -v ON_ERROR_STOP=1 \
-        -c "CREATE ROLE workshop_app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'freshclone'" \
-        >>"$A5_LOG" 2>&1; then
-    A5_STATUS="fail"; A5_NOTE="could not create the workshop_app role"; return
-  fi
+  # The documented order: `upgrade head`, then bootstrap. Migration
+  # 7bf9ae20fe0d creates the application role bare when an empty cluster has
+  # none, and bootstrap gives it LOGIN and the password below.
   echo "== alembic upgrade head ==" >>"$A5_LOG"
   if ! ( cd "$dir/backend" && env -i "${ISO[@]}" \
           "WORKSHOP_ROOT=$dir" "WORKSHOP_DATABASE_ADMIN_URL=$admin_dsn" \
@@ -703,13 +709,13 @@ PY
        ) >>"$A5_LOG" 2>&1; then
     A5_STATUS="fail"; A5_NOTE="could not promote the first user to operator"; return
   fi
-  echo "== db/backfill.py --apply --force ==" >>"$A5_LOG"
+  echo "== db/backfill.py --apply ==" >>"$A5_LOG"
   backend_stop
   if ! ( cd "$dir/backend" && env -i "${ISO[@]}" \
           "WORKSHOP_ROOT=$dir" "WORKSHOP_DATABASE_URL=$app_dsn" \
           "WORKSHOP_DATABASE_ADMIN_URL=$admin_dsn" \
-          "$VENV/bin/python" db/backfill.py --apply --force ) >>"$A5_LOG" 2>&1; then
-    A5_STATUS="fail"; A5_NOTE="db/backfill.py --apply --force failed"; return
+          "$VENV/bin/python" db/backfill.py --apply ) >>"$A5_LOG" 2>&1; then
+    A5_STATUS="fail"; A5_NOTE="db/backfill.py --apply failed"; return
   fi
   if ! a5_start_backend "$dir" "$port" "$app_dsn"; then
     A5_STATUS="fail"
@@ -1068,6 +1074,11 @@ judge() { # $1 = assertion name, $2 = status, $3 = note, $4 = log path
 RUN_BUILD=0
 want build_with_zero_apps && RUN_BUILD=1
 want shell_boots_with_empty_catalog && RUN_BUILD=1
+if [[ $TREE_ONLY -eq 1 && $RUN_BUILD -eq 1 ]]; then
+  RUN_BUILD=0
+  say ""
+  say "BUILD AND BOOT ASSERTIONS -- not run (--tree-only)"
+fi
 
 if [[ $RUN_BUILD -eq 1 ]]; then
   say ""

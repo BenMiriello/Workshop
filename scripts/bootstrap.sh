@@ -172,7 +172,7 @@ fi
 
 # Cron is the scheduler for everything periodic; there are no systemd timers.
 # Opt-in because a clone that only serves the UI wants none of it, and because
-# the block includes host-specific schedules (the operator's commute windows)
+# the block includes host-specific schedules (an app's own time windows)
 # that are meaningless elsewhere. Autonomous entries ship commented out and
 # install_cron.sh does not change that.
 if [ "${WITH_CRON:-0}" = "1" ]; then

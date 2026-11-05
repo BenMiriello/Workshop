@@ -103,6 +103,18 @@ def upgrade() -> None:
     """)
 
     # --- 4. take provisioning away from the application role ----------------
+    # On a fresh database the role does not exist yet: `db.bootstrap` creates
+    # it, and bootstrap cannot run before `ticket_event` exists, which is a
+    # later revision. So a one-step `alembic upgrade head` failed here. Create
+    # it bare (NOLOGIN, no privileges) so this revision and the later grants to
+    # it apply; bootstrap then gives it a password, LOGIN and its DML grants.
+    op.execute(f"""
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{APP_ROLE}') THEN
+                CREATE ROLE {APP_ROLE} NOLOGIN NOSUPERUSER NOBYPASSRLS;
+            END IF;
+        END $$
+    """)
     for table in ("organization", "user_account", "alembic_version"):
         op.execute(f"REVOKE INSERT, UPDATE, DELETE ON {table} FROM {APP_ROLE}")
     # And for tables created by future migrations, the default grant would hand

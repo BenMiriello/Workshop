@@ -64,21 +64,19 @@ req "claude CLI ($CLAUDE_BIN)" "$c" "npm i -g @anthropic-ai/claude-code, or set 
 opt "docker"       "$(have docker)"   "the app runner needs it; without it apps fall back to bare subprocesses"
 opt "gh"           "$(have gh)"       "apt install gh && gh auth login (needed for PRs and issue trackers)"
 opt "jq"           "$(have jq)"       "apt install jq (the reviewer gate uses it)"
-opt "ffmpeg"       "$(have ffmpeg)"   "apt install ffmpeg (birds audio only)"
+opt "ffmpeg"       "$(have ffmpeg)"   "apt install ffmpeg (audio apps only)"
 opt "rsync"        "$(have rsync)"    "apt install rsync (rsync/ssh deploy provider only)"
 
 # ---- node/python version detail --------------------------------------------
 if command -v node >/dev/null 2>&1; then
   NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-  # 18 is the floor vite 5 actually needs and it is what builds on this box
-  # today. 20 is what .nvmrc pins and what the frontend unit runs, so anything
-  # between the two is a warning, not a failure: it works, it just is not what
-  # the deployment is pinned to.
-  [ "${NODE_MAJOR:-0}" -ge 18 ] && n=1 || n=0
-  req "node >= 18 (found $(node -v 2>/dev/null))" "$n" "install node 20 (see .nvmrc)"
+  # 20 is the floor, not a preference: package.json `engines`, .nvmrc, the
+  # screenshot driver and several dependencies all need it, and on 18 an install
+  # silently skips optional packages and later commands fail far from the cause.
+  # scripts/require_node.cjs refuses the build/typecheck/test path on the same
+  # floor.
   [ "${NODE_MAJOR:-0}" -ge 20 ] && n=1 || n=0
-  opt "node >= 20 (the pinned version)" "$n" \
-      "builds work on 18, but .nvmrc and the frontend unit both pin 20+"
+  req "node >= 20 (found $(node -v 2>/dev/null))" "$n" "install node 20 (see .nvmrc)"
 fi
 
 # ---- config files -----------------------------------------------------------
@@ -179,7 +177,7 @@ port_note 8002 "the public edge"
 
 # ---- scheduled work ---------------------------------------------------------
 # Cron is this deployment's scheduler and nothing else reports on it: there are
-# no systemd timers. A missing or drifted block means the commute briefs, the
+# no systemd timers. A missing or drifted block means apps' scheduled briefs, the
 # daily digest and the frontend watchdog silently do not happen, and the only
 # symptom is an absence -- which is the hardest kind of failure to notice.
 # Optional, not required: a clone that only serves the UI needs none of it.
@@ -189,7 +187,7 @@ if command -v crontab >/dev/null 2>&1; then
   elif crontab -l 2>/dev/null | grep -qF "managed by scripts/install_cron.sh"; then
     WARNS+=("cron block DRIFTED from infra/cron/workshop.crontab|bash scripts/install_cron.sh --check shows the diff; re-run install_cron.sh to reconcile")
   else
-    WARNS+=("cron block not installed|bash scripts/install_cron.sh — without it nothing scheduled runs (commute briefs, daily digest, frontend watchdog)")
+    WARNS+=("cron block not installed|bash scripts/install_cron.sh — without it nothing scheduled runs (app briefs, daily digest, frontend watchdog)")
   fi
 fi
 

@@ -66,7 +66,9 @@ def bootstrap(password: str) -> None:
         from psycopg import sql
 
         raw = conn.connection.driver_connection
-        stmt = (sql.SQL("ALTER ROLE {} WITH PASSWORD {}") if exists
+        # LOGIN on the ALTER too: migration 7bf9ae20fe0d creates the role
+        # NOLOGIN when a fresh database is migrated before this has run.
+        stmt = (sql.SQL("ALTER ROLE {} WITH LOGIN PASSWORD {}") if exists
                 else sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}"))
         with raw.cursor() as cur:
             cur.execute(stmt.format(sql.Identifier(APP_ROLE), sql.Literal(password)))
