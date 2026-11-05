@@ -1,0 +1,34 @@
+/* Page labels: a number on every control on screen, drawn by the shell over
+   everything, app frames included. Positions arrive as `left`/`top` from
+   LabelsLayer, which mirrors the badge's size here. Nothing moves, so there is
+   no motion to reduce. The badge the pointer is over also shows the name
+   the control is said by (`.ws-labels__name`). */
+
+.ws-labels {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-toast);
+  pointer-events: none;
+}
+
+.ws-labels__badge {
+  position: absolute;
+  box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--card); color: var(--fg);
+  box-shadow: 0 0 0 1px var(--border), var(--shadow-sm);
+  font-family: var(--font-mono);
+  font-size: 11px; font-weight: 600; line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ws-labels__badge[data-hover] { z-index: 1; box-shadow: 0 0 0 1px var(--border-strong), var(--shadow-md); }
+.ws-labels__name {
+  max-width: 280px;
+  margin-left: var(--space-2);
+  overflow: hidden; text-overflow: ellipsis;
+  font-family: var(--font-sans); font-weight: 500;
+}

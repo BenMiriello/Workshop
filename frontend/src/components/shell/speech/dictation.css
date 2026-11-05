@@ -1,0 +1,211 @@
+/* The dictation bar, and the dock it shares with the read-aloud player:
+   both float at the bottom centre (the top of the visible area on touch),
+   stacked, above everything, unless the bar has been dragged elsewhere. */
+
+.ws-speech-dock {
+  position: fixed;
+  z-index: var(--z-toast);
+  left: var(--space-3); right: var(--space-3);
+  bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+  pointer-events: none;
+}
+.ws-speech-dock > * { pointer-events: auto; }
+/* Touch: at the top of the visible area (its top is set from the visual
+   viewport). Safe-area padding keeps it below a notch. */
+.ws-speech-dock--top { bottom: auto; padding-top: env(safe-area-inset-top); }
+.ws-speech-dock .ws-speech-player { position: relative; inset: auto; transform: none; }
+
+/* The dictation bar: a pill, one row. Nothing in it changes width as words
+   arrive: the count has room for its digits and the newest words have a slot
+   of their own. Dragged, it is fixed where it was let go (the dock is not
+   transformed, so fixed means the screen). */
+.ws-dictpill {
+  --level: 0;
+  display: flex; align-items: center; gap: var(--space-1);
+  max-width: min(44rem, calc(100vw - 2 * var(--space-3)));
+  min-height: 2.5rem;
+  padding: 0 var(--space-1) 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--card); color: var(--fg);
+  border: 1px solid var(--card-ring);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  animation: ws-fade var(--dur-fast) var(--ease-out);
+}
+.ws-dictpill--free { z-index: var(--z-toast); }
+/* Pulled into its own spot or back out to the pointer, it glides there
+   (GLIDE_MS in useBarDrag.ts); the rest of a drag follows the pointer. */
+.ws-dictpill.is-gliding { transition: left 180ms var(--ease-out), top 180ms var(--ease-out); }
+/* Its own spot, held in the dock while it is elsewhere: shown while dragging. */
+.ws-dictpill-slot { flex: none; pointer-events: none; }
+.ws-dictpill.is-dragging { box-shadow: var(--shadow-lg), 0 0 0 1px var(--border-strong); }
+.ws-bar-dragging iframe { pointer-events: none; }
+.ws-dictpill svg { width: 16px; height: 16px; stroke-width: 1.8; flex: none; }
+
+.ws-dictpill__grip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.25rem; height: 2rem; margin-left: var(--space-1);
+  color: var(--faint); cursor: grab; touch-action: none;
+}
+.ws-dictpill__grip:hover { color: var(--muted); }
+.ws-dictpill.is-dragging .ws-dictpill__grip { cursor: grabbing; }
+
+.ws-dictpill__state {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1rem; color: var(--live);
+}
+.ws-dictpill__state svg { width: 14px; height: 14px; }
+.ws-dictpill__dot {
+  width: 0.5rem; height: 0.5rem; border-radius: var(--radius-pill);
+  background: var(--live);
+  box-shadow: 0 0 0 calc(var(--level) * 0.375rem) var(--live-soft);
+}
+
+.ws-dictpill__where {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  min-width: 0; max-width: 13rem;
+  padding: var(--space-1) var(--space-2);
+  border: 0; border-radius: var(--radius-pill);
+  background: transparent; color: var(--fg);
+  font: inherit; cursor: pointer;
+}
+.ws-dictpill__where:hover { background: var(--card-hover); }
+.ws-dictpill__where:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+.ws-dictpill__where > svg:first-child { color: var(--muted); }
+.ws-dictpill__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Where the place is when that is not simply here: beside, not open, waiting. */
+.ws-dictpill__at { flex: none; color: var(--muted); font-size: var(--fs-sm); white-space: nowrap; }
+.ws-dictpill__mode { flex: none; padding: var(--space-1); }
+.ws-dictpill__other { cursor: default; }
+.ws-dictpill__other:hover { background: transparent; }
+
+.ws-dictpill__count {
+  min-width: 5.5rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The newest words, end first: the line is right-aligned in a fixed slot and
+   its start runs off under a fade. */
+.ws-dictpill__newest {
+  display: flex; justify-content: flex-end;
+  width: 14rem; min-width: 0; overflow: hidden;
+  color: var(--muted);
+  mask-image: linear-gradient(to right, transparent, black 2rem);
+}
+.ws-dictpill__newest > span { flex: none; }
+
+/* Only the notice's sentence gives way; its buttons and the bar's own never
+   shrink under it. */
+.ws-dictpill-notice {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  flex: 0 1 auto; min-width: 0; max-width: 24rem;
+}
+.ws-dictpill-notice__text { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-right: var(--space-1); }
+.ws-dictpill-notice .ws-btn, .ws-dictpill > .ws-btn { flex: none; }
+
+/* The ring on the button that ends a notice on its own, running down over the
+   time left (its duration is set from the notice). */
+.ws-dictpill-countdown { width: 14px; height: 14px; transform: rotate(-90deg); }
+.ws-dictpill-countdown circle {
+  fill: none; stroke: currentColor; stroke-width: 2.5;
+  stroke-dasharray: 50.3; stroke-dashoffset: 0;
+  animation: ws-dictpill-countdown linear forwards;
+}
+@keyframes ws-dictpill-countdown { to { stroke-dashoffset: 50.3; } }
+
+/* A narrow screen shows the mode by its icon alone, and one showing a notice
+   gives it the room of the count, Actions, the mode, the destination and
+   Pause; all are back when it goes. */
+@media (max-width: 480px) {
+  .ws-dictpill__where:not(.ws-dictpill__mode) { max-width: 7rem; }
+  .ws-dictpill__label { display: none; }
+  .ws-dictpill .ws-dictpill__where.ws-dictpill__other { max-width: 13rem; }
+  .ws-dictpill.has-notice .ws-dictpill__count,
+  .ws-dictpill.has-notice .ws-dictpill__actions,
+  .ws-dictpill.has-notice .ws-dictpill__where,
+  .ws-dictpill.has-notice .ws-dictpill__pause { display: none; }
+}
+
+@media (pointer: coarse) {
+  .ws-dictpill { min-height: 2.75rem; }
+  .ws-dictpill__newest { width: 8rem; }
+  .ws-dictpill__count { min-width: 4.5rem; }
+  .ws-dictpill__where { max-width: 9rem; }
+}
+/* The smallest phones: a shorter destination and count, so Stop stays on screen. */
+@media (max-width: 380px) {
+  .ws-dictpill__where:not(.ws-dictpill__mode) { max-width: 5rem; }
+  .ws-dictpill__count { min-width: 3.75rem; }
+}
+
+/* Settings > Speech > Spoken commands. */
+/* A command's phrases, with the menu for when it is heard at the end. */
+.ws-command-row { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
+.ws-command-row > .ws-phrases { flex: 1 1 auto; }
+.ws-command-row > .ws-menu, .ws-command-row > .ws-when { flex: none; }
+.ws-phrases { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); min-width: 0; }
+.ws-phrases__chip {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px 2px 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset); color: var(--fg); font-size: var(--fs-sm);
+}
+.ws-phrases__chip button {
+  display: inline-flex; padding: 2px; border: 0; border-radius: var(--radius-pill);
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.ws-phrases__chip button:hover { color: var(--fg); }
+.ws-phrases__plus {
+  display: inline-flex; padding: 3px; border: 1px dashed var(--border); border-radius: var(--radius-pill);
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.ws-phrases__plus:hover { color: var(--fg); }
+.ws-phrases__add { flex: 1 1 100%; max-width: 20rem; }
+.ws-own-command { min-width: 0; padding-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
+.ws-own-command textarea { width: 100%; min-height: 0; box-sizing: border-box; }
+.ws-own-command > .ws-btn, .ws-own-commands > .ws-btn { align-self: flex-start; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-dictpill { animation: none; }
+  .ws-dictpill.is-gliding { transition: none; }
+  .ws-dictpill__dot { box-shadow: none; }
+  .ws-dictpill-countdown circle { animation: none; }
+}
+
+/* Every kept action, in the Actions dialog: the name, then its Undo or Redo. */
+.ws-actlog { gap: 0; }
+.ws-actlog__row {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) 0; border-bottom: 1px solid var(--border);
+}
+.ws-actlog__row:last-child { border-bottom: none; }
+.ws-actlog__label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-actlog__row.is-undone .ws-actlog__label { color: var(--faint); }
+.ws-actlog__none { color: var(--muted); }
+
+/* Where words went, in the This dictation dialog: each piece's place, its
+   words, then Copy and Move to. */
+.ws-pieces { gap: 0; max-height: 60vh; overflow-y: auto; }
+.ws-pieces__row {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-2) 0; border-bottom: 1px solid var(--border);
+}
+.ws-pieces__row:last-child { border-bottom: none; }
+.ws-pieces__icon { flex: none; width: 1rem; height: 1rem; margin-top: 0.125rem; color: var(--muted); }
+.ws-pieces__body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.ws-pieces__where { color: var(--muted); font-size: var(--fs-sm); }
+.ws-pieces__text {
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+  overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.ws-pieces__none { color: var(--muted); }
+
+/* Settings, Speech, the last day of dictations: one block per dictation. */
+.ws-recent { padding-bottom: var(--space-2); }
+.ws-recent__head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  padding-top: var(--space-2); color: var(--muted); font-size: var(--fs-sm);
+}

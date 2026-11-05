@@ -19,7 +19,8 @@ import logging
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from services import auth_store, chat_store, installation, ownership
+from deps_user import socket_origin_ok as _origin_ok, socket_user
+from services import chat_store, ownership
 from services.voice import machine as m
 from services.voice import protocol
 from services.voice.runtime import TTS_SAMPLE_RATE, VoiceRuntime
@@ -28,61 +29,12 @@ from services.voice.timeline import SAMPLE_RATE
 log = logging.getLogger("workshop.voice.stream")
 router = APIRouter()
 
-SESSION_COOKIE = "workshop_session"
-
-_DEV_ORIGINS = {
-    "http://localhost:5173", "http://127.0.0.1:5173",
-    "http://localhost:5174", "http://127.0.0.1:5174",
-}
-
-
-def _origin_ok(ws: WebSocket) -> bool:
-    """Is this socket coming from a page we serve?
-
-    THE HOST TO COMPARE AGAINST IS THE ONE THE BROWSER TYPED, NOT OURS.
-    Nearly every real connection arrives through the public edge, which
-    terminates the browser's socket and dials this process on 127.0.0.1:8000.
-    Comparing the browser's Origin against THIS process's Host therefore
-    compares `workshop.<host>` against `127.0.0.1:8000` and rejects every
-    genuine connection with a 403, which is exactly what happened: the operator
-    got a spinner that never resolved while the log filled with
-    `WebSocket /voice/stream 403`.
-
-    The edge forwards the original host as `x-forwarded-host` and does its own
-    same-origin check before dialing (it is the boundary the browser actually
-    talks to). This is the standard reverse-proxy arrangement, and it adds no
-    trust: an attacker who could set `x-forwarded-host` is already inside the
-    loopback interface, where they could talk to this port directly anyway.
-    """
-    origin = ws.headers.get("origin")
-    if not origin:
-        return True                      # a native client sends none
-    if origin in _DEV_ORIGINS:
-        return True
-    # The declared origins, read from the one place that knows them
-    # (`installation.declared_origins`). Any of them is this installation.
-    if origin.rstrip("/") in installation.declared_origins():
-        return True
-    host = ws.headers.get("x-forwarded-host") or ws.headers.get("host", "")
-    return bool(host) and origin.split("//", 1)[-1] == host
-
-
-def _user(ws: WebSocket):
-    user = auth_store.session_user(ws.cookies.get(SESSION_COOKIE))
-    if user is not None:
-        return user
-    auth = ws.headers.get("authorization", "")
-    if auth.lower().startswith("bearer "):
-        return auth_store.device_user(auth[7:].strip())
-    return None
-
-
 @router.websocket("/voice/stream")
 async def voice_stream(ws: WebSocket) -> None:
     if not _origin_ok(ws):
         await ws.close(code=4403)
         return
-    user = _user(ws)
+    user = socket_user(ws)
     if user is None:
         await ws.close(code=4401)
         return

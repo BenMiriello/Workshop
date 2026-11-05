@@ -248,7 +248,11 @@ async def voice_health():
 async def voice_voices():
     if not voice_engine.TTS.available:
         return {"available": False, "voices": []}
-    return {"available": True, "voices": voice_engine.TTS.voices()}
+    try:
+        names = await asyncio.to_thread(voice_engine.TTS.voices)
+    except RuntimeError:
+        return {"available": False, "voices": []}
+    return {"available": True, "voices": names}
 
 
 @router.get("/voice/prefs", response_model=VoicePrefs, response_model_exclude_unset=True)

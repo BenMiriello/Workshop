@@ -1,0 +1,7 @@
+{
+  "name": "workshop-selection-menu",
+  "version": "1.0.0",
+  "description": "One item of the app's own in the system menu shown for a text selection in the shell's WebView, beside the system items.",
+  "main": "index.ts",
+  "private": true
+}

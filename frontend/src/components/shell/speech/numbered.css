@@ -1,0 +1,99 @@
+/* A numbered list to pick from by voice (NumberedDialog.tsx): one row per
+   item, the number in a fixed column so the labels line up, how it is said
+   as a chip at the right. */
+
+.ws-numbered:focus { outline: none; }
+.ws-numbered {
+  display: flex; flex-direction: column; gap: var(--space-4);
+  /* Overlay scrollbars are drawn over the body's right edge. */
+  padding-right: var(--space-3);
+  color: var(--fg);
+}
+.ws-numbered__filter { position: relative; }
+.ws-numbered__filter > svg {
+  position: absolute; left: var(--space-2); top: 50%; transform: translateY(-50%);
+  width: 14px; height: 14px; stroke-width: 1.8; color: var(--muted); pointer-events: none;
+}
+.ws-numbered__filter input { padding-left: calc(var(--space-2) + 14px + var(--space-2)); }
+.ws-numbered__none { margin: 0; color: var(--muted); }
+
+.ws-numbered section { display: flex; flex-direction: column; gap: 1px; }
+
+.ws-numbered__row {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-1);
+  border-radius: var(--radius-sm);
+}
+.ws-numbered__row[data-open] { background: var(--bg-inset); }
+
+.ws-numbered__main,
+.ws-numbered__choice {
+  display: flex; align-items: center; gap: var(--space-3);
+  min-width: 0; width: 100%;
+  padding: var(--space-1) var(--space-2) var(--space-1) 0;
+  color: inherit;
+  font-size: var(--fs-base); text-align: left;
+}
+.ws-numbered__choice {
+  display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto;
+  padding-left: var(--space-2);
+  border: 0; border-radius: var(--radius-sm);
+  background: none; font: inherit; font-size: var(--fs-base);
+  cursor: pointer;
+}
+.ws-numbered__choice:hover { background: var(--bg-inset); }
+.ws-numbered__choice:disabled { cursor: default; color: var(--muted); }
+
+/* The chevron's place is kept in rows said one way too, so the chips line up. */
+.ws-numbered__more {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.5rem; height: 1.5rem;
+  padding: 0; border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--faint);
+}
+button.ws-numbered__more { cursor: pointer; }
+button.ws-numbered__more:hover { color: var(--fg); background: var(--bg-inset); }
+.ws-numbered__row[data-open] button.ws-numbered__more:hover { background: var(--bg); }
+
+.ws-numbered__n {
+  font-family: var(--font-mono); font-size: var(--fs-sm); font-weight: var(--fw-semi);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  text-align: right;
+}
+
+.ws-numbered__text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+
+.ws-numbered__say {
+  flex: none;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+  color: var(--fg);
+  white-space: nowrap;
+}
+.ws-numbered__row[data-open] .ws-numbered__say { background: var(--bg); }
+
+.ws-numbered__more-icon {
+  width: 14px; height: 14px; stroke-width: 1.8;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.ws-numbered__row[data-open] .ws-numbered__more-icon { transform: rotate(90deg); }
+
+.ws-numbered__phrases {
+  grid-column: 2;
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-1);
+  /* Under the first chip: clear of the chevron beside it. */
+  padding: 0 calc(var(--space-2) + 1.5rem + var(--space-3)) var(--space-2) 0;
+}
+
+@media (max-width: 480px) {
+  .ws-numbered__main, .ws-numbered__choice { gap: var(--space-2); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ws-numbered__more-icon { transition: none; }
+}

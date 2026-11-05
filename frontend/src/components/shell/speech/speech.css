@@ -1,0 +1,156 @@
+/* Speech overlays: the dictation chip, the Read aloud button under a
+   selection, and the reading player. All of them are fixed-position layers
+   drawn by the shell over everything, app frames included, so none of them
+   ever moves a page's layout. Their positions are computed in SpeechLayer and
+   arrive as `left`/`top`; everything else is here. */
+
+.ws-speech-layer { display: contents; }
+
+.ws-speech-chip,
+.ws-speech-select,
+.ws-speech-player,
+.ws-speech-note {
+  position: fixed;
+  z-index: var(--z-toast);
+}
+
+/* The chip's size is mirrored by CHIP_SIZE / CHIP_SIZE_TOUCH in
+   lib/speech/placement.ts, which places it. Change both together. */
+.ws-speech-chip {
+  /* Whole pixels, as placement.ts assumes: a size in rem follows the root
+     font size, which an app or a phone's text size can make fractional, and
+     the ring and the icon then round to different pixels. */
+  --_size: 24px;
+  --level: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--_size); height: var(--_size); padding: 0;
+  border: 1px solid var(--border); border-radius: var(--radius-pill);
+  background: var(--card); color: var(--muted);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.ws-speech-chip svg { width: 14px; height: 14px; stroke-width: 1.8; }
+.ws-speech-chip:hover { color: var(--fg); border-color: var(--border-strong); }
+.ws-speech-chip:focus-visible { box-shadow: var(--focus-ring); }
+.ws-speech-chip--touch { --_size: 32px; }
+.ws-speech-chip--touch svg { width: 16px; height: 16px; }
+/* Recording is LIVE: the one moving hue, with a ring that follows the voice. */
+.ws-speech-chip[data-phase="listening"] {
+  color: var(--live); border-color: var(--live); background: var(--live-soft);
+  box-shadow: 0 0 0 calc(var(--level) * 0.375rem) var(--live-soft);
+}
+.ws-speech-chip[data-phase="starting"],
+.ws-speech-chip[data-phase="finishing"] { color: var(--live); border-color: var(--live); }
+.ws-speech-chip[data-phase="error"] { color: var(--danger); border-color: var(--danger); }
+/* "Dictate here": words are going somewhere else; a dashed live edge says
+   this field could take them. */
+.ws-speech-chip[data-phase="here"] { color: var(--live); border: 1px dashed var(--live); }
+
+/* The field words are going into, while dictating: a ring drawn over it, so
+   the field itself never changes. */
+/* Its z-index is the field's layer, set inline (stackLayer.ts). */
+.ws-speech-ring {
+  position: fixed;
+  margin: -3px; padding: 3px; box-sizing: content-box;
+  border: 1.5px solid var(--live); border-radius: var(--radius-sm);
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+/* An error is a line beside the chip, neutral ink with the hue on the chip. */
+.ws-speech-note {
+  max-width: 18rem;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--card); color: var(--fg);
+  box-shadow: var(--shadow-md);
+  font-size: var(--fs-sm);
+  pointer-events: none;
+  animation: ws-fade var(--dur-fast) var(--ease-out);
+}
+
+.ws-speech-note--blocked {
+  max-width: 20rem;
+  padding: var(--space-2) var(--space-3);
+  pointer-events: auto;
+}
+.ws-speech-note--blocked p { margin: 0 0 var(--space-2); }
+.ws-speech-note__actions {
+  display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1);
+}
+
+/* One toolbar: a single surface holding its buttons, never loose pills. */
+.ws-speech-select {
+  display: flex; align-items: center; gap: var(--space-1);
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--card); color: var(--fg);
+  border: 1px solid var(--card-ring);
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+  animation: ws-fade var(--dur-fast) var(--ease-out);
+}
+/* In the dock on touch it is laid out by the dock, like the dictation bar. */
+.ws-speech-select--docked { position: static; border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+
+.ws-speech-player {
+  left: 50%; transform: translateX(-50%);
+  bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: var(--space-1);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--card); color: var(--fg);
+  border: 1px solid var(--card-ring);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--fs-sm);
+  animation: ws-fade var(--dur-fast) var(--ease-out);
+}
+.ws-speech-player__state {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  margin-right: var(--space-1);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ws-speech-player__state svg { width: 14px; height: 14px; stroke-width: 1.8; }
+.ws-speech-player[data-phase="playing"] .ws-speech-player__state svg { color: var(--live); }
+.ws-speech-player[data-phase="error"] .ws-speech-player__state { color: var(--fg); white-space: normal; }
+.ws-speech-player[data-phase="error"] .ws-speech-player__state svg { color: var(--danger); flex: none; }
+.ws-speech-player__speed { font-variant-numeric: tabular-nums; min-width: 3.25rem; }
+.ws-speech-player__pos {
+  margin-right: var(--space-1);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ws-speech-player__highlight[aria-pressed="true"] { --_fg: var(--you); }
+/* Floats over the player, so nothing in it moves when it comes and goes. */
+.ws-speech-player__back {
+  position: absolute; left: 50%; bottom: calc(100% + var(--space-2));
+  transform: translateX(-50%);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+  animation: ws-fade var(--dur-fast) var(--ease-out);
+}
+/* A player docked at the top of a phone has it below instead. */
+.ws-speech-dock--top .ws-speech-player__back { bottom: auto; top: calc(100% + var(--space-2)); }
+/* A finger needs a bigger target than a pointer. */
+@media (pointer: coarse) {
+  .ws-speech-player .ws-btn--sm { height: var(--control-h-lg); }
+  .ws-speech-player .ws-btn--icon.ws-btn--sm { width: var(--control-h-lg); }
+}
+/* On a phone the controls take the width; the state word stays for screen
+   readers, and the icon still says it. */
+@media (max-width: 26rem) {
+  .ws-speech-player__word {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip-path: inset(50%); white-space: nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-speech-chip { transition: none; }
+  .ws-speech-chip[data-phase="listening"] { box-shadow: none; }
+  .ws-speech-note, .ws-speech-select, .ws-speech-player, .ws-speech-player__back { animation: none; }
+}

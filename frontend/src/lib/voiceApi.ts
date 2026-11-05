@@ -1,11 +1,6 @@
 // Thin client for the per-owner voice prefs + voice catalog.
 import type { VoicePrefs } from "./voice/modes";
-import { shortHttpError } from "@workshop/ui";
-
-async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-  return r.json() as Promise<T>;
-}
+import { jsonOrFail as j } from "./http";
 
 export const voiceApi = {
   getPrefs: () => fetch("/api/voice/prefs").then(j<VoicePrefs & Record<string, unknown>>),

@@ -46,7 +46,7 @@ def app(monkeypatch, tmp_path):
     # a real owner must never share that owner's storage.
     monkeypatch.setattr(ownership, "_RUNTIME", tmp_path)
     monkeypatch.setattr(
-        voice_stream, "_user", lambda ws: {"id": 6, "email": "test@example.com"}
+        voice_stream, "socket_user", lambda ws: {"id": 6, "email": "test@example.com"}
     )
     return main.app
 
@@ -143,7 +143,7 @@ class TestAuth:
         import main
         from routes import voice_stream
 
-        monkeypatch.setattr(voice_stream, "_user", lambda ws: None)
+        monkeypatch.setattr(voice_stream, "socket_user", lambda ws: None)
         client = TestClient(main.app)
         with pytest.raises(Exception):
             with client.websocket_connect("/voice/stream"):

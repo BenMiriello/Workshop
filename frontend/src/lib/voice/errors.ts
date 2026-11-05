@@ -5,6 +5,8 @@
 // The classification is worth keeping exactly as it is: each kind and its
 // sentence came from a real failure that used to surface as "mic error".
 
+import { currentMicClient, micBlockedHelp } from "../speech/micAccess";
+
 export type MicFailKind =
   | "insecure"     // not an https/localhost origin, so mediaDevices does not exist
   | "unsupported"  // secure, but no getUserMedia at all
@@ -34,7 +36,7 @@ export function micFailText(kind: MicFailKind, detail?: string): string {
 export class MicError extends Error {
   kind: MicFailKind;
   constructor(kind: MicFailKind, message?: string) {
-    super(message ?? MIC_FAIL_TEXT[kind]);
+    super(message ?? (kind === "notAllowed" ? micBlockedHelp(currentMicClient()) : MIC_FAIL_TEXT[kind]));
     this.name = "MicError";
     this.kind = kind;
   }
