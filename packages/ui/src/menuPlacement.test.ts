@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { narrowClip, placeMenu, type Rect } from "./menuPlacement";
+import { fixedClippers, narrowClip, placeMenu, type Ancestor, type Rect } from "./menuPlacement";
 
 const rect = (left: number, top: number, w: number, h: number): Rect =>
   ({ left, top, right: left + w, bottom: top + h });
@@ -161,5 +161,47 @@ describe("narrowClip", () => {
     const clip = narrowClip(VIEWPORT, [{ rect: log, clipsX: true, clipsY: false }]);
     expect(placeMenu(trigger, LIST, VIEWPORT, "bottom", GAP).insetStart).toBe(0);
     expect(placeMenu(trigger, LIST, clip, "bottom", GAP).insetStart).toBe(1072 - 1130);
+  });
+});
+
+describe("fixedClippers", () => {
+  // The phone sheet's real chain at 402px, nearest the surface first: the
+  // menu's own wrapper, the card's sticky footer, the card, the sheet's
+  // scrolling body, the sheet, the page scroller.
+  const plain = (sticky = false): Ancestor =>
+    ({ rect: rect(0, 0, 0, 0), clipsX: false, clipsY: false, sticky });
+  const clips = (r: Rect): Ancestor => ({ rect: r, clipsX: true, clipsY: true, sticky: false });
+  const BODY = rect(24, 181, 354, 340);
+  const SHEET = rect(12, 132, 378, 401);
+  const PAGE = rect(0, 0, 402, 625);
+
+  it("lets a fixed surface escape every scroller when nothing captures it", () => {
+    expect(fixedClippers([plain(), clips(BODY), clips(SHEET), clips(PAGE)], false)).toEqual([]);
+  });
+
+  it("keeps it inside the scroller a sticky ancestor sticks in", () => {
+    const chain = [plain(), plain(true), plain(), clips(BODY), clips(SHEET), clips(PAGE)];
+    expect(fixedClippers(chain, false).map((c) => c.rect)).toEqual([BODY, SHEET, PAGE]);
+  });
+
+  it("does not count a clipping box below the sticky ancestor", () => {
+    const strip = rect(200, 480, 150, 40);
+    const chain = [plain(), clips(strip), plain(true), clips(BODY)];
+    expect(fixedClippers(chain, false).map((c) => c.rect)).toEqual([BODY]);
+  });
+
+  it("counts every clipping ancestor under a containing block", () => {
+    const strip = rect(200, 480, 150, 40);
+    expect(fixedClippers([plain(), clips(strip), clips(BODY)], true).map((c) => c.rect))
+      .toEqual([strip, BODY]);
+  });
+
+  it("puts the queue menu's right edge inside the sheet's body", () => {
+    // Measured on iOS 18.6: a 176px menu under the footer caret at x=333 was
+    // placed against the viewport (right edge 394) and painted cut at 378.
+    const chain = [plain(), plain(true), plain(), clips(BODY), clips(SHEET), clips(PAGE)];
+    const clip = narrowClip(rect(0, 0, 402, 678), fixedClippers(chain, false));
+    const p = placeMenu(rect(333, 493, 28, 28), { width: 176, height: 219 }, clip, "bottom", GAP);
+    expect(333 + p.insetStart + 176).toBe(378 - 8);
   });
 });

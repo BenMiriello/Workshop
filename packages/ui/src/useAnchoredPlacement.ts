@@ -1,5 +1,5 @@
 import { useLayoutEffect, useState, type RefObject } from "react";
-import { narrowClip, placeMenu, type Clipper, type Rect } from "./menuPlacement";
+import { fixedClippers, narrowClip, placeMenu, type Ancestor, type Rect } from "./menuPlacement";
 
 // THE DOM HALF OF ANCHORED PLACEMENT, shared by Menu and Popover.
 //
@@ -33,30 +33,30 @@ function fixedOrigin(host: HTMLElement): { x: number; y: number } {
   return { x: r.left, y: r.top };
 }
 
-// The box the surface must stay inside. With the viewport as its containing
-// block, a fixed surface escapes every ancestor's overflow, so the viewport is
-// the whole box. Under a containing-block ancestor it does not, and this falls
-// back to every ancestor that clips, each axis asked separately (see
-// `narrowClip`).
+const NO_RECT: Rect = { left: 0, top: 0, right: 0, bottom: 0 };
+
+// The box the surface must stay inside: the viewport, narrowed by whichever
+// ancestors actually clip a fixed surface here (see `fixedClippers`), each
+// axis asked separately (see `narrowClip`). The walk starts at the anchor,
+// which is the surface's parent.
 function clipBox(el: HTMLElement, contained: boolean): Rect {
   const viewport = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
-  if (!contained) return viewport;
-  const clippers: Clipper[] = [];
-  for (let n = el.parentElement; n; n = n.parentElement) {
+  const ancestors: Ancestor[] = [];
+  for (let n: HTMLElement | null = el; n; n = n.parentElement) {
     const s = getComputedStyle(n);
     // CSS coerces a `visible` paired with a non-visible other axis to `auto`,
     // so a computed value of `visible` is the only one that does not clip.
     const clipsX = s.overflowX !== "visible";
     const clipsY = s.overflowY !== "visible";
-    if (!clipsX && !clipsY) continue;
-    const r = n.getBoundingClientRect();
-    clippers.push({
-      rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom },
+    const r = clipsX || clipsY ? n.getBoundingClientRect() : null;
+    ancestors.push({
+      rect: r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : NO_RECT,
       clipsX,
       clipsY,
+      sticky: s.position === "sticky",
     });
   }
-  return narrowClip(viewport, clippers);
+  return narrowClip(viewport, fixedClippers(ancestors, contained));
 }
 
 /**

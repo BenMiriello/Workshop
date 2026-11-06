@@ -12,6 +12,16 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.8.1 - 2026-11-05 - A menu under a sticky bar stays inside the scroller on iOS
+
+**Fixed.** A `Menu` or `Popover` whose trigger sits in a `position: sticky`
+element (a card's sticky footer, a sticky toolbar) is now kept inside the
+scroller that element sticks in, and every clipping box above it. iOS WebKit
+(measured on 18.6) paints a fixed surface there cut at the scroller's edge,
+while reporting it where it was placed, so the menu lost its right edge in a
+phone sheet. Desktop engines keep showing it whole, now inside that box. No
+API change.
+
 ## 0.8.0 - 2026-11-05 - page views, read aloud, spoken actions, floating menus
 
 **Minor, with migrations.** Everything built on 0.7.10 between 2026-09-23 and

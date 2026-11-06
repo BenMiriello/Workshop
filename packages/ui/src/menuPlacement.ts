@@ -47,6 +47,37 @@ export function narrowClip(base: Rect, clippers: readonly Clipper[]): Rect {
   return box;
 }
 
+/** One ancestor of the surface, nearest first, as `fixedClippers` reads it. */
+export type Ancestor = Clipper & { sticky: boolean };
+
+/**
+ * Which ancestors clip a `position: fixed` surface.
+ *
+ * With the viewport as its containing block, none should: fixed escapes every
+ * ancestor's overflow. Two cases where that is not what gets painted:
+ *
+ * - `contained`: an ancestor is the containing block for fixed descendants (a
+ *   transform, a filter, `contain`...), so the surface lives inside it and
+ *   every clipping ancestor applies.
+ * - A `position: sticky` ancestor. iOS WebKit (measured on iOS 18.6) paints a
+ *   fixed element inside a sticky one CLIPPED by the scroller the sticky
+ *   element sticks in, and by every clipping box above it, although
+ *   `getBoundingClientRect` reports it where it was placed. No DOM API reports
+ *   the cut, so the rule has to be known rather than measured. Desktop engines
+ *   do not clip there, and keeping the surface inside that box costs them
+ *   nothing they would otherwise show. Reported 2026-11-05: the queue menu
+ *   under the sticky footer of a card in a phone sheet lost its right edge to
+ *   the sheet's scrolling body. Clipping boxes BELOW the sticky element do not
+ *   cut it on iOS either, so they stay out.
+ */
+export function fixedClippers(ancestors: readonly Ancestor[], contained: boolean): Clipper[] {
+  const from = contained ? 0 : ancestors.findIndex((a) => a.sticky);
+  if (from < 0) return [];
+  return ancestors.slice(from)
+    .filter((a) => a.clipsX || a.clipsY)
+    .map(({ rect, clipsX, clipsY }) => ({ rect, clipsX, clipsY }));
+}
+
 export type Placement = {
   /** Pixel offset from the trigger's own left edge to the surface's left
    * edge. Not a binary "pin to whichever edge fits": a surface whose width
