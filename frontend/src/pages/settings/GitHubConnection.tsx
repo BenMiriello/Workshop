@@ -59,10 +59,10 @@ export function GitHubConnection({ data, busy, onReconnect, onRetry, onHelper, o
       <Row wrap style={{ gap: "var(--space-3)", alignItems: "center" }}>
         <img src={`https://github.com/${encodeURIComponent(data.login)}.png?size=64`} alt=""
              width={32} height={32} style={{ borderRadius: "var(--radius-pill)" }} />
-        <Stack>
-          <strong>{data.login}</strong>
-          {inst && <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{reach(inst)}</span>}
-        </Stack>
+        <div>
+          <div><strong>{data.login}</strong></div>
+          {inst && <div className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{reach(inst)}</div>}
+        </div>
         <Spacer />
         {action}
         <Menu label="GitHub account" trigger={
