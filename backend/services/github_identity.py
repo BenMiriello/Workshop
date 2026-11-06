@@ -308,12 +308,34 @@ def verify(tok: str) -> dict:
             "detail": f"Signed in as {login}." if login else "Signed in."}
 
 
+def _api_get(tok: str, path: str) -> httpx.Response:
+    return httpx.get(
+        f"{API_BASE}{path}",
+        headers={
+            "Authorization": f"Bearer {tok}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        timeout=10.0,
+    )
+
+
+def _repository_count(tok: str, installation_id: int) -> int | None:
+    try:
+        r = _api_get(tok, f"/user/installations/{installation_id}/repositories?per_page=1")
+        return int((r.json() or {}).get("total_count")) if r.status_code == 200 else None
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+        return None
+
+
 def installation_state(owner_id: int | None = None) -> dict | None:
     """Where the GitHub App is installed, as far as the signed-in account sees.
 
-    `{state, repository_selection, blocked}`. `state` is `installed` when the
-    app is on the account's own login, `missing` when it is not, `unknown` when
-    GitHub could not be asked. `blocked` names any installation on an account
+    `state` is `installed` when the app is on the account's own login,
+    `missing` when it is not, `signed_out` when GitHub no longer accepts the
+    sign-in (revoked on github.com), `unknown` when GitHub could not be asked.
+    `repository_count` is set when the install covers picked repositories
+    rather than all of them. `blocked` names any installation on an account
     this installation must not reach ([SEC-G1]): the token reaches it, so the
     screen has to say so. None when the credential is not a sign-in, since a
     pasted token's reach is its own and has no installation.
@@ -326,27 +348,19 @@ def installation_state(owner_id: int | None = None) -> dict | None:
     tok = rec.get(_TOKEN) or ""
     if not tok or rec.get(_SOURCE) != "device":
         return None
-    unknown = {"state": "unknown", "repository_selection": "", "blocked": []}
+    out = {"state": "unknown", "id": None, "manage_url": "",
+           "repository_selection": "", "repository_count": None, "blocked": []}
     try:
-        r = httpx.get(
-            f"{API_BASE}/user/installations",
-            headers={
-                "Authorization": f"Bearer {tok}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            timeout=10.0,
-        )
-        rows = None
-        if r.status_code == 200:
-            rows = (r.json() or {}).get("installations") or []
+        r = _api_get(tok, "/user/installations")
+        rows = (r.json() or {}).get("installations") if r.status_code == 200 else None
     except (httpx.HTTPError, ValueError, AttributeError):
-        rows = None
+        return out
+    if r.status_code == 401:
+        return {**out, "state": "signed_out"}
     if not isinstance(rows, list):
-        return unknown
+        return out
     login = (rec.get(_LOGIN) or "").lower()
     mine = None
-    blocked: list[str] = []
     for row in rows:
         account = str(((row or {}).get("account") or {}).get("login") or "")
         if account.lower() == login:
@@ -354,11 +368,18 @@ def installation_state(owner_id: int | None = None) -> dict | None:
         try:
             installation.reject_blocked(account)
         except ValueError:
-            blocked.append(account)
+            out["blocked"].append(account)
+    if not mine:
+        return {**out, "state": "missing"}
+    iid = mine.get("id")
+    selection = str(mine.get("repository_selection") or "")
     return {
-        "state": "installed" if mine else "missing",
-        "repository_selection": str((mine or {}).get("repository_selection") or ""),
-        "blocked": blocked,
+        **out,
+        "state": "installed",
+        "id": iid,
+        "manage_url": f"https://github.com/settings/installations/{iid}" if iid else "",
+        "repository_selection": selection,
+        "repository_count": _repository_count(tok, iid) if selection == "selected" and iid else None,
     }
 
 
@@ -573,8 +594,11 @@ def poll_device(device_code: str, owner_id: int | None = None) -> dict:
     tok = str(body.get("access_token") or "")
     if not tok:
         raise GithubAuthError("GitHub returned no token for a completed sign-in.")
-    return {"status": "connected", "detail": "Connected.",
-            **connect_token(tok, owner_id, source="device")}
+    connect_token(tok, owner_id, source="device")
+    # Signing in sets up git on this machine too, the way GitHub Desktop and
+    # `gh auth login` do; the card can turn it off again.
+    install_credential_helper()
+    return {"status": "connected", "detail": "Connected.", **status(owner_id)}
 
 
 # ---- the global defaults ------------------------------------------------------

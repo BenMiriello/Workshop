@@ -30,7 +30,10 @@ class DefaultsOut(BaseModel):
 class InstallationOut(BaseModel):
     """Where the GitHub App is installed, for a signed-in account."""
     state: str
+    id: int | None = None
+    manage_url: str = ""
     repository_selection: str
+    repository_count: int | None = None
     blocked: list[str]
 
 

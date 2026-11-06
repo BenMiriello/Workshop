@@ -11316,6 +11316,15 @@ export interface components {
         InstallationOut: {
             /** Blocked */
             blocked: string[];
+            /** Id */
+            id?: number | null;
+            /**
+             * Manage Url
+             * @default
+             */
+            manage_url: string;
+            /** Repository Count */
+            repository_count?: number | null;
             /** Repository Selection */
             repository_selection: string;
             /** State */

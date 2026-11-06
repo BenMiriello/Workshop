@@ -367,10 +367,13 @@ def test_a_completed_device_sign_in_stores_the_token(monkeypatch):
                         lambda url, data: {"access_token": "from-device"})
     monkeypatch.setattr(github_identity, "verify", lambda t: _ok())
     monkeypatch.setattr(github_identity, "helper_installed", lambda: False)
+    helper = []
+    monkeypatch.setattr(github_identity, "install_credential_helper", lambda: helper.append(1))
     _installations(monkeypatch, [{"account": {"login": "octo"}, "repository_selection": "all"}])
 
     out = github_identity.poll_device("dev-code", OWNER)
 
+    assert helper == [1], "signing in sets up git on this machine"
     assert out["status"] == "connected"
     assert out["source"] == "device"
     assert "from-device" not in repr(out)
@@ -428,11 +431,13 @@ class _Resp:
         return self._body
 
 
-def _installations(monkeypatch, rows, code=200):
+def _installations(monkeypatch, rows, code=200, count=None):
     seen = []
 
     def fake_get(url, headers=None, timeout=None):
         seen.append((url, headers))
+        if "/repositories" in url:
+            return _Resp(200, {"total_count": count})
         return _Resp(code, {"installations": rows})
 
     monkeypatch.setattr(github_identity.httpx, "get", fake_get)
@@ -446,12 +451,14 @@ def _signed_in(login="octo"):
 def test_installed_on_the_accounts_own_login(monkeypatch):
     _signed_in()
     seen = _installations(monkeypatch, [
-        {"account": {"login": "Octo"}, "repository_selection": "all"}])
+        {"id": 42, "account": {"login": "Octo"}, "repository_selection": "all"}])
 
     out = github_identity.installation_state(OWNER)
 
-    assert out == {"state": "installed", "repository_selection": "all", "blocked": []}
-    assert seen[0][0].endswith("/user/installations")
+    assert out == {"state": "installed", "id": 42,
+                   "manage_url": "https://github.com/settings/installations/42",
+                   "repository_selection": "all", "repository_count": None, "blocked": []}
+    assert [u for u, _ in seen] == [f"{github_identity.API_BASE}/user/installations"]
     assert "from-device" not in repr(out)
 
 
@@ -473,6 +480,23 @@ def test_an_installation_on_a_blocked_account_is_named(monkeypatch):
 
     assert out["state"] == "installed"
     assert out["blocked"] == ["offlimits-org"]
+
+
+def test_picked_repositories_are_counted(monkeypatch):
+    _signed_in()
+    _installations(monkeypatch, [
+        {"id": 7, "account": {"login": "octo"}, "repository_selection": "selected"}], count=3)
+
+    out = github_identity.installation_state(OWNER)
+
+    assert (out["repository_selection"], out["repository_count"]) == ("selected", 3)
+
+
+def test_a_sign_in_revoked_on_github_reads_as_signed_out(monkeypatch):
+    _signed_in()
+    _installations(monkeypatch, [], code=401)
+
+    assert github_identity.installation_state(OWNER)["state"] == "signed_out"
 
 
 def test_github_unreachable_reads_as_unknown(monkeypatch):
