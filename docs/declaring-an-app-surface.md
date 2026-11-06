@@ -196,7 +196,7 @@ types; a shortcut that breaks this is dropped and the block keeps the rest.
 Read by `backend/services/overlay_apps.py`.
 
 While the service is running the app is listed by `GET /api/apps/overlays`
-(`{overlays: [{slug, title, shortcut, url}]}`), and the shell opens it:
+(`{overlays: [{slug, title, shortcut, url, events, settings}]}`), and the shell opens it:
 
 - from its shortcut, pressed on any page or inside any same-origin app frame,
   pressed again (or Esc) to close it. The operator can change the shortcut per
@@ -218,8 +218,14 @@ the overlay's own frame only:
 | shell -> app | `workshop/v1/context` | `{overlay: true, field: {name} \| null}` |
 | app -> shell | `workshop/v1/insertText` | `{text}`: the overlay closes, the field gets its focus back and the text goes in at its caret, as typing would |
 | app -> shell | `workshop/v1/closeOverlay` | none |
+| shell -> app | `workshop/v1/openSettings` | none: the settings button in the overlay's title row was pressed |
 
 Send `hello` once loaded; `field` is the remembered field's name, or `null`
 when there is none, in which case `insertText` only closes the overlay, so
 offer something else (a copy button) instead. An app opened on its own, not
 as an overlay, gets no `context` answer and should behave as a normal page.
+
+An app with settings of its own declares `"settings": true` in the block. The
+overlay's title row then carries a settings button on the right, and pressing
+it sends the app `openSettings`, so the app's own settings open from the same
+place as the title rather than from a second gear inside the app.

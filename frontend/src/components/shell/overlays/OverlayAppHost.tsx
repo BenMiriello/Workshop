@@ -6,12 +6,15 @@
 // was in is remembered: the one focused now, else the last one focused, which
 // is the field a menu click just took focus from. The app asks with `hello`
 // and is told that field's name; `insertText` closes the overlay, gives the
-// field its focus back and puts the text at its caret.
+// field its focus back and puts the text at its caret. An app whose overlay
+// declares `settings` gets a settings button in the title row, which sends it
+// `openSettings`.
 
 import { useEffect, useRef } from "react";
-import { Modal, usePoll } from "@workshop/ui";
+import { Settings } from "lucide-react";
+import { Button, Modal, usePoll } from "@workshop/ui";
 import { isMacLike } from "../../../lib/speech/shortcuts";
-import { contextMessage, parseOverlayMessage } from "../../../lib/overlayApps/messages";
+import { OPEN_SETTINGS_MSG, contextMessage, parseOverlayMessage } from "../../../lib/overlayApps/messages";
 import { chordFor, overlayShortcuts } from "../../../lib/overlayApps/prefs";
 import { pressed } from "../../../lib/overlayApps/shortcut";
 import { overlayApps, useOverlayApps } from "../../../lib/overlayApps/store";
@@ -120,8 +123,19 @@ export function OverlayAppHost() {
     return () => window.removeEventListener("message", onMessage);
   }, [open]);
 
+  const openSettings = () =>
+    frame.current?.contentWindow?.postMessage({ v: 1, type: OPEN_SETTINGS_MSG }, window.location.origin);
+  const title = app?.settings ? (
+    <span className="ws-overlay-app__title">
+      <span>{app.title}</span>
+      <Button variant="ghost" size="sm" icon aria-label="Settings" title="Settings" onClick={openSettings}>
+        <Settings aria-hidden />
+      </Button>
+    </span>
+  ) : app?.title;
+
   return (
-    <Modal open={!!app} onClose={() => overlayApps.close()} title={app?.title} size="lg">
+    <Modal open={!!app} onClose={() => overlayApps.close()} title={title} size="lg">
       {app && (
         <iframe
           ref={frame}

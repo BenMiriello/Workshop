@@ -22,3 +22,10 @@
 .ws-panel-overlay__state {
   margin: var(--space-6);
 }
+
+.ws-overlay-app__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}

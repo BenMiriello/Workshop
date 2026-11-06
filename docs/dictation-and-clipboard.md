@@ -494,7 +494,7 @@ longer with their recordings.
 ## Apps over any page: `overlay`
 
 ```json
-{"overlay": {"service": "app", "path": "/", "title": "Clipboard", "shortcut": "Mod+Alt+V"}}
+{"overlay": {"service": "app", "path": "/", "title": "Clipboard", "shortcut": "Mod+Alt+V", "settings": true}}
 ```
 
 The shell opens the service at `path` in a centred modal over the current page,
@@ -507,6 +507,7 @@ the field that was focused. Messages (same `{v: 1, type}` shape as the others):
 | shell -> app | `workshop/v1/context` | `{overlay: true, field: {name} | null}` |
 | app -> shell | `workshop/v1/insertText` | `{text}`: into the remembered field, then the overlay closes |
 | app -> shell | `workshop/v1/closeOverlay` | — |
+| shell -> app | `workshop/v1/openSettings` | — (the settings button in the title row, for a block with `settings`) |
 
 ## The clipboard app
 

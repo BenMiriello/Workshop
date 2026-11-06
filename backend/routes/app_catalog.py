@@ -62,6 +62,8 @@ class OverlayApp(BaseModel):
     url: str
     # Workshop events the app subscribes to (its manifest's `events` block).
     events: list[str] = []
+    # The app opens its own settings when told to (`workshop/v1/openSettings`).
+    settings: bool = False
 
 
 class OverlayList(BaseModel):

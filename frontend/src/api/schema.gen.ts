@@ -12710,6 +12710,11 @@ export interface components {
              * @default []
              */
             events: string[];
+            /**
+             * Settings
+             * @default false
+             */
+            settings: boolean;
             /** Shortcut */
             shortcut?: string | null;
             /** Slug */

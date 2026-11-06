@@ -60,10 +60,13 @@ def parse_shortcut(raw: object) -> str | None:
 
 
 def parse_overlay(raw: object) -> dict | None:
-    """A manifest's `overlay` block as {service, path, title, shortcut}, or None.
+    """A manifest's `overlay` block as {service, path, title, shortcut,
+    settings}, or None.
 
     `title` is None when the block names none (the caller uses the app's own
-    name), and so is `shortcut` when absent or unreadable."""
+    name), and so is `shortcut` when absent or unreadable. `settings` is true
+    when the app opens its own settings on `workshop/v1/openSettings`, so the
+    shell offers a settings button in the overlay's title row."""
     block = raw.get("overlay") if isinstance(raw, dict) else None
     if not isinstance(block, dict):
         return None
@@ -76,7 +79,8 @@ def parse_overlay(raw: object) -> dict | None:
     title = block.get("title")
     title = title.strip()[:80] if isinstance(title, str) and title.strip() else None
     return {"service": service, "path": path, "title": title,
-            "shortcut": parse_shortcut(block.get("shortcut"))}
+            "shortcut": parse_shortcut(block.get("shortcut")),
+            "settings": block.get("settings") is True}
 
 
 def frame_url(slug: str, service: str, path: str) -> str:
@@ -112,5 +116,6 @@ def running_overlays() -> list[dict]:
             "shortcut": decl["shortcut"],
             "url": frame_url(slug, decl["service"], decl["path"]),
             "events": sorted(app_events.subscriptions(raw)),
+            "settings": decl["settings"],
         })
     return sorted(found, key=lambda o: o["title"].lower())

@@ -11,6 +11,8 @@ export const HELLO_MSG = "workshop/v1/hello";
 export const CONTEXT_MSG = "workshop/v1/context";
 export const INSERT_MSG = "workshop/v1/insertText";
 export const CLOSE_MSG = "workshop/v1/closeOverlay";
+/** Shell to app: open your settings (an app whose overlay declares `settings`). */
+export const OPEN_SETTINGS_MSG = "workshop/v1/openSettings";
 
 /** Longest text an app may hand the shell to insert in one message. */
 export const INSERT_MAX = 200_000;

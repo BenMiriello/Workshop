@@ -14,14 +14,15 @@ from services import app_runner, overlay_apps
 
 def test_a_full_block_parses():
     raw = {"overlay": {"service": "app", "path": "list", "title": " Board ",
-                       "shortcut": "Mod + Alt + V"}}
+                       "shortcut": "Mod + Alt + V", "settings": True}}
     assert overlay_apps.parse_overlay(raw) == {
-        "service": "app", "path": "/list", "title": "Board", "shortcut": "Mod+Alt+V"}
+        "service": "app", "path": "/list", "title": "Board", "shortcut": "Mod+Alt+V",
+        "settings": True}
 
 
 def test_defaults_fill_path_title_and_shortcut():
     assert overlay_apps.parse_overlay({"overlay": {"service": "web"}}) == {
-        "service": "web", "path": "/", "title": None, "shortcut": None}
+        "service": "web", "path": "/", "title": None, "shortcut": None, "settings": False}
 
 
 @pytest.mark.parametrize("raw", [
@@ -67,9 +68,11 @@ def test_only_running_apps_are_listed(monkeypatch):
 
     assert overlay_apps.running_overlays() == [
         {"slug": "titled", "title": "Alpha", "shortcut": "F8",
-         "url": "/api/base-apps/run/titled/proxy/web/", "events": ["dictated"]},
+         "url": "/api/base-apps/run/titled/proxy/web/", "events": ["dictated"],
+         "settings": False},
         {"slug": "notes-x", "title": "Notes X", "shortcut": None,
-         "url": "/api/base-apps/run/notes-x/proxy/app/pick", "events": []},
+         "url": "/api/base-apps/run/notes-x/proxy/app/pick", "events": [],
+         "settings": False},
     ]
 
 

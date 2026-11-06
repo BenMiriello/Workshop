@@ -3,7 +3,7 @@ import { panelApp } from "./panel";
 import type { OverlayApp } from "./store";
 
 const app = (slug: string, events: string[] = []): OverlayApp =>
-  ({ slug, title: slug, url: `/a/${slug}/`, events, shortcut: null });
+  ({ slug, title: slug, url: `/a/${slug}/`, events, shortcut: null, settings: false });
 
 describe("panelApp", () => {
   it("prefers the app that keeps copies", () => {
