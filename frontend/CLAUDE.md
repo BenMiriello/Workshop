@@ -218,7 +218,7 @@ A `StatusPill` is transparent with a hairline in its own tone; a filled chip mea
 
 ### The attributes
 
-Appearance is `data-theme` × `data-palette`, both on `<html>`, both applied by the pre-React bootstrap in `index.html` before first paint:
+Appearance is `data-theme` × `data-palette`, both on `<html>`, both applied before first paint by the appearance script (`packages/ui/src/appearanceScript.ts`), which the kit's `workshopAppearance()` Vite plugin puts in the `<head>` of the shell and of every framed app. It also follows a change written by any other page on the origin, which is how an app framed by the shell follows Settings while open:
 
 | attribute | values | storage | default | writer |
 |---|---|---|---|---|
@@ -242,7 +242,7 @@ Rules the model enforces, checked by `packages/ui/src/styles/palette.test.ts` (1
 - **Surfaces take the `you` hue at ~10% of accent chroma, trimmed per scheme by `bgC`.** Warm and green bases tint neutrals far more visibly than blue or violet ones at equal chroma, so Fern (0.45), Clay (0.55) and Graphite (0.25) trim harder. No contrast check can see this; it is a seed-level constraint, pinned in the tests.
 - **The Settings picker's identity strip is not the app's tokens, on purpose.** The live preview renders the scheme's real, very-low-chroma neutrals — correct, but near-black and near-white do not show hue in a 76px chip. `identitySwatch()` supplies the scheme's three agency tones at moderate chroma, mode-independent, as a strip above the preview. What is being chosen is the relationship between the tiers, so all three are shown. Never used outside the picker.
 
-Adding a scheme: add a seed to `SCHEMES` in `palette.mjs`, add the id to the `PALETTES` array in the `index.html` bootstrap, run `npm run gen:tokens`, run the tests. The picker builds itself from the generated list, into the right group.
+Adding a scheme: add a seed to `SCHEMES` in `palette.mjs`, run `npm run gen:tokens`, run the tests. The appearance script reads its ids from `palettes.gen.ts`, so nothing else lists them. The picker builds itself from the generated list, into the right group.
 
 ## Charts (recharts)
 

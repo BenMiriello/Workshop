@@ -6,7 +6,7 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.8.1
+Version: 0.8.2
 
 ## @workshop/ui
 
@@ -292,6 +292,12 @@ Source: `src/Editor.tsx`
 - type PathProfile
 - type VersionedDocumentProps
 - VersionedDocument
+
+## @workshop/ui/vite
+
+Source: `src/vite.ts`
+
+- workshopAppearance
 
 ## Asset entry points
 

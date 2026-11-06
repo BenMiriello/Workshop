@@ -5,7 +5,8 @@
    Edit palette.mjs, then run `npm run gen:tokens` from packages/ui/.
 
    8 palettes x { light, dark }. `data-palette` and `data-theme` both live on
-   <html>; the pre-React bootstrap in index.html sets them before first paint.
+   <html>; the appearance script (appearanceScript.ts) sets them before first
+   paint, in the shell and in every app built with the workshopAppearance plugin.
    Imported by tokens.css, so every entry point picks it up automatically.
    ========================================================================== */
 

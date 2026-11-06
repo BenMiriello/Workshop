@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { resolvePaletteId, type PaletteId } from "./styles/palettes.gen";
+import { PALETTE_KEY, THEME_KEY as STORAGE_KEY } from "./appearanceScript";
 
 // Appearance has two independent axes, both attributes on <html>:
 //
 //   data-theme    light | dark | system     — mode
 //   data-palette  lagoon | iris | ...       — color scheme (eight, from palette.mjs)
 //
-// The pre-React bootstrap in index.html applies both from localStorage before
-// first paint; these hooks keep a React-visible copy and are the only things
-// that write them back. Both are VIEW PREFERENCES: they commit on change.
+// The appearance script (appearanceScript.ts, put in every page's <head> by
+// the workshopAppearance Vite plugin) applies both from localStorage before
+// first paint, in the shell and in each framed app; these hooks keep a
+// React-visible copy and are the only things that write them back. Both are
+// VIEW PREFERENCES: they commit on change.
 export type ThemeMode = "light" | "dark" | "system";
 export type { PaletteId };
-
-const STORAGE_KEY = "ws-theme";
-const PALETTE_KEY = "ws-palette";
 
 export function getStoredTheme(): ThemeMode {
   try {
@@ -22,7 +22,7 @@ export function getStoredTheme(): ThemeMode {
   } catch {
     /* private mode / disabled storage — fall through */
   }
-  return "dark"; // dark by default; matches the index.html bootstrap fallback
+  return "dark"; // dark by default; matches the appearance script's fallback
 }
 
 export function applyTheme(mode: ThemeMode): void {

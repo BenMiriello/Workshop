@@ -52,6 +52,7 @@ export default defineConfig({
         Markdown: resolve(HERE, "src/Markdown.tsx"),
         Editor: resolve(HERE, "src/Editor.tsx"),
         tokens: resolve(HERE, "src/styles/tokens.js"),
+        vite: resolve(HERE, "src/vite.ts"),
       },
       formats: ["es"],
     },

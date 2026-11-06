@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import fs from "node:fs";
 import path from "node:path";
 import { importmapPlugin, sharedInputs } from "./plugins/importmap";
+import { workshopAppearance } from "../packages/ui/src/vite";
 
 // iOS Safari refuses navigator.geolocation with "Origin does not have permission
 // to use Geolocation service" unless the document/origin has been granted the
@@ -208,6 +209,9 @@ export default defineConfig({
     // elsewhere resolve `react` (and the rest of SHARED) to the instances THIS
     // bundle already carries. See plugins/importmap.ts.
     importmapPlugin(),
+    // The same appearance script every app built on the kit carries, so the
+    // shell and its framed apps paint and follow Settings identically.
+    workshopAppearance(),
   ],
   build: {
     rollupOptions: {

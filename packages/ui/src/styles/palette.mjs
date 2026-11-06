@@ -266,7 +266,7 @@ export const MODES = /** @type {const} */ (["light", "dark"]);
 
 /* Ids that existed before the agency model, mapped to their nearest scheme, so
    a stored preference survives the change instead of silently snapping to the
-   default. Duplicated in the index.html bootstrap, which runs before modules. */
+   default. The appearance script carries them too, through palettes.gen.ts. */
 export const LEGACY_PALETTES = {
   violet: "iris",
   plum: "iris",

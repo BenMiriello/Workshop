@@ -107,7 +107,8 @@ function cssBlock(selector, paletteId, mode) {
    became eight schemes and a tab still holding `data-palette="violet"` picked
    up the new CSS over HMR. A color layer must never be able to leave the app
    unpainted; an unknown scheme falls back to the default's colors, and the
-   bootstrap in index.html rewrites the attribute on the next load.
+   appearance script (appearanceScript.ts) rewrites the attribute on the next
+   load.
 
    Per-scheme blocks come AFTER the base and carry equal specificity, so they
    win by source order for the document that actually names them.
@@ -156,7 +157,8 @@ function buildCss() {
    Edit palette.mjs, then run \`npm run gen:tokens\` from packages/ui/.
 
    ${SCHEMES.length} palettes x { light, dark }. \`data-palette\` and \`data-theme\` both live on
-   <html>; the pre-React bootstrap in index.html sets them before first paint.
+   <html>; the appearance script (appearanceScript.ts) sets them before first
+   paint, in the shell and in every app built with the workshopAppearance plugin.
    Imported by tokens.css, so every entry point picks it up automatically.
    ========================================================================== */
 

@@ -10,8 +10,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="color-scheme" content="dark light" />
     <!-- Dark by default: paint the dark page bg immediately (before fonts/CSS
-         load) so first paint is never a white flash. The bootstrap script below
-         may switch to light/system per the persisted choice. -->
+         load) so first paint is never a white flash. The appearance script the
+         workshopAppearance plugin puts at the top of <head> may switch to
+         light/system per the persisted choice. -->
     <style>
       html { background: #100d11; }
     </style>
@@ -27,34 +28,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <!-- Pre-React appearance bootstrap. Applies both axes to <html> before any
-         paint so there's no light/dark or wrong-scheme flash.
-           localStorage["ws-theme"]   = "light" | "dark" | "system"  (default dark)
-           localStorage["ws-palette"] = one of the eight ids in palettes.gen.ts
-                                        (default iris)
-         Settings is the only writer of either; see packages/ui/src/theme.ts. The
-         scheme list is duplicated here because this runs before any module
-         loads — keep it in step with PALETTE_IDS and LEGACY_PALETTES if a
-         scheme is ever added or renamed. -->
-    <script>
-      (function () {
-        var PALETTES = ["lagoon", "iris", "cobalt", "fern", "clay", "slate", "linen", "graphite"];
-        // Ids from before the agency color model, mapped to their nearest
-        // surviving scheme so a saved preference moves across instead of
-        // silently snapping to the default. (cobalt kept its id and its hue.)
-        var LEGACY = { violet: "iris", plum: "iris", teal: "lagoon", sandstone: "linen" };
-        var root = document.documentElement;
-        try {
-          root.setAttribute("data-theme", localStorage.getItem("ws-theme") || "dark");
-          var p = localStorage.getItem("ws-palette");
-          if (PALETTES.indexOf(p) < 0) p = LEGACY[p] || "iris";
-          root.setAttribute("data-palette", p);
-        } catch (e) {
-          root.setAttribute("data-theme", "dark");
-          root.setAttribute("data-palette", "iris");
-        }
-      })();
-    </script>
     <!-- BLOCKING service-worker killer. Runs before any module loads so a
          stale cached SW from an earlier deploy can't intercept fetches.
          Triggers a single reload after cleanup so the page is served from

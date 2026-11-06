@@ -12,6 +12,19 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.8.2 - 2026-11-05 - Apps show the chosen theme and color scheme
+
+**Added.** `@workshop/ui/vite` exports `workshopAppearance()`, a Vite plugin
+that puts the appearance script at the top of a page's `<head>`. The script
+applies the stored theme and color scheme (`ws-theme`, `ws-palette`) to
+`<html>` before the first paint, and again whenever another page on the same
+origin changes them, so an app framed by the shell follows Settings while it is
+open. Until now only the shell read them, and every framed app hardcoded
+`data-theme="dark"` in the default scheme. To adopt it, add the plugin to the
+app's `vite.config` and drop the hardcoded `data-theme` from its `index.html`.
+The shell uses the same plugin in place of its inline bootstrap, so the scheme
+ids are no longer listed by hand anywhere. No change to the React API.
+
 ## 0.8.1 - 2026-11-05 - A menu under a sticky bar stays inside the scroller on iOS
 
 **Fixed.** A `Menu` or `Popover` whose trigger sits in a `position: sticky`
