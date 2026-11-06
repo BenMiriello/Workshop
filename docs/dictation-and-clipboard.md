@@ -581,13 +581,21 @@ clipboard manager:
 
 ### Where a Workshop copy goes
 
-Settings > Copy and paste, per device (`lib/copyPrefs.ts`), in every browser
-and both native apps:
+Two choices, kept on the server per user (`services/copy_prefs.py`,
+`GET/PUT /copies/prefs`) so every device follows them, and re-read whenever a
+device brings the Workshop back into view (`lib/copyPrefs.ts`):
 
 - **Save copies from**: Nowhere (nothing is reported to apps), The Workshop,
-  or, where the native app can watch, anything copied on the device.
+  or, where the native app can watch, anything copied on the device (that
+  part is the device's own setting).
 - **Workshop copies**: go to the system clipboard too (default), or stay in the
   Workshop.
+
+The platform shows no control for them. An app offers them in its own
+settings by message (`copyPrefsBridge.ts`): `workshop/v1/copyPrefs` asks,
+`workshop/v1/setCopyPrefs {from?, destination?}` changes, and the shell answers
+both with `workshop/v1/copyPrefs {from, destination, canWatch, ok}`. The
+clipboard app's Settings carry them, in the page and in its overlay.
 
 Staying in the Workshop holds every copy made in it, on the shell and every
 same-origin app frame (`CopyRelay.tsx`): a keyboard or menu copy is cancelled
