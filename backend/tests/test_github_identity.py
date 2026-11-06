@@ -336,8 +336,16 @@ def test_helper_installed_is_false_when_only_one_host_is_wired(monkeypatch):
 
 # ---- the device grant --------------------------------------------------------
 
-def test_the_device_flow_says_what_is_missing_rather_than_failing_opaquely(monkeypatch):
+def test_the_product_application_is_the_default(monkeypatch):
     monkeypatch.delenv(github_identity.CLIENT_ID_ENV, raising=False)
+    monkeypatch.delenv(github_identity.APP_SLUG_ENV, raising=False)
+    assert github_identity.client_id() == github_identity.PRODUCT_CLIENT_ID
+    assert github_identity.install_url() == (
+        f"https://github.com/apps/{github_identity.PRODUCT_APP_SLUG}/installations/new")
+
+
+def test_the_device_flow_says_what_is_missing_rather_than_failing_opaquely(monkeypatch):
+    monkeypatch.setenv(github_identity.CLIENT_ID_ENV, "")
     with pytest.raises(github_identity.GithubAuthError) as e:
         github_identity.start_device(OWNER)
     assert "no GitHub application" in str(e.value)
@@ -359,6 +367,7 @@ def test_a_completed_device_sign_in_stores_the_token(monkeypatch):
                         lambda url, data: {"access_token": "from-device"})
     monkeypatch.setattr(github_identity, "verify", lambda t: _ok())
     monkeypatch.setattr(github_identity, "helper_installed", lambda: False)
+    _installations(monkeypatch, [{"account": {"login": "octo"}, "repository_selection": "all"}])
 
     out = github_identity.poll_device("dev-code", OWNER)
 
@@ -401,10 +410,76 @@ def test_status_is_safe_to_render(monkeypatch):
     out = github_identity.status(OWNER)
 
     assert set(out) == {"connected", "login", "source", "scopes", "connected_at",
-                        "device_available", "helper_installed", "helper_path",
-                        "defaults"}
+                        "device_available", "install_url", "installation",
+                        "helper_installed", "helper_path", "defaults"}
     assert out["helper_installed"] is True
+    assert out["installation"] is None
     assert "tok" not in repr(out)
+
+
+# ---- where the application is installed ---------------------------------------
+
+class _Resp:
+    def __init__(self, code, body):
+        self.status_code = code
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+def _installations(monkeypatch, rows, code=200):
+    seen = []
+
+    def fake_get(url, headers=None, timeout=None):
+        seen.append((url, headers))
+        return _Resp(code, {"installations": rows})
+
+    monkeypatch.setattr(github_identity.httpx, "get", fake_get)
+    return seen
+
+
+def _signed_in(login="octo"):
+    github_identity._save(OWNER, {"token": "from-device", "source": "device", "login": login})
+
+
+def test_installed_on_the_accounts_own_login(monkeypatch):
+    _signed_in()
+    seen = _installations(monkeypatch, [
+        {"account": {"login": "Octo"}, "repository_selection": "all"}])
+
+    out = github_identity.installation_state(OWNER)
+
+    assert out == {"state": "installed", "repository_selection": "all", "blocked": []}
+    assert seen[0][0].endswith("/user/installations")
+    assert "from-device" not in repr(out)
+
+
+def test_missing_until_it_is_installed(monkeypatch):
+    _signed_in()
+    _installations(monkeypatch, [])
+
+    assert github_identity.installation_state(OWNER)["state"] == "missing"
+
+
+def test_an_installation_on_a_blocked_account_is_named(monkeypatch):
+    monkeypatch.setenv("WORKSHOP_BLOCKED_REPO_OWNERS", "offlimits")
+    _signed_in()
+    _installations(monkeypatch, [
+        {"account": {"login": "octo"}, "repository_selection": "selected"},
+        {"account": {"login": "offlimits-org"}, "repository_selection": "all"}])
+
+    out = github_identity.installation_state(OWNER)
+
+    assert out["state"] == "installed"
+    assert out["blocked"] == ["offlimits-org"]
+
+
+def test_github_unreachable_reads_as_unknown(monkeypatch):
+    _signed_in()
+    _installations(monkeypatch, [], code=502)
+
+    assert github_identity.installation_state(OWNER)["state"] == "unknown"
 
 
 # ---- the global defaults ----------------------------------------------------

@@ -10325,6 +10325,12 @@ export interface components {
              */
             helper_path: string;
             /**
+             * Install Url
+             * @default
+             */
+            install_url: string;
+            installation?: components["schemas"]["InstallationOut"] | null;
+            /**
              * Login
              * @default
              */
@@ -11302,6 +11308,18 @@ export interface components {
         InstallIn: {
             /** Target Slug */
             target_slug?: string | null;
+        };
+        /**
+         * InstallationOut
+         * @description Where the GitHub App is installed, for a signed-in account.
+         */
+        InstallationOut: {
+            /** Blocked */
+            blocked: string[];
+            /** Repository Selection */
+            repository_selection: string;
+            /** State */
+            state: string;
         };
         /**
          * InstalledProject
@@ -15125,6 +15143,9 @@ export interface components {
             helper_installed: boolean;
             /** Helper Path */
             helper_path: string;
+            /** Install Url */
+            install_url: string;
+            installation?: components["schemas"]["InstallationOut"] | null;
             /** Login */
             login: string;
             /** Scopes */

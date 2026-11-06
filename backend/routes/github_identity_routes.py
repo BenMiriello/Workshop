@@ -27,6 +27,13 @@ class DefaultsOut(BaseModel):
     default_branch_name: str
 
 
+class InstallationOut(BaseModel):
+    """Where the GitHub App is installed, for a signed-in account."""
+    state: str
+    repository_selection: str
+    blocked: list[str]
+
+
 class StatusOut(BaseModel):
     """What a settings surface may know about the connection. No secret."""
     connected: bool
@@ -35,6 +42,8 @@ class StatusOut(BaseModel):
     scopes: list[str]
     connected_at: str | None = None
     device_available: bool
+    install_url: str
+    installation: InstallationOut | None = None
     helper_installed: bool
     helper_path: str
     defaults: DefaultsOut
@@ -66,6 +75,8 @@ class DevicePollOut(BaseModel):
     scopes: list[str] = []
     connected_at: str | None = None
     device_available: bool = False
+    install_url: str = ""
+    installation: InstallationOut | None = None
     helper_installed: bool = False
     helper_path: str = ""
     defaults: DefaultsOut | None = None

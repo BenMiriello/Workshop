@@ -21,6 +21,7 @@ import {
   shortHttpError,
 } from "@workshop/ui";
 import type { components } from "../../api/schema.gen";
+import { Installation } from "./GitHubInstallation";
 
 // Settings -> Apps: the GitHub account this installation pushes and opens pull
 // requests as.
@@ -38,8 +39,9 @@ import type { components } from "../../api/schema.gen";
 //
 // CONNECT IS ONE BUTTON. It starts GitHub's device sign-in against the
 // product's own application: this card shows a short code, the operator
-// approves it on github.com, and the card finishes by itself. Nobody registers
-// an application or pastes a token.
+// approves it on github.com, and the card finishes by itself. Then the app is
+// installed on the account (GitHubInstallation.tsx), which is what gives the
+// sign-in its reach. Nobody registers an application or pastes a token.
 //
 // THE TOKEN NEVER REACHES THIS PAGE. Every field rendered here is a login, a
 // scope name, a timestamp or a boolean.
@@ -245,6 +247,15 @@ export default function GitHubAccount() {
                   <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                     Scopes: {data.scopes.join(", ")}.
                   </span>
+                )}
+
+                {data.installation && (
+                  <Installation
+                    installation={data.installation}
+                    installUrl={data.install_url}
+                    checking={busy === "check"}
+                    onCheck={async () => { setBusy("check"); await load(); setBusy(null); }}
+                  />
                 )}
 
                 {/* A view-shaped switch over a reversible action, so it commits

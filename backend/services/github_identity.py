@@ -43,13 +43,17 @@ store: a credential carrying an organisation scope is rejected at the point of
 entry, with a message naming what to generate instead. The boundary is then in
 the credential as well as in the code, which is what the ticket asked for.
 
-HOW AN ACCOUNT GETS CONNECTED. The product has ONE GitHub application of its
-own, and its public client id is all an installation needs (`client_id()`).
+HOW AN ACCOUNT GETS CONNECTED. The product has ONE GitHub App of its own, and
+its public client id is all an installation needs (`client_id()`).
 Connecting is GitHub's device sign-in: `start_device()` asks for a short code,
 the operator approves it on github.com, and `poll_device()` stores the token
 through `connect_token`, so the org-scope refusal and the blocked-account
 refusal apply to it. There is no client secret and no redirect back to this
-installation, so it works on a box with no public address. An installation
+installation, so it works on a box with no public address. The sign-in alone
+reaches no repository: a GitHub App's user token reaches only the accounts the
+app is installed on, so the second step is installing it on the account
+(`install_url()`, checked by `installation_state()`). That is what keeps the
+[SEC-G1] boundary in the credential for a signed-in account. An installation
 never registers an application of its own: that made every operator fill in a
 developer form, which is not how connecting an account works anywhere else.
 
@@ -77,9 +81,13 @@ from services import installation
 API_BASE = "https://api.github.com"
 DEVICE_CODE_URL = "https://github.com/login/device/code"
 ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token"
-# The product application's public client id. Not a secret: a device sign-in
-# needs nothing else from it.
+# The product's GitHub App. Its client id is public, not a secret: a device
+# sign-in needs nothing else from it. Both can be overridden for a fork that
+# ships an application of its own.
 CLIENT_ID_ENV = "WORKSHOP_GITHUB_CLIENT_ID"
+APP_SLUG_ENV = "WORKSHOP_GITHUB_APP_SLUG"
+PRODUCT_CLIENT_ID = "Iv23liZJni690dxOxhtg"
+PRODUCT_APP_SLUG = "bgm-workshop"
 
 # The store's keys. `token` is write-only from the outside.
 _TOKEN = "token"
@@ -165,8 +173,18 @@ def token(owner_id: int | None = None) -> str | None:
 
 
 def client_id(owner_id: int | None = None) -> str | None:
-    """The product application's client id, or None when none is configured."""
-    return (os.environ.get(CLIENT_ID_ENV) or "").strip() or None
+    """The GitHub App's client id: the environment's, else the product's own.
+    Set the variable to an empty string to turn sign-in off."""
+    raw = os.environ.get(CLIENT_ID_ENV)
+    return (PRODUCT_CLIENT_ID if raw is None else raw).strip() or None
+
+
+def install_url() -> str:
+    """Where an account installs the GitHub App, which is what gives a sign-in
+    its reach: a GitHub App's user token reaches only the repositories of the
+    accounts the app is installed on."""
+    slug = (os.environ.get(APP_SLUG_ENV) or "").strip() or PRODUCT_APP_SLUG
+    return f"https://github.com/apps/{slug}/installations/new"
 
 
 def connected(owner_id: int | None = None) -> bool:
@@ -288,6 +306,60 @@ def verify(tok: str) -> dict:
         login = ""
     return {"ok": True, "login": login, "scopes": _scopes_from(r.headers),
             "detail": f"Signed in as {login}." if login else "Signed in."}
+
+
+def installation_state(owner_id: int | None = None) -> dict | None:
+    """Where the GitHub App is installed, as far as the signed-in account sees.
+
+    `{state, repository_selection, blocked}`. `state` is `installed` when the
+    app is on the account's own login, `missing` when it is not, `unknown` when
+    GitHub could not be asked. `blocked` names any installation on an account
+    this installation must not reach ([SEC-G1]): the token reaches it, so the
+    screen has to say so. None when the credential is not a sign-in, since a
+    pasted token's reach is its own and has no installation.
+
+    `GET /user/installations` lists only THIS app's installations, so it says
+    nothing about an organization the app was never installed on.
+    """
+    oid = _owner_id(owner_id)
+    rec = _load(oid) or {}
+    tok = rec.get(_TOKEN) or ""
+    if not tok or rec.get(_SOURCE) != "device":
+        return None
+    unknown = {"state": "unknown", "repository_selection": "", "blocked": []}
+    try:
+        r = httpx.get(
+            f"{API_BASE}/user/installations",
+            headers={
+                "Authorization": f"Bearer {tok}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=10.0,
+        )
+        rows = None
+        if r.status_code == 200:
+            rows = (r.json() or {}).get("installations") or []
+    except (httpx.HTTPError, ValueError, AttributeError):
+        rows = None
+    if not isinstance(rows, list):
+        return unknown
+    login = (rec.get(_LOGIN) or "").lower()
+    mine = None
+    blocked: list[str] = []
+    for row in rows:
+        account = str(((row or {}).get("account") or {}).get("login") or "")
+        if account.lower() == login:
+            mine = row
+        try:
+            installation.reject_blocked(account)
+        except ValueError:
+            blocked.append(account)
+    return {
+        "state": "installed" if mine else "missing",
+        "repository_selection": str((mine or {}).get("repository_selection") or ""),
+        "blocked": blocked,
+    }
 
 
 def _reject_unusable(login: str, scopes: list[str]) -> None:
@@ -576,6 +648,8 @@ def status(owner_id: int | None = None) -> dict:
         "scopes": scopes,
         "connected_at": rec.get(_CONNECTED_AT) or None,
         "device_available": bool(client_id(oid)),
+        "install_url": install_url(),
+        "installation": installation_state(oid),
         "helper_installed": helper_installed(),
         "helper_path": str(helper_path()),
         "defaults": defaults(oid),
