@@ -474,7 +474,8 @@ app.include_router(memory_routes.router, dependencies=_OPERATOR)         # seman
 app.include_router(storage_routes.router, dependencies=_OPERATOR)  # usage by app and kind, retention settings (/storage)
 app.include_router(agents.router, prefix="/agents", tags=["agents"], dependencies=_OPERATOR)
 app.include_router(projects.router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)
-app.include_router(project_repo_routes.router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)
+app.include_router(project_repo_routes.project_router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)
+app.include_router(project_repo_routes.app_router, prefix="/installed-apps", tags=["apps"], dependencies=_OPERATOR)
 # ONE PREFIX FOR ONE CONCEPT (MEM-15). This was `/knowledge`, alongside
 # `/notes` and `/memory` for the same store, while the page is called Memory and
 # the thing is called a note. Everything scope-addressed sits under

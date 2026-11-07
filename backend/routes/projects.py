@@ -682,45 +682,17 @@ def _github_connected() -> bool:
 
 
 def _record_repo(raw: dict, info: dict, created_by: str) -> None:
-    """Write the repo binding onto a registry row. A repository Workshop made is
-    managed (pushed after each turn) by default; a linked one is not. See
-    services/project_repo.py."""
-    raw["repo"] = {**_repo_field(info), "created_by": created_by,
-                   "managed": created_by == "workshop"}
+    """Write the repo binding onto a registry row (services/project_repo.py)."""
+    raw["repo"] = project_repo.repo_record(info, created_by)
     raw.pop("repo_error", None)
 
 
 def _provision_repo(slug: str, *, scratch: bool) -> dict:
-    """Create the app's GitHub repository and record it, or record why not.
-
-    Never raises for a GitHub failure: the app exists either way, so the reason
-    is kept on the row (`repo_error`) and the app page offers to try again.
-    A folder that already has an `origin` (a create that made the repo on
-    GitHub and then failed to push) is bound rather than created twice.
-    """
-    data = _load_registry()
-    raw = data["projects"][slug]
-    target = Path(raw["dir"])
-    try:
-        existing = subprocess.run(["git", "-C", str(target), "remote", "get-url", "origin"],
-                                  capture_output=True, text=True, timeout=15)
-        if existing.returncode == 0 and existing.stdout.strip():
-            info = github.bind_repo(str(target), existing.stdout.strip())
-            subprocess.run(["git", "-C", str(target), "push", "-q", "-u", "origin", "HEAD"],
-                           env=git_service.git_env(), capture_output=True, timeout=180)
-        else:
-            github.reject_blocked(slug, raw.get("title") or "")
-            name = github.unique_repo_name(github.repo_base_name(slug, scratch))
-            info = github.create_repo(str(target), name, _github_defaults()["default_visibility"])
-        _record_repo(raw, info, "workshop")
-        _assert_project_ignored(slug)
-    except (*_GITHUB_ERRORS, HTTPException) as e:
-        detail = e.detail if isinstance(e, HTTPException) else _github_http_error(e).detail
-        raw["repo_error"] = str(detail)
-    raw["last_touched"] = _now()
-    data["projects"][slug] = raw
-    _save_registry(data)
-    return raw
+    """Create the app's GitHub repository, or record why not on its row, and
+    return the row. Never raises for a GitHub failure: the app exists either
+    way and the app page offers to try again."""
+    project_repo.provision(project_repo.target("project", slug), scratch=scratch)
+    return _load_registry()["projects"][slug]
 
 
 def _github_http_error(e: Exception) -> HTTPException:

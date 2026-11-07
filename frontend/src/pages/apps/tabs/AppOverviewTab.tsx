@@ -39,11 +39,16 @@ function OverviewBody({ app }: { app: AppRecord }) {
   // reads /api/projects/<slug>/..., so without a linked tree each would render
   // its own error and the page would be four error regions stacked.
   if (!slug) {
+    // An installed app that is its own repository still has one to show; the
+    // panel falls back to the region when it is not.
     return (
-      // The title carries the fact, and nothing under it explains what a
-      // working tree would get you. That sentence was the mechanism explained
-      // in prose, which is what check_explainer_text.py keeps off the screen.
-      <StateBlock title="No linked working tree" />
+      <RepositoryPanel
+        base={`/api/installed-apps/${encodeURIComponent(app.slug)}`}
+        // The title carries the fact, and nothing under it explains what a
+        // working tree would get you. That sentence was the mechanism explained
+        // in prose, which is what check_explainer_text.py keeps off the screen.
+        unavailable={<StateBlock title="No linked working tree" />}
+      />
     );
   }
 
@@ -64,7 +69,7 @@ function OverviewBody({ app }: { app: AppRecord }) {
           connect-github` had been live with no caller since ProjectDetail was
           deleted; this is the surface that half of the ticket asked for. The
           brief still has no home here, which is the ticket's other half. */}
-      <RepositoryPanel slug={slug} />
+      <RepositoryPanel base={`/api/projects/${encodeURIComponent(slug)}`} />
       {/* The autonomy brake. It used to sit in two places (here and the top of
           the Deploys page); the Deploys page is gone, so this is the one. */}
       <AutonomyPanel slug={slug} />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ExternalLink, GitBranch, Link as LinkIcon, Plus, Upload } from "lucide-react";
 import {
   Button,
@@ -31,6 +31,11 @@ import type { components } from "../api/schema.gen";
 // fused them ends up telling people to delete their remote by hand:
 // app-separation-and-github-2026-08-20.md section 3.5. The segmented control
 // says which one is about to happen before it happens.
+//
+// TWO KINDS OF APP. `base` is the app's route: `/api/projects/<slug>` for an app
+// with a working tree, `/api/installed-apps/<slug>` for an installed app. An
+// installed app whose folder is not its own repository has nothing to show, so
+// the panel renders `unavailable` instead.
 
 type Repo = components["schemas"]["RepoOut"];
 type Mode = "create" | "bind";
@@ -40,19 +45,28 @@ function detailOf(body: unknown, fallback: string): string {
   return typeof d === "string" ? d : fallback;
 }
 
+function commits(n: number): string {
+  return n === 1 ? "1 commit" : `${n} commits`;
+}
+
 function standing(repo: Repo): { status: StatusKind; text: string } {
-  if (repo.push?.state === "diverged" || repo.behind > 0) {
-    return { status: "warn", text: "GitHub has changes this app doesn't have" };
+  if (repo.behind > 0 && repo.ahead > 0) {
+    return { status: "warn", text: `${commits(repo.ahead)} ahead, ${commits(repo.behind)} behind` };
   }
+  if (repo.behind > 0) return { status: "warn", text: `${commits(repo.behind)} behind` };
+  if (repo.push?.state === "diverged") return { status: "warn", text: "Behind GitHub" };
   if (repo.push?.state === "failed") return { status: "danger", text: "Push failed" };
-  if (repo.ahead > 0) {
-    return { status: "stopped", text: repo.ahead === 1 ? "1 change not on GitHub" : `${repo.ahead} changes not on GitHub` };
-  }
+  if (repo.ahead > 0) return { status: "stopped", text: `${commits(repo.ahead)} to push` };
   return { status: "ok", text: "Up to date" };
 }
 
-export default function RepositoryPanel({ slug }: { slug: string }) {
-  const base = `/api/projects/${encodeURIComponent(slug)}`;
+export default function RepositoryPanel({ base, unavailable = null }: {
+  base: string;
+  unavailable?: ReactNode;
+}) {
+  // A project app creates and links through its own connect route; an
+  // installed app through the repo route.
+  const connectPath = base.startsWith("/api/projects/") ? "/connect-github" : "/repo/connect";
   const [repo, setRepo] = useState<Repo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -93,15 +107,15 @@ export default function RepositoryPanel({ slug }: { slug: string }) {
   }, [base]);
 
   const connect = useCallback(async () => {
-    const out = await send("connect", "/connect-github", "POST",
+    const out = await send("connect", connectPath, "POST",
       mode === "create" ? { mode: "create" } : { mode: "bind", remote_url: remoteUrl.trim() });
     if (out) { setRemoteUrl(""); await load(); }
-  }, [send, load, mode, remoteUrl]);
+  }, [send, load, connectPath, mode, remoteUrl]);
 
   const retryCreate = useCallback(async () => {
     setMode("create");
-    if (await send("connect", "/connect-github", "POST", { mode: "create" })) await load();
-  }, [send, load]);
+    if (await send("connect", connectPath, "POST", { mode: "create" })) await load();
+  }, [send, load, connectPath]);
 
   const setManaged = useCallback(async (managed: boolean) => {
     const out = await send("managed", "/repo/managed", "PUT", { managed });
@@ -117,6 +131,8 @@ export default function RepositoryPanel({ slug }: { slug: string }) {
   const blocker = mode === "bind" && !remoteUrl.trim()
     ? "A remote URL is required to link an existing repository."
     : null;
+
+  if (repo && !repo.available) return <>{unavailable}</>;
 
   return (
     <Section label="Repository" icon={<GitBranch aria-hidden />}>

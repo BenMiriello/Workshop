@@ -47,7 +47,12 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setattr(apps_svc, "reconcile_from_registries", lambda: {"ok": False, "reason": "stubbed"})
     monkeypatch.setattr(project_repo, "_connected_login", lambda: "octo")
     monkeypatch.setattr(project_repo, "_status_path", lambda: tmp_path / "repo-push.json")
+    monkeypatch.setattr(project_repo, "_apps_store_path", lambda: tmp_path / "app-repos.json")
     return d, bare, registry
+
+
+def _t():
+    return project_repo.target("project", "widgets")
 
 
 def _row(registry):
@@ -56,7 +61,7 @@ def _row(registry):
 
 def test_an_older_apps_repository_on_the_connected_account_is_adopted_as_managed(app):
     d, _, registry = app
-    out = project_repo.describe("widgets", fetch=False)
+    out = project_repo.describe(_t(), fetch=False)
     assert out["connected"] and out["managed"] and out["created_by"] == "workshop"
     assert (out["owner"], out["name"]) == ("octo", "widgets")
     assert _row(registry)["repo"]["managed"] is True
@@ -64,7 +69,7 @@ def test_an_older_apps_repository_on_the_connected_account_is_adopted_as_managed
 
 def test_a_repository_on_another_account_is_adopted_as_linked(app, monkeypatch):
     monkeypatch.setattr(project_repo, "_connected_login", lambda: "someone-else")
-    out = project_repo.describe("widgets", fetch=False)
+    out = project_repo.describe(_t(), fetch=False)
     assert out["connected"] and not out["managed"] and out["created_by"] == "link"
 
 
@@ -73,15 +78,15 @@ def test_push_sends_new_commits_and_reports_ok(app):
     (d / "b.txt").write_text("b\n")
     _git(d, "add", ".")
     _git(d, "commit", "-q", "-m", "two")
-    assert project_repo.describe("widgets", fetch=False)["ahead"] == 1
+    assert project_repo.describe(_t(), fetch=False)["ahead"] == 1
 
-    entry = project_repo.push("widgets")
+    entry = project_repo.push(_t())
 
     assert entry["state"] == "ok"
     remote_head = subprocess.run(["git", "-C", str(bare), "rev-parse", "main"],
                                  capture_output=True, text=True).stdout.strip()
     assert remote_head == entry["sha"]
-    assert project_repo.describe("widgets", fetch=False)["push"]["state"] == "ok"
+    assert project_repo.describe(_t(), fetch=False)["push"]["state"] == "ok"
 
 
 def test_a_remote_with_commits_this_app_lacks_is_diverged_and_never_forced(app, tmp_path):
@@ -97,7 +102,7 @@ def test_a_remote_with_commits_this_app_lacks_is_diverged_and_never_forced(app, 
     _git(d, "add", ".")
     _git(d, "commit", "-q", "-m", "mine")
 
-    entry = project_repo.push("widgets")
+    entry = project_repo.push(_t())
 
     assert entry["state"] == "diverged"
     assert subprocess.run(["git", "-C", str(bare), "rev-parse", "main"],
@@ -105,18 +110,48 @@ def test_a_remote_with_commits_this_app_lacks_is_diverged_and_never_forced(app, 
 
 
 def test_turning_management_off_is_kept(app):
-    project_repo.describe("widgets", fetch=False)
-    out = project_repo.set_managed("widgets", False)
+    project_repo.describe(_t(), fetch=False)
+    out = project_repo.set_managed(_t(), False)
     assert out["managed"] is False
-    assert project_repo.describe("widgets", fetch=False)["managed"] is False
+    assert project_repo.describe(_t(), fetch=False)["managed"] is False
 
 
 def test_the_app_is_found_from_a_chat_worktree(app, tmp_path):
     d, _, _ = app
     wt = tmp_path / "wt"
     _git(d, "worktree", "add", "-q", "-b", "chat-x", str(wt))
-    assert project_repo._slug_for(str(wt)) == "widgets"
-    assert project_repo._slug_for(str(d)) == "widgets"
+    assert project_repo.target_for(str(wt)).slug == "widgets"
+    assert project_repo.target_for(str(d)).key == "project:widgets"
+
+
+def test_an_installed_app_keeps_its_record_outside_the_projects_registry(app, tmp_path, monkeypatch):
+    d, bare, registry = app
+    from services import app_ui
+    monkeypatch.setattr(app_ui, "app_dir", lambda slug: d)
+
+    t = project_repo.target("app", "widgets")
+    out = project_repo.describe(t, fetch=False)
+
+    assert out["available"] and out["connected"] and out["managed"]
+    assert "repo" not in _row(registry)
+    assert json.loads((tmp_path / "app-repos.json").read_text())["widgets"]["repo"]["name"] == "widgets"
+    (d / "c.txt").write_text("c\n")
+    _git(d, "add", ".")
+    _git(d, "commit", "-q", "-m", "three")
+    assert project_repo.push(t)["state"] == "ok"
+
+
+def test_an_app_folder_inside_another_repository_offers_nothing(app, tmp_path, monkeypatch):
+    d, _, _ = app
+    inner = d / "inner-app"
+    inner.mkdir()
+    from services import app_ui
+    monkeypatch.setattr(app_ui, "app_dir", lambda slug: inner)
+
+    t = project_repo.target("app", "inner-app")
+
+    assert project_repo.describe(t, fetch=False) == {"available": False, "connected": False, "error": ""}
+    assert "not its own repository" in project_repo.provision(t, scratch=True)
 
 
 # ---- creating an app ----------------------------------------------------------
