@@ -4,10 +4,12 @@ Thin, testable wrappers over `gh` and `git` for the connect/publish/merge flow.
 No FastAPI here so the pure logic (naming, uniqueness, owner policy) can be
 unit-tested without a server.
 
-Hard policy baked into the code, not left as a flippable default:
-  - Platform-created repos are ALWAYS `--private`. There is no public path.
-  - Every repo belongs to ONE configured account. A remote owned by anyone else
-    is refused rather than silently accepted.
+Policy:
+  - Platform-created repos are private unless the operator's own default
+    (Settings, GitHub, Visibility) says public. Nothing else picks public.
+  - Every repo belongs to ONE account: the installation's declared owner, else
+    the connected GitHub account. A remote owned by anyone else is refused
+    rather than silently accepted when binding.
 
 WHICH account, and which accounts are off limits, are properties of the
 INSTALLATION rather than of the platform. An operator whose work org must never
@@ -47,13 +49,33 @@ import subprocess
 # this module is the thing doing the refusing, it is just not the thing that
 # decides. It used to be both, which is what made `github` and
 # `github_identity` import each other.
+from services import installation
 from services.installation import (  # noqa: F401  (re-export)
     BLOCKED_OWNERS_ENV,
     OWNER_ENV,
     blocked_owners,
-    owner,
     reject_blocked,
 )
+
+VISIBILITIES = ("private", "public")
+
+
+def owner() -> str:
+    """The account repos are created under: the installation's declared owner
+    (`WORKSHOP_GITHUB_OWNER`), else the connected GitHub account's login."""
+    try:
+        return installation.owner()
+    except ValueError:
+        pass
+    try:
+        from services import github_identity
+
+        login = github_identity.status().get("login") or ""
+    except Exception:
+        login = ""
+    if not login:
+        raise ValueError("Connect GitHub in Settings, Connectors to create repositories.")
+    return login
 
 
 def repo_base_name(slug: str, scratch: bool) -> str:
@@ -146,21 +168,22 @@ def _default_branch(owner: str, name: str) -> str:
     return b or "main"
 
 
-def create_repo(dir: str, name: str) -> dict:
-    """Create a NEW private GitHub repo from an existing local repo and push it.
+def create_repo(dir: str, name: str, visibility: str = "private") -> dict:
+    """Create a NEW GitHub repo from an existing local repo and push it.
 
     OUTWARD-FACING: this mutates GitHub. Runs, in one call:
-      gh repo create <owner>/<name> --private --source=<dir> --remote=origin --push
+      gh repo create <owner>/<name> --<visibility> --source=<dir> --remote=origin --push
 
-    The `--private` flag is mandatory and unconditional; there is no code path
-    that creates a public repo. Returns {owner, name, remote_url, default_branch}.
+    Private unless `visibility` is exactly "public". Returns
+    {owner, name, remote_url, default_branch}.
     """
     reject_blocked(name, dir)
     _owner = owner()
     full = f"{_owner}/{name}"
+    flag = "--public" if visibility == "public" else "--private"
     try:
         _run(
-            ["gh", "repo", "create", full, "--private",
+            ["gh", "repo", "create", full, flag,
              "--source", dir, "--remote", "origin", "--push"],
             timeout=180,
         )

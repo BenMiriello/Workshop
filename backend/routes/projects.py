@@ -36,7 +36,7 @@ from services import scope_owner
 # not a cycle being deferred -- and a deferred import hides a cycle rather
 # than breaking one. The file had three local copies and 799a7866 added a
 # fourth, which is how this drifts one line at a time.
-from services import github
+from services import git_service, github, project_repo
 
 log = logging.getLogger("workshop.projects")
 
@@ -189,6 +189,10 @@ class ProjectRepo(BaseModel):
     remote_url: str | None = None
     default_branch: str | None = None
     connected_at: str | None = None
+    # Whether Workshop pushes the default branch after each turn, and whether
+    # Workshop made the repository or it was linked. See services/project_repo.py.
+    managed: bool | None = None
+    created_by: str | None = None
 
 
 class Project(BaseModel):
@@ -207,6 +211,8 @@ class Project(BaseModel):
     # Additive GitHub binding (Phase G1). Absent = a purely local project,
     # which is what all six live projects are. See ProjectRepo above.
     repo: ProjectRepo | None = None
+    # Why creating the app's repository failed, kept until a retry succeeds.
+    repo_error: str | None = None
     # Opt-in worktree-per-task concurrency (Phase G3). Default false keeps the
     # existing single-dir sweep behavior; the dispatcher consults this flag to
     # decide whether to allocate a per-task worktree. Absent reads as false.
@@ -414,7 +420,10 @@ def set_repo(slug: str, remote_url: str, default_branch: str | None = None) -> d
 
     github.reject_blocked(remote_url)
     info = github.bind_repo(str(proj_dir), remote_url)
-    raw["repo"] = _repo_field(info)
+    prev = raw.get("repo") or {}
+    _record_repo(raw, info, prev.get("created_by") or "link")
+    if "managed" in prev:
+        raw["repo"]["managed"] = prev["managed"]
     branch = (default_branch or "").strip()
     if branch:
         raw["repo"]["default_branch"] = branch
@@ -532,7 +541,7 @@ def _scaffold_from_template(target: Path, template: str, slug: str, title: str, 
         brief_path.write_text(existing + f"\n## Brief\n\n{brief.strip()}\n")
 
 
-def _git_init(target: Path) -> None:
+def _git_init(target: Path, branch: str = "main") -> None:
     env = {
         **os.environ,
         "GIT_AUTHOR_NAME": "Workshop Projects",
@@ -540,10 +549,10 @@ def _git_init(target: Path) -> None:
         "GIT_COMMITTER_NAME": "Workshop Projects",
         "GIT_COMMITTER_EMAIL": "projects@workshop.local",
     }
-    # -b main so the trunk is always `main` (git's default is often `master`,
-    # which leaves the branches UI — which looks for `main` — empty). Existing
-    # projects are NOT rewritten; this only affects fresh scaffolds.
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=target, env=env, check=True)
+    # `-b <branch>` so the trunk is the operator's default branch name rather
+    # than whatever git's own default is on this host. Existing projects are
+    # NOT rewritten; this only affects fresh scaffolds.
+    subprocess.run(["git", "init", "-q", "-b", branch], cwd=target, env=env, check=True)
     subprocess.run(["git", "add", "."], cwd=target, env=env, check=True)
     subprocess.run(
         ["git", "commit", "-q", "-m", f"Scaffold {target.name}"],
@@ -599,9 +608,10 @@ async def create_project(body: CreateProjectIn) -> Project:
     purpose = body.purpose.strip()
     brief = body.brief.strip()
 
+    gh_defaults = _github_defaults()
     _projects_root().mkdir(parents=True, exist_ok=True)
     _scaffold_from_template(target, body.template, slug, title, purpose, brief)
-    _git_init(target)
+    _git_init(target, gh_defaults["default_branch_name"])
 
     now = _now()
     record = {
@@ -635,30 +645,82 @@ async def create_project(body: CreateProjectIn) -> Project:
         "agents": [],
     }
 
-    # Provision a private GitHub repo unless this is a scratch/blank scaffold
-    # (default off there). Owner is the configured account; the repo is always
-    # private; a scratch project lands in the `workshop-` namespace.
-    scratch = _is_scratch_template(body.template)
-    want_repo = body.create_repo if body.create_repo is not None else (not scratch)
-    if want_repo:
-            # An install with no GitHub owner configured, or no `gh` login, used to
-        # take the whole scaffold down with a 500 AFTER the directory had been
-        # written. The local project is real either way, so a repo failure is
-        # reported as a failure to connect one — not as a failure to create the
-        # project the operator can already see on disk.
-        try:
-            github.reject_blocked(slug, title)
-            base = github.repo_base_name(slug, scratch)
-            name = github.unique_repo_name(base)
-            info = github.create_repo(str(target), name)
-        except _GITHUB_ERRORS as e:
-            raise _github_http_error(e)
-        record["repo"] = _repo_field(info)
-        _assert_project_ignored(slug)
-
+    # The app is saved BEFORE its repository is attempted. A GitHub failure used
+    # to raise after the folder was written and before this row was, which left
+    # a folder with no app that made every retry of the same name a 409.
     data.setdefault("projects", {})[slug] = record
     _save_registry(data)
+
+    # Whether to create a repository is the operator's own default (Settings,
+    # GitHub, "Create one for each new app"), and only once GitHub is connected.
+    # `create_repo` on the request overrides it either way.
+    want_repo = body.create_repo
+    if want_repo is None:
+        want_repo = gh_defaults["auto_create_repo"] and _github_connected()
+    if want_repo:
+        record = _provision_repo(slug, scratch=_is_scratch_template(body.template))
     return Project(slug=slug, **record)
+
+
+def _github_defaults() -> dict:
+    try:
+        from services import github_identity
+
+        return github_identity.defaults()
+    except Exception:
+        return {"auto_create_repo": False, "default_visibility": "private",
+                "default_branch_name": "main"}
+
+
+def _github_connected() -> bool:
+    try:
+        from services import github_identity
+
+        return github_identity.connected()
+    except Exception:
+        return False
+
+
+def _record_repo(raw: dict, info: dict, created_by: str) -> None:
+    """Write the repo binding onto a registry row. A repository Workshop made is
+    managed (pushed after each turn) by default; a linked one is not. See
+    services/project_repo.py."""
+    raw["repo"] = {**_repo_field(info), "created_by": created_by,
+                   "managed": created_by == "workshop"}
+    raw.pop("repo_error", None)
+
+
+def _provision_repo(slug: str, *, scratch: bool) -> dict:
+    """Create the app's GitHub repository and record it, or record why not.
+
+    Never raises for a GitHub failure: the app exists either way, so the reason
+    is kept on the row (`repo_error`) and the app page offers to try again.
+    A folder that already has an `origin` (a create that made the repo on
+    GitHub and then failed to push) is bound rather than created twice.
+    """
+    data = _load_registry()
+    raw = data["projects"][slug]
+    target = Path(raw["dir"])
+    try:
+        existing = subprocess.run(["git", "-C", str(target), "remote", "get-url", "origin"],
+                                  capture_output=True, text=True, timeout=15)
+        if existing.returncode == 0 and existing.stdout.strip():
+            info = github.bind_repo(str(target), existing.stdout.strip())
+            subprocess.run(["git", "-C", str(target), "push", "-q", "-u", "origin", "HEAD"],
+                           env=git_service.git_env(), capture_output=True, timeout=180)
+        else:
+            github.reject_blocked(slug, raw.get("title") or "")
+            name = github.unique_repo_name(github.repo_base_name(slug, scratch))
+            info = github.create_repo(str(target), name, _github_defaults()["default_visibility"])
+        _record_repo(raw, info, "workshop")
+        _assert_project_ignored(slug)
+    except (*_GITHUB_ERRORS, HTTPException) as e:
+        detail = e.detail if isinstance(e, HTTPException) else _github_http_error(e).detail
+        raw["repo_error"] = str(detail)
+    raw["last_touched"] = _now()
+    data["projects"][slug] = raw
+    _save_registry(data)
+    return raw
 
 
 def _github_http_error(e: Exception) -> HTTPException:
@@ -698,30 +760,29 @@ async def connect_github(slug: str, body: ConnectGithubIn) -> Project:
     if not proj_dir.exists():
         raise HTTPException(404, f"project directory missing: {proj_dir}")
 
-    try:
-        if body.mode == "create":
-            github.reject_blocked(slug, raw.get("title") or "")
-            # Unknown scratch-ness defaults to scratch: safer, keeps a clean
-            # `workshop-` namespace and never publishes a real repo by accident.
-            scratch = body.scratch if body.scratch is not None else True
-            base = github.repo_base_name(slug, scratch)
-            name = github.unique_repo_name(base)
-            info = github.create_repo(str(proj_dir), name)
-        elif body.mode == "bind":
-            if not (body.remote_url or "").strip():
-                raise HTTPException(400, "bind requires remote_url")
+    if body.mode == "create":
+        # The same path a new app takes, so a retry after a failed create binds
+        # the `origin` that create already made instead of making a second repo.
+        # Unknown scratch-ness defaults to scratch: a clean `workshop-` name.
+        scratch = body.scratch if body.scratch is not None else True
+        raw = _provision_repo(slug, scratch=scratch)
+        if raw.get("repo_error"):
+            raise HTTPException(400, raw["repo_error"])
+    elif body.mode == "bind":
+        if not (body.remote_url or "").strip():
+            raise HTTPException(400, "bind requires remote_url")
+        try:
             github.reject_blocked(body.remote_url)
             info = github.bind_repo(str(proj_dir), body.remote_url.strip())
-        else:  # pragma: no cover - pydantic Literal blocks this
-            raise HTTPException(400, f"unknown mode: {body.mode}")
-    except _GITHUB_ERRORS as e:
-        raise _github_http_error(e)
-
-    raw["repo"] = _repo_field(info)
-    raw["last_touched"] = _now()
-    data = _load_registry()
-    data.setdefault("projects", {})[slug] = raw
-    _save_registry(data)
+        except _GITHUB_ERRORS as e:
+            raise _github_http_error(e)
+        _record_repo(raw, info, "link")
+        raw["last_touched"] = _now()
+        data = _load_registry()
+        data.setdefault("projects", {})[slug] = raw
+        _save_registry(data)
+    else:  # pragma: no cover - pydantic Literal blocks this
+        raise HTTPException(400, f"unknown mode: {body.mode}")
 
     # Enable git rerere so recurring conflict resolutions replay automatically
     # during rebase-before-publish (Phase G3). Best-effort: a failure here must
@@ -1226,7 +1287,8 @@ async def import_project(body: ImportProjectIn) -> Project:
 
     _projects_root().mkdir(parents=True, exist_ok=True)
     env = {
-        **os.environ,
+        # The connected GitHub account's credential, so a private repo clones.
+        **git_service.git_env(),
         "GIT_AUTHOR_NAME": "Workshop Projects",
         "GIT_AUTHOR_EMAIL": "projects@workshop.local",
         "GIT_COMMITTER_NAME": "Workshop Projects",
@@ -1278,6 +1340,12 @@ async def import_project(body: ImportProjectIn) -> Project:
         # instead of compounding.
         **scope_owner.stamp(),
     }
+    # An imported repository is LINKED: recorded and shown, never pushed by
+    # Workshop unless the operator turns that on (services/project_repo.py).
+    parsed = project_repo.parse_remote(url)
+    if parsed:
+        _record_repo(record, {"owner": parsed[0], "name": parsed[1], "remote_url": url,
+                              "default_branch": git_service.main_branch(target)}, "link")
     data.setdefault("projects", {})[slug] = record
     _save_registry(data)
     return Project(slug=slug, **record)

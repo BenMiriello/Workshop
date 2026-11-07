@@ -31,6 +31,7 @@ from routes import gpu_claims as gpu_claims_routes
 from routes import resources as resources_routes
 from routes import chat_schedules as chat_schedules_routes
 from routes import github_identity_routes
+from routes import project_repo_routes
 from routes import dashboard_order as dashboard_order_routes
 from routes import storage as storage_routes
 from routes import tools as tools_routes
@@ -472,6 +473,7 @@ app.include_router(memory_routes.router, dependencies=_OPERATOR)         # seman
 app.include_router(storage_routes.router, dependencies=_OPERATOR)  # usage by app and kind, retention settings (/storage)
 app.include_router(agents.router, prefix="/agents", tags=["agents"], dependencies=_OPERATOR)
 app.include_router(projects.router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)
+app.include_router(project_repo_routes.router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)
 # ONE PREFIX FOR ONE CONCEPT (MEM-15). This was `/knowledge`, alongside
 # `/notes` and `/memory` for the same store, while the page is called Memory and
 # the thing is called a note. Everything scope-addressed sits under

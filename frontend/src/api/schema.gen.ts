@@ -5499,6 +5499,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{slug}/repo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Repo */
+        get: operations["get_repo_projects__slug__repo_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{slug}/repo/managed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Managed */
+        put: operations["put_managed_projects__slug__repo_managed_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{slug}/repo/push": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Push */
+        post: operations["post_push_projects__slug__repo_push_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{slug}/retire": {
         parameters: {
             query?: never;
@@ -12086,6 +12137,11 @@ export interface components {
             /** Ticket Title */
             ticket_title?: string | null;
         };
+        /** ManagedIn */
+        ManagedIn: {
+            /** Managed */
+            managed: boolean;
+        };
         /**
          * MarkDuplicateOut
          * @description The folded ticket in its cancelled state, and a stub of the canonical one
@@ -13153,6 +13209,8 @@ export interface components {
             /** Purpose */
             purpose: string;
             repo?: components["schemas"]["ProjectRepo"] | null;
+            /** Repo Error */
+            repo_error?: string | null;
             /**
              * Sensitivity
              * @default shareable
@@ -13245,8 +13303,12 @@ export interface components {
         ProjectRepo: {
             /** Connected At */
             connected_at?: string | null;
+            /** Created By */
+            created_by?: string | null;
             /** Default Branch */
             default_branch?: string | null;
+            /** Managed */
+            managed?: boolean | null;
             /** Name */
             name?: string | null;
             /** Owner */
@@ -13434,6 +13496,23 @@ export interface components {
              * @default false
              */
             set_upstream: boolean;
+        };
+        /** PushOut */
+        PushOut: {
+            /** At */
+            at: string;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /**
+             * Sha
+             * @default
+             */
+            sha: string;
+            /** State */
+            state: string;
         };
         /** PushResult */
         PushResult: {
@@ -13863,6 +13942,57 @@ export interface components {
         RepoBody: {
             /** Repo */
             repo: string;
+        };
+        /** RepoOut */
+        RepoOut: {
+            /**
+             * Ahead
+             * @default 0
+             */
+            ahead: number;
+            /**
+             * Behind
+             * @default 0
+             */
+            behind: number;
+            /** Connected */
+            connected: boolean;
+            /**
+             * Created By
+             * @default
+             */
+            created_by: string;
+            /**
+             * Default Branch
+             * @default
+             */
+            default_branch: string;
+            /**
+             * Error
+             * @default
+             */
+            error: string;
+            /**
+             * Managed
+             * @default false
+             */
+            managed: boolean;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Owner
+             * @default
+             */
+            owner: string;
+            push?: components["schemas"]["PushOut"] | null;
+            /**
+             * Web Url
+             * @default
+             */
+            web_url: string;
         };
         /**
          * RepoState
@@ -26904,6 +27034,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_repo_projects__slug__repo_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_managed_projects__slug__repo_managed_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagedIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_push_projects__slug__repo_push_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"];
                 };
             };
             /** @description Validation Error */

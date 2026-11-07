@@ -4902,6 +4902,10 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
             )
             if sha:
                 _push(turn, "checkpoint", {"sha": sha})
+            # A managed app's repository follows its work: push the default
+            # branch in the background when it has commits GitHub does not.
+            from services import ownership, project_repo
+            project_repo.push_after_turn(cwd, ownership.owner_or_none())
     except Exception as e:
         log.info("turn %s: checkpoint skipped: %s", turn.id, e)
 
