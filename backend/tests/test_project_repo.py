@@ -44,7 +44,7 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKSHOP_PROJECTS_REGISTRY", str(registry))
     monkeypatch.setenv("WORKSHOP_RUNTIME_DIR", str(tmp_path / "runtime"))
     from services import apps as apps_svc
-    monkeypatch.setattr(apps_svc, "reconcile_from_registries", lambda: {"ok": False, "reason": "test"})
+    monkeypatch.setattr(apps_svc, "reconcile_from_registries", lambda: {"ok": False, "reason": "stubbed"})
     monkeypatch.setattr(project_repo, "_connected_login", lambda: "octo")
     monkeypatch.setattr(project_repo, "_status_path", lambda: tmp_path / "repo-push.json")
     return d, bare, registry
@@ -129,7 +129,7 @@ def fresh(tmp_path, monkeypatch):
     monkeypatch.setattr(P, "_projects_root", lambda: tmp_path / "projects")
     monkeypatch.setattr(P, "_assert_project_ignored", lambda slug: None)
     from services import apps as apps_svc
-    monkeypatch.setattr(apps_svc, "reconcile_from_registries", lambda: {"ok": False, "reason": "test"})
+    monkeypatch.setattr(apps_svc, "reconcile_from_registries", lambda: {"ok": False, "reason": "stubbed"})
     monkeypatch.setattr(github, "reject_blocked", lambda *a: None)
     monkeypatch.setattr(github, "unique_repo_name", lambda base: base)
     monkeypatch.setattr(github_identity, "connected", lambda owner_id=None: True)
