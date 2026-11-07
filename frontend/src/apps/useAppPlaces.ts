@@ -40,6 +40,8 @@ export type AppPlace = {
   tabs?: readonly string[];
   projectSlug?: string | null;
   hasFiles?: boolean;
+  /** Whether the app is a repository of its own (gives it Overview). */
+  ownRepository?: boolean;
   /** Whether this app ships its own screens at `home`. */
   ownScreen?: boolean;
   /** The screens it serves, from its manifest's exposed services. */
@@ -89,6 +91,7 @@ function place(app: LauncherCard, known: AppPlace | undefined): AppPlace {
     tabs: surface?.tabs ?? undefined,
     projectSlug: surface?.project_slug ?? null,
     hasFiles: surface?.files ?? false,
+    ownRepository: surface?.repository ?? false,
     ownScreen: !!known,
     screens: surface?.screens ?? [],
   };

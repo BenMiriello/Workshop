@@ -89,7 +89,9 @@ RETIRED_TAB_IDS: frozenset[str] = frozenset({
 REQUIRES_LINKED_PROJECT: dict[str, bool] = {
     "work": True,
     # Overview is the autonomy brake, the services and the environment, and
-    # every one of those reads the linked tree.
+    # every one of those reads the linked tree. The one exception is the
+    # repository panel: an app that is its own repository has Overview for
+    # that alone (`_own_repository`).
     "overview": True,
     "chats": False,
     "memory": False,
@@ -156,9 +158,21 @@ def available_tabs(slug: str) -> list[str]:
     out: list[str] = []
     for tab in TAB_IDS:
         if REQUIRES_LINKED_PROJECT.get(tab, False) and not project:
-            continue
+            if not (tab == "overview" and _own_repository(slug)):
+                continue
         out.append(tab)
     return out
+
+
+def _own_repository(slug: str) -> bool:
+    """Whether the app's own tree is a git repository of its own, which gives
+    it a repository to show on Overview (services/project_repo.py)."""
+    try:
+        from services import app_ui
+
+        return (app_ui.app_dir(slug) / ".git").exists()
+    except Exception:
+        return False
 
 
 def app_screens(slug: str) -> list[dict]:
@@ -262,7 +276,10 @@ def surface_for(slug: str, *, own_route: str | None = None) -> dict:
     # home or a bundled screen is more specific.
     if home is None and screens:
         home = f"{base}/ui/{screens[0]['service']}"
-    resolved = _resolve_home(home, base, tabs)
+    # An app with no linked tree has Overview only for its repository, which is
+    # a setting rather than a place to open on.
+    opens_on = tabs if _linked_project(slug) else [t for t in tabs if t != "overview"]
+    resolved = _resolve_home(home, base, opens_on or tabs)
 
     return {
         "home": resolved,
@@ -271,4 +288,5 @@ def surface_for(slug: str, *, own_route: str | None = None) -> dict:
         "declared": bool(block) or bool(own_route),
         "project_slug": _linked_project(slug),
         "files": "files" in available,
+        "repository": _own_repository(slug),
     }

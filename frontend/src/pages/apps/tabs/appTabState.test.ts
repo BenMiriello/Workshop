@@ -73,6 +73,13 @@ describe("canHaveContent", () => {
     }
   });
 
+  it("gives an app that is its own repository Overview, and nothing else project-backed", () => {
+    const repo = { ...BARE, ownRepository: true };
+    expect(canHaveContent("overview", BARE)).toBe(false);
+    expect(canHaveContent("overview", repo)).toBe(true);
+    expect(canHaveContent("work", repo)).toBe(false);
+  });
+
   it("asks about files separately, because a manifest can declare a root", () => {
     // An app may own a directory without owning a project (app_files.py), so
     // Files does not follow the project link.

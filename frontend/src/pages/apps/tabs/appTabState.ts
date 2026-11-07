@@ -104,6 +104,9 @@ export type AppTabFacts = {
   projectSlug: string | null;
   /** Whether the app has a file root at all (a declared one or a linked tree). */
   hasFiles: boolean;
+  /** Whether the app is a repository of its own, which gives it Overview for
+   *  its repository even with no linked tree. */
+  ownRepository?: boolean;
 };
 
 /**
@@ -116,6 +119,7 @@ export type AppTabFacts = {
  */
 export function canHaveContent(tab: Exclude<AppTabId, "app">, facts: AppTabFacts): boolean {
   if (tab === "files") return facts.hasFiles;
+  if (tab === "overview" && facts.ownRepository) return true;
   return !REQUIRES_LINKED_PROJECT[tab] || !!facts.projectSlug;
 }
 

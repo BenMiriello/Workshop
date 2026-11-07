@@ -60,6 +60,9 @@ class AppSurface(BaseModel):
     declared: bool
     project_slug: str | None = None
     files: bool
+    # Whether the app's own tree is a repository of its own, which gives an
+    # app with no linked project an Overview for its repository.
+    repository: bool = False
 
 
 class LauncherCard(BaseModel):

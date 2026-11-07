@@ -83,6 +83,19 @@ def test_an_unlinked_app_loses_the_tabs_that_could_only_be_empty(install):
     assert s["home"] == "/apps/nothing-installed-here/chats"
 
 
+def test_an_unlinked_app_that_is_its_own_repository_keeps_overview(install, tmp_path):
+    # Overview carries the repository panel, which an installed app that is a
+    # repository of its own can fill without any linked tree.
+    from services import app_links
+    (tmp_path / "apps" / "solo" / ".git").mkdir(parents=True)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(app_links, "linked_project_slug", lambda slug: None)
+        s = app_surface.surface_for("solo")
+    assert s["tabs"] == ["overview", "chats", "memory", "files"]
+    assert s["repository"] is True and s["project_slug"] is None
+    assert s["home"] == "/apps/solo/chats"
+
+
 def test_a_manifest_declares_the_tabs_and_their_order(install):
     install(tree={"surface": {"tabs": ["memory", "chats"]}})
     s = app_surface.surface_for("widgets")

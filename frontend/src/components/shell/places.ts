@@ -373,6 +373,7 @@ export function buildPlaces(
     const tabs = tabsForApp(app.tabs, {
       projectSlug: app.projectSlug ?? null,
       hasFiles: app.hasFiles ?? false,
+      ownRepository: app.ownRepository ?? false,
     });
     const pages: ShellPage[] = [
       // An app that ships its own screens gets a row for them, first. One that

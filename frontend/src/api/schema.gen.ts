@@ -8517,6 +8517,11 @@ export interface components {
             /** Project Slug */
             project_slug?: string | null;
             /**
+             * Repository
+             * @default false
+             */
+            repository: boolean;
+            /**
              * Screens
              * @default []
              */
