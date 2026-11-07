@@ -46,6 +46,7 @@ def app(tmp_path, monkeypatch):
     from services import apps as apps_svc
     monkeypatch.setattr(apps_svc, "reconcile_from_registries", lambda: {"ok": False, "reason": "stubbed"})
     monkeypatch.setattr(project_repo, "_connected_login", lambda: "octo")
+    monkeypatch.setattr(project_repo, "_in_workshop_tree", lambda d: True)
     monkeypatch.setattr(project_repo, "_status_path", lambda: tmp_path / "repo-push.json")
     monkeypatch.setattr(project_repo, "_apps_store_path", lambda: tmp_path / "app-repos.json")
     return d, bare, registry
@@ -69,6 +70,14 @@ def test_an_older_apps_repository_on_the_connected_account_is_adopted_as_managed
 
 def test_a_repository_on_another_account_is_adopted_as_linked(app, monkeypatch):
     monkeypatch.setattr(project_repo, "_connected_login", lambda: "someone-else")
+    out = project_repo.describe(_t(), fetch=False)
+    assert out["connected"] and not out["managed"] and out["created_by"] == "link"
+
+
+def test_a_folder_outside_workshops_own_roots_is_adopted_as_linked(app, monkeypatch):
+    # A project registered from a folder elsewhere was not made by Workshop,
+    # even when the repository is on the same account.
+    monkeypatch.setattr(project_repo, "_in_workshop_tree", lambda d: False)
     out = project_repo.describe(_t(), fetch=False)
     assert out["connected"] and not out["managed"] and out["created_by"] == "link"
 

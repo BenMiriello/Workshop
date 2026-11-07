@@ -20,9 +20,10 @@ publish the tree it sits in.
 
 ADOPTION. Apps made before this existed have an `origin` remote and no record.
 `adopt()` records one from the app's own `.git`: a repository on the connected
-account is taken as Workshop's own and starts managed, anything else starts
-linked. Imports record their repo at import time, so only older apps take
-this path.
+account whose folder is inside Workshop's own projects or apps root is taken as
+Workshop's own and starts managed; anything else (a project registered from a
+folder elsewhere, a repo on another account) starts linked. Imports record
+their repo at import time, so only older apps take this path.
 
 NEVER FORCE. A push that GitHub refuses because the remote has commits this
 app does not is reported as `diverged` and left alone. Resolving it is a
@@ -115,6 +116,18 @@ def _own_repo(d: Path) -> bool:
     return r.returncode == 0 and Path(r.stdout.strip()).resolve() == d.resolve()
 
 
+def _in_workshop_tree(d: Path) -> bool:
+    """Whether `d` is under the roots Workshop creates apps in."""
+    from wsplatform import paths
+
+    roots = [paths.projects_root(), paths.workshop_root() / "apps"]
+    try:
+        r = d.resolve()
+        return any(r.is_relative_to(root.resolve()) for root in roots)
+    except OSError:
+        return False
+
+
 # ---- where an app's record lives ---------------------------------------------
 
 @dataclass
@@ -187,7 +200,7 @@ def adopt(t: Target) -> dict | None:
     if not parsed:
         return None
     owner, name = parsed
-    mine = owner.lower() == _connected_login().lower()
+    mine = owner.lower() == _connected_login().lower() and _in_workshop_tree(t.dir)
     repo = repo_record({"owner": owner, "name": name, "remote_url": r.stdout.strip(),
                         "default_branch": git_service.main_branch(t.dir)},
                        "workshop" if mine else "link")
