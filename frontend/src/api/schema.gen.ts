@@ -3706,6 +3706,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/copies/prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Prefs */
+        get: operations["get_prefs_copies_prefs_get"];
+        /** Put Prefs */
+        put: operations["put_prefs_copies_prefs_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dashboard/layout": {
         parameters: {
             query?: never;
@@ -10153,6 +10171,23 @@ export interface components {
             verb: string;
             /** Worktree Id */
             worktree_id?: string | null;
+        };
+        /** CopyPrefs */
+        CopyPrefs: {
+            /**
+             * Destination
+             * @enum {string}
+             */
+            destination: "system" | "workshop";
+            /** Save */
+            save: boolean;
+        };
+        /** CopyPrefsChange */
+        CopyPrefsChange: {
+            /** Destination */
+            destination?: ("system" | "workshop") | null;
+            /** Save */
+            save?: boolean | null;
         };
         /** CreateProjectIn */
         CreateProjectIn: {
@@ -24026,6 +24061,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ControlCancelled"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_prefs_copies_prefs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopyPrefs"];
+                };
+            };
+        };
+    };
+    put_prefs_copies_prefs_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CopyPrefsChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopyPrefs"];
                 };
             };
             /** @description Validation Error */
