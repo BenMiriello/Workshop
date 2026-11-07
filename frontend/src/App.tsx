@@ -286,9 +286,6 @@ function ShellApp() {
           <Route path="/settings/instructions" element={<Navigate to="/settings/chat" replace />} />
           <Route path="/apps" element={<Apps />} />
           <Route path="/marketplace" element={<Marketplace />} />
-          {/* Every app's routes come from src/apps/registry.tsx — the shell
-              does not know which apps exist. */}
-          {appRoutes()}
           {/* The seven per-app tabs, generic over :appSlug: the shell does not
               need to know which apps exist to route to them, only that every
               app gets the same eight rows (places.ts). */}
@@ -312,6 +309,13 @@ function ShellApp() {
           <Route path="/apps/:appSlug/files" element={<AppFilesTab />} />
           <Route path="/apps/:appSlug/tickets" element={<AppTicketsTab />} />
           <Route path="/apps/:appSlug/runs" element={<AppRunsTab />} />
+          {/* Every app's routes come from src/apps/registry.tsx — the shell
+              does not know which apps exist. AFTER the per-app tabs above: an
+              app page like `/apps/<slug>/:id` ties with `/apps/:appSlug/chats`
+              on specificity, and on a tie the route listed first wins, so an
+              app's own catch-all used to swallow its Chats, Memory and Overview
+              tabs. A static app path still outranks a tab either way. */}
+          {appRoutes()}
           <Route path="/chat/:contextKey" element={<FocusedChat />} />
           {/* Voice is a toggle inside the chat, not a separate screen. Old
               /voice deep-links redirect to the one focused chat (no second mount). */}
